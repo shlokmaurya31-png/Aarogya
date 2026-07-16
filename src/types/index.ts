@@ -1,0 +1,162 @@
+export type RiskLevel = "optimal" | "watch" | "elevated" | "critical";
+
+export type SystemId = "brain" | "heart" | "lungs" | "kidneys" | "bones";
+
+export interface SystemMetric {
+  label: string;
+  value: string;
+  risk: RiskLevel;
+}
+
+export interface BodySystem {
+  id: SystemId;
+  name: string;
+  status: RiskLevel;
+  summary: string;
+  metrics: SystemMetric[];
+  lastChecked: string;
+}
+
+export interface VitalPoint {
+  t: string;
+  value: number;
+}
+
+export interface VitalSeries {
+  id: string;
+  label: string;
+  unit: string;
+  color: string;
+  current: number;
+  delta: number;
+  risk: RiskLevel;
+  data: VitalPoint[];
+}
+
+export type TimelineEventType =
+  | "blood-test"
+  | "ct-scan"
+  | "mri"
+  | "vaccination"
+  | "doctor-visit"
+  | "hospitalization";
+
+export interface TimelineEvent {
+  id: string;
+  date: string;
+  type: TimelineEventType;
+  title: string;
+  facility: string;
+  description: string;
+}
+
+export interface PatientProfile {
+  name: string;
+  patientId: string;
+  hospitalId: string;
+  age: number;
+  gender: string;
+  height: string;
+  weight: string;
+  bloodGroup: string;
+  allergies: string[];
+  insurance: string;
+  emergencyContact: string;
+  abhaNumber: string;
+  aadhaarLinked: boolean;
+  ayushmanBharat: "eligible" | "enrolled" | "not-eligible";
+  avatarInitials: string;
+}
+
+export interface NotificationItem {
+  id: string;
+  kind: "lab" | "medicine" | "message" | "appointment";
+  title: string;
+  detail: string;
+  time: string;
+  risk?: RiskLevel;
+}
+
+export type UserMode = "patient" | "doctor";
+
+export type NavId =
+  | "overview"
+  | "appointments"
+  | "history"
+  | "reports"
+  | "labs"
+  | "prescriptions"
+  | "insurance"
+  | "emergency";
+
+export type PatientNavId = "home" | "appointments" | "medicines" | "reports" | "emergency";
+
+export type AppointmentStatus = "upcoming" | "completed" | "cancelled";
+export type AppointmentMode = "in-person" | "video";
+
+export interface Appointment {
+  id: string;
+  doctor: string;
+  specialty: string;
+  facility: string;
+  date: string;
+  time: string;
+  mode: AppointmentMode;
+  status: AppointmentStatus;
+}
+
+export type ReportKind = "lab" | "radiology" | "discharge" | "prescription";
+
+export interface ReportDoc {
+  id: string;
+  title: string;
+  kind: ReportKind;
+  facility: string;
+  date: string;
+  sizeKb: number;
+  verified: boolean;
+}
+
+export interface LabResult {
+  id: string;
+  test: string;
+  panel: string;
+  value: number;
+  unit: string;
+  refLow: number;
+  refHigh: number;
+  risk: RiskLevel;
+  date: string;
+}
+
+export type PrescriptionStatus = "active" | "completed" | "refill-due";
+
+export interface Prescription {
+  id: string;
+  drug: string;
+  dose: string;
+  frequency: string;
+  prescribedBy: string;
+  startDate: string;
+  status: PrescriptionStatus;
+  adherence: number;
+}
+
+export type ClaimStatus = "approved" | "processing" | "submitted" | "rejected";
+
+export interface InsuranceClaim {
+  id: string;
+  claimNo: string;
+  reason: string;
+  amount: number;
+  status: ClaimStatus;
+  date: string;
+}
+
+export interface EmergencyContact {
+  id: string;
+  name: string;
+  relation: string;
+  phone: string;
+  priority: number;
+}
