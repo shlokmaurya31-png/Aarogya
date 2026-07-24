@@ -103,7 +103,7 @@ function HeroNav() {
   const lenis = useLenis();
 
   return (
-    <header className="fixed top-0 inset-x-0 z-10 px-5 sm:px-8 py-4 sm:py-5 flex flex-row justify-between items-center bg-transparent">
+    <header className="fixed top-0 inset-x-0 z-20 px-5 sm:px-8 py-4 sm:py-5 flex flex-row justify-between items-center bg-transparent">
       <button
         onClick={() => lenis?.scrollTo(0)}
         className="flex items-center gap-2.5 text-[14px] font-semibold tracking-tight"
