@@ -6,6 +6,7 @@ import { SectionHeader } from "@/components/ui/SectionHeader";
 import { Card } from "@/components/ui/Card";
 import { downloadTextFile } from "@/lib/download";
 import { useRecordsStore } from "@/store/useRecordsStore";
+import { useTranslation } from "@/hooks/useTranslation";
 import type { ReportKind } from "@/types";
 
 const KIND_META: Record<ReportKind, { icon: typeof FileText; label: string; color: string }> = {
@@ -25,12 +26,13 @@ function formatSize(kb: number) {
 
 export function ReportsView() {
   const reports = useRecordsStore((s) => s.reports);
+  const { t } = useTranslation();
 
   return (
     <div className="space-y-5">
       <SectionHeader
         eyebrow="Reports"
-        title="Documents & records"
+        title={t("reports.title")}
         subtitle={`${reports.length} documents · Uploaded directly by labs and hospitals, no paper involved`}
       />
 

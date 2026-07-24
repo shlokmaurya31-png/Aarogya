@@ -6,6 +6,7 @@ import { insuranceClaims, patient } from "@/lib/mock-data";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { Card, CardLabel } from "@/components/ui/Card";
 import { StatusPill } from "@/components/ui/StatusPill";
+import { useTranslation } from "@/hooks/useTranslation";
 import type { ClaimStatus } from "@/types";
 
 const STATUS_TONE: Record<ClaimStatus, "emerald" | "amber" | "cyan" | "red"> = {
@@ -25,12 +26,13 @@ function formatCurrency(n: number) {
 
 export function InsuranceView() {
   const totalClaimed = insuranceClaims.reduce((sum, c) => sum + c.amount, 0);
+  const { t } = useTranslation();
 
   return (
     <div className="space-y-5">
       <SectionHeader
         eyebrow="Insurance"
-        title="Coverage & claims"
+        title={t("insurance.title")}
         subtitle={`${formatCurrency(totalClaimed)} claimed across ${insuranceClaims.length} claims`}
       />
 
@@ -49,7 +51,7 @@ export function InsuranceView() {
 
       <Card className="p-0">
         <div className="border-b border-hairline p-5">
-          <CardLabel>Claims history</CardLabel>
+          <CardLabel>{t("label.claimsHistory")}</CardLabel>
         </div>
         <div className="divide-y divide-hairline">
           {insuranceClaims.map((c, i) => (

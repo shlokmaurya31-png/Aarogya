@@ -8,17 +8,19 @@ import { bodySystems } from "@/lib/mock-data";
 import { RISK_COLOR, RISK_LABEL } from "@/lib/risk";
 import { SYSTEM_FRIENDLY, RISK_FRIENDLY } from "@/lib/plain-language";
 import { useUiStore } from "@/store/useUiStore";
+import { useTranslation } from "@/hooks/useTranslation";
 import { cn } from "@/lib/utils";
 
 /** Per-system status list — replaces the old 3D anatomy view. Rows expand to metrics. */
 export function SystemsCard() {
   const [openId, setOpenId] = useState<string | null>(null);
   const isPatient = useUiStore((s) => s.mode === "patient");
+  const { t } = useTranslation();
 
   return (
     <Card className="h-full p-0">
       <div className="border-b border-hairline p-5">
-        <CardLabel>{isPatient ? "How your body is doing" : "Body Systems Review"}</CardLabel>
+        <CardLabel>{isPatient ? t("label.bodySystemsPatient") : t("label.bodySystemsDoctor")}</CardLabel>
       </div>
       <div className="divide-y divide-hairline">
         {bodySystems.map((sys) => {

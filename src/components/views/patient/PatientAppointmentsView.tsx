@@ -7,6 +7,7 @@ import { SectionHeader } from "@/components/ui/SectionHeader";
 import { Card } from "@/components/ui/Card";
 import { useToastStore } from "@/store/useToastStore";
 import { openDirections } from "@/lib/download";
+import { useTranslation } from "@/hooks/useTranslation";
 
 function formatDate(d: string) {
   return new Date(d).toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short" });
@@ -16,6 +17,7 @@ export function PatientAppointmentsView() {
   const upcoming = appointments.filter((a) => a.status === "upcoming");
   const past = appointments.filter((a) => a.status !== "upcoming");
   const push = useToastStore((s) => s.push);
+  const { t } = useTranslation();
 
   function joinOrDirections(mode: "video" | "in-person", facility: string, doctor: string) {
     if (mode === "video") {
@@ -29,14 +31,14 @@ export function PatientAppointmentsView() {
     <div className="space-y-5">
       <SectionHeader
         eyebrow="Appointments"
-        title="Your visits"
+        title={t("appointments.titlePatient")}
         subtitle="Everything you have booked, in one place"
         action={
           <button
             onClick={() => push("Booking request sent — you'll get a confirmation shortly", "emerald")}
             className="flex items-center gap-1.5 rounded-full bg-cyan px-4 py-2.5 text-[13px] font-medium text-ink transition hover:brightness-110 active:scale-[0.97]"
           >
-            <Plus size={15} /> Book a visit
+            <Plus size={15} /> {t("btn.bookVisit")}
           </button>
         }
       />
@@ -68,7 +70,7 @@ export function PatientAppointmentsView() {
                 onClick={() => joinOrDirections(a.mode, a.facility, a.doctor)}
                 className="mt-4 w-full rounded-full border border-hairline py-2.5 text-[13px] font-medium text-text-secondary transition hover:border-cyan/30 hover:text-cyan"
               >
-                {a.mode === "video" ? "Join video call" : "Get directions"}
+                {a.mode === "video" ? t("btn.joinVideo") : t("btn.getDirections")}
               </button>
             </Card>
           </motion.div>

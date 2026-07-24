@@ -7,10 +7,12 @@ import { emergencyContacts, patient } from "@/lib/mock-data";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { Card, CardLabel } from "@/components/ui/Card";
 import { useToastStore } from "@/store/useToastStore";
+import { useTranslation } from "@/hooks/useTranslation";
 
 export function EmergencyView() {
   const [sosState, setSosState] = useState<"idle" | "sending" | "sent">("idle");
   const push = useToastStore((s) => s.push);
+  const { t } = useTranslation();
 
   function triggerSos() {
     if (sosState !== "idle") return;
@@ -26,7 +28,7 @@ export function EmergencyView() {
     <div className="space-y-5">
       <SectionHeader
         eyebrow="Emergency"
-        title="In case of emergency"
+        title={t("emergency.title")}
         subtitle="Blood group, allergies and contacts are shared instantly with responders on SOS"
       />
 
@@ -48,15 +50,15 @@ export function EmergencyView() {
           className="flex w-full shrink-0 items-center justify-center gap-1.5 rounded-full bg-red px-6 py-2.5 text-[13px] font-semibold text-ink transition hover:brightness-110 active:scale-[0.97] disabled:opacity-70 sm:w-auto"
         >
           {sosState === "sending" && <Loader2 size={14} className="animate-spin" />}
-          {sosState === "idle" && "Trigger SOS"}
-          {sosState === "sending" && "Sending…"}
-          {sosState === "sent" && "SOS sent"}
+          {sosState === "idle" && t("btn.triggerSos")}
+          {sosState === "sending" && t("btn.sosSending")}
+          {sosState === "sent" && t("btn.sosSent")}
         </button>
       </Card>
 
       <Card>
         <div className="flex items-center justify-between">
-          <CardLabel>Critical information</CardLabel>
+          <CardLabel>{t("label.criticalInfo")}</CardLabel>
         </div>
         <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div className="rounded-2xl bg-black/[0.035] px-3 py-3 text-center">
@@ -82,7 +84,7 @@ export function EmergencyView() {
 
       <Card className="p-0">
         <div className="border-b border-hairline p-5">
-          <CardLabel>Contacts, in priority order</CardLabel>
+          <CardLabel>{t("label.contactsPriority")}</CardLabel>
         </div>
         <div className="divide-y divide-hairline">
           {emergencyContacts.map((c, i) => (

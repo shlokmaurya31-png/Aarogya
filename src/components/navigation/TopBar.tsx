@@ -6,27 +6,29 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Search } from "lucide-react";
 import { patient, doctorProfile } from "@/lib/mock-data";
 import { useUiStore } from "@/store/useUiStore";
+import { useTranslation } from "@/hooks/useTranslation";
 import { ModeToggle } from "./ModeToggle";
+import { LanguageSwitcher } from "./LanguageSwitcher";
 import { cn } from "@/lib/utils";
 import type { NavId, PatientNavId } from "@/types";
 
-const DOCTOR_TABS: { id: NavId; label: string }[] = [
-  { id: "overview", label: "Summary" },
-  { id: "history", label: "History" },
-  { id: "labs", label: "Labs" },
-  { id: "reports", label: "Reports" },
-  { id: "prescriptions", label: "Meds" },
-  { id: "appointments", label: "Appointments" },
-  { id: "insurance", label: "Insurance" },
-  { id: "emergency", label: "Emergency" },
+const DOCTOR_TABS: { id: NavId; labelKey: string }[] = [
+  { id: "overview", labelKey: "nav.summary" },
+  { id: "history", labelKey: "nav.history" },
+  { id: "labs", labelKey: "nav.labs" },
+  { id: "reports", labelKey: "nav.reports" },
+  { id: "prescriptions", labelKey: "nav.prescriptions" },
+  { id: "appointments", labelKey: "nav.appointments" },
+  { id: "insurance", labelKey: "nav.insurance" },
+  { id: "emergency", labelKey: "nav.emergency" },
 ];
 
-const PATIENT_TABS: { id: PatientNavId; label: string }[] = [
-  { id: "home", label: "Home" },
-  { id: "appointments", label: "Appointments" },
-  { id: "medicines", label: "Medicines" },
-  { id: "reports", label: "Reports" },
-  { id: "emergency", label: "Emergency" },
+const PATIENT_TABS: { id: PatientNavId; labelKey: string }[] = [
+  { id: "home", labelKey: "nav.home" },
+  { id: "appointments", labelKey: "nav.appointments" },
+  { id: "medicines", labelKey: "nav.medicines" },
+  { id: "reports", labelKey: "nav.reports" },
+  { id: "emergency", labelKey: "nav.emergency" },
 ];
 
 function Tab({
@@ -65,6 +67,7 @@ export function TopBar() {
   const setActiveView = useUiStore((s) => s.setActiveView);
   const activePatientView = useUiStore((s) => s.activePatientView);
   const setActivePatientView = useUiStore((s) => s.setActivePatientView);
+  const { t } = useTranslation();
 
   const isDoctor = mode === "doctor";
   const tabs = isDoctor ? DOCTOR_TABS : PATIENT_TABS;
@@ -93,7 +96,7 @@ export function TopBar() {
   }, [searchOpen]);
 
   const results = query.trim()
-    ? tabs.filter((t) => t.label.toLowerCase().includes(query.trim().toLowerCase()))
+    ? tabs.filter((tab) => t(tab.labelKey).toLowerCase().includes(query.trim().toLowerCase()))
     : tabs;
 
   function selectResult(id: string) {
@@ -115,20 +118,20 @@ export function TopBar() {
         {/* tabs */}
         <nav className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {isDoctor
-            ? DOCTOR_TABS.map((t) => (
+            ? DOCTOR_TABS.map((tab) => (
                 <Tab
-                  key={t.id}
-                  label={t.label}
-                  isActive={activeView === t.id}
-                  onClick={() => setActiveView(t.id)}
+                  key={tab.id}
+                  label={t(tab.labelKey)}
+                  isActive={activeView === tab.id}
+                  onClick={() => setActiveView(tab.id)}
                 />
               ))
-            : PATIENT_TABS.map((t) => (
+            : PATIENT_TABS.map((tab) => (
                 <Tab
-                  key={t.id}
-                  label={t.label}
-                  isActive={activePatientView === t.id}
-                  onClick={() => setActivePatientView(t.id)}
+                  key={tab.id}
+                  label={t(tab.labelKey)}
+                  isActive={activePatientView === tab.id}
+                  onClick={() => setActivePatientView(tab.id)}
                 />
               ))}
         </nav>
@@ -141,9 +144,11 @@ export function TopBar() {
             aria-label="Search"
           >
             <Search size={13} />
-            Search
+            {t("topbar.search")}
             <kbd className="rounded-md border border-hairline px-1.5 font-mono text-[10px]">⌘K</kbd>
           </button>
+
+          <LanguageSwitcher />
 
           <ModeToggle />
 
@@ -168,12 +173,12 @@ export function TopBar() {
       {isDoctor && (
         <div className="border-t border-hairline bg-surface/60">
           <div className="mx-auto flex max-w-[1500px] items-center gap-3 px-5 py-2 text-[11.5px]">
-            <span className="text-text-tertiary">Viewing chart</span>
+            <span className="text-text-tertiary">{t("topbar.viewingChart")}</span>
             <span className="font-medium text-text-primary">{patient.name}</span>
             <span className="tabular-nums text-text-tertiary">{patient.patientId}</span>
             <span className="ml-auto hidden items-center gap-1.5 text-text-tertiary sm:flex">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald" />
-              Consent active · expires in 24h
+              {t("topbar.consentActive")}
             </span>
           </div>
         </div>
@@ -215,13 +220,13 @@ export function TopBar() {
               {results.length === 0 && (
                 <p className="px-3 py-4 text-center text-[12.5px] text-text-tertiary">No matches</p>
               )}
-              {results.map((t) => (
+              {results.map((tab) => (
                 <button
-                  key={t.id}
-                  onClick={() => selectResult(t.id)}
+                  key={tab.id}
+                  onClick={() => selectResult(tab.id)}
                   className="flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-[13px] text-text-secondary transition hover:bg-black/[0.04] hover:text-text-primary"
                 >
-                  {t.label}
+                  {t(tab.labelKey)}
                 </button>
               ))}
             </div>

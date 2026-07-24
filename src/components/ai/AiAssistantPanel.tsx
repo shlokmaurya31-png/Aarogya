@@ -7,6 +7,7 @@ import { StreamingText } from "./StreamingText";
 import { useUiStore } from "@/store/useUiStore";
 import { useToastStore } from "@/store/useToastStore";
 import { useRecordsStore } from "@/store/useRecordsStore";
+import { useTranslation } from "@/hooks/useTranslation";
 import { cn } from "@/lib/utils";
 import type { ReportKind } from "@/types";
 
@@ -106,7 +107,11 @@ export function AiAssistantPanel() {
   const [listening, setListening] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const mode = useUiStore((s) => s.mode);
-  const content = CONTENT[mode];
+  const { t } = useTranslation();
+  const content =
+    mode === "patient"
+      ? { ...CONTENT.patient, title: t("ai.title"), subtitle: t("ai.subtitle"), placeholder: t("ai.placeholder") }
+      : CONTENT.doctor;
   const push = useToastStore((s) => s.push);
   const addReport = useRecordsStore((s) => s.addReport);
   const addNotification = useRecordsStore((s) => s.addNotification);
@@ -244,7 +249,7 @@ export function AiAssistantPanel() {
             onClick={() => fileInputRef.current?.click()}
             className="flex shrink-0 items-center gap-1.5 rounded-full bg-cyan px-3.5 py-2 text-[12px] font-medium text-ink transition hover:brightness-110 active:scale-[0.97]"
           >
-            <FileUp size={13} /> Upload a record
+            <FileUp size={13} /> {t("ai.uploadRecord")}
           </button>
         )}
       </div>

@@ -8,6 +8,7 @@ import { SectionHeader } from "@/components/ui/SectionHeader";
 import { Card } from "@/components/ui/Card";
 import { HealthTimeline } from "@/components/timeline/HealthTimeline";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/hooks/useTranslation";
 import type { TimelineEventType } from "@/types";
 
 const FILTERS: { id: TimelineEventType | "all"; label: string }[] = [
@@ -22,6 +23,7 @@ const FILTERS: { id: TimelineEventType | "all"; label: string }[] = [
 
 export function MedicalHistoryView() {
   const [filter, setFilter] = useState<TimelineEventType | "all">("all");
+  const { t } = useTranslation();
 
   const filtered = useMemo(
     () => (filter === "all" ? timeline : timeline.filter((e) => e.type === filter)),
@@ -32,7 +34,7 @@ export function MedicalHistoryView() {
     <div className="space-y-5">
       <SectionHeader
         eyebrow="Medical History"
-        title="Every record, in one place"
+        title={t("history.title")}
         subtitle={`${timeline.length} events across 5 facilities since 2025`}
       />
 

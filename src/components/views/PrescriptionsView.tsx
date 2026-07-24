@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/Card";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { useToastStore } from "@/store/useToastStore";
 import { useRecordsStore } from "@/store/useRecordsStore";
+import { useTranslation } from "@/hooks/useTranslation";
 import type { PrescriptionStatus } from "@/types";
 
 const STATUS_TONE: Record<PrescriptionStatus, "emerald" | "amber" | "neutral"> = {
@@ -44,6 +45,7 @@ export function PrescriptionsView() {
   const refillDue = prescriptions.filter((p) => p.status === "refill-due").length;
   const [requested, setRequested] = useState<Set<string>>(new Set());
   const push = useToastStore((s) => s.push);
+  const { t } = useTranslation();
 
   const [formOpen, setFormOpen] = useState(false);
   const [doctorName, setDoctorName] = useState(doctorSignature.name);
@@ -102,7 +104,7 @@ export function PrescriptionsView() {
     <div className="space-y-5">
       <SectionHeader
         eyebrow="Prescriptions"
-        title="Current medications"
+        title={t("prescriptions.title")}
         subtitle={
           refillDue > 0
             ? `${refillDue} medication needs a refill soon`
@@ -113,7 +115,7 @@ export function PrescriptionsView() {
             onClick={openForm}
             className="flex items-center gap-1.5 rounded-full bg-cyan px-4 py-2 text-[12.5px] font-medium text-ink transition hover:brightness-110 active:scale-[0.97]"
           >
-            <Plus size={14} /> New prescription
+            <Plus size={14} /> {t("btn.newPrescription")}
           </button>
         }
       />
@@ -163,7 +165,7 @@ export function PrescriptionsView() {
                   disabled={requested.has(p.id)}
                   className="mt-4 w-full rounded-full border border-amber/30 bg-amber/10 py-2 text-[12px] font-medium text-amber transition hover:bg-amber/15 disabled:cursor-default disabled:opacity-60"
                 >
-                  {requested.has(p.id) ? "Refill requested" : "Request refill"}
+                  {requested.has(p.id) ? t("btn.refillRequested") : t("btn.requestRefill")}
                 </button>
               )}
             </Card>
@@ -190,7 +192,7 @@ export function PrescriptionsView() {
               className="glass-strong card-shadow w-full max-w-md rounded-[20px]"
             >
               <div className="flex items-center justify-between border-b border-hairline px-5 py-4">
-                <p className="text-[14px] font-semibold text-text-primary">New prescription</p>
+                <p className="text-[14px] font-semibold text-text-primary">{t("btn.newPrescription")}</p>
                 <button
                   onClick={() => setFormOpen(false)}
                   aria-label="Close"
@@ -276,13 +278,13 @@ export function PrescriptionsView() {
                   onClick={() => setFormOpen(false)}
                   className="rounded-full border border-hairline px-4 py-2 text-[12.5px] font-medium text-text-secondary transition hover:border-hairline-strong"
                 >
-                  Cancel
+                  {t("btn.cancel")}
                 </button>
                 <button
                   onClick={submitPrescription}
                   className="rounded-full bg-cyan px-4 py-2 text-[12.5px] font-medium text-ink transition hover:brightness-110 active:scale-[0.97]"
                 >
-                  Issue prescription
+                  {t("btn.issuePrescription")}
                 </button>
               </div>
             </motion.div>

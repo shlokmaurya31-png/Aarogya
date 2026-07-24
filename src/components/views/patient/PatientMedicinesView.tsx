@@ -9,6 +9,7 @@ import { Card, CardLabel } from "@/components/ui/Card";
 import { cn } from "@/lib/utils";
 import { useToastStore } from "@/store/useToastStore";
 import { useRecordsStore } from "@/store/useRecordsStore";
+import { useTranslation } from "@/hooks/useTranslation";
 
 export function PatientMedicinesView() {
   const [taken, setTaken] = useState<Record<string, boolean>>(
@@ -19,6 +20,7 @@ export function PatientMedicinesView() {
   const active = prescriptions.filter((p) => p.status !== "completed");
   const [ordered, setOrdered] = useState<Set<string>>(new Set());
   const push = useToastStore((s) => s.push);
+  const { t } = useTranslation();
 
   function orderRefill(id: string, drug: string) {
     setOrdered((s) => new Set(s).add(id));
@@ -29,7 +31,7 @@ export function PatientMedicinesView() {
     <div className="space-y-5">
       <SectionHeader
         eyebrow="Medicines"
-        title="Today's medicines"
+        title={t("patientHome.medicinesTitle")}
         subtitle="Tap each one off as you take it"
       />
 
@@ -43,7 +45,7 @@ export function PatientMedicinesView() {
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.35, delay: i * 0.05 }}
-                onClick={() => setTaken((t) => ({ ...t, [m.id]: !t[m.id] }))}
+                onClick={() => setTaken((prev) => ({ ...prev, [m.id]: !prev[m.id] }))}
                 className={cn(
                   "flex items-center gap-4 rounded-2xl px-4 py-3.5 text-left transition",
                   isTaken ? "bg-emerald/[0.06]" : "bg-black/[0.035] hover:bg-black/[0.055]"
@@ -91,7 +93,7 @@ export function PatientMedicinesView() {
                   disabled={ordered.has(p.id)}
                   className="shrink-0 rounded-full border border-amber/30 bg-amber/10 px-3.5 py-1.5 text-[12px] font-medium text-amber transition hover:bg-amber/15 disabled:cursor-default disabled:opacity-60"
                 >
-                  {ordered.has(p.id) ? "Ordered" : "Order refill"}
+                  {ordered.has(p.id) ? t("btn.ordered") : t("btn.orderRefill")}
                 </button>
               )}
             </div>

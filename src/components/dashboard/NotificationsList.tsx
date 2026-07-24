@@ -5,6 +5,7 @@ import { FlaskConical, Pill, CalendarClock, MessageCircle } from "lucide-react";
 import { Card, CardLabel } from "@/components/ui/Card";
 import { RISK_COLOR } from "@/lib/risk";
 import { useRecordsStore } from "@/store/useRecordsStore";
+import { useTranslation } from "@/hooks/useTranslation";
 import type { NotificationItem } from "@/types";
 
 const ICONS: Record<NotificationItem["kind"], typeof FlaskConical> = {
@@ -16,10 +17,11 @@ const ICONS: Record<NotificationItem["kind"], typeof FlaskConical> = {
 
 export function NotificationsList() {
   const notifications = useRecordsStore((s) => s.notifications);
+  const { t } = useTranslation();
 
   return (
     <Card>
-      <CardLabel>Notifications</CardLabel>
+      <CardLabel>{t("label.notifications")}</CardLabel>
       <div className="mt-3 flex flex-col gap-1">
         {notifications.map((n, i) => {
           const Icon = ICONS[n.kind];

@@ -7,6 +7,7 @@ import { SectionHeader } from "@/components/ui/SectionHeader";
 import { Card } from "@/components/ui/Card";
 import { downloadTextFile } from "@/lib/download";
 import { useRecordsStore } from "@/store/useRecordsStore";
+import { useTranslation } from "@/hooks/useTranslation";
 import type { ReportKind } from "@/types";
 
 const KIND_ICON: Record<ReportKind, typeof FileText> = {
@@ -22,12 +23,13 @@ function formatDate(d: string) {
 
 export function PatientReportsView() {
   const reports = useRecordsStore((s) => s.reports);
+  const { t } = useTranslation();
 
   return (
     <div className="space-y-5">
       <SectionHeader
         eyebrow="Reports"
-        title="Your reports, explained simply"
+        title={t("reports.titlePatient")}
         subtitle="No medical jargon — just what it means for you"
       />
 

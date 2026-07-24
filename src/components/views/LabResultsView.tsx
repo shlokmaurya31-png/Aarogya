@@ -5,6 +5,7 @@ import { labResults } from "@/lib/mock-data";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { Card, CardLabel } from "@/components/ui/Card";
 import { RISK_COLOR, RISK_LABEL } from "@/lib/risk";
+import { useTranslation } from "@/hooks/useTranslation";
 import type { LabResult } from "@/types";
 
 function groupByPanel(results: LabResult[]) {
@@ -47,12 +48,13 @@ function RangeBar({ result }: { result: LabResult }) {
 export function LabResultsView() {
   const groups = groupByPanel(labResults);
   const flagged = labResults.filter((r) => r.risk === "elevated" || r.risk === "critical").length;
+  const { t } = useTranslation();
 
   return (
     <div className="space-y-5">
       <SectionHeader
         eyebrow="Lab Results"
-        title="Diagnostics, structured"
+        title={t("labs.title")}
         subtitle={`${labResults.length} results across ${groups.length} panels · ${flagged} flagged for review`}
       />
 

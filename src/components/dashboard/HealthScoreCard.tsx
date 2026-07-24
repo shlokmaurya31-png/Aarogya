@@ -5,6 +5,7 @@ import { Card, CardLabel } from "@/components/ui/Card";
 import { vitals } from "@/lib/mock-data";
 import { overallStatus } from "@/lib/plain-language";
 import { Counter } from "@/components/landing/Counter";
+import { useTranslation } from "@/hooks/useTranslation";
 
 const SCORE = 86;
 const R = 64;
@@ -12,10 +13,11 @@ const CIRC = 2 * Math.PI * R;
 
 export function HealthScoreCard() {
   const status = overallStatus(vitals.map((v) => v.risk));
+  const { t } = useTranslation();
 
   return (
     <Card className="flex h-full flex-col items-center justify-center gap-5 p-8 text-center">
-      <CardLabel>Health Score</CardLabel>
+      <CardLabel>{t("label.healthScore")}</CardLabel>
 
       <div className="relative h-40 w-40">
         <svg viewBox="0 0 160 160" className="h-full w-full -rotate-90">
@@ -39,7 +41,7 @@ export function HealthScoreCard() {
           <span className="tabular-nums text-[40px] font-semibold leading-none text-text-primary">
             <Counter to={SCORE} duration={1.6} />
           </span>
-          <span className="mt-1 text-[11px] text-text-tertiary">out of 100</span>
+          <span className="mt-1 text-[11px] text-text-tertiary">{t("label.outOf100")}</span>
         </div>
       </div>
 

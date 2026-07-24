@@ -11,12 +11,13 @@ import { NotificationsList } from "@/components/dashboard/NotificationsList";
 import { cn } from "@/lib/utils";
 import { useToastStore } from "@/store/useToastStore";
 import { openDirections } from "@/lib/download";
+import { useTranslation } from "@/hooks/useTranslation";
 
-function greeting() {
+function greetingKey() {
   const h = new Date().getHours();
-  if (h < 12) return "Good morning";
-  if (h < 17) return "Good afternoon";
-  return "Good evening";
+  if (h < 12) return "patientHome.morning";
+  if (h < 17) return "patientHome.afternoon";
+  return "patientHome.evening";
 }
 
 function formatDate(d: string) {
@@ -27,6 +28,7 @@ export function PatientHomeView() {
   const nextAppointment = appointments.find((a) => a.status === "upcoming");
   const dueToday = upcomingMedicines.filter((m) => !m.taken);
   const push = useToastStore((s) => s.push);
+  const { t } = useTranslation();
 
   function joinOrDirections(mode: "video" | "in-person", facility: string, doctor: string) {
     if (mode === "video") {
@@ -43,9 +45,9 @@ export function PatientHomeView() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
       >
-        <p className="text-[11px] uppercase tracking-[0.14em] text-text-tertiary">{greeting()}</p>
+        <p className="text-[11px] uppercase tracking-[0.14em] text-text-tertiary">{t(greetingKey())}</p>
         <h1 className="mt-1 text-[24px] font-semibold tracking-tight text-text-primary">
-          {patient.name.split(" ")[0]}, here&rsquo;s how you&rsquo;re doing
+          {patient.name.split(" ")[0]}, {t("patientHome.subheading")}
         </h1>
       </motion.header>
 
@@ -84,7 +86,7 @@ export function PatientHomeView() {
           transition={{ duration: 0.5, delay: 0.2 }}
         >
           <Card className="h-full">
-            <CardLabel>Today&rsquo;s medicines</CardLabel>
+            <CardLabel>{t("patientHome.medicinesTitle")}</CardLabel>
             <div className="mt-3 flex flex-col gap-2">
               {upcomingMedicines.map((m) => (
                 <div
@@ -122,7 +124,7 @@ export function PatientHomeView() {
           transition={{ duration: 0.5, delay: 0.25 }}
         >
           <Card className="h-full">
-            <CardLabel>Next appointment</CardLabel>
+            <CardLabel>{t("patientHome.nextAppointment")}</CardLabel>
             {nextAppointment ? (
               <div className="mt-3">
                 <div className="flex items-center gap-3">
@@ -149,7 +151,7 @@ export function PatientHomeView() {
                   }
                   className="mt-4 w-full rounded-full border border-hairline py-2.5 text-[13px] font-medium text-text-secondary transition hover:border-cyan/30 hover:text-cyan"
                 >
-                  {nextAppointment.mode === "video" ? "Join video call" : "Get directions"}
+                  {nextAppointment.mode === "video" ? t("btn.joinVideo") : t("btn.getDirections")}
                 </button>
               </div>
             ) : (
