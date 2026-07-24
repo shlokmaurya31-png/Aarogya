@@ -35,7 +35,7 @@ export function ReportsSection() {
           className="rounded-[28px] border border-hairline bg-card/50 p-8"
         >
           <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white/[0.04] text-text-tertiary">
+            <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-black/[0.045] text-text-tertiary">
               <FileX2 size={17} />
             </span>
             <h3 className="text-[16px] font-semibold text-text-secondary">Healthcare today</h3>
@@ -65,7 +65,7 @@ export function ReportsSection() {
             <span className="flex h-10 w-10 items-center justify-center rounded-2xl border border-cyan/25 bg-cyan/10 text-cyan">
               <BadgeCheck size={17} />
             </span>
-            <h3 className="text-[16px] font-semibold text-white">With Aarogya</h3>
+            <h3 className="text-[16px] font-semibold text-text-primary">With Aarogya</h3>
           </div>
           <ul className="relative mt-6 space-y-4">
             {AFTER.map((item) => (

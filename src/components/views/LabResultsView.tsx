@@ -28,9 +28,9 @@ function RangeBar({ result }: { result: LabResult }) {
   const color = RISK_COLOR[result.risk];
 
   return (
-    <div className="relative h-1.5 w-full rounded-full bg-white/[0.06]">
+    <div className="relative h-1.5 w-full rounded-full bg-black/[0.07]">
       <div
-        className="absolute h-full rounded-full bg-white/[0.14]"
+        className="absolute h-full rounded-full bg-black/[0.16]"
         style={{ left: `${lowPct}%`, width: `${highPct - lowPct}%` }}
       />
       <motion.div

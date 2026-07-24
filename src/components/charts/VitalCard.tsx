@@ -50,8 +50,8 @@ export function VitalCard({ vital, delay = 0 }: { vital: VitalSeries; delay?: nu
             <Tooltip
               cursor={false}
               contentStyle={{
-                background: "#151515",
-                border: "1px solid rgba(255,255,255,0.08)",
+                background: "var(--card)",
+                border: "1px solid var(--hairline-strong)",
                 borderRadius: 12,
                 fontSize: 11,
                 padding: "4px 10px",

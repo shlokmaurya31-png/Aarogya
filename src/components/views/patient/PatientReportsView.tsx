@@ -2,10 +2,11 @@
 
 import { motion } from "framer-motion";
 import { FileText, FlaskConical, Scan, FileHeart, Download } from "lucide-react";
-import { reports } from "@/lib/mock-data";
 import { REPORT_FRIENDLY } from "@/lib/plain-language";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { Card } from "@/components/ui/Card";
+import { downloadTextFile } from "@/lib/download";
+import { useRecordsStore } from "@/store/useRecordsStore";
 import type { ReportKind } from "@/types";
 
 const KIND_ICON: Record<ReportKind, typeof FileText> = {
@@ -20,6 +21,8 @@ function formatDate(d: string) {
 }
 
 export function PatientReportsView() {
+  const reports = useRecordsStore((s) => s.reports);
+
   return (
     <div className="space-y-5">
       <SectionHeader
@@ -47,6 +50,14 @@ export function PatientReportsView() {
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-[14px] font-semibold text-text-primary">{r.title}</p>
                       <button
+                        onClick={() =>
+                          downloadTextFile(
+                            `${r.title.replace(/\s+/g, "-")}.txt`,
+                            `${r.title}\n${r.facility}\nDate: ${formatDate(r.date)}\n\n${
+                              REPORT_FRIENDLY[r.id] ?? "Ask Aarogya AI to explain this report to you."
+                            }`
+                          )
+                        }
                         className="shrink-0 rounded-full border border-hairline p-2 text-text-tertiary transition hover:border-cyan/30 hover:text-cyan"
                         aria-label={`Download ${r.title}`}
                       >

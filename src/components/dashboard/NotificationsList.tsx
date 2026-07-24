@@ -2,9 +2,9 @@
 
 import { motion } from "framer-motion";
 import { FlaskConical, Pill, CalendarClock, MessageCircle } from "lucide-react";
-import { notifications } from "@/lib/mock-data";
 import { Card, CardLabel } from "@/components/ui/Card";
 import { RISK_COLOR } from "@/lib/risk";
+import { useRecordsStore } from "@/store/useRecordsStore";
 import type { NotificationItem } from "@/types";
 
 const ICONS: Record<NotificationItem["kind"], typeof FlaskConical> = {
@@ -15,6 +15,8 @@ const ICONS: Record<NotificationItem["kind"], typeof FlaskConical> = {
 };
 
 export function NotificationsList() {
+  const notifications = useRecordsStore((s) => s.notifications);
+
   return (
     <Card>
       <CardLabel>Notifications</CardLabel>
@@ -27,13 +29,13 @@ export function NotificationsList() {
               initial={{ opacity: 0, x: 12 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.4, delay: 0.1 + i * 0.05 }}
-              className="flex items-start gap-3 rounded-2xl px-2.5 py-2.5 transition hover:bg-white/[0.03]"
+              className="flex items-start gap-3 rounded-2xl px-2.5 py-2.5 transition hover:bg-black/[0.035]"
             >
               <span
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
                 style={{
-                  backgroundColor: (n.risk ? RISK_COLOR[n.risk] : "#78c8ff") + "1a",
-                  color: n.risk ? RISK_COLOR[n.risk] : "#78c8ff",
+                  backgroundColor: (n.risk ? RISK_COLOR[n.risk] : "#0e7490") + "1a",
+                  color: n.risk ? RISK_COLOR[n.risk] : "#0e7490",
                 }}
               >
                 <Icon size={14} />

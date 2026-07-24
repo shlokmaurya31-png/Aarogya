@@ -9,6 +9,8 @@ import { SystemsCard } from "@/components/dashboard/SystemsCard";
 import { AiAssistantPanel } from "@/components/ai/AiAssistantPanel";
 import { NotificationsList } from "@/components/dashboard/NotificationsList";
 import { cn } from "@/lib/utils";
+import { useToastStore } from "@/store/useToastStore";
+import { openDirections } from "@/lib/download";
 
 function greeting() {
   const h = new Date().getHours();
@@ -24,6 +26,15 @@ function formatDate(d: string) {
 export function PatientHomeView() {
   const nextAppointment = appointments.find((a) => a.status === "upcoming");
   const dueToday = upcomingMedicines.filter((m) => !m.taken);
+  const push = useToastStore((s) => s.push);
+
+  function joinOrDirections(mode: "video" | "in-person", facility: string, doctor: string) {
+    if (mode === "video") {
+      push(`Connecting your video call with ${doctor}…`, "cyan");
+    } else {
+      openDirections(facility);
+    }
+  }
 
   return (
     <div className="space-y-5">
@@ -38,32 +49,34 @@ export function PatientHomeView() {
         </h1>
       </motion.header>
 
-      {/* bento row 1 — score, systems, AI */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      {/* hero — Ask Aarogya is the main event on this page */}
+      <motion.div
+        initial={{ opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.05 }}
+      >
+        <AiAssistantPanel />
+      </motion.div>
+
+      {/* secondary row — score, systems */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <motion.div
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.05 }}
+          transition={{ duration: 0.5, delay: 0.15 }}
         >
           <HealthScoreCard />
         </motion.div>
         <motion.div
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.1 }}
+          transition={{ duration: 0.5, delay: 0.2 }}
         >
           <SystemsCard />
         </motion.div>
-        <motion.div
-          initial={{ opacity: 0, y: 14 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.15 }}
-        >
-          <AiAssistantPanel />
-        </motion.div>
       </div>
 
-      {/* bento row 2 — medicines, appointment, notifications */}
+      {/* bento row — medicines, appointment, notifications */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <motion.div
           initial={{ opacity: 0, y: 14 }}
@@ -76,12 +89,12 @@ export function PatientHomeView() {
               {upcomingMedicines.map((m) => (
                 <div
                   key={m.id}
-                  className="flex items-center gap-3 rounded-2xl bg-white/[0.03] px-3.5 py-3"
+                  className="flex items-center gap-3 rounded-2xl bg-black/[0.035] px-3.5 py-3"
                 >
                   <span
                     className={cn(
                       "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
-                      m.taken ? "bg-emerald/15 text-emerald" : "bg-white/[0.06] text-text-secondary"
+                      m.taken ? "bg-emerald/15 text-emerald" : "bg-black/[0.06] text-text-secondary"
                     )}
                   >
                     {m.taken ? <Check size={15} /> : <Pill size={15} />}
@@ -130,7 +143,12 @@ export function PatientHomeView() {
                   {nextAppointment.mode === "video" ? <Video size={12} /> : <MapPin size={12} />}
                   {nextAppointment.facility}
                 </p>
-                <button className="mt-4 w-full rounded-full border border-hairline py-2.5 text-[13px] font-medium text-text-secondary transition hover:border-cyan/30 hover:text-cyan">
+                <button
+                  onClick={() =>
+                    joinOrDirections(nextAppointment.mode, nextAppointment.facility, nextAppointment.doctor)
+                  }
+                  className="mt-4 w-full rounded-full border border-hairline py-2.5 text-[13px] font-medium text-text-secondary transition hover:border-cyan/30 hover:text-cyan"
+                >
                   {nextAppointment.mode === "video" ? "Join video call" : "Get directions"}
                 </button>
               </div>

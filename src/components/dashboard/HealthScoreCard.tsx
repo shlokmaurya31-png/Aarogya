@@ -19,7 +19,7 @@ export function HealthScoreCard() {
 
       <div className="relative h-40 w-40">
         <svg viewBox="0 0 160 160" className="h-full w-full -rotate-90">
-          <circle cx="80" cy="80" r={R} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="10" />
+          <circle cx="80" cy="80" r={R} fill="none" stroke="rgba(0,0,0,0.08)" strokeWidth="10" />
           <motion.circle
             cx="80"
             cy="80"
@@ -36,7 +36,7 @@ export function HealthScoreCard() {
           />
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="tabular-nums text-[40px] font-semibold leading-none text-white">
+          <span className="tabular-nums text-[40px] font-semibold leading-none text-text-primary">
             <Counter to={SCORE} duration={1.6} />
           </span>
           <span className="mt-1 text-[11px] text-text-tertiary">out of 100</span>

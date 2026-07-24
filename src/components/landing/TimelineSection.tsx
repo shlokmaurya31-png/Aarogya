@@ -24,7 +24,7 @@ export function TimelineSection() {
 
       <div ref={ref} className="relative mx-auto mt-16 max-w-3xl">
         {/* spine that draws in as you scroll */}
-        <div aria-hidden className="absolute left-[19px] top-0 h-full w-px bg-white/[0.07]" />
+        <div aria-hidden className="absolute left-[19px] top-0 h-full w-px bg-black/[0.08]" />
         <motion.div
           aria-hidden
           style={{ scaleY: lineScale, transformOrigin: "top" }}
@@ -52,7 +52,7 @@ export function TimelineSection() {
                 </span>
                 <div className="flex-1 rounded-[20px] border border-hairline bg-card p-5 transition-colors duration-300 hover:border-hairline-strong">
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <h3 className="text-[15px] font-semibold text-white">{event.title}</h3>
+                    <h3 className="text-[15px] font-semibold text-text-primary">{event.title}</h3>
                     <span className="font-mono text-[11.5px] tabular-nums text-text-tertiary">
                       {formatEventDate(event.date)}
                     </span>

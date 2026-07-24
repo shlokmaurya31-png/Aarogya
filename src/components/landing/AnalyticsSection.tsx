@@ -28,7 +28,7 @@ export function AnalyticsSection() {
               viewport={{ once: true, margin: "-60px" }}
               transition={{ duration: 0.6, delay: i * 0.08 }}
             >
-              <p className="bg-gradient-to-b from-white to-white/50 bg-clip-text text-[clamp(2.4rem,5vw,4rem)] font-semibold leading-none tracking-tight text-transparent">
+              <p className="bg-gradient-to-b from-text-primary to-text-primary/50 bg-clip-text text-[clamp(2.4rem,5vw,4rem)] font-semibold leading-none tracking-tight text-transparent">
                 <Counter to={s.to} suffix={s.suffix} decimals={s.decimals ?? 0} />
               </p>
               <p className="mt-3 max-w-[220px] text-[13px] leading-relaxed text-text-secondary">

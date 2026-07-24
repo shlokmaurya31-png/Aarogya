@@ -31,7 +31,7 @@ export function SectionHeading({
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, margin: "-80px" }}
         transition={{ duration: 0.8, delay: 0.08, ease: [0.16, 1, 0.3, 1] }}
-        className="mt-4 text-balance bg-gradient-to-b from-white to-white/60 bg-clip-text text-[clamp(1.9rem,4.2vw,3.2rem)] font-semibold leading-[1.04] tracking-tight text-transparent"
+        className="mt-4 text-balance bg-gradient-to-b from-text-primary to-text-primary/60 bg-clip-text text-[clamp(1.9rem,4.2vw,3.2rem)] font-semibold leading-[1.04] tracking-tight text-transparent"
       >
         {title}
       </motion.h2>

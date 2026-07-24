@@ -79,7 +79,7 @@ export function FeaturesSection() {
               <span className="relative flex h-10 w-10 items-center justify-center rounded-2xl border border-cyan/20 bg-cyan/[0.07] text-cyan">
                 <Icon size={18} />
               </span>
-              <h3 className="relative mt-5 text-[17px] font-semibold tracking-tight text-white">
+              <h3 className="relative mt-5 text-[17px] font-semibold tracking-tight text-text-primary">
                 {f.title}
               </h3>
               <p className="relative mt-2 max-w-lg text-[13.5px] leading-relaxed text-text-secondary">

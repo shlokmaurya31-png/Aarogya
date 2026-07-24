@@ -1,26 +1,26 @@
 @import "tailwindcss";
 
 :root {
-  --ink: #080808;
-  --surface: #101010;
-  --card: #151515;
-  --card-raised: #1a1a1a;
-  --hairline: rgba(255, 255, 255, 0.06);
-  --hairline-strong: rgba(255, 255, 255, 0.1);
+  --ink: #ffffff;
+  --surface: #f6f6f8;
+  --card: #ffffff;
+  --card-raised: #f7f7f9;
+  --hairline: rgba(0, 0, 0, 0.08);
+  --hairline-strong: rgba(0, 0, 0, 0.14);
 
-  --text-primary: rgba(255, 255, 255, 0.92);
-  --text-secondary: rgba(255, 255, 255, 0.56);
-  --text-tertiary: rgba(255, 255, 255, 0.34);
+  --text-primary: rgba(10, 10, 10, 0.92);
+  --text-secondary: rgba(10, 10, 10, 0.58);
+  --text-tertiary: rgba(10, 10, 10, 0.38);
 
-  --emerald: #8fe388;
-  --amber: #f8c84b;
-  --red: #ff6b6b;
-  --cyan: #78c8ff;
+  --emerald: #15803d;
+  --amber: #b45309;
+  --red: #dc2626;
+  --cyan: #0e7490;
 
-  --emerald-dim: rgba(143, 227, 136, 0.14);
-  --amber-dim: rgba(248, 200, 75, 0.14);
-  --red-dim: rgba(255, 107, 107, 0.14);
-  --cyan-dim: rgba(120, 200, 255, 0.14);
+  --emerald-dim: rgba(21, 128, 61, 0.12);
+  --amber-dim: rgba(180, 83, 9, 0.12);
+  --red-dim: rgba(220, 38, 38, 0.12);
+  --cyan-dim: rgba(14, 116, 144, 0.12);
 
   --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
@@ -43,7 +43,7 @@
   --color-red: var(--red);
   --color-cyan: var(--cyan);
 
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-inter);
   --font-mono: var(--font-geist-mono);
 
   --radius-card: 24px;
@@ -52,7 +52,7 @@
 }
 
 html {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 body {
@@ -79,11 +79,11 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.14);
   border-radius: 8px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.22);
 }
 
 .tabular-nums {
@@ -91,14 +91,14 @@ body {
 }
 
 .glass {
-  background: rgba(21, 21, 21, 0.6);
+  background: rgba(255, 255, 255, 0.6);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--hairline);
 }
 
 .glass-strong {
-  background: rgba(16, 16, 16, 0.72);
+  background: rgba(255, 255, 255, 0.78);
   backdrop-filter: blur(28px);
   -webkit-backdrop-filter: blur(28px);
   border: 1px solid var(--hairline-strong);
@@ -106,16 +106,24 @@ body {
 
 .card-shadow {
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.03) inset,
-    0 24px 48px -24px rgba(0, 0, 0, 0.6);
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 24px 48px -24px rgba(0, 0, 0, 0.14);
 }
 
 .glow-emerald {
-  box-shadow: 0 0 0 1px var(--emerald-dim), 0 0 32px -4px rgba(143, 227, 136, 0.25);
+  box-shadow: 0 0 0 1px var(--emerald-dim), 0 0 32px -6px rgba(21, 128, 61, 0.22);
 }
 
 .text-balance {
   text-wrap: balance;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.animate-blink {
+  animation: blink 1s step-end infinite;
 }
 
 @keyframes shimmer {
@@ -137,8 +145,8 @@ body {
 /* Faint perspective grid that fades toward the horizon. */
 .holo-grid {
   background-image:
-    linear-gradient(rgba(120, 200, 255, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(120, 200, 255, 0.05) 1px, transparent 1px);
+    linear-gradient(rgba(14, 116, 144, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(14, 116, 144, 0.08) 1px, transparent 1px);
   background-size: 56px 56px;
   mask-image: radial-gradient(ellipse 70% 60% at 50% 45%, black 0%, transparent 100%);
   -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 45%, black 0%, transparent 100%);

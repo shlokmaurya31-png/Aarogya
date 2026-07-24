@@ -52,11 +52,11 @@ export function AiDiagnosisSection() {
                   transition={{ duration: 0.6, delay: i * 0.1, ease: [0.16, 1, 0.3, 1] }}
                   className="flex gap-4"
                 >
-                  <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-hairline bg-white/[0.03] text-cyan">
+                  <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-hairline bg-black/[0.035] text-cyan">
                     <Icon size={16} />
                   </span>
                   <div>
-                    <h3 className="text-[15px] font-semibold text-white">{c.title}</h3>
+                    <h3 className="text-[15px] font-semibold text-text-primary">{c.title}</h3>
                     <p className="mt-1 max-w-sm text-[13.5px] leading-relaxed text-text-secondary">
                       {c.text}
                     </p>
@@ -80,13 +80,13 @@ export function AiDiagnosisSection() {
             aria-hidden
             className="pointer-events-none absolute -top-20 left-1/2 h-40 w-3/4 -translate-x-1/2 bg-cyan/10 blur-3xl"
           />
-          <div className="rounded-[24px] bg-ink/60 p-6">
+          <div className="rounded-[24px] bg-black/[0.025] p-6">
             <div className="flex items-center justify-between border-b border-hairline pb-4">
               <div className="flex items-center gap-2.5">
                 <span className="flex h-7 w-7 items-center justify-center rounded-full border border-cyan/25 bg-cyan/10">
                   <Sparkles size={13} className="text-cyan" />
                 </span>
-                <span className="text-[13px] font-medium text-white">Clinical brief</span>
+                <span className="text-[13px] font-medium text-text-primary">Clinical brief</span>
               </div>
               <span className="font-mono text-[11px] text-text-tertiary">1.4s · 8 yrs of records</span>
             </div>

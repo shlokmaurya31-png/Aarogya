@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { LoadingScreen } from "@/components/shared/LoadingScreen";
+import { ToastViewport } from "@/components/shared/ToastViewport";
 import { TopBar } from "@/components/navigation/TopBar";
 import { ViewSwitcher } from "@/components/views/ViewSwitcher";
 import { PatientViewSwitcher } from "@/components/views/PatientViewSwitcher";
@@ -31,6 +32,7 @@ export default function DashboardPage() {
           </motion.div>
         )}
       </AnimatePresence>
+      <ToastViewport />
     </>
   );
 }

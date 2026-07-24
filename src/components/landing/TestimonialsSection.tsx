@@ -47,7 +47,7 @@ export function TestimonialsSection() {
               &ldquo;{q.quote}&rdquo;
             </blockquote>
             <figcaption className="mt-6 border-t border-hairline pt-4">
-              <p className="text-[13.5px] font-semibold text-white">{q.name}</p>
+              <p className="text-[13.5px] font-semibold text-text-primary">{q.name}</p>
               <p className="mt-0.5 text-[12px] text-text-tertiary">{q.role}</p>
             </figcaption>
           </motion.figure>

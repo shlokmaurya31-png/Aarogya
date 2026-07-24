@@ -29,7 +29,7 @@ export function SystemsCard() {
               <button
                 onClick={() => setOpenId(isOpen ? null : sys.id)}
                 aria-expanded={isOpen}
-                className="flex w-full items-center gap-3.5 px-5 py-3.5 text-left transition hover:bg-white/[0.02]"
+                className="flex w-full items-center gap-3.5 px-5 py-3.5 text-left transition hover:bg-black/[0.025]"
               >
                 <span
                   className="h-2 w-2 shrink-0 rounded-full"

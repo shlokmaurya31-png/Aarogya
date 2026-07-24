@@ -1,6 +1,5 @@
 import { SmoothScroll } from "@/components/landing/SmoothScroll";
-import { Nav } from "@/components/landing/Nav";
-import { HeroSection } from "@/components/landing/HeroSection";
+import { Hero } from "@/components/landing/Hero";
 import { FeaturesSection } from "@/components/landing/FeaturesSection";
 import { AiDiagnosisSection } from "@/components/landing/AiDiagnosisSection";
 import { TimelineSection } from "@/components/landing/TimelineSection";
@@ -17,9 +16,8 @@ export default function LandingPage() {
   return (
     <SmoothScroll>
       <div className="min-h-screen bg-ink text-text-primary">
-        <Nav />
+        <Hero />
         <main>
-          <HeroSection />
           <FeaturesSection />
           <AiDiagnosisSection />
           <TimelineSection />

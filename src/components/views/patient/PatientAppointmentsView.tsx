@@ -5,6 +5,8 @@ import { CalendarDays, Video, MapPin, Plus } from "lucide-react";
 import { appointments } from "@/lib/mock-data";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { Card } from "@/components/ui/Card";
+import { useToastStore } from "@/store/useToastStore";
+import { openDirections } from "@/lib/download";
 
 function formatDate(d: string) {
   return new Date(d).toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short" });
@@ -13,6 +15,15 @@ function formatDate(d: string) {
 export function PatientAppointmentsView() {
   const upcoming = appointments.filter((a) => a.status === "upcoming");
   const past = appointments.filter((a) => a.status !== "upcoming");
+  const push = useToastStore((s) => s.push);
+
+  function joinOrDirections(mode: "video" | "in-person", facility: string, doctor: string) {
+    if (mode === "video") {
+      push(`Connecting your video call with ${doctor}…`, "cyan");
+    } else {
+      openDirections(facility);
+    }
+  }
 
   return (
     <div className="space-y-5">
@@ -21,7 +32,10 @@ export function PatientAppointmentsView() {
         title="Your visits"
         subtitle="Everything you have booked, in one place"
         action={
-          <button className="flex items-center gap-1.5 rounded-full bg-cyan px-4 py-2.5 text-[13px] font-medium text-ink transition hover:brightness-110 active:scale-[0.97]">
+          <button
+            onClick={() => push("Booking request sent — you'll get a confirmation shortly", "emerald")}
+            className="flex items-center gap-1.5 rounded-full bg-cyan px-4 py-2.5 text-[13px] font-medium text-ink transition hover:brightness-110 active:scale-[0.97]"
+          >
             <Plus size={15} /> Book a visit
           </button>
         }
@@ -50,7 +64,10 @@ export function PatientAppointmentsView() {
                 )}
                 {a.facility}
               </div>
-              <button className="mt-4 w-full rounded-full border border-hairline py-2.5 text-[13px] font-medium text-text-secondary transition hover:border-cyan/30 hover:text-cyan">
+              <button
+                onClick={() => joinOrDirections(a.mode, a.facility, a.doctor)}
+                className="mt-4 w-full rounded-full border border-hairline py-2.5 text-[13px] font-medium text-text-secondary transition hover:border-cyan/30 hover:text-cyan"
+              >
                 {a.mode === "video" ? "Join video call" : "Get directions"}
               </button>
             </Card>

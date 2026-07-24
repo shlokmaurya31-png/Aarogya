@@ -49,7 +49,7 @@ export function FaqSection() {
                 <span
                   className={cn(
                     "text-[15.5px] font-medium transition-colors",
-                    isOpen ? "text-white" : "text-text-secondary"
+                    isOpen ? "text-text-primary" : "text-text-secondary"
                   )}
                 >
                   {f.q}

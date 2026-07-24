@@ -2,16 +2,17 @@
 
 import { motion } from "framer-motion";
 import { FileText, FlaskConical, Scan, FileHeart, Download, BadgeCheck } from "lucide-react";
-import { reports } from "@/lib/mock-data";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { Card } from "@/components/ui/Card";
+import { downloadTextFile } from "@/lib/download";
+import { useRecordsStore } from "@/store/useRecordsStore";
 import type { ReportKind } from "@/types";
 
 const KIND_META: Record<ReportKind, { icon: typeof FileText; label: string; color: string }> = {
-  lab: { icon: FlaskConical, label: "Lab Report", color: "#ff6b6b" },
-  radiology: { icon: Scan, label: "Radiology", color: "#78c8ff" },
-  discharge: { icon: FileHeart, label: "Discharge Summary", color: "#f8c84b" },
-  prescription: { icon: FileText, label: "Prescription", color: "#8fe388" },
+  lab: { icon: FlaskConical, label: "Lab Report", color: "#dc2626" },
+  radiology: { icon: Scan, label: "Radiology", color: "#0e7490" },
+  discharge: { icon: FileHeart, label: "Discharge Summary", color: "#b45309" },
+  prescription: { icon: FileText, label: "Prescription", color: "#15803d" },
 };
 
 function formatDate(d: string) {
@@ -23,6 +24,8 @@ function formatSize(kb: number) {
 }
 
 export function ReportsView() {
+  const reports = useRecordsStore((s) => s.reports);
+
   return (
     <div className="space-y-5">
       <SectionHeader
@@ -42,7 +45,7 @@ export function ReportsView() {
                 initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.3, delay: i * 0.04 }}
-                className="flex items-center gap-4 px-5 py-4 transition hover:bg-white/[0.02]"
+                className="flex items-center gap-4 px-5 py-4 transition hover:bg-black/[0.025]"
               >
                 <span
                   className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
@@ -70,6 +73,12 @@ export function ReportsView() {
                   {formatSize(r.sizeKb)}
                 </span>
                 <button
+                  onClick={() =>
+                    downloadTextFile(
+                      `${r.title.replace(/\s+/g, "-")}.txt`,
+                      `${r.title}\n${meta.label} · ${r.facility}\nDate: ${formatDate(r.date)}\n\nThis is a placeholder export from Aarogya AI.`
+                    )
+                  }
                   className="shrink-0 rounded-full border border-hairline p-2 text-text-tertiary transition hover:border-cyan/30 hover:text-cyan"
                   aria-label={`Download ${r.title}`}
                 >

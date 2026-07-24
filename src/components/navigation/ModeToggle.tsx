@@ -16,7 +16,7 @@ export function ModeToggle() {
   const setMode = useUiStore((s) => s.setMode);
 
   return (
-    <div className="flex rounded-full border border-hairline bg-white/[0.03] p-0.5">
+    <div className="flex rounded-full border border-hairline bg-black/[0.035] p-0.5">
       {OPTIONS.map((o) => {
         const Icon = o.icon;
         const active = mode === o.id;

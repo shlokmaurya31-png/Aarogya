@@ -3,17 +3,27 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { Check } from "lucide-react";
-import { upcomingMedicines, prescriptions } from "@/lib/mock-data";
+import { upcomingMedicines } from "@/lib/mock-data";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { Card, CardLabel } from "@/components/ui/Card";
 import { cn } from "@/lib/utils";
+import { useToastStore } from "@/store/useToastStore";
+import { useRecordsStore } from "@/store/useRecordsStore";
 
 export function PatientMedicinesView() {
   const [taken, setTaken] = useState<Record<string, boolean>>(
     Object.fromEntries(upcomingMedicines.map((m) => [m.id, m.taken]))
   );
 
+  const prescriptions = useRecordsStore((s) => s.prescriptions);
   const active = prescriptions.filter((p) => p.status !== "completed");
+  const [ordered, setOrdered] = useState<Set<string>>(new Set());
+  const push = useToastStore((s) => s.push);
+
+  function orderRefill(id: string, drug: string) {
+    setOrdered((s) => new Set(s).add(id));
+    push(`Refill ordered for ${drug} — on its way`, "amber");
+  }
 
   return (
     <div className="space-y-5">
@@ -36,7 +46,7 @@ export function PatientMedicinesView() {
                 onClick={() => setTaken((t) => ({ ...t, [m.id]: !t[m.id] }))}
                 className={cn(
                   "flex items-center gap-4 rounded-2xl px-4 py-3.5 text-left transition",
-                  isTaken ? "bg-emerald/[0.06]" : "bg-white/[0.03] hover:bg-white/[0.05]"
+                  isTaken ? "bg-emerald/[0.06]" : "bg-black/[0.035] hover:bg-black/[0.055]"
                 )}
               >
                 <span
@@ -76,8 +86,12 @@ export function PatientMedicinesView() {
                 <p className="text-[12px] text-text-tertiary">{p.frequency}</p>
               </div>
               {p.status === "refill-due" && (
-                <button className="shrink-0 rounded-full border border-amber/30 bg-amber/10 px-3.5 py-1.5 text-[12px] font-medium text-amber transition hover:bg-amber/15">
-                  Order refill
+                <button
+                  onClick={() => orderRefill(p.id, p.drug)}
+                  disabled={ordered.has(p.id)}
+                  className="shrink-0 rounded-full border border-amber/30 bg-amber/10 px-3.5 py-1.5 text-[12px] font-medium text-amber transition hover:bg-amber/15 disabled:cursor-default disabled:opacity-60"
+                >
+                  {ordered.has(p.id) ? "Ordered" : "Order refill"}
                 </button>
               )}
             </div>

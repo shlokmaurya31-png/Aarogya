@@ -85,7 +85,7 @@ export function LoadingScreen({ onComplete }: { onComplete: () => void }) {
           {particles.map((p) => (
             <motion.span
               key={p.id}
-              className="absolute rounded-full bg-white/20"
+              className="absolute rounded-full bg-black/15"
               style={{
                 left: `${p.x}%`,
                 top: `${p.y}%`,
@@ -153,7 +153,7 @@ export function LoadingScreen({ onComplete }: { onComplete: () => void }) {
             </div>
 
             {/* progress line */}
-            <div className="w-[220px] h-px bg-white/[0.06] overflow-hidden rounded-full">
+            <div className="w-[220px] h-px bg-black/[0.08] overflow-hidden rounded-full">
               <motion.div
                 className="h-full bg-gradient-to-r from-cyan/40 via-cyan to-cyan/40"
                 animate={{ width: `${progress}%` }}

@@ -53,7 +53,7 @@ export function ClinicalBrief() {
         <dl className="mt-4 space-y-3.5">
           {SOAP.map((s) => (
             <div key={s.key} className="flex gap-3">
-              <dt className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/[0.05] text-[11px] font-semibold text-cyan">
+              <dt className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-black/[0.045] text-[11px] font-semibold text-cyan">
                 {s.key}
               </dt>
               <dd className="min-w-0 flex-1">

@@ -89,7 +89,7 @@ export function PricingSection() {
               {t.name}
             </h3>
             <p className="mt-3 flex items-baseline gap-1.5">
-              <span className="text-[36px] font-semibold tracking-tight text-white">{t.price}</span>
+              <span className="text-[36px] font-semibold tracking-tight text-text-primary">{t.price}</span>
               <span className="text-[12.5px] text-text-tertiary">{t.period}</span>
             </p>
             <p className="mt-1 text-[13px] text-text-secondary">{t.tagline}</p>

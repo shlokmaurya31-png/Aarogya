@@ -26,7 +26,7 @@ export function HealthTimeline() {
             animate={{ scaleX: 1 }}
             transition={{ duration: 1, ease: [0.16, 1, 0.3, 1] }}
             style={{ transformOrigin: "left" }}
-            className="absolute left-2 right-2 top-[19px] h-px bg-white/[0.08]"
+            className="absolute left-2 right-2 top-[19px] h-px bg-black/[0.09]"
           />
           {timeline.map((event, i) => {
             const meta = TYPE_META[event.type];
@@ -44,7 +44,7 @@ export function HealthTimeline() {
                 <span
                   className={cn(
                     "flex h-10 w-10 items-center justify-center rounded-full border transition-all",
-                    isOpen ? "border-transparent" : "border-hairline bg-[#151515]"
+                    isOpen ? "border-transparent" : "border-hairline bg-card"
                   )}
                   style={isOpen ? { backgroundColor: meta.color + "22", boxShadow: `0 0 0 1px ${meta.color}55` } : undefined}
                 >
@@ -75,7 +75,7 @@ export function HealthTimeline() {
             {(() => {
               const event = timeline.find((e) => e.id === openId)!;
               return (
-                <div className="mt-5 rounded-2xl border border-hairline bg-white/[0.03] p-4">
+                <div className="mt-5 rounded-2xl border border-hairline bg-black/[0.03] p-4">
                   <p className="text-[12px] text-text-tertiary">{event.facility}</p>
                   <p className="mt-1.5 text-[13px] leading-relaxed text-text-secondary">
                     {event.description}

@@ -1,10 +1,10 @@
 import type { RiskLevel, SystemId } from "@/types";
 
 export const RISK_FRIENDLY: Record<RiskLevel, { label: string; color: string }> = {
-  optimal: { label: "All good", color: "#8fe388" },
-  watch: { label: "Worth watching", color: "#78c8ff" },
-  elevated: { label: "Needs attention", color: "#f8c84b" },
-  critical: { label: "Talk to your doctor soon", color: "#ff6b6b" },
+  optimal: { label: "All good", color: "#15803d" },
+  watch: { label: "Worth watching", color: "#0e7490" },
+  elevated: { label: "Needs attention", color: "#b45309" },
+  critical: { label: "Talk to your doctor soon", color: "#dc2626" },
 };
 
 export const SYSTEM_FRIENDLY: Record<SystemId, string> = {
@@ -25,13 +25,13 @@ export const REPORT_FRIENDLY: Record<string, string> = {
 
 export function overallStatus(risks: RiskLevel[]): { label: string; message: string; color: string } {
   if (risks.includes("critical")) {
-    return { label: "Needs attention", message: "A couple of things need your attention today.", color: "#ff6b6b" };
+    return { label: "Needs attention", message: "A couple of things need your attention today.", color: "#dc2626" };
   }
   if (risks.includes("elevated")) {
-    return { label: "Mostly good", message: "You're doing okay — one or two things worth watching.", color: "#f8c84b" };
+    return { label: "Mostly good", message: "You're doing okay — one or two things worth watching.", color: "#b45309" };
   }
   if (risks.includes("watch")) {
-    return { label: "Doing well", message: "You're doing well overall, just keep an eye on a couple of things.", color: "#78c8ff" };
+    return { label: "Doing well", message: "You're doing well overall, just keep an eye on a couple of things.", color: "#0e7490" };
   }
-  return { label: "Doing great", message: "Everything looks good today.", color: "#8fe388" };
+  return { label: "Doing great", message: "Everything looks good today.", color: "#15803d" };
 }

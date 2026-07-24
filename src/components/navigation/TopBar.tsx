@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { motion } from "framer-motion";
+import { useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { Search } from "lucide-react";
 import { patient, doctorProfile } from "@/lib/mock-data";
 import { useUiStore } from "@/store/useUiStore";
@@ -43,7 +44,7 @@ function Tab({
       aria-current={isActive ? "page" : undefined}
       className={cn(
         "relative whitespace-nowrap rounded-full px-3.5 py-1.5 text-[12.5px] transition-colors duration-200",
-        isActive ? "text-white" : "text-text-tertiary hover:text-text-secondary"
+        isActive ? "text-text-primary" : "text-text-tertiary hover:text-text-secondary"
       )}
     >
       {isActive && (
@@ -66,8 +67,43 @@ export function TopBar() {
   const setActivePatientView = useUiStore((s) => s.setActivePatientView);
 
   const isDoctor = mode === "doctor";
+  const tabs = isDoctor ? DOCTOR_TABS : PATIENT_TABS;
+
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen((o) => !o);
+      }
+      if (e.key === "Escape") setSearchOpen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  useEffect(() => {
+    if (searchOpen) {
+      setQuery("");
+      requestAnimationFrame(() => inputRef.current?.focus());
+    }
+  }, [searchOpen]);
+
+  const results = query.trim()
+    ? tabs.filter((t) => t.label.toLowerCase().includes(query.trim().toLowerCase()))
+    : tabs;
+
+  function selectResult(id: string) {
+    if (isDoctor) setActiveView(id as NavId);
+    else setActivePatientView(id as PatientNavId);
+    setSearchOpen(false);
+  }
 
   return (
+    <>
     <header className="sticky top-0 z-40 border-b border-hairline bg-ink/80 backdrop-blur-xl">
       <div className="mx-auto flex max-w-[1500px] items-center gap-4 px-5 py-3">
         {/* brand */}
@@ -100,6 +136,7 @@ export function TopBar() {
         {/* right cluster */}
         <div className="flex shrink-0 items-center gap-3">
           <button
+            onClick={() => setSearchOpen(true)}
             className="hidden items-center gap-2 rounded-full border border-hairline px-3 py-1.5 text-[12px] text-text-tertiary transition hover:border-hairline-strong hover:text-text-secondary lg:flex"
             aria-label="Search"
           >
@@ -142,5 +179,56 @@ export function TopBar() {
         </div>
       )}
     </header>
+
+    <AnimatePresence>
+      {searchOpen && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+          className="fixed inset-0 z-[100] flex items-start justify-center bg-black/20 pt-[15vh]"
+          onClick={() => setSearchOpen(false)}
+        >
+          <motion.div
+            initial={{ opacity: 0, y: -12, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -8, scale: 0.98 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            onClick={(e) => e.stopPropagation()}
+            className="glass-strong card-shadow w-full max-w-md overflow-hidden rounded-[20px]"
+          >
+            <div className="flex items-center gap-2.5 border-b border-hairline px-4 py-3">
+              <Search size={14} className="text-text-tertiary" />
+              <input
+                ref={inputRef}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Jump to a section…"
+                className="flex-1 bg-transparent text-[13.5px] outline-none placeholder:text-text-tertiary"
+              />
+              <kbd className="rounded-md border border-hairline px-1.5 font-mono text-[10px] text-text-tertiary">
+                Esc
+              </kbd>
+            </div>
+            <div className="max-h-72 overflow-y-auto p-1.5">
+              {results.length === 0 && (
+                <p className="px-3 py-4 text-center text-[12.5px] text-text-tertiary">No matches</p>
+              )}
+              {results.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => selectResult(t.id)}
+                  className="flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-[13px] text-text-secondary transition hover:bg-black/[0.04] hover:text-text-primary"
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+    </>
   );
 }

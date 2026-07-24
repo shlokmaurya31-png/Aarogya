@@ -22,7 +22,7 @@ function triage(selected: string[]): { level: string; color: string; advice: str
   if (selected.includes("Chest discomfort") || selected.includes("Shortness of breath")) {
     return {
       level: "See a doctor soon",
-      color: "#f8c84b",
+      color: "#b45309",
       advice:
         "Chest-related symptoms deserve prompt attention. Aarogya would book you a cardiology slot and share your history before you arrive.",
     };
@@ -30,14 +30,14 @@ function triage(selected: string[]): { level: string; color: string; advice: str
   if (selected.length >= 3) {
     return {
       level: "Worth a consultation",
-      color: "#78c8ff",
+      color: "#0e7490",
       advice:
         "This combination is worth discussing with a doctor. Aarogya would suggest the right specialist and prepare your records for the visit.",
     };
   }
   return {
     level: "Monitor at home",
-    color: "#8fe388",
+    color: "#15803d",
     advice:
       "Nothing urgent by itself. Aarogya would log this against your history and alert you if a pattern starts forming.",
   };
@@ -73,7 +73,7 @@ export function SymptomsSection() {
                   "rounded-full border px-4 py-2 text-[13px] transition-all duration-200 active:scale-95",
                   active
                     ? "border-cyan/50 bg-cyan/15 text-cyan shadow-[0_0_20px_-6px_rgba(120,200,255,0.5)]"
-                    : "border-hairline bg-white/[0.03] text-text-secondary hover:border-hairline-strong hover:text-white"
+                    : "border-hairline bg-black/[0.035] text-text-secondary hover:border-hairline-strong hover:text-text-primary"
                 )}
               >
                 {s}

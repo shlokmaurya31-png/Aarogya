@@ -40,7 +40,7 @@ export function PatientCard() {
 
         <div className="mt-5 grid grid-cols-3 gap-2">
           {STATS.map((s) => (
-            <div key={s.label} className="rounded-2xl bg-white/[0.03] px-3 py-2.5 text-center">
+            <div key={s.label} className="rounded-2xl bg-black/[0.035] px-3 py-2.5 text-center">
               <p className="tabular-nums text-[14px] font-semibold">{s.value}</p>
               <p className="mt-0.5 text-[10px] text-text-tertiary">{s.label}</p>
             </div>

@@ -30,7 +30,7 @@ export function Footer() {
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: "-80px" }}
           transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
-          className="mx-auto max-w-3xl text-balance bg-gradient-to-b from-white to-white/55 bg-clip-text text-[clamp(2.2rem,6vw,4.5rem)] font-semibold leading-[1.02] tracking-tight text-transparent"
+          className="mx-auto max-w-3xl text-balance bg-gradient-to-b from-text-primary to-text-primary/55 bg-clip-text text-[clamp(2.2rem,6vw,4.5rem)] font-semibold leading-[1.02] tracking-tight text-transparent"
         >
           Your health deserves a memory.
         </motion.h2>
@@ -42,7 +42,7 @@ export function Footer() {
           className="mt-9"
         >
           <Link href="/dashboard">
-            <MagneticButton className="bg-white text-ink hover:bg-cyan">
+            <MagneticButton className="bg-[#0a0a0a] text-white hover:bg-cyan">
               Enter Aarogya <ArrowRight size={15} />
             </MagneticButton>
           </Link>
@@ -68,7 +68,7 @@ export function Footer() {
             <ul className="mt-4 space-y-2.5">
               {col.links.map((l) => (
                 <li key={l}>
-                  <span className="cursor-pointer text-[13px] text-text-secondary transition-colors hover:text-white">
+                  <span className="cursor-pointer text-[13px] text-text-secondary transition-colors hover:text-text-primary">
                     {l}
                   </span>
                 </li>
@@ -80,7 +80,7 @@ export function Footer() {
 
       {/* giant wordmark */}
       <div aria-hidden className="pointer-events-none select-none overflow-hidden">
-        <p className="translate-y-[22%] bg-gradient-to-b from-white/[0.05] to-transparent bg-clip-text text-center text-[clamp(5rem,18vw,16rem)] font-bold leading-none tracking-tighter text-transparent">
+        <p className="translate-y-[22%] bg-gradient-to-b from-black/[0.06] to-transparent bg-clip-text text-center text-[clamp(5rem,18vw,16rem)] font-bold leading-none tracking-tighter text-transparent">
           AAROGYA
         </p>
       </div>

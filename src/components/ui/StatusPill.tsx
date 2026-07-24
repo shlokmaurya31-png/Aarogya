@@ -5,7 +5,7 @@ const TONES = {
   amber: "text-amber bg-amber/10 border-amber/20",
   red: "text-red bg-red/10 border-red/20",
   cyan: "text-cyan bg-cyan/10 border-cyan/20",
-  neutral: "text-text-secondary bg-white/[0.04] border-hairline",
+  neutral: "text-text-secondary bg-black/[0.045] border-hairline",
 } as const;
 
 export function StatusPill({
