@@ -82,6 +82,15 @@ interface SignUpLabInput {
   proofFile: File;
 }
 
+export interface ProfileUpdate {
+  name: string;
+  email: string;
+  phone?: string;
+  specialty?: string;
+  registrationId?: string;
+  facility?: string;
+}
+
 interface AuthState {
   user: AuthUser | null;
   hasHydrated: boolean;
@@ -94,6 +103,7 @@ interface AuthState {
   signUpPatient: (input: SignUpPatientInput) => ActionResult;
   signUpDoctor: (input: SignUpDoctorInput) => ActionResult;
   signUpLab: (input: SignUpLabInput) => ActionResult;
+  updateProfile: (updates: ProfileUpdate) => ActionResult;
   logout: () => void;
   approveApplication: (id: string) => void;
   rejectApplication: (id: string) => void;
@@ -189,6 +199,7 @@ export const useAuthStore = create<AuthState>()(
             role: "patient",
             name,
             email,
+            phone,
             avatarInitials: initials(name),
           },
         });
@@ -229,6 +240,7 @@ export const useAuthStore = create<AuthState>()(
             role: "doctor",
             name,
             email,
+            phone,
             avatarInitials: initials(name),
             specialty,
             registrationId,
@@ -271,12 +283,30 @@ export const useAuthStore = create<AuthState>()(
             role: "lab",
             name,
             email,
+            phone,
             avatarInitials: initials(name),
             registrationId,
             facility,
             verificationStatus: "pending",
           },
         }));
+        return { ok: true };
+      },
+
+      updateProfile: (updates) => {
+        if (!updates.name.trim() || !updates.email.trim()) {
+          return { ok: false, error: "Name and email can't be empty." };
+        }
+        set((s) => {
+          if (!s.user) return {};
+          return {
+            user: {
+              ...s.user,
+              ...updates,
+              avatarInitials: initials(updates.name),
+            },
+          };
+        });
         return { ok: true };
       },
 

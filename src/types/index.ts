@@ -225,6 +225,7 @@ export interface AuthUser {
   role: AuthRole;
   name: string;
   email: string;
+  phone?: string;
   avatarInitials: string;
   specialty?: string;
   registrationId?: string;

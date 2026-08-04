@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { motion } from "framer-motion";
-import { Check, LogOut, ShieldCheck, X } from "lucide-react";
+import { Check, LogOut, Settings, ShieldCheck, X } from "lucide-react";
 import { Card, CardLabel } from "@/components/ui/Card";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { ToastViewport } from "@/components/shared/ToastViewport";
@@ -74,15 +75,23 @@ export default function AdminPage() {
             <ShieldCheck size={16} className="text-cyan" />
             Aarogya Admin
           </div>
-          <button
-            onClick={() => {
-              logout();
-              router.push("/");
-            }}
-            className="flex items-center gap-1.5 rounded-full border border-hairline px-3.5 py-1.5 text-[12px] text-text-secondary transition hover:border-red/30 hover:text-red"
-          >
-            <LogOut size={13} /> Log out
-          </button>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/settings"
+              className="flex items-center gap-1.5 rounded-full border border-hairline px-3.5 py-1.5 text-[12px] text-text-secondary transition hover:border-cyan/30 hover:text-cyan"
+            >
+              <Settings size={13} /> Settings
+            </Link>
+            <button
+              onClick={() => {
+                logout();
+                router.push("/");
+              }}
+              className="flex items-center gap-1.5 rounded-full border border-hairline px-3.5 py-1.5 text-[12px] text-text-secondary transition hover:border-red/30 hover:text-red"
+            >
+              <LogOut size={13} /> Log out
+            </button>
+          </div>
         </div>
       </header>
 

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { LogOut, Search } from "lucide-react";
+import { LogOut, Search, Settings } from "lucide-react";
 import { patient, doctorProfile } from "@/lib/mock-data";
 import { useUiStore } from "@/store/useUiStore";
 import { useAuthStore } from "@/store/useAuthStore";
@@ -181,6 +181,13 @@ export function TopBar() {
               {displayInitials}
               <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-ink bg-cyan" />
             </div>
+            <Link
+              href="/settings"
+              className="text-text-tertiary transition hover:text-cyan"
+              aria-label="Account settings"
+            >
+              <Settings size={15} />
+            </Link>
             <button
               onClick={handleLogout}
               className="text-text-tertiary transition hover:text-red"
