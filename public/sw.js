@@ -1,4 +1,4 @@
-const CACHE_NAME = "aarogya-shell-v1";
+const CACHE_NAME = "aarogya-shell-v2";
 const PRECACHE_URLS = ["/", "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (event) => {
