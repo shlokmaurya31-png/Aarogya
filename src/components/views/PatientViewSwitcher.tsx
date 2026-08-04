@@ -6,6 +6,7 @@ import { PatientHomeView } from "./patient/PatientHomeView";
 import { PatientAppointmentsView } from "./patient/PatientAppointmentsView";
 import { PatientMedicinesView } from "./patient/PatientMedicinesView";
 import { PatientReportsView } from "./patient/PatientReportsView";
+import { PatientInsuranceView } from "./patient/PatientInsuranceView";
 import { EmergencyView } from "./EmergencyView";
 import type { PatientNavId } from "@/types";
 
@@ -14,6 +15,7 @@ const VIEWS: Record<PatientNavId, React.ComponentType> = {
   appointments: PatientAppointmentsView,
   medicines: PatientMedicinesView,
   reports: PatientReportsView,
+  insurance: PatientInsuranceView,
   emergency: EmergencyView,
 };
 

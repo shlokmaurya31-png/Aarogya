@@ -47,6 +47,7 @@ function buildRecordContext() {
 Age ${patient.age}, ${patient.gender}, ${patient.bloodGroup}, ${patient.height}, ${patient.weight}
 Allergies: ${patient.allergies.join(", ")}
 Insurance: ${patient.insurance} · Ayushman Bharat: ${patient.ayushmanBharat}
+TPA: ${patient.tpa.name} · Health Card ID: ${patient.tpa.healthCardId} · Policy: ${patient.tpa.policyNumber} · Helpline: ${patient.tpa.helpline}
 
 VITALS
 ${vitalsBlock}

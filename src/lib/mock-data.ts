@@ -36,7 +36,37 @@ export const patient: PatientProfile = {
   aadhaarLinked: true,
   ayushmanBharat: "enrolled",
   avatarInitials: "MK",
+  tpa: {
+    name: "Medi Assist Insurance TPA",
+    healthCardId: "MAI-2941-77053",
+    policyNumber: "SH-FMO-88213",
+    helpline: "1800-425-9449",
+  },
 };
+
+export interface TpaDirectoryEntry {
+  name: string;
+  description: string;
+}
+
+export const majorIndianTpas: TpaDirectoryEntry[] = [
+  {
+    name: "Medi Assist Insurance TPA",
+    description: "One of India's largest TPAs, coordinating cashless admissions across a broad hospital network.",
+  },
+  {
+    name: "MD India Health Insurance TPA",
+    description: "Handles claim processing and network hospital coordination for several major insurers.",
+  },
+  {
+    name: "Vidal Health Insurance TPA",
+    description: "Manages cashless authorization, claims settlement, and policyholder support.",
+  },
+  {
+    name: "Paramount Health Services & Insurance TPA",
+    description: "One of India's earlier TPAs, focused on claims administration and hospital network management.",
+  },
+];
 
 function series(base: number, spread: number, n = 24) {
   const arr = [];

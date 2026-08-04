@@ -92,6 +92,15 @@ const PATIENT_CONTEXT: Record<PatientNavId, PageAiContext> = {
       "Compare to my last report",
     ],
   },
+  insurance: {
+    label: "Insurance & TPA",
+    suggestions: [
+      "What is a TPA?",
+      "How do cashless claims work?",
+      "Check my claim status",
+      "What's my health card ID?",
+    ],
+  },
   emergency: {
     label: "Emergency",
     suggestions: ["I'm having chest pain", "Call my emergency contact", "What's the nearest hospital?", "Show my allergies"],

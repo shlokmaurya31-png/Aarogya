@@ -50,6 +50,13 @@ export interface TimelineEvent {
   description: string;
 }
 
+export interface TpaProfile {
+  name: string;
+  healthCardId: string;
+  policyNumber: string;
+  helpline: string;
+}
+
 export interface PatientProfile {
   name: string;
   patientId: string;
@@ -66,6 +73,7 @@ export interface PatientProfile {
   aadhaarLinked: boolean;
   ayushmanBharat: "eligible" | "enrolled" | "not-eligible";
   avatarInitials: string;
+  tpa: TpaProfile;
 }
 
 export interface NotificationItem {
@@ -89,7 +97,7 @@ export type NavId =
   | "insurance"
   | "emergency";
 
-export type PatientNavId = "home" | "appointments" | "medicines" | "reports" | "emergency";
+export type PatientNavId = "home" | "appointments" | "medicines" | "reports" | "insurance" | "emergency";
 
 export type AppointmentStatus = "upcoming" | "completed" | "cancelled";
 export type AppointmentMode = "in-person" | "video";

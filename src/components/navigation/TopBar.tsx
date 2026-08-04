@@ -30,6 +30,7 @@ const PATIENT_TABS: { id: PatientNavId; labelKey: string }[] = [
   { id: "appointments", labelKey: "nav.appointments" },
   { id: "medicines", labelKey: "nav.medicines" },
   { id: "reports", labelKey: "nav.reports" },
+  { id: "insurance", labelKey: "nav.insurance" },
   { id: "emergency", labelKey: "nav.emergency" },
 ];
 
