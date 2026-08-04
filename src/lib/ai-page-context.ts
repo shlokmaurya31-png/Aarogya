@@ -55,7 +55,7 @@ const DOCTOR_CONTEXT: Record<NavId, PageAiContext> = {
       "Pull critical allergies",
       "Show emergency protocol",
       "Summarize vitals right now",
-      "Contact emergency contact",
+      "Which hospital has a free bed",
     ],
   },
 };
@@ -103,7 +103,7 @@ const PATIENT_CONTEXT: Record<PatientNavId, PageAiContext> = {
   },
   emergency: {
     label: "Emergency",
-    suggestions: ["I'm having chest pain", "Call my emergency contact", "What's the nearest hospital?", "Show my allergies"],
+    suggestions: ["I'm having chest pain", "Book me a hospital bed", "Which hospital has the shortest wait?", "Show my allergies"],
   },
 };
 

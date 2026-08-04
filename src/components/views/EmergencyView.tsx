@@ -6,6 +6,7 @@ import { Phone, Siren, Ambulance, Loader2, ShieldCheck } from "lucide-react";
 import { emergencyContacts, patient } from "@/lib/mock-data";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { Card, CardLabel } from "@/components/ui/Card";
+import { BedBookingCard } from "@/components/dashboard/BedBookingCard";
 import { useToastStore } from "@/store/useToastStore";
 import { useTranslation } from "@/hooks/useTranslation";
 
@@ -55,6 +56,8 @@ export function EmergencyView() {
           {sosState === "sent" && t("btn.sosSent")}
         </button>
       </Card>
+
+      <BedBookingCard />
 
       <Card>
         <div className="flex items-center justify-between">

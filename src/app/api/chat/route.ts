@@ -10,6 +10,7 @@ import {
   prescriptions,
   appointments,
   insuranceClaims,
+  hospitalBeds,
 } from "@/lib/mock-data";
 
 function buildRecordContext() {
@@ -43,6 +44,13 @@ function buildRecordContext() {
     .map((c) => `- ${c.claimNo}: ${c.reason}, ₹${c.amount}, ${c.status} (${c.date})`)
     .join("\n");
 
+  const hospitalBlock = hospitalBeds
+    .map(
+      (h) =>
+        `- ${h.name} (${h.city}, ${h.distanceKm} km): ${h.emergencyBeds} emergency, ${h.icuBeds} ICU, ${h.generalBeds} general beds free, ~${h.avgWaitMinutes} min ER wait without booking`
+    )
+    .join("\n");
+
   return `PATIENT RECORD: ${patient.name} (${patient.patientId})
 Age ${patient.age}, ${patient.gender}, ${patient.bloodGroup}, ${patient.height}, ${patient.weight}
 Allergies: ${patient.allergies.join(", ")}
@@ -70,6 +78,9 @@ ${apptBlock}
 INSURANCE CLAIMS
 ${claimsBlock}
 
+NEARBY HOSPITAL BED AVAILABILITY (live counts shown on the Emergency page's Instant Bed Booking panel)
+${hospitalBlock}
+
 TREATING DOCTOR
 ${doctorProfile.name}, ${doctorProfile.specialty}, ${doctorProfile.facility} (${doctorProfile.registrationId})`;
 }
@@ -81,13 +92,17 @@ const SYSTEM_PROMPTS = {
 
 Stay in character at all times. Do not say you are an AI language model, a prototype, a demo, or that you lack access to real data. You have the record, use it.
 
-Clinical judgment: don't hand out definitive diagnoses or replace a doctor's decision. Ground specific findings in the record and suggest confirming plans with ${doctorProfile.name} or the relevant specialist when it matters, but do this naturally as part of good care, not as a disclaimer. If the patient describes something that sounds like a medical emergency (chest pain, trouble breathing, stroke symptoms, severe bleeding, etc.), tell them clearly to seek immediate/emergency care.
+Clinical judgment: don't hand out definitive diagnoses or replace a doctor's decision. Ground specific findings in the record and suggest confirming plans with ${doctorProfile.name} or the relevant specialist when it matters, but do this naturally as part of good care, not as a disclaimer. If the patient describes something that sounds like a medical emergency (chest pain, trouble breathing, stroke symptoms, severe bleeding, etc.), tell them clearly to seek immediate/emergency care, and recommend the nearest hospital with a free bed and the shortest wait from the list below.
+
+If asked to book a hospital bed, you can't complete the booking yourself in chat. Point them to the "Instant Bed Booking" panel on the Emergency page, tell them which hospital currently looks best (shortest wait, beds free in the category they need), and remind them the confirmation code from that panel gets them past the ER queue at the admission desk.
 
 ${RECORD_CONTEXT}`,
 
   doctor: `You are Aarogya Clinical Intelligence, an AI assistant inside the clinician dashboard, currently briefing ${doctorProfile.name} on the chart open below. Respond concisely and clinically, using standard medical terminology, as if briefing a physician between patients. Treat the record as ground truth and cite specific values, trends, and dates from it.
 
 Stay in character at all times. Do not say you are an AI language model, a prototype, or a demo, and do not claim you lack access to the chart. You have it, use it.
+
+If asked about admitting the patient or booking a bed, you can't complete the booking yourself in chat. Point to the "Instant Bed Booking" panel on the Emergency page and recommend the best option from the list below (shortest wait, beds free in the needed category).
 
 ${RECORD_CONTEXT}`,
 } as const;

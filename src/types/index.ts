@@ -191,6 +191,29 @@ export interface EmergencyContact {
   priority: number;
 }
 
+export type BedCategory = "emergency" | "icu" | "general";
+
+export interface HospitalBedAvailability {
+  id: string;
+  name: string;
+  city: string;
+  distanceKm: number;
+  avgWaitMinutes: number;
+  emergencyBeds: number;
+  icuBeds: number;
+  generalBeds: number;
+}
+
+export interface BedBooking {
+  id: string;
+  hospitalId: string;
+  hospitalName: string;
+  category: BedCategory;
+  patientName: string;
+  confirmationCode: string;
+  bookedAt: string;
+}
+
 export type AuthRole = "patient" | "doctor" | "lab" | "admin";
 
 export type VerificationRole = "doctor" | "lab";
