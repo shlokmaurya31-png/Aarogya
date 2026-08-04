@@ -9,7 +9,6 @@ import { patient, doctorProfile } from "@/lib/mock-data";
 import { useUiStore } from "@/store/useUiStore";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useTranslation } from "@/hooks/useTranslation";
-import { ModeToggle } from "./ModeToggle";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { cn } from "@/lib/utils";
@@ -171,8 +170,6 @@ export function TopBar() {
           </button>
 
           <LanguageSwitcher />
-
-          <ModeToggle />
 
           <div className="flex items-center gap-2.5">
             <div className="hidden text-right md:block">
