@@ -295,6 +295,7 @@ export const reports: ReportDoc[] = [
     date: "2026-06-02",
     sizeKb: 214,
     verified: true,
+    labCategory: "lipid-panel",
   },
   {
     id: "r2",

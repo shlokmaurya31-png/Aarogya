@@ -10,7 +10,7 @@ import { useAuthStore } from "@/store/useAuthStore";
 import { useUiStore } from "@/store/useUiStore";
 import { useToastStore } from "@/store/useToastStore";
 
-type Role = "patient" | "doctor";
+type Role = "patient" | "doctor" | "lab";
 type Mode = "signin" | "signup";
 
 const inputClass =
@@ -28,11 +28,24 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 const ROLE_OPTIONS: { id: Role; label: string }[] = [
   { id: "patient", label: "Patient" },
   { id: "doctor", label: "Doctor" },
+  { id: "lab", label: "Lab" },
 ];
 const MODE_OPTIONS: { id: Mode; label: string }[] = [
   { id: "signin", label: "Sign in" },
   { id: "signup", label: "Sign up" },
 ];
+
+const EYEBROW: Record<Role, string> = {
+  patient: "Patient access",
+  doctor: "Clinician access",
+  lab: "Lab / diagnostics access",
+};
+
+const SUBTITLE: Record<Role, string> = {
+  patient: "Your health record, your AI assistant, one place.",
+  doctor: "Verified clinical access to patient charts, labs, and prescriptions.",
+  lab: "Register accredited test reports directly into a patient's record.",
+};
 
 export default function LoginPage() {
   const router = useRouter();
@@ -40,8 +53,10 @@ export default function LoginPage() {
   const setUiMode = useUiStore((s) => s.setMode);
   const signInPatient = useAuthStore((s) => s.signInPatient);
   const signInDoctor = useAuthStore((s) => s.signInDoctor);
+  const signInLab = useAuthStore((s) => s.signInLab);
   const signUpPatient = useAuthStore((s) => s.signUpPatient);
   const signUpDoctor = useAuthStore((s) => s.signUpDoctor);
+  const signUpLab = useAuthStore((s) => s.signUpLab);
 
   const [role, setRole] = useState<Role>("patient");
   const [mode, setMode] = useState<Mode>("signin");
@@ -72,6 +87,10 @@ export default function LoginPage() {
   }
 
   function enter(nextRole: Role) {
+    if (nextRole === "lab") {
+      router.push("/lab");
+      return;
+    }
     setUiMode(nextRole);
     router.push("/dashboard");
   }
@@ -79,12 +98,13 @@ export default function LoginPage() {
   function handleSignIn(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    const result = role === "patient" ? signInPatient(email, password) : signInDoctor(email, password);
+    const result =
+      role === "patient" ? signInPatient(email, password) : role === "doctor" ? signInDoctor(email, password) : signInLab(email, password);
     if (!result.ok) {
       setError(result.error);
       return;
     }
-    push(`Welcome back${role === "doctor" ? ", doctor" : ""}.`, "emerald");
+    push(`Welcome back${role === "doctor" ? ", doctor" : role === "lab" ? " to the lab portal" : ""}.`, "emerald");
     enter(role);
   }
 
@@ -110,27 +130,37 @@ export default function LoginPage() {
     }
 
     if (!proofFile) {
-      setProofError("Upload a proof of practice document to continue.");
+      setProofError(
+        role === "doctor" ? "Upload a proof of practice document to continue." : "Upload a proof of accreditation to continue."
+      );
       return;
     }
-    const result = signUpDoctor({ name, email, phone, specialty, registrationId, facility, password, proofFile });
+
+    if (role === "doctor") {
+      const result = signUpDoctor({ name, email, phone, specialty, registrationId, facility, password, proofFile });
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      push("Application submitted — verification pending.", "amber");
+      enter("doctor");
+      return;
+    }
+
+    const result = signUpLab({ name, email, phone, registrationId, facility, password, proofFile });
     if (!result.ok) {
       setError(result.error);
       return;
     }
     push("Application submitted — verification pending.", "amber");
-    enter("doctor");
+    enter("lab");
   }
 
   return (
     <AuthLayout
-      eyebrow={role === "doctor" ? "Clinician access" : "Patient access"}
+      eyebrow={EYEBROW[role]}
       title={mode === "signin" ? "Welcome back" : "Create your account"}
-      subtitle={
-        role === "doctor"
-          ? "Verified clinical access to patient charts, labs, and prescriptions."
-          : "Your health record, your AI assistant, one place."
-      }
+      subtitle={SUBTITLE[role]}
       footer={
         <p className="text-center text-[12px] text-text-tertiary">
           Platform admin?{" "}
@@ -147,13 +177,13 @@ export default function LoginPage() {
 
       <form onSubmit={mode === "signin" ? handleSignIn : handleSignUp} className="mt-6 space-y-4">
         {mode === "signup" && (
-          <Field label="Full name">
+          <Field label={role === "lab" ? "Lab / diagnostic centre name" : "Full name"}>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
               className={inputClass}
-              placeholder="e.g. Aditi Sharma"
+              placeholder={role === "lab" ? "e.g. Dr Lal PathLabs — Pune Branch" : "e.g. Aditi Sharma"}
             />
           </Field>
         )}
@@ -226,6 +256,40 @@ export default function LoginPage() {
           </>
         )}
 
+        {mode === "signup" && role === "lab" && (
+          <>
+            <Field label="Accreditation ID">
+              <input
+                value={registrationId}
+                onChange={(e) => setRegistrationId(e.target.value)}
+                required
+                className={inputClass}
+                placeholder="e.g. NABL-XX-00000 or CAP-00000"
+              />
+            </Field>
+            <Field label="Branch address / facility">
+              <input
+                value={facility}
+                onChange={(e) => setFacility(e.target.value)}
+                required
+                className={inputClass}
+                placeholder="e.g. Dr Lal PathLabs, Camp Road, Pune"
+              />
+            </Field>
+            <FileDropField
+              label="Proof of accreditation"
+              hint="NABL or CAP accreditation certificate, or lab registration license (PDF or image)."
+              accept="image/*,.pdf"
+              file={proofFile}
+              onChange={(f) => {
+                setProofFile(f);
+                setProofError(null);
+              }}
+              error={proofError ?? undefined}
+            />
+          </>
+        )}
+
         <Field label="Password">
           <input
             type="password"
@@ -269,7 +333,7 @@ export default function LoginPage() {
           type="submit"
           className="w-full rounded-full bg-cyan py-3 text-[13.5px] font-medium text-ink transition hover:brightness-110 active:scale-[0.99]"
         >
-          {mode === "signin" ? "Sign in" : role === "doctor" ? "Submit application" : "Create account"}
+          {mode === "signin" ? "Sign in" : role === "patient" ? "Create account" : "Submit application"}
         </button>
       </form>
     </AuthLayout>

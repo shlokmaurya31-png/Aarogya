@@ -201,7 +201,7 @@ export function TopBar() {
             <span className="text-text-tertiary">{t("topbar.viewingChart")}</span>
             <span className="font-medium text-text-primary">{patient.name}</span>
             <span className="tabular-nums text-text-tertiary">{patient.patientId}</span>
-            {authUser?.doctorStatus === "pending" && (
+            {authUser?.verificationStatus === "pending" && (
               <StatusPill label="Verification pending" tone="amber" />
             )}
             <span className="ml-auto hidden items-center gap-1.5 text-text-tertiary sm:flex">

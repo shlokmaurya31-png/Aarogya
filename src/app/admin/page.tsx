@@ -9,27 +9,31 @@ import { StatusPill } from "@/components/ui/StatusPill";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useToastStore } from "@/store/useToastStore";
-import type { DoctorApplication } from "@/types";
+import type { VerificationApplication } from "@/types";
 
-const STATUS_TONE: Record<DoctorApplication["status"], "amber" | "emerald" | "red"> = {
+const STATUS_TONE: Record<VerificationApplication["status"], "amber" | "emerald" | "red"> = {
   pending: "amber",
   verified: "emerald",
   rejected: "red",
 };
 
-const FILTERS = ["all", "pending", "verified", "rejected"] as const;
-type Filter = (typeof FILTERS)[number];
+const STATUS_FILTERS = ["all", "pending", "verified", "rejected"] as const;
+type StatusFilter = (typeof STATUS_FILTERS)[number];
+
+const ROLE_FILTERS = ["all", "doctor", "lab"] as const;
+type RoleFilter = (typeof ROLE_FILTERS)[number];
 
 export default function AdminPage() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const hasHydrated = useAuthStore((s) => s.hasHydrated);
-  const doctorApplications = useAuthStore((s) => s.doctorApplications);
-  const approveDoctorApplication = useAuthStore((s) => s.approveDoctorApplication);
-  const rejectDoctorApplication = useAuthStore((s) => s.rejectDoctorApplication);
+  const verificationApplications = useAuthStore((s) => s.verificationApplications);
+  const approveApplication = useAuthStore((s) => s.approveApplication);
+  const rejectApplication = useAuthStore((s) => s.rejectApplication);
   const logout = useAuthStore((s) => s.logout);
   const push = useToastStore((s) => s.push);
-  const [filter, setFilter] = useState<Filter>("pending");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("pending");
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
 
   useEffect(() => {
     if (!hasHydrated) return;
@@ -37,20 +41,24 @@ export default function AdminPage() {
   }, [hasHydrated, user, router]);
 
   const visible = useMemo(
-    () => (filter === "all" ? doctorApplications : doctorApplications.filter((a) => a.status === filter)),
-    [doctorApplications, filter]
+    () =>
+      verificationApplications
+        .filter((a) => statusFilter === "all" || a.status === statusFilter)
+        .filter((a) => roleFilter === "all" || a.role === roleFilter),
+    [verificationApplications, statusFilter, roleFilter]
   );
 
-  const pendingCount = doctorApplications.filter((a) => a.status === "pending").length;
-  const verifiedCount = doctorApplications.filter((a) => a.status === "verified").length;
+  const pendingCount = verificationApplications.filter((a) => a.status === "pending").length;
+  const verifiedCount = verificationApplications.filter((a) => a.status === "verified").length;
+  const labCount = verificationApplications.filter((a) => a.role === "lab").length;
 
-  function handleApprove(app: DoctorApplication) {
-    approveDoctorApplication(app.id);
+  function handleApprove(app: VerificationApplication) {
+    approveApplication(app.id);
     push(`${app.name} verified and approved.`, "emerald");
   }
 
-  function handleReject(app: DoctorApplication) {
-    rejectDoctorApplication(app.id);
+  function handleReject(app: VerificationApplication) {
+    rejectApplication(app.id);
     push(`${app.name}'s application rejected.`, "red");
   }
 
@@ -79,35 +87,54 @@ export default function AdminPage() {
       </header>
 
       <main className="mx-auto max-w-[1200px] px-5 py-8">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
           <Card>
             <CardLabel>Pending verification</CardLabel>
             <p className="mt-2 text-[28px] font-semibold tabular-nums">{pendingCount}</p>
           </Card>
           <Card>
-            <CardLabel>Verified doctors</CardLabel>
+            <CardLabel>Verified</CardLabel>
             <p className="mt-2 text-[28px] font-semibold tabular-nums">{verifiedCount}</p>
           </Card>
           <Card>
+            <CardLabel>Lab applications</CardLabel>
+            <p className="mt-2 text-[28px] font-semibold tabular-nums">{labCount}</p>
+          </Card>
+          <Card>
             <CardLabel>Total applications</CardLabel>
-            <p className="mt-2 text-[28px] font-semibold tabular-nums">{doctorApplications.length}</p>
+            <p className="mt-2 text-[28px] font-semibold tabular-nums">{verificationApplications.length}</p>
           </Card>
         </div>
 
         <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-[15px] font-medium">Doctor verification queue</h2>
-          <div className="inline-flex rounded-full border border-hairline bg-black/[0.025] p-1">
-            {FILTERS.map((f) => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={`rounded-full px-3 py-1 text-[11.5px] capitalize transition ${
-                  filter === f ? "bg-cyan text-ink" : "text-text-secondary hover:text-text-primary"
-                }`}
-              >
-                {f}
-              </button>
-            ))}
+          <h2 className="text-[15px] font-medium">Doctor & lab verification queue</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex rounded-full border border-hairline bg-black/[0.025] p-1">
+              {ROLE_FILTERS.map((f) => (
+                <button
+                  key={f}
+                  onClick={() => setRoleFilter(f)}
+                  className={`rounded-full px-3 py-1 text-[11.5px] capitalize transition ${
+                    roleFilter === f ? "bg-cyan text-ink" : "text-text-secondary hover:text-text-primary"
+                  }`}
+                >
+                  {f === "all" ? "All roles" : f}
+                </button>
+              ))}
+            </div>
+            <div className="inline-flex rounded-full border border-hairline bg-black/[0.025] p-1">
+              {STATUS_FILTERS.map((f) => (
+                <button
+                  key={f}
+                  onClick={() => setStatusFilter(f)}
+                  className={`rounded-full px-3 py-1 text-[11.5px] capitalize transition ${
+                    statusFilter === f ? "bg-cyan text-ink" : "text-text-secondary hover:text-text-primary"
+                  }`}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -126,10 +153,12 @@ export default function AdminPage() {
                 <div>
                   <div className="flex flex-wrap items-center gap-2.5">
                     <p className="text-[13.5px] font-medium">{app.name}</p>
+                    <StatusPill label={app.role} tone="cyan" />
                     <StatusPill label={app.status} tone={STATUS_TONE[app.status]} />
                   </div>
                   <p className="mt-1 text-[12px] text-text-tertiary">
-                    {app.specialty} · {app.facility} · {app.registrationId}
+                    {app.specialty ? `${app.specialty} · ` : ""}
+                    {app.facility} · {app.role === "lab" ? "Accreditation" : "Registration"} ID: {app.registrationId}
                   </p>
                   <p className="mt-1 text-[11.5px] text-text-tertiary">
                     {app.email} · submitted {app.submittedAt} · proof: {app.proofFileName}

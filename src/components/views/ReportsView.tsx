@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/Card";
 import { downloadTextFile } from "@/lib/download";
 import { useRecordsStore } from "@/store/useRecordsStore";
 import { useTranslation } from "@/hooks/useTranslation";
+import { LAB_CATEGORY_MAP } from "@/lib/lab-categories";
 import type { ReportKind } from "@/types";
 
 const KIND_META: Record<ReportKind, { icon: typeof FileText; label: string; color: string }> = {
@@ -58,7 +59,7 @@ export function ReportsView() {
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13.5px] font-medium text-text-primary">{r.title}</p>
                   <p className="truncate text-[12px] text-text-tertiary">
-                    {meta.label} · {r.facility}
+                    {r.labCategory ? LAB_CATEGORY_MAP[r.labCategory].label : meta.label} · {r.facility}
                   </p>
                 </div>
                 <div className="hidden shrink-0 items-center gap-1.5 sm:flex">

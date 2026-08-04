@@ -107,6 +107,26 @@ export interface Appointment {
 
 export type ReportKind = "lab" | "radiology" | "discharge" | "prescription";
 
+export type LabReportCategory =
+  | "routine-blood-panel"
+  | "lipid-panel"
+  | "thyroid-panel"
+  | "diabetes-profile"
+  | "liver-function-test"
+  | "kidney-function-test"
+  | "cardiac-risk-markers"
+  | "vitamin-panel"
+  | "hormone-panel"
+  | "iron-studies"
+  | "urinalysis"
+  | "biopsy-pathology"
+  | "microbiology-culture"
+  | "infectious-disease-serology"
+  | "molecular-pcr"
+  | "toxicology-drug-screen"
+  | "coagulation-panel"
+  | "immunology-autoimmune";
+
 export interface ReportDoc {
   id: string;
   title: string;
@@ -115,6 +135,8 @@ export interface ReportDoc {
   date: string;
   sizeKb: number;
   verified: boolean;
+  labCategory?: LabReportCategory;
+  patientRef?: string;
 }
 
 export interface LabResult {
@@ -161,9 +183,11 @@ export interface EmergencyContact {
   priority: number;
 }
 
-export type AuthRole = "patient" | "doctor" | "admin";
+export type AuthRole = "patient" | "doctor" | "lab" | "admin";
 
-export type DoctorVerificationStatus = "pending" | "verified" | "rejected";
+export type VerificationRole = "doctor" | "lab";
+
+export type VerificationStatus = "pending" | "verified" | "rejected";
 
 export interface AuthUser {
   id: string;
@@ -174,17 +198,18 @@ export interface AuthUser {
   specialty?: string;
   registrationId?: string;
   facility?: string;
-  doctorStatus?: DoctorVerificationStatus;
+  verificationStatus?: VerificationStatus;
 }
 
-export interface DoctorApplication {
+export interface VerificationApplication {
   id: string;
+  role: VerificationRole;
   name: string;
   email: string;
-  specialty: string;
+  specialty?: string;
   registrationId: string;
   facility: string;
   proofFileName: string;
   submittedAt: string;
-  status: DoctorVerificationStatus;
+  status: VerificationStatus;
 }

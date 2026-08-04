@@ -30,10 +30,14 @@ export default function DashboardPage() {
       router.replace("/admin");
       return;
     }
+    if (user.role === "lab") {
+      router.replace("/lab");
+      return;
+    }
     setMode(user.role);
   }, [hasHydrated, user, router, setMode]);
 
-  if (!hasHydrated || !user || user.role === "admin") {
+  if (!hasHydrated || !user || user.role === "admin" || user.role === "lab") {
     return <div className="flex min-h-screen items-center justify-center bg-ink text-text-tertiary">Loading…</div>;
   }
 
