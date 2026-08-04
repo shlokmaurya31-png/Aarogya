@@ -89,7 +89,7 @@ export default function LabPage() {
       id: `note-lab-${Date.now()}`,
       kind: "lab",
       title: `New ${categoryDef.label} result`,
-      detail: `${reportTitle} — uploaded by ${facility} for ${patientRef.trim()}`,
+      detail: `${reportTitle}, uploaded by ${facility} for ${patientRef.trim()}`,
       time: "Just now",
       risk: "watch",
     });
@@ -192,7 +192,7 @@ export default function LabPage() {
             <div className="mt-4 space-y-3">
               {myReports.length === 0 && (
                 <p className="py-8 text-center text-[13px] text-text-tertiary">
-                  Nothing registered yet — submit your first report on the left.
+                  Nothing registered yet. Submit your first report on the left.
                 </p>
               )}
               {myReports.map((r, i) => (

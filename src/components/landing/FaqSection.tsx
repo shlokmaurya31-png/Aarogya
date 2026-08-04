@@ -9,11 +9,11 @@ import { cn } from "@/lib/utils";
 const FAQS = [
   {
     q: "Is my health data safe?",
-    a: "Your record is encrypted with keys only you control — even Aarogya cannot read it without your consent. Every access event is logged and visible to you, as required by the DPDP Act 2023.",
+    a: "Your record is encrypted with keys only you control. Even Aarogya cannot read it without your consent. Every access event is logged and visible to you, as required by the DPDP Act 2023.",
   },
   {
     q: "Is it really free for patients?",
-    a: "Yes — free, forever. Like UPI, patients never pay. The platform is funded by the doctors, hospitals, labs and insurers whose work it makes faster.",
+    a: "Yes, free, forever. Like UPI, patients never pay. The platform is funded by the doctors, hospitals, labs and insurers whose work it makes faster.",
   },
   {
     q: "Does it work with my existing ABHA ID?",
@@ -25,7 +25,7 @@ const FAQS = [
   },
   {
     q: "Can my doctor refuse to use it?",
-    a: "Doctors keep their own workflow — Aarogya appears as a single scan-to-view screen that saves them 30–45 minutes a day. Adoption is voluntary, but the time saved tends to make the argument.",
+    a: "Doctors keep their own workflow. Aarogya appears as a single scan-to-view screen that saves them 30–45 minutes a day. Adoption is voluntary, but the time saved tends to make the argument.",
   },
 ];
 

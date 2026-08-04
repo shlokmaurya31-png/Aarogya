@@ -132,7 +132,7 @@ body {
   }
 }
 
-/* Film-grain noise for the landing page — pure SVG, no network request. */
+/* Film-grain noise for the landing page: pure SVG, no network request. */
 .noise::after {
   content: "";
   position: absolute;

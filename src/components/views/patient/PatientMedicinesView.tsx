@@ -24,7 +24,7 @@ export function PatientMedicinesView() {
 
   function orderRefill(id: string, drug: string) {
     setOrdered((s) => new Set(s).add(id));
-    push(`Refill ordered for ${drug} — on its way`, "amber");
+    push(`Refill ordered for ${drug}, on its way`, "amber");
   }
 
   return (

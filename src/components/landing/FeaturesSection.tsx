@@ -39,13 +39,13 @@ const FEATURES = [
   {
     icon: Languages,
     title: "Speaks your language",
-    text: "Hindi, Tamil, Telugu, Bengali, Kannada — reports explained in words you actually use.",
+    text: "Hindi, Tamil, Telugu, Bengali, Kannada: reports explained in words you actually use.",
     span: "lg:col-span-2",
   },
   {
     icon: Siren,
     title: "Emergency-ready",
-    text: "Blood group, allergies and contacts reach first responders the moment SOS is triggered — with live ambulance tracking.",
+    text: "Blood group, allergies and contacts reach first responders the moment SOS is triggered, with live ambulance tracking.",
     span: "lg:col-span-6",
   },
 ];
@@ -56,7 +56,7 @@ export function FeaturesSection() {
       <SectionHeading
         eyebrow="The platform"
         title="Infrastructure for a billion health records."
-        subtitle="Six systems working as one — identity, verification, intelligence, consent, language, and emergency response."
+        subtitle="Six systems working as one: identity, verification, intelligence, consent, language, and emergency response."
       />
 
       <div className="mt-16 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-6">

@@ -46,7 +46,7 @@ export function ClinicalBrief() {
           <TriangleAlert size={14} className="mt-0.5 shrink-0 text-amber" />
           <p className="text-[12px] leading-relaxed text-amber">
             Interaction flag: existing ACE inhibitor (lisinopril, per Jan 2026 record) may
-            potentiate hypotensive effect with newly initiated statin — recommend dose review.
+            potentiate hypotensive effect with newly initiated statin. Recommend dose review.
           </p>
         </div>
 

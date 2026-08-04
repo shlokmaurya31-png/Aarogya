@@ -22,7 +22,7 @@ function buildRecordContext() {
     .join("\n");
 
   const labsBlock = labResults
-    .map((l) => `- ${l.test} (${l.panel}): ${l.value} ${l.unit}, reference ${l.refLow}-${l.refHigh}, flag: ${l.risk} — ${l.date}`)
+    .map((l) => `- ${l.test} (${l.panel}): ${l.value} ${l.unit}, reference ${l.refLow}-${l.refHigh}, flag: ${l.risk}, ${l.date}`)
     .join("\n");
 
   const rxBlock = prescriptions
@@ -43,7 +43,7 @@ function buildRecordContext() {
     .map((c) => `- ${c.claimNo}: ${c.reason}, ₹${c.amount}, ${c.status} (${c.date})`)
     .join("\n");
 
-  return `PATIENT RECORD — ${patient.name} (${patient.patientId})
+  return `PATIENT RECORD: ${patient.name} (${patient.patientId})
 Age ${patient.age}, ${patient.gender}, ${patient.bloodGroup}, ${patient.height}, ${patient.weight}
 Allergies: ${patient.allergies.join(", ")}
 Insurance: ${patient.insurance} · Ayushman Bharat: ${patient.ayushmanBharat}
@@ -77,17 +77,17 @@ ${doctorProfile.name}, ${doctorProfile.specialty}, ${doctorProfile.facility} (${
 const RECORD_CONTEXT = buildRecordContext();
 
 const SYSTEM_PROMPTS = {
-  patient: `You are Aarogya, ${patient.name}'s personal AI health assistant inside their Aarogya health record dashboard. You have full access to their record below — treat it as ground truth and answer directly and specifically from it, the way a well-informed care assistant who has read the whole chart would. Speak warmly, plainly, and briefly (2-4 sentences unless asked for more detail).
+  patient: `You are Aarogya, ${patient.name}'s personal AI health assistant inside their Aarogya health record dashboard. You have full access to their record below. Treat it as ground truth and answer directly and specifically from it, the way a well-informed care assistant who has read the whole chart would. Speak warmly, plainly, and briefly (2-4 sentences unless asked for more detail).
 
-Stay in character at all times. Do not say you are an AI language model, a prototype, a demo, or that you lack access to real data — you have the record, use it.
+Stay in character at all times. Do not say you are an AI language model, a prototype, a demo, or that you lack access to real data. You have the record, use it.
 
-Clinical judgment: don't hand out definitive diagnoses or replace a doctor's decision — ground specific findings in the record and suggest confirming plans with ${doctorProfile.name} or the relevant specialist when it matters, but do this naturally as part of good care, not as a disclaimer. If the patient describes something that sounds like a medical emergency (chest pain, trouble breathing, stroke symptoms, severe bleeding, etc.), tell them clearly to seek immediate/emergency care.
+Clinical judgment: don't hand out definitive diagnoses or replace a doctor's decision. Ground specific findings in the record and suggest confirming plans with ${doctorProfile.name} or the relevant specialist when it matters, but do this naturally as part of good care, not as a disclaimer. If the patient describes something that sounds like a medical emergency (chest pain, trouble breathing, stroke symptoms, severe bleeding, etc.), tell them clearly to seek immediate/emergency care.
 
 ${RECORD_CONTEXT}`,
 
   doctor: `You are Aarogya Clinical Intelligence, an AI assistant inside the clinician dashboard, currently briefing ${doctorProfile.name} on the chart open below. Respond concisely and clinically, using standard medical terminology, as if briefing a physician between patients. Treat the record as ground truth and cite specific values, trends, and dates from it.
 
-Stay in character at all times. Do not say you are an AI language model, a prototype, or a demo, and do not claim you lack access to the chart — you have it, use it.
+Stay in character at all times. Do not say you are an AI language model, a prototype, or a demo, and do not claim you lack access to the chart. You have it, use it.
 
 ${RECORD_CONTEXT}`,
 } as const;
@@ -109,7 +109,7 @@ export async function POST(req: NextRequest) {
   const basePrompt = mode === "doctor" ? SYSTEM_PROMPTS.doctor : SYSTEM_PROMPTS.patient;
   const system =
     typeof page === "string" && page.trim()
-      ? `${basePrompt}\n\nThe user is currently viewing the "${page}" section of the dashboard. When their question is general or open-ended, lean your default focus toward what's most useful on that section — but always answer whatever they actually ask, even if it's about something else.`
+      ? `${basePrompt}\n\nThe user is currently viewing the "${page}" section of the dashboard. When their question is general or open-ended, lean your default focus toward what's most useful on that section, but always answer whatever they actually ask, even if it's about something else.`
       : basePrompt;
 
   try {

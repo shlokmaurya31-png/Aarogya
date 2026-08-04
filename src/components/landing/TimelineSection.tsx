@@ -19,7 +19,7 @@ export function TimelineSection() {
       <SectionHeading
         eyebrow="Longitudinal record"
         title="A health story that never loses a chapter."
-        subtitle="Every visit, test and vaccination — across every hospital, city and year — in one continuous record."
+        subtitle="Every visit, test and vaccination (across every hospital, city and year) in one continuous record."
       />
 
       <div ref={ref} className="relative mx-auto mt-16 max-w-3xl">

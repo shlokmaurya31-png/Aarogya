@@ -11,7 +11,7 @@ import { useUiStore } from "@/store/useUiStore";
 import { useTranslation } from "@/hooks/useTranslation";
 import { cn } from "@/lib/utils";
 
-/** Per-system status list — replaces the old 3D anatomy view. Rows expand to metrics. */
+/** Per-system status list: replaces the old 3D anatomy view. Rows expand to metrics. */
 export function SystemsCard() {
   const [openId, setOpenId] = useState<string | null>(null);
   const isPatient = useUiStore((s) => s.mode === "patient");

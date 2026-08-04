@@ -57,7 +57,7 @@ export function PatientInsuranceView() {
       <SectionHeader
         eyebrow="Insurance"
         title={t("nav.insurance")}
-        subtitle="Your TPA card, cashless coverage, and claims — everything for a hassle-free hospital visit"
+        subtitle="Your TPA card, cashless coverage, and claims: everything for a hassle-free hospital visit"
       />
 
       <Card className="relative overflow-hidden bg-gradient-to-br from-cyan/[0.08] to-transparent">
@@ -116,7 +116,7 @@ export function PatientInsuranceView() {
         <p className="mt-2.5 text-[13px] leading-relaxed text-text-secondary">
           A Third-Party Administrator (TPA) is a licensed organization that processes your health claims, manages
           network hospitals, and handles customer service between you and your insurer. A TPA doesn&rsquo;t sell
-          policies or collect money — it makes hospital visits and bill payments easy.
+          policies or collect money. Instead, it makes hospital visits and bill payments easy.
         </p>
 
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">

@@ -22,7 +22,7 @@ export function DashboardPreviewSection() {
         align="center"
         eyebrow="The product"
         title="A dashboard that already knows you."
-        subtitle="Vitals, medication, appointments and AI insight — visible in the first five seconds."
+        subtitle="Vitals, medication, appointments and AI insight, visible in the first five seconds."
       />
 
       <motion.div

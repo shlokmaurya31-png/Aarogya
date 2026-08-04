@@ -17,7 +17,7 @@ const SYMPTOMS = [
   "Blurred vision",
 ];
 
-/** Deliberately cautious, triage-style copy — the AI assists, it never diagnoses. */
+/** Deliberately cautious, triage-style copy: the AI assists, it never diagnoses. */
 function triage(selected: string[]): { level: string; color: string; advice: string } {
   if (selected.includes("Chest discomfort") || selected.includes("Shortness of breath")) {
     return {
@@ -58,7 +58,7 @@ export function SymptomsSection() {
           align="center"
           eyebrow="Try it"
           title="Tell it how you feel. Watch it think."
-          subtitle="Select a few symptoms — this is the same triage engine that runs inside the app."
+          subtitle="Select a few symptoms. This is the same triage engine that runs inside the app."
         />
 
         <div className="mx-auto mt-12 flex max-w-2xl flex-wrap justify-center gap-2.5">
@@ -110,7 +110,7 @@ export function SymptomsSection() {
                   {result.advice}
                 </p>
                 <p className="mt-3 text-[11px] text-text-tertiary">
-                  Guidance only — Aarogya assists, your doctor decides.
+                  Guidance only: Aarogya assists, your doctor decides.
                 </p>
               </motion.div>
             )}

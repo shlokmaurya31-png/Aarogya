@@ -7,13 +7,13 @@ import { SectionHeading } from "./SectionHeading";
 import { StreamingText } from "@/components/ai/StreamingText";
 
 const BRIEF =
-  "42F · T2DM, essential HTN. HbA1c 7.2% — rising 0.4%/quarter over 3 quarters. eGFR 76 mL/min, trending down. Flag: prescribed statin may interact with existing ACE inhibitor — recommend dose review before dispensing. Overall risk: moderate, actionable.";
+  "42F · T2DM, essential HTN. HbA1c 7.2%, rising 0.4%/quarter over 3 quarters. eGFR 76 mL/min, trending down. Flag: prescribed statin may interact with existing ACE inhibitor. Recommend dose review before dispensing. Overall risk: moderate, actionable.";
 
 const CAPABILITIES = [
   {
     icon: FileSearch,
     title: "Explains any report",
-    text: "Reads scans, panels and discharge summaries — then briefs the doctor like a senior colleague would.",
+    text: "Reads scans, panels and discharge summaries, then briefs the doctor like a senior colleague would.",
   },
   {
     icon: TriangleAlert,
@@ -38,7 +38,7 @@ export function AiDiagnosisSection() {
           <SectionHeading
             eyebrow="Clinical intelligence"
             title="A second opinion, before the first one."
-            subtitle="Aarogya's model is fine-tuned on structured Indian clinical data — not a chatbot bolted onto a database."
+            subtitle="Aarogya's model is fine-tuned on structured Indian clinical data, not a chatbot bolted onto a database."
           />
           <div className="mt-10 space-y-6">
             {CAPABILITIES.map((c, i) => {

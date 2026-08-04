@@ -51,7 +51,7 @@ export function PatientHomeView() {
         </h1>
       </motion.header>
 
-      {/* hero — Ask Aarogya is the main event on this page */}
+      {/* hero: Ask Aarogya is the main event on this page */}
       <motion.div
         initial={{ opacity: 0, y: 14 }}
         animate={{ opacity: 1, y: 0 }}
@@ -60,7 +60,7 @@ export function PatientHomeView() {
         <AiAssistantPanel />
       </motion.div>
 
-      {/* secondary row — score, systems */}
+      {/* secondary row: score, systems */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <motion.div
           initial={{ opacity: 0, y: 14 }}
@@ -78,7 +78,7 @@ export function PatientHomeView() {
         </motion.div>
       </div>
 
-      {/* bento row — medicines, appointment, notifications */}
+      {/* bento row: medicines, appointment, notifications */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <motion.div
           initial={{ opacity: 0, y: 14 }}

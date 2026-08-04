@@ -31,10 +31,10 @@ export function AppointmentsView() {
       <SectionHeader
         eyebrow="Appointments"
         title={t("appointments.title")}
-        subtitle={`${upcoming.length} upcoming · Next with ${upcoming[0]?.doctor ?? "—"}`}
+        subtitle={`${upcoming.length} upcoming · Next with ${upcoming[0]?.doctor ?? "None scheduled"}`}
         action={
           <button
-            onClick={() => push("Appointment request sent — the patient will be notified to confirm a slot", "emerald")}
+            onClick={() => push("Appointment request sent, the patient will be notified to confirm a slot", "emerald")}
             className="flex items-center gap-1.5 rounded-full bg-cyan px-4 py-2 text-[12.5px] font-medium text-ink transition hover:brightness-110 active:scale-[0.97]"
           >
             <Plus size={14} /> {t("btn.bookAppointment")}

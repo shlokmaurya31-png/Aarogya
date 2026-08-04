@@ -30,7 +30,7 @@ export const patient: PatientProfile = {
   weight: "68 kg",
   bloodGroup: "B+",
   allergies: ["Penicillin", "Peanuts"],
-  insurance: "Star Health — Family Optima",
+  insurance: "Star Health (Family Optima)",
   emergencyContact: "Arjun Kulkarni · +91 98220 XXXXX",
   abhaNumber: "91-4821-6620-1147",
   aadhaarLinked: true,
@@ -162,7 +162,7 @@ export const bodySystems: BodySystem[] = [
     id: "kidneys",
     name: "Renal & Metabolic",
     status: "elevated",
-    summary: "HbA1c trending upward over 3 years — monitor renal filtration closely.",
+    summary: "HbA1c trending upward over 3 years. Monitor renal filtration closely.",
     metrics: [
       { label: "eGFR", value: "76 mL/min", risk: "watch" },
       { label: "HbA1c", value: "7.2%", risk: "elevated" },
@@ -191,7 +191,7 @@ export const timeline: TimelineEvent[] = [
     type: "doctor-visit",
     title: "Cardiology Consultation",
     facility: "Fortis Hospital, Pune",
-    description: "Dr. Rakesh Sharma reviewed 8-year cardiac history. AI flagged possible ACE inhibitor / statin interaction — dosage adjusted.",
+    description: "Dr. Rakesh Sharma reviewed 8-year cardiac history. AI flagged possible ACE inhibitor / statin interaction. Dosage adjusted.",
   },
   {
     id: "t2",
@@ -221,7 +221,7 @@ export const timeline: TimelineEvent[] = [
     id: "t5",
     date: "2025-09-08",
     type: "hospitalization",
-    title: "Cardiac Observation — 2 Days",
+    title: "Cardiac Observation (2 Days)",
     facility: "Fortis Hospital, Pune",
     description: "Admitted for chest discomfort. Discharge summary auto-uploaded, insurance claim approved in 4 hours.",
   },
@@ -229,7 +229,7 @@ export const timeline: TimelineEvent[] = [
     id: "t6",
     date: "2025-04-30",
     type: "mri",
-    title: "Brain MRI — Routine Screening",
+    title: "Brain MRI (Routine Screening)",
     facility: "Manipal Hospitals, Bengaluru",
     description: "No structural abnormalities detected.",
   },
@@ -254,7 +254,7 @@ export const notifications: NotificationItem[] = [
   {
     id: "n3",
     kind: "appointment",
-    title: "Dr. Sharma — Follow-up",
+    title: "Dr. Sharma: Follow-up",
     detail: "Fortis Hospital, Pune · Cardiology",
     time: "Tomorrow, 11:30 AM",
   },
@@ -338,7 +338,7 @@ export const reports: ReportDoc[] = [
   },
   {
     id: "r3",
-    title: "Cardiac Observation — Discharge Summary",
+    title: "Cardiac Observation (Discharge Summary)",
     kind: "discharge",
     facility: "Fortis Hospital, Pune",
     date: "2025-09-10",
@@ -347,7 +347,7 @@ export const reports: ReportDoc[] = [
   },
   {
     id: "r4",
-    title: "Brain MRI — Routine Screening",
+    title: "Brain MRI (Routine Screening)",
     kind: "radiology",
     facility: "Manipal Hospitals, Bengaluru",
     date: "2025-04-30",
@@ -356,7 +356,7 @@ export const reports: ReportDoc[] = [
   },
   {
     id: "r5",
-    title: "Digital Prescription — Metformin, Atorvastatin",
+    title: "Digital Prescription (Metformin, Atorvastatin)",
     kind: "prescription",
     facility: "Dr. Rakesh Sharma, Fortis Pune",
     date: "2026-06-14",
@@ -420,7 +420,7 @@ export const prescriptions: Prescription[] = [
 ];
 
 export const insuranceClaims: InsuranceClaim[] = [
-  { id: "c1", claimNo: "SH-2025-88213", reason: "Cardiac observation — 2 days", amount: 84500, status: "approved", date: "2025-09-12" },
+  { id: "c1", claimNo: "SH-2025-88213", reason: "Cardiac observation (2 days)", amount: 84500, status: "approved", date: "2025-09-12" },
   { id: "c2", claimNo: "SH-2026-11042", reason: "Lumbar CT scan", amount: 6200, status: "approved", date: "2026-01-13" },
   { id: "c3", claimNo: "SH-2026-30981", reason: "Cardiology consultation", amount: 1500, status: "processing", date: "2026-06-15" },
 ];

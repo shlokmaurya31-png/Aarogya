@@ -143,7 +143,7 @@ export function Hero() {
             transition={{ duration: 0.6, delay: 0.7 }}
           >
             <p className="text-lg md:text-xl text-text-secondary leading-relaxed font-normal mb-14 max-w-2xl">
-              One permanent health record for every Indian — <br />
+              One permanent health record for every Indian, <br />
               read by AI, verified by labs, understood by every doctor you will ever meet.
             </p>
           </motion.div>

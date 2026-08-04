@@ -35,7 +35,7 @@ export function PatientAppointmentsView() {
         subtitle="Everything you have booked, in one place"
         action={
           <button
-            onClick={() => push("Booking request sent — you'll get a confirmation shortly", "emerald")}
+            onClick={() => push("Booking request sent, you'll get a confirmation shortly", "emerald")}
             className="flex items-center gap-1.5 rounded-full bg-cyan px-4 py-2.5 text-[13px] font-medium text-ink transition hover:brightness-110 active:scale-[0.97]"
           >
             <Plus size={15} /> {t("btn.bookVisit")}

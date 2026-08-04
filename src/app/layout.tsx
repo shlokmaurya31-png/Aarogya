@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Aarogya AI — India's Health Intelligence Platform",
+  title: "Aarogya AI: India's Health Intelligence Platform",
   description:
     "A unified AI health operating system connecting patients, doctors, hospitals, labs, pharmacies, and insurers across India.",
 };

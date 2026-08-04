@@ -18,7 +18,7 @@ const QUOTES = [
   },
   {
     quote:
-      "Direct upload ended the forged-report problem overnight. Our results carry our signature — mathematically.",
+      "Direct upload ended the forged-report problem overnight. Our results carry our signature, mathematically.",
     name: "Priya Nair",
     role: "Lab Director · SRL Diagnostics",
   },
@@ -55,7 +55,7 @@ export function TestimonialsSection() {
       </div>
 
       <p className="mt-8 text-center text-[11px] text-text-tertiary">
-        Illustrative voices from the product concept — pilot program opening 2026.
+        Illustrative voices from the product concept (pilot program opening 2026).
       </p>
     </section>
   );

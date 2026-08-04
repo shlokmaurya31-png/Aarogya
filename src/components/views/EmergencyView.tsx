@@ -19,7 +19,7 @@ export function EmergencyView() {
     setSosState("sending");
     setTimeout(() => {
       setSosState("sent");
-      push("SOS sent — contacts alerted and nearest ambulance notified", "red");
+      push("SOS sent, contacts alerted and nearest ambulance notified", "red");
       setTimeout(() => setSosState("idle"), 4000);
     }, 900);
   }

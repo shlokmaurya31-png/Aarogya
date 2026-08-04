@@ -33,7 +33,7 @@ export default function AdminLoginPage() {
     <AuthLayout
       eyebrow="Restricted access"
       title="Admin sign in"
-      subtitle="Platform oversight — doctor verification, patients, and system health."
+      subtitle="Platform oversight: doctor verification, patients, and system health."
       footer={
         <p className="text-center text-[12px] text-text-tertiary">
           Not an admin?{" "}
@@ -77,7 +77,7 @@ export default function AdminLoginPage() {
         </button>
 
         <p className="rounded-xl border border-amber/20 bg-amber/[0.06] px-3.5 py-2.5 text-[11.5px] leading-relaxed text-amber">
-          Demo credentials — admin@aarogya.ai / admin123
+          Demo credentials: admin@aarogya.ai / admin123
         </p>
       </form>
     </AuthLayout>

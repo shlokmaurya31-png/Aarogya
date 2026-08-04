@@ -13,7 +13,7 @@ const BEFORE = [
 
 const AFTER = [
   "One structured, lifelong record",
-  "Lab-signed results — mathematically unforgeable",
+  "Lab-signed results, mathematically unforgeable",
   "Any doctor briefed in under ten seconds",
   "Claims auto-verified against source data",
 ];

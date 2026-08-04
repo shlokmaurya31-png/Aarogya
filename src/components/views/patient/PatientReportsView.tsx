@@ -30,7 +30,7 @@ export function PatientReportsView() {
       <SectionHeader
         eyebrow="Reports"
         title={t("reports.titlePatient")}
-        subtitle="No medical jargon — just what it means for you"
+        subtitle="No medical jargon, just what it means for you"
       />
 
       <div className="flex flex-col gap-3">

@@ -44,7 +44,7 @@ const SEED_APPLICATIONS: VerificationApplication[] = [
   {
     id: "app-seed-3",
     role: "lab",
-    name: "Dr Lal PathLabs — Pune Branch",
+    name: "Dr Lal PathLabs, Pune Branch",
     email: "pune.branch@lalpathlabs.example.com",
     registrationId: "NABL-MH-20394",
     facility: "Dr Lal PathLabs, Camp Road, Pune",
@@ -181,7 +181,7 @@ export const useAuthStore = create<AuthState>()(
 
       signUpPatient: ({ name, email, phone, password }) => {
         if (!name.trim() || !email.trim() || !phone.trim() || password.length < 6) {
-          return { ok: false, error: "Fill every field — password needs at least 6 characters." };
+          return { ok: false, error: "Fill every field. Password needs at least 6 characters." };
         }
         set({
           user: {
@@ -205,7 +205,7 @@ export const useAuthStore = create<AuthState>()(
           !facility.trim() ||
           password.length < 6
         ) {
-          return { ok: false, error: "Fill every field — password needs at least 6 characters." };
+          return { ok: false, error: "Fill every field. Password needs at least 6 characters." };
         }
         if (!proofFile) {
           return { ok: false, error: "Upload proof of practice to continue." };
@@ -248,7 +248,7 @@ export const useAuthStore = create<AuthState>()(
           !facility.trim() ||
           password.length < 6
         ) {
-          return { ok: false, error: "Fill every field — password needs at least 6 characters." };
+          return { ok: false, error: "Fill every field. Password needs at least 6 characters." };
         }
         if (!proofFile) {
           return { ok: false, error: "Upload proof of accreditation to continue." };

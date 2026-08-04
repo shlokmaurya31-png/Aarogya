@@ -8,7 +8,7 @@ const STATS = [
   { to: 670, suffix: "M+", label: "ABHA health IDs already issued in India" },
   { to: 1.38, decimals: 2, suffix: "M", label: "Registered doctors the platform is built for" },
   { to: 50, suffix: "K+", label: "Diagnostic labs ready for direct upload" },
-  { to: 6, suffix: " hrs", label: "Insurance claims — down from 3 weeks" },
+  { to: 6, suffix: " hrs", label: "Insurance claims, down from 3 weeks" },
 ];
 
 export function AnalyticsSection() {

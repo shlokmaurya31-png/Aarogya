@@ -64,15 +64,15 @@ const CONTENT = {
 
 const ACKS = {
   patient: [
-    "Got it — I'll keep an eye on that and let you know if anything changes.",
+    "Got it. I'll keep an eye on that and let you know if anything changes.",
     "Noted, I've added that to your daily summary.",
     "I'll remind you at the right time. Anything else?",
-    "Good question — I've flagged it for your next doctor visit too.",
+    "Good question. I've flagged it for your next doctor visit too.",
   ],
   doctor: [
-    "Pulling that up now — cross-referencing the last 8 years of records.",
+    "Pulling that up now, cross-referencing the last 8 years of records.",
     "No conflicting entries found. I'll flag anything relevant in the brief.",
-    "Trend data refreshed — see the vitals panel for the full series.",
+    "Trend data refreshed. See the vitals panel for the full series.",
     "Noted. I'll draft that and attach it to the chart for review.",
   ],
 };
@@ -98,7 +98,7 @@ function guessReportKind(filename: string): ReportKind {
 
 const ANALYSIS_LINE: Record<ReportKind, string> = {
   lab: "Values look broadly within expected ranges, with one or two markers worth keeping an eye on.",
-  radiology: "Nothing acute stands out at a glance — worth a radiologist's confirmation at your next visit.",
+  radiology: "Nothing acute stands out at a glance, worth a radiologist's confirmation at your next visit.",
   discharge: "Summary captured, and the follow-up items have been noted for you.",
   prescription: "Medication details captured and cross-checked against what you're already taking.",
 };
@@ -160,7 +160,7 @@ export function AiAssistantPanel({ onClose }: { onClose?: () => void } = {}) {
       setMessages((m) =>
         m.map((msg) => (msg.id === loadingId ? { id: loadingId, role: "ai", text: fallback } : msg))
       );
-      push("AI service unavailable — showing a fallback response", "amber");
+      push("AI service unavailable, showing a fallback response", "amber");
     }
   }
 
@@ -217,7 +217,7 @@ export function AiAssistantPanel({ onClose }: { onClose?: () => void } = {}) {
         id: `note-${reportId}`,
         kind: "lab",
         title: "New record uploaded",
-        detail: `${title} — analyzed by Aarogya AI and added to your records`,
+        detail: `${title}, analyzed by Aarogya AI and added to your records`,
         time: "Just now",
         risk: "watch",
       });
@@ -227,7 +227,7 @@ export function AiAssistantPanel({ onClose }: { onClose?: () => void } = {}) {
             ? {
                 id: loadingId,
                 role: "ai",
-                text: `I've reviewed "${title}". ${ANALYSIS_LINE[kind]} I've added it to your records — your doctor will see it at your next visit.`,
+                text: `I've reviewed "${title}". ${ANALYSIS_LINE[kind]} I've added it to your records. Your doctor will see it at your next visit.`,
               }
             : msg
         )
@@ -299,7 +299,7 @@ export function AiAssistantPanel({ onClose }: { onClose?: () => void } = {}) {
           <TriangleAlert size={14} className="mt-0.5 shrink-0 text-amber" />
           <p className="text-[12px] leading-relaxed text-amber">
             Drug interaction flag: current ACE inhibitor (patient history) may interact with
-            newly prescribed statin — consider dose adjustment.
+            newly prescribed statin. Consider dose adjustment.
           </p>
         </div>
       )}

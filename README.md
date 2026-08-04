@@ -1,17 +1,17 @@
 # Aarogya AI
 
-India's unified health intelligence platform — one permanent health record for every patient, read by AI, verified by labs, and understood by every doctor they'll ever meet.
+India's unified health intelligence platform: one permanent health record for every patient, read by AI, verified by labs, and understood by every doctor they'll ever meet.
 
 Aarogya AI is a prototype health-record and clinical-workflow platform connecting **patients**, **doctors**, **hospitals**, **labs**, and **insurers** around a single longitudinal record. It ships as a cinematic marketing site plus a fully interactive command-center dashboard with separate patient and doctor experiences.
 
 ## Features
 
-- **Dual-mode dashboard** — switch between a Patient view (health score, medicines, appointments, AI assistant) and a Doctor view (clinical summary, SOAP briefs, lab results, prescriptions) from one toggle.
-- **AI health assistant** — a chat-style panel where patients can ask questions, get voice input (Web Speech API), and upload a health record for the AI to "analyze" — the resulting summary is added to the patient's Reports and surfaces on the doctor's side too.
-- **Doctor-authored prescriptions** — a form doctors fill with their name/registration/facility once and reuse, issuing new prescriptions that show up live in the patient's Medicines view.
-- **Emergency SOS, appointment booking, refill requests, report downloads, and directions/video-call actions** — all wired to real client-side state and feedback (toasts), not static mockups.
-- **Multi-language dashboard** — a language switcher in the top bar translates the UI into English, Hindi, Bengali, Marathi, Telugu, Tamil, Gujarati, Urdu, Kannada, Odia, and Malayalam (with automatic RTL for Urdu).
-- **Cinematic landing page** — an animated hero with a scrubbable background video, staggered-word headline, and sections covering the platform's features, AI diagnosis, timeline, pricing, and FAQ.
+- **Dual-mode dashboard**: switch between a Patient view (health score, medicines, appointments, AI assistant) and a Doctor view (clinical summary, SOAP briefs, lab results, prescriptions) from one toggle.
+- **AI health assistant**: a chat-style panel where patients can ask questions, get voice input (Web Speech API), and upload a health record for the AI to "analyze"; the resulting summary is added to the patient's Reports and surfaces on the doctor's side too.
+- **Doctor-authored prescriptions**: a form doctors fill with their name/registration/facility once and reuse, issuing new prescriptions that show up live in the patient's Medicines view.
+- **Emergency SOS, appointment booking, refill requests, report downloads, and directions/video-call actions**: all wired to real client-side state and feedback (toasts), not static mockups.
+- **Multi-language dashboard**: a language switcher in the top bar translates the UI into English, Hindi, Bengali, Marathi, Telugu, Tamil, Gujarati, Urdu, Kannada, Odia, and Malayalam (with automatic RTL for Urdu).
+- **Cinematic landing page**: an animated hero with a scrubbable background video, staggered-word headline, and sections covering the platform's features, AI diagnosis, timeline, pricing, and FAQ.
 
 ## Tech stack
 
@@ -63,4 +63,4 @@ src/
 
 ## Notes
 
-This is a prototype built on mock data with no backend — all "records," "prescriptions," and "AI analysis" are simulated client-side via shared state, and translations are hand-written rather than sourced from a verified translation service. Both should be reviewed before any real clinical or production use.
+This is a prototype built on mock data with no backend. All "records," "prescriptions," and "AI analysis" are simulated client-side via shared state, and translations are hand-written rather than sourced from a verified translation service. Both should be reviewed before any real clinical or production use.

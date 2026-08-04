@@ -124,7 +124,7 @@ export default function LoginPage() {
         setError(result.error);
         return;
       }
-      push("Account created — welcome to Aarogya.", "emerald");
+      push("Account created. Welcome to Aarogya.", "emerald");
       enter("patient");
       return;
     }
@@ -142,7 +142,7 @@ export default function LoginPage() {
         setError(result.error);
         return;
       }
-      push("Application submitted — verification pending.", "amber");
+      push("Application submitted. Verification pending.", "amber");
       enter("doctor");
       return;
     }
@@ -152,7 +152,7 @@ export default function LoginPage() {
       setError(result.error);
       return;
     }
-    push("Application submitted — verification pending.", "amber");
+    push("Application submitted. Verification pending.", "amber");
     enter("lab");
   }
 
@@ -183,7 +183,7 @@ export default function LoginPage() {
               onChange={(e) => setName(e.target.value)}
               required
               className={inputClass}
-              placeholder={role === "lab" ? "e.g. Dr Lal PathLabs — Pune Branch" : "e.g. Aditi Sharma"}
+              placeholder={role === "lab" ? "e.g. Dr Lal PathLabs, Pune Branch" : "e.g. Aditi Sharma"}
             />
           </Field>
         )}

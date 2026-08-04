@@ -88,7 +88,7 @@ export function Footer() {
       <div className="relative border-t border-hairline">
         <div className="mx-auto flex max-w-[1400px] flex-col items-start justify-between gap-3 px-6 py-6 text-[12px] text-text-tertiary sm:flex-row sm:items-center sm:px-10">
           <span>© 2026 Aarogya AI · Aparix Ventures</span>
-          <span>Made in India, for India — and beyond.</span>
+          <span>Made in India, for India, and beyond.</span>
         </div>
       </div>
     </footer>

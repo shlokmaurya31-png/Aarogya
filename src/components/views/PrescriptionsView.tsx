@@ -58,7 +58,7 @@ export function PrescriptionsView() {
 
   function requestRefill(id: string, drug: string) {
     setRequested((s) => new Set(s).add(id));
-    push(`Refill requested for ${drug} — pharmacy notified`, "amber");
+    push(`Refill requested for ${drug}, pharmacy notified`, "amber");
   }
 
   function openForm() {
