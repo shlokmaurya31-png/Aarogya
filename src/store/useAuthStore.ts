@@ -15,8 +15,6 @@ function nextId(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-const ADMIN_CREDENTIALS = { email: "admin@aarogya.ai", password: "admin123" };
-
 const SEED_APPLICATIONS: VerificationApplication[] = [
   {
     id: "app-seed-1",
@@ -100,7 +98,7 @@ interface AuthState {
   signInPatient: (email: string, password: string) => ActionResult;
   signInDoctor: (email: string, password: string) => ActionResult;
   signInLab: (email: string, password: string) => ActionResult;
-  signInAdmin: (email: string, password: string) => ActionResult;
+  signInAdmin: (email: string, password: string) => Promise<ActionResult>;
   signUpPatient: (input: SignUpPatientInput) => ActionResult;
   signUpDoctor: (input: SignUpDoctorInput) => ActionResult;
   signUpLab: (input: SignUpLabInput) => ActionResult;
@@ -171,12 +169,22 @@ export const useAuthStore = create<AuthState>()(
         return { ok: true };
       },
 
-      signInAdmin: (email, password) => {
-        if (
-          email.trim().toLowerCase() !== ADMIN_CREDENTIALS.email ||
-          password !== ADMIN_CREDENTIALS.password
-        ) {
-          return { ok: false, error: "Invalid admin credentials." };
+      signInAdmin: async (email, password) => {
+        let data: { error?: string } = {};
+        let ok = false;
+        try {
+          const res = await fetch("/api/admin-auth", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email, password }),
+          });
+          data = await res.json();
+          ok = res.ok;
+        } catch {
+          return { ok: false, error: "Couldn't reach the server to verify admin credentials." };
+        }
+        if (!ok) {
+          return { ok: false, error: data.error ?? "Invalid admin credentials." };
         }
         set({
           user: {

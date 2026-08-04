@@ -11,6 +11,7 @@ import { useAuthStore } from "@/store/useAuthStore";
 import { usePatientStore } from "@/store/usePatientStore";
 import { useTranslation } from "@/hooks/useTranslation";
 import { LanguageSwitcher } from "./LanguageSwitcher";
+import { ThemeToggle } from "./ThemeToggle";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { cn } from "@/lib/utils";
 import type { NavId, PatientNavId } from "@/types";
@@ -171,6 +172,8 @@ export function TopBar() {
             {t("topbar.search")}
             <kbd className="rounded-md border border-hairline px-1.5 font-mono text-[10px]">⌘K</kbd>
           </button>
+
+          <ThemeToggle />
 
           <LanguageSwitcher />
 

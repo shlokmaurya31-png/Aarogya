@@ -1,7 +1,24 @@
 import type { Metadata, Viewport } from "next";
+import Script from "next/script";
 import { Geist_Mono, Inter } from "next/font/google";
 import { PwaRegister } from "@/components/shared/PwaRegister";
+import { ThemeInit } from "@/components/shared/ThemeInit";
 import "./globals.css";
+
+const THEME_INIT_SCRIPT = `(function() {
+  try {
+    var stored = localStorage.getItem('aarogya-theme');
+    var theme = null;
+    if (stored) {
+      var parsed = JSON.parse(stored);
+      theme = parsed && parsed.state && parsed.state.theme;
+    }
+    if (!theme) {
+      theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    document.documentElement.setAttribute('data-theme', theme);
+  } catch (e) {}
+})();`;
 
 const inter = Inter({
   variable: "--font-inter",
@@ -36,10 +53,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${geistMono.variable} h-full`}>
+    <html lang="en" className={`${inter.variable} ${geistMono.variable} h-full`} suppressHydrationWarning>
       <body className="min-h-full flex flex-col font-sans antialiased">
+        <Script id="theme-init" strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
         {children}
         <PwaRegister />
+        <ThemeInit />
       </body>
     </html>
   );

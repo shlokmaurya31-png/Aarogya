@@ -10,6 +10,7 @@ import { ToastViewport } from "@/components/shared/ToastViewport";
 import { useAuthStore } from "@/store/useAuthStore";
 import { usePatientStore } from "@/store/usePatientStore";
 import { useLanguageStore } from "@/store/useLanguageStore";
+import { useThemeStore } from "@/store/useThemeStore";
 import { useToastStore } from "@/store/useToastStore";
 import { LANGUAGES } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -58,6 +59,8 @@ function SettingsForm({ user }: { user: AuthUser }) {
   const updateInsuranceProvider = usePatientStore((s) => s.updateInsuranceProvider);
   const language = useLanguageStore((s) => s.language);
   const setLanguage = useLanguageStore((s) => s.setLanguage);
+  const theme = useThemeStore((s) => s.theme);
+  const setTheme = useThemeStore((s) => s.setTheme);
   const push = useToastStore((s) => s.push);
 
   const [name, setName] = useState(user.name);
@@ -271,6 +274,27 @@ function SettingsForm({ user }: { user: AuthUser }) {
               Update password
             </button>
           </form>
+        </Card>
+
+        <Card>
+          <CardLabel>Appearance</CardLabel>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {(["light", "dark"] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setTheme(t)}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-full border px-3.5 py-2 text-[12.5px] capitalize transition",
+                  theme === t
+                    ? "border-cyan/40 bg-cyan/10 text-cyan"
+                    : "border-hairline text-text-secondary hover:border-hairline-strong"
+                )}
+              >
+                {theme === t && <Check size={12} />}
+                {t}
+              </button>
+            ))}
+          </div>
         </Card>
 
         <Card>

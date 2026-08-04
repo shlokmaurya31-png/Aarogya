@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { useLenis } from "lenis/react";
+import { ThemeToggle } from "@/components/navigation/ThemeToggle";
 
 const HEADLINE_TOP = ["the", "body,"];
 const HEADLINE_BOTTOM = ["finally", "legible."];
@@ -113,12 +114,15 @@ function HeroNav() {
         <span className="text-emerald select-none">&#10010;</span>
       </button>
 
-      <Link
-        href="/login"
-        className="rounded-full border border-black/10 bg-black/[0.05] px-4 py-2 text-[12.5px] font-medium text-text-primary backdrop-blur transition hover:border-cyan/40 hover:bg-cyan/10 hover:text-cyan"
-      >
-        Sign in
-      </Link>
+      <div className="flex items-center gap-2.5">
+        <ThemeToggle />
+        <Link
+          href="/login"
+          className="rounded-full border border-black/10 bg-black/[0.05] px-4 py-2 text-[12.5px] font-medium text-text-primary backdrop-blur transition hover:border-cyan/40 hover:bg-cyan/10 hover:text-cyan"
+        >
+          Sign in
+        </Link>
+      </div>
     </header>
   );
 }

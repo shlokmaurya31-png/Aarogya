@@ -17,10 +17,14 @@ export default function AdminLoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const result = signInAdmin(email, password);
+    setError(null);
+    setSubmitting(true);
+    const result = await signInAdmin(email, password);
+    setSubmitting(false);
     if (!result.ok) {
       setError(result.error);
       return;
@@ -71,9 +75,10 @@ export default function AdminLoginPage() {
 
         <button
           type="submit"
-          className="w-full rounded-full bg-cyan py-3 text-[13.5px] font-medium text-ink transition hover:brightness-110 active:scale-[0.99]"
+          disabled={submitting}
+          className="w-full rounded-full bg-cyan py-3 text-[13.5px] font-medium text-ink transition hover:brightness-110 active:scale-[0.99] disabled:opacity-60"
         >
-          Sign in
+          {submitting ? "Checking..." : "Sign in"}
         </button>
 
         <p className="rounded-xl border border-amber/20 bg-amber/[0.06] px-3.5 py-2.5 text-[11.5px] leading-relaxed text-amber">
