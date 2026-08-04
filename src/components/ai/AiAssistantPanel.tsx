@@ -2,12 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Sparkles, Mic, ArrowUp, TriangleAlert, Paperclip, Loader2, FileUp } from "lucide-react";
+import { Sparkles, Mic, ArrowUp, TriangleAlert, Paperclip, Loader2, FileUp, X } from "lucide-react";
 import { StreamingText } from "./StreamingText";
 import { useUiStore } from "@/store/useUiStore";
 import { useToastStore } from "@/store/useToastStore";
 import { useRecordsStore } from "@/store/useRecordsStore";
 import { useTranslation } from "@/hooks/useTranslation";
+import { getPageAiContext } from "@/lib/ai-page-context";
 import { cn } from "@/lib/utils";
 import type { ReportKind } from "@/types";
 
@@ -102,16 +103,19 @@ const ANALYSIS_LINE: Record<ReportKind, string> = {
   prescription: "Medication details captured and cross-checked against what you're already taking.",
 };
 
-export function AiAssistantPanel() {
+export function AiAssistantPanel({ onClose }: { onClose?: () => void } = {}) {
   const [value, setValue] = useState("");
   const [listening, setListening] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const mode = useUiStore((s) => s.mode);
+  const activeView = useUiStore((s) => s.activeView);
+  const activePatientView = useUiStore((s) => s.activePatientView);
   const { t } = useTranslation();
   const content =
     mode === "patient"
       ? { ...CONTENT.patient, title: t("ai.title"), subtitle: t("ai.subtitle"), placeholder: t("ai.placeholder") }
       : CONTENT.doctor;
+  const pageContext = getPageAiContext(mode, mode === "doctor" ? activeView : activePatientView);
   const push = useToastStore((s) => s.push);
   const addReport = useRecordsStore((s) => s.addReport);
   const addNotification = useRecordsStore((s) => s.addNotification);
@@ -143,7 +147,7 @@ export function AiAssistantPanel() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: toSend, mode }),
+        body: JSON.stringify({ message: toSend, mode, page: pageContext.label }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? "Request failed");
@@ -262,14 +266,25 @@ export function AiAssistantPanel() {
             <p className="text-[11px] text-text-tertiary">{content.subtitle}</p>
           </div>
         </div>
-        {mode === "patient" && (
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="flex shrink-0 items-center gap-1.5 rounded-full bg-cyan px-3.5 py-2 text-[12px] font-medium text-ink transition hover:brightness-110 active:scale-[0.97]"
-          >
-            <FileUp size={13} /> {t("ai.uploadRecord")}
-          </button>
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {mode === "patient" && (
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-1.5 rounded-full bg-cyan px-3.5 py-2 text-[12px] font-medium text-ink transition hover:brightness-110 active:scale-[0.97]"
+            >
+              <FileUp size={13} /> {t("ai.uploadRecord")}
+            </button>
+          )}
+          {onClose && (
+            <button
+              onClick={onClose}
+              aria-label="Close assistant"
+              className="flex h-7 w-7 items-center justify-center rounded-full text-text-tertiary transition hover:bg-black/[0.05] hover:text-text-primary"
+            >
+              <X size={15} />
+            </button>
+          )}
+        </div>
       </div>
       <input
         ref={fileInputRef}
@@ -327,7 +342,7 @@ export function AiAssistantPanel() {
       </div>
 
       <div className="mt-3 flex flex-wrap gap-2">
-        {content.suggestions.map((s) => (
+        {pageContext.suggestions.map((s) => (
           <button
             key={s}
             onClick={() => handleSend(s)}

@@ -100,12 +100,16 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { message, mode } = await req.json();
+  const { message, mode, page } = await req.json();
   if (!message || typeof message !== "string") {
     return NextResponse.json({ error: "Missing 'message' string." }, { status: 400 });
   }
 
-  const system = mode === "doctor" ? SYSTEM_PROMPTS.doctor : SYSTEM_PROMPTS.patient;
+  const basePrompt = mode === "doctor" ? SYSTEM_PROMPTS.doctor : SYSTEM_PROMPTS.patient;
+  const system =
+    typeof page === "string" && page.trim()
+      ? `${basePrompt}\n\nThe user is currently viewing the "${page}" section of the dashboard. When their question is general or open-ended, lean your default focus toward what's most useful on that section — but always answer whatever they actually ask, even if it's about something else.`
+      : basePrompt;
 
   try {
     const anthropic = new Anthropic({ apiKey });

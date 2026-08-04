@@ -9,6 +9,7 @@ import { LanguageDirEffect } from "@/components/shared/LanguageDirEffect";
 import { TopBar } from "@/components/navigation/TopBar";
 import { ViewSwitcher } from "@/components/views/ViewSwitcher";
 import { PatientViewSwitcher } from "@/components/views/PatientViewSwitcher";
+import { AiAssistantWidget } from "@/components/ai/AiAssistantWidget";
 import { useUiStore } from "@/store/useUiStore";
 import { useAuthStore } from "@/store/useAuthStore";
 
@@ -16,9 +17,11 @@ export default function DashboardPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const isDoctor = useUiStore((s) => s.mode === "doctor");
+  const activePatientView = useUiStore((s) => s.activePatientView);
   const setMode = useUiStore((s) => s.setMode);
   const user = useAuthStore((s) => s.user);
   const hasHydrated = useAuthStore((s) => s.hasHydrated);
+  const showWidget = isDoctor || activePatientView !== "home";
 
   useEffect(() => {
     if (!hasHydrated) return;
@@ -60,6 +63,7 @@ export default function DashboardPage() {
           </motion.div>
         )}
       </AnimatePresence>
+      {!loading && showWidget && <AiAssistantWidget />}
       <ToastViewport />
       <LanguageDirEffect />
     </>
