@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { LoadingScreen } from "@/components/shared/LoadingScreen";
 import { ToastViewport } from "@/components/shared/ToastViewport";
@@ -9,10 +10,32 @@ import { TopBar } from "@/components/navigation/TopBar";
 import { ViewSwitcher } from "@/components/views/ViewSwitcher";
 import { PatientViewSwitcher } from "@/components/views/PatientViewSwitcher";
 import { useUiStore } from "@/store/useUiStore";
+import { useAuthStore } from "@/store/useAuthStore";
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const isDoctor = useUiStore((s) => s.mode === "doctor");
+  const setMode = useUiStore((s) => s.setMode);
+  const user = useAuthStore((s) => s.user);
+  const hasHydrated = useAuthStore((s) => s.hasHydrated);
+
+  useEffect(() => {
+    if (!hasHydrated) return;
+    if (!user) {
+      router.replace("/login");
+      return;
+    }
+    if (user.role === "admin") {
+      router.replace("/admin");
+      return;
+    }
+    setMode(user.role);
+  }, [hasHydrated, user, router, setMode]);
+
+  if (!hasHydrated || !user || user.role === "admin") {
+    return <div className="flex min-h-screen items-center justify-center bg-ink text-text-tertiary">Loading…</div>;
+  }
 
   return (
     <>

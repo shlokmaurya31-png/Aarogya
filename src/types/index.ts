@@ -160,3 +160,31 @@ export interface EmergencyContact {
   phone: string;
   priority: number;
 }
+
+export type AuthRole = "patient" | "doctor" | "admin";
+
+export type DoctorVerificationStatus = "pending" | "verified" | "rejected";
+
+export interface AuthUser {
+  id: string;
+  role: AuthRole;
+  name: string;
+  email: string;
+  avatarInitials: string;
+  specialty?: string;
+  registrationId?: string;
+  facility?: string;
+  doctorStatus?: DoctorVerificationStatus;
+}
+
+export interface DoctorApplication {
+  id: string;
+  name: string;
+  email: string;
+  specialty: string;
+  registrationId: string;
+  facility: string;
+  proofFileName: string;
+  submittedAt: string;
+  status: DoctorVerificationStatus;
+}

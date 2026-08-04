@@ -114,10 +114,10 @@ function HeroNav() {
       </button>
 
       <Link
-        href="/dashboard"
+        href="/login"
         className="rounded-full border border-black/10 bg-black/[0.05] px-4 py-2 text-[12.5px] font-medium text-text-primary backdrop-blur transition hover:border-cyan/40 hover:bg-cyan/10 hover:text-cyan"
       >
-        Enter Dashboard
+        Sign in
       </Link>
     </header>
   );

@@ -41,7 +41,7 @@ export function Footer() {
           transition={{ duration: 0.7, delay: 0.15 }}
           className="mt-9"
         >
-          <Link href="/dashboard">
+          <Link href="/login">
             <MagneticButton className="bg-[#0a0a0a] text-white hover:bg-cyan">
               Enter Aarogya <ArrowRight size={15} />
             </MagneticButton>

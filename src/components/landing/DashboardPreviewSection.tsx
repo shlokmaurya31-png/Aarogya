@@ -95,7 +95,7 @@ export function DashboardPreviewSection() {
       </motion.div>
 
       <div className="mt-12 text-center">
-        <Link href="/dashboard">
+        <Link href="/login">
           <MagneticButton className="bg-[#0a0a0a] text-white hover:bg-cyan">
             Open the live dashboard <ArrowRight size={15} />
           </MagneticButton>

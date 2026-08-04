@@ -2,13 +2,16 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { Search } from "lucide-react";
+import { LogOut, Search } from "lucide-react";
 import { patient, doctorProfile } from "@/lib/mock-data";
 import { useUiStore } from "@/store/useUiStore";
+import { useAuthStore } from "@/store/useAuthStore";
 import { useTranslation } from "@/hooks/useTranslation";
 import { ModeToggle } from "./ModeToggle";
 import { LanguageSwitcher } from "./LanguageSwitcher";
+import { StatusPill } from "@/components/ui/StatusPill";
 import { cn } from "@/lib/utils";
 import type { NavId, PatientNavId } from "@/types";
 
@@ -62,15 +65,34 @@ function Tab({
 }
 
 export function TopBar() {
+  const router = useRouter();
   const mode = useUiStore((s) => s.mode);
   const activeView = useUiStore((s) => s.activeView);
   const setActiveView = useUiStore((s) => s.setActiveView);
   const activePatientView = useUiStore((s) => s.activePatientView);
   const setActivePatientView = useUiStore((s) => s.setActivePatientView);
+  const authUser = useAuthStore((s) => s.user);
+  const logout = useAuthStore((s) => s.logout);
   const { t } = useTranslation();
 
   const isDoctor = mode === "doctor";
   const tabs = isDoctor ? DOCTOR_TABS : PATIENT_TABS;
+
+  const displayName = authUser?.name ?? (isDoctor ? doctorProfile.name : patient.name);
+  const displaySub =
+    authUser?.role === "doctor"
+      ? authUser.specialty ?? doctorProfile.specialty
+      : authUser?.role === "patient"
+        ? patient.patientId
+        : isDoctor
+          ? doctorProfile.specialty
+          : patient.patientId;
+  const displayInitials = authUser?.avatarInitials ?? (isDoctor ? doctorProfile.avatarInitials : patient.avatarInitials);
+
+  function handleLogout() {
+    logout();
+    router.push("/");
+  }
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -154,17 +176,20 @@ export function TopBar() {
 
           <div className="flex items-center gap-2.5">
             <div className="hidden text-right md:block">
-              <p className="text-[12px] font-medium leading-tight text-text-primary">
-                {isDoctor ? doctorProfile.name : patient.name}
-              </p>
-              <p className="text-[10.5px] leading-tight text-text-tertiary">
-                {isDoctor ? doctorProfile.specialty : patient.patientId}
-              </p>
+              <p className="text-[12px] font-medium leading-tight text-text-primary">{displayName}</p>
+              <p className="text-[10.5px] leading-tight text-text-tertiary">{displaySub}</p>
             </div>
             <div className="relative flex h-8 w-8 items-center justify-center rounded-full bg-cyan/12 text-[11px] font-semibold text-cyan">
-              {isDoctor ? doctorProfile.avatarInitials : patient.avatarInitials}
+              {displayInitials}
               <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-ink bg-cyan" />
             </div>
+            <button
+              onClick={handleLogout}
+              className="text-text-tertiary transition hover:text-red"
+              aria-label="Log out"
+            >
+              <LogOut size={15} />
+            </button>
           </div>
         </div>
       </div>
@@ -176,6 +201,9 @@ export function TopBar() {
             <span className="text-text-tertiary">{t("topbar.viewingChart")}</span>
             <span className="font-medium text-text-primary">{patient.name}</span>
             <span className="tabular-nums text-text-tertiary">{patient.patientId}</span>
+            {authUser?.doctorStatus === "pending" && (
+              <StatusPill label="Verification pending" tone="amber" />
+            )}
             <span className="ml-auto hidden items-center gap-1.5 text-text-tertiary sm:flex">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald" />
               {t("topbar.consentActive")}

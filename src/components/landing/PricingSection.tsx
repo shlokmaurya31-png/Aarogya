@@ -104,7 +104,7 @@ export function PricingSection() {
             </ul>
 
             <Link
-              href="/dashboard"
+              href="/login"
               className={cn(
                 "mt-8 rounded-full py-3 text-center text-[13.5px] font-medium transition active:scale-[0.98]",
                 t.featured
