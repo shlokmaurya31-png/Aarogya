@@ -130,16 +130,34 @@ export function AiAssistantPanel() {
     return () => recognitionRef.current?.stop();
   }, []);
 
-  function handleSend(text?: string) {
+  async function handleSend(text?: string) {
     const toSend = (text ?? value).trim();
     if (!toSend) return;
     setMessages((m) => [...m, { id: nextId(), role: "user", text: toSend }]);
     setValue("");
-    const replies = ACKS[mode];
-    setTimeout(() => {
-      const reply = replies[Math.floor(Math.random() * replies.length)];
-      setMessages((m) => [...m, { id: nextId(), role: "ai", text: reply }]);
-    }, 700);
+
+    const loadingId = nextId();
+    setMessages((m) => [...m, { id: loadingId, role: "ai", text: "", loading: true }]);
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: toSend, mode }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? "Request failed");
+      setMessages((m) =>
+        m.map((msg) => (msg.id === loadingId ? { id: loadingId, role: "ai", text: data.text } : msg))
+      );
+    } catch {
+      const replies = ACKS[mode];
+      const fallback = replies[Math.floor(Math.random() * replies.length)];
+      setMessages((m) =>
+        m.map((msg) => (msg.id === loadingId ? { id: loadingId, role: "ai", text: fallback } : msg))
+      );
+      push("AI service unavailable — showing a fallback response", "amber");
+    }
   }
 
   function toggleMic() {
