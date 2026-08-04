@@ -173,20 +173,20 @@ export function TopBar() {
           <LanguageSwitcher />
 
           <div className="flex items-center gap-2.5">
-            <div className="hidden text-right md:block">
-              <p className="text-[12px] font-medium leading-tight text-text-primary">{displayName}</p>
-              <p className="text-[10.5px] leading-tight text-text-tertiary">{displaySub}</p>
-            </div>
-            <div className="relative flex h-8 w-8 items-center justify-center rounded-full bg-cyan/12 text-[11px] font-semibold text-cyan">
-              {displayInitials}
-              <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-ink bg-cyan" />
-            </div>
             <Link
               href="/settings"
-              className="text-text-tertiary transition hover:text-cyan"
+              className="flex items-center gap-2.5 rounded-full py-1 pl-1 pr-2.5 transition hover:bg-black/[0.04]"
               aria-label="Account settings"
             >
-              <Settings size={15} />
+              <div className="hidden text-right md:block">
+                <p className="text-[12px] font-medium leading-tight text-text-primary">{displayName}</p>
+                <p className="text-[10.5px] leading-tight text-text-tertiary">{displaySub}</p>
+              </div>
+              <div className="relative flex h-8 w-8 items-center justify-center rounded-full bg-cyan/12 text-[11px] font-semibold text-cyan">
+                {displayInitials}
+                <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-ink bg-cyan" />
+              </div>
+              <Settings size={14} className="text-text-tertiary" />
             </Link>
             <button
               onClick={handleLogout}
