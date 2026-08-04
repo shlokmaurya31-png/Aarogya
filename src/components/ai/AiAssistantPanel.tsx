@@ -7,6 +7,7 @@ import { StreamingText } from "./StreamingText";
 import { useUiStore } from "@/store/useUiStore";
 import { useToastStore } from "@/store/useToastStore";
 import { useRecordsStore } from "@/store/useRecordsStore";
+import { usePatientStore } from "@/store/usePatientStore";
 import { useTranslation } from "@/hooks/useTranslation";
 import { getPageAiContext } from "@/lib/ai-page-context";
 import { cn } from "@/lib/utils";
@@ -117,8 +118,12 @@ export function AiAssistantPanel({ onClose }: { onClose?: () => void } = {}) {
       : CONTENT.doctor;
   const pageContext = getPageAiContext(mode, mode === "doctor" ? activeView : activePatientView);
   const push = useToastStore((s) => s.push);
-  const addReport = useRecordsStore((s) => s.addReport);
-  const addNotification = useRecordsStore((s) => s.addNotification);
+  const addDoctorReport = useRecordsStore((s) => s.addReport);
+  const addDoctorNotification = useRecordsStore((s) => s.addNotification);
+  const addPatientReport = usePatientStore((s) => s.addReport);
+  const addPatientNotification = usePatientStore((s) => s.addNotification);
+  const addReport = mode === "patient" ? addPatientReport : addDoctorReport;
+  const addNotification = mode === "patient" ? addPatientNotification : addDoctorNotification;
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [messages, setMessages] = useState<ChatMessage[]>(() => [
@@ -144,10 +149,27 @@ export function AiAssistantPanel({ onClose }: { onClose?: () => void } = {}) {
     setMessages((m) => [...m, { id: loadingId, role: "ai", text: "", loading: true }]);
 
     try {
+      const patientData = mode === "patient" ? usePatientStore.getState() : null;
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: toSend, mode, page: pageContext.label }),
+        body: JSON.stringify({
+          message: toSend,
+          mode,
+          page: pageContext.label,
+          patientData: patientData
+            ? {
+                profile: patientData.profile,
+                vitals: patientData.vitals,
+                bodySystems: patientData.bodySystems,
+                timeline: patientData.timeline,
+                appointments: patientData.appointments,
+                reports: patientData.reports,
+                prescriptions: patientData.prescriptions,
+                insuranceClaims: patientData.insuranceClaims,
+              }
+            : undefined,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? "Request failed");

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { usePatientStore } from "@/store/usePatientStore";
 import type { AuthUser, VerificationApplication } from "@/types";
 
 type ActionResult = { ok: true } | { ok: false; error: string };
@@ -310,7 +311,10 @@ export const useAuthStore = create<AuthState>()(
         return { ok: true };
       },
 
-      logout: () => set({ user: null }),
+      logout: () => {
+        usePatientStore.getState().reset();
+        set({ user: null });
+      },
 
       approveApplication: (id) =>
         set((s) => ({

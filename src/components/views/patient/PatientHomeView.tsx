@@ -1,15 +1,14 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { CalendarDays, Pill, Check, Video, MapPin } from "lucide-react";
-import { patient, appointments, upcomingMedicines } from "@/lib/mock-data";
+import { CalendarDays, Pill, Video, MapPin } from "lucide-react";
 import { Card, CardLabel } from "@/components/ui/Card";
 import { HealthScoreCard } from "@/components/dashboard/HealthScoreCard";
 import { SystemsCard } from "@/components/dashboard/SystemsCard";
 import { AiAssistantPanel } from "@/components/ai/AiAssistantPanel";
 import { NotificationsList } from "@/components/dashboard/NotificationsList";
-import { cn } from "@/lib/utils";
 import { useToastStore } from "@/store/useToastStore";
+import { usePatientStore } from "@/store/usePatientStore";
 import { openDirections } from "@/lib/download";
 import { useTranslation } from "@/hooks/useTranslation";
 
@@ -25,8 +24,11 @@ function formatDate(d: string) {
 }
 
 export function PatientHomeView() {
+  const profile = usePatientStore((s) => s.profile);
+  const appointments = usePatientStore((s) => s.appointments);
+  const prescriptions = usePatientStore((s) => s.prescriptions);
   const nextAppointment = appointments.find((a) => a.status === "upcoming");
-  const dueToday = upcomingMedicines.filter((m) => !m.taken);
+  const activeMedicines = prescriptions.filter((p) => p.status !== "completed");
   const push = useToastStore((s) => s.push);
   const { t } = useTranslation();
 
@@ -47,7 +49,7 @@ export function PatientHomeView() {
       >
         <p className="text-[11px] uppercase tracking-[0.14em] text-text-tertiary">{t(greetingKey())}</p>
         <h1 className="mt-1 text-[24px] font-semibold tracking-tight text-text-primary">
-          {patient.name.split(" ")[0]}, {t("patientHome.subheading")}
+          {(profile?.name ?? "there").split(" ")[0]}, {t("patientHome.subheading")}
         </h1>
       </motion.header>
 
@@ -87,33 +89,26 @@ export function PatientHomeView() {
         >
           <Card className="h-full">
             <CardLabel>{t("patientHome.medicinesTitle")}</CardLabel>
-            <div className="mt-3 flex flex-col gap-2">
-              {upcomingMedicines.map((m) => (
-                <div
-                  key={m.id}
-                  className="flex items-center gap-3 rounded-2xl bg-black/[0.035] px-3.5 py-3"
-                >
-                  <span
-                    className={cn(
-                      "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
-                      m.taken ? "bg-emerald/15 text-emerald" : "bg-black/[0.06] text-text-secondary"
-                    )}
-                  >
-                    {m.taken ? <Check size={15} /> : <Pill size={15} />}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-[13.5px] font-medium text-text-primary">{m.name}</p>
-                    <p className="text-[12px] text-text-tertiary">
-                      {m.dose} · {m.time}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-            {dueToday.length > 0 && (
-              <p className="mt-3 text-[12px] text-text-tertiary">
-                {dueToday.length} {dueToday.length === 1 ? "dose" : "doses"} left for today
+            {activeMedicines.length === 0 ? (
+              <p className="mt-3 text-[13px] text-text-secondary">
+                No medicines added yet. Your doctor&rsquo;s prescriptions will show up here.
               </p>
+            ) : (
+              <div className="mt-3 flex flex-col gap-2">
+                {activeMedicines.slice(0, 4).map((p) => (
+                  <div key={p.id} className="flex items-center gap-3 rounded-2xl bg-black/[0.035] px-3.5 py-3">
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-black/[0.06] text-text-secondary">
+                      <Pill size={15} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[13.5px] font-medium text-text-primary">{p.drug}</p>
+                      <p className="text-[12px] text-text-tertiary">
+                        {p.dose} · {p.frequency}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </Card>
         </motion.div>

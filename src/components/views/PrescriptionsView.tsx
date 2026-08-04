@@ -10,6 +10,7 @@ import { StatusPill } from "@/components/ui/StatusPill";
 import { useToastStore } from "@/store/useToastStore";
 import { useRecordsStore } from "@/store/useRecordsStore";
 import { useTranslation } from "@/hooks/useTranslation";
+import { ESSENTIAL_MEDICINES } from "@/lib/essential-medicines";
 import type { PrescriptionStatus } from "@/types";
 
 const STATUS_TONE: Record<PrescriptionStatus, "emerald" | "amber" | "neutral"> = {
@@ -247,8 +248,17 @@ export function PrescriptionsView() {
                       value={drug}
                       onChange={(e) => setDrug(e.target.value)}
                       placeholder="Drug name"
+                      list="essential-medicines"
                       className="w-full rounded-xl border border-hairline bg-black/[0.025] px-3.5 py-2.5 text-[13px] outline-none focus:border-cyan/40"
                     />
+                    <datalist id="essential-medicines">
+                      {ESSENTIAL_MEDICINES.map((med) => (
+                        <option key={med} value={med} />
+                      ))}
+                    </datalist>
+                    <p className="text-[10.5px] text-text-tertiary">
+                      Suggestions from India&rsquo;s National List of Essential Medicines (NLEM 2022)
+                    </p>
                     <div className="grid grid-cols-2 gap-2">
                       <input
                         value={dose}

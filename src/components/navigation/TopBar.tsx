@@ -8,6 +8,7 @@ import { LogOut, Search, Settings } from "lucide-react";
 import { patient, doctorProfile } from "@/lib/mock-data";
 import { useUiStore } from "@/store/useUiStore";
 import { useAuthStore } from "@/store/useAuthStore";
+import { usePatientStore } from "@/store/usePatientStore";
 import { useTranslation } from "@/hooks/useTranslation";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { StatusPill } from "@/components/ui/StatusPill";
@@ -73,6 +74,7 @@ export function TopBar() {
   const setActivePatientView = useUiStore((s) => s.setActivePatientView);
   const authUser = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
+  const patientProfile = usePatientStore((s) => s.profile);
   const { t } = useTranslation();
 
   const isDoctor = mode === "doctor";
@@ -83,7 +85,7 @@ export function TopBar() {
     authUser?.role === "doctor"
       ? authUser.specialty ?? doctorProfile.specialty
       : authUser?.role === "patient"
-        ? patient.patientId
+        ? patientProfile?.patientId ?? ""
         : isDoctor
           ? doctorProfile.specialty
           : patient.patientId;

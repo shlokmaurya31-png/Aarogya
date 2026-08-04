@@ -5,6 +5,8 @@ import { BedDouble, Clock, MapPinned, Navigation, X } from "lucide-react";
 import { Card, CardLabel } from "@/components/ui/Card";
 import { useBedBookingStore } from "@/store/useBedBookingStore";
 import { useToastStore } from "@/store/useToastStore";
+import { useUiStore } from "@/store/useUiStore";
+import { usePatientStore } from "@/store/usePatientStore";
 import { openDirections } from "@/lib/download";
 import { patient } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
@@ -26,9 +28,12 @@ export function BedBookingCard() {
   const bookBed = useBedBookingStore((s) => s.bookBed);
   const cancelBooking = useBedBookingStore((s) => s.cancelBooking);
   const push = useToastStore((s) => s.push);
+  const isPatientMode = useUiStore((s) => s.mode === "patient");
+  const patientProfile = usePatientStore((s) => s.profile);
+  const bookingName = isPatientMode ? patientProfile?.name ?? "You" : patient.name;
 
   function handleBook(hospitalId: string, category: BedCategory) {
-    const result = bookBed(hospitalId, category, patient.name);
+    const result = bookBed(hospitalId, category, bookingName);
     if (!result.ok) {
       push(result.error, "amber");
       return;

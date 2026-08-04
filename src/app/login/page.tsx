@@ -7,6 +7,7 @@ import { AuthLayout } from "@/components/auth/AuthLayout";
 import { PillToggle } from "@/components/auth/PillToggle";
 import { FileDropField } from "@/components/auth/FileDropField";
 import { useAuthStore } from "@/store/useAuthStore";
+import { usePatientStore } from "@/store/usePatientStore";
 import { useUiStore } from "@/store/useUiStore";
 import { useToastStore } from "@/store/useToastStore";
 
@@ -92,6 +93,10 @@ export default function LoginPage() {
       return;
     }
     setUiMode(nextRole);
+    if (nextRole === "patient" && !usePatientStore.getState().profile) {
+      router.push("/onboarding");
+      return;
+    }
     router.push("/dashboard");
   }
 

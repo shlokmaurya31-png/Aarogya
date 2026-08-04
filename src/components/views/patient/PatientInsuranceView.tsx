@@ -2,11 +2,12 @@
 
 import { motion } from "framer-motion";
 import { CreditCard, Phone, ShieldCheck, FileCheck, IdCard, Headset, Download, Building2 } from "lucide-react";
-import { patient, insuranceClaims, majorIndianTpas } from "@/lib/mock-data";
+import { majorIndianTpas } from "@/lib/mock-data";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { Card, CardLabel } from "@/components/ui/Card";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { downloadTextFile } from "@/lib/download";
+import { usePatientStore } from "@/store/usePatientStore";
 import { useTranslation } from "@/hooks/useTranslation";
 import type { ClaimStatus } from "@/types";
 
@@ -50,7 +51,11 @@ function formatCurrency(n: number) {
 
 export function PatientInsuranceView() {
   const { t } = useTranslation();
+  const profile = usePatientStore((s) => s.profile);
+  const insuranceClaims = usePatientStore((s) => s.insuranceClaims);
   const totalClaimed = insuranceClaims.reduce((sum, c) => sum + c.amount, 0);
+  const hasInsurance = Boolean(profile && profile.insurance !== "Not added yet");
+  const tpa = profile?.tpa;
 
   return (
     <div className="space-y-5">
@@ -67,48 +72,56 @@ export function PatientInsuranceView() {
               <ShieldCheck size={20} />
             </span>
             <div>
-              <p className="text-[15px] font-semibold text-text-primary">{patient.tpa.name}</p>
-              <p className="text-[12px] text-text-tertiary">{patient.insurance}</p>
+              <p className="text-[15px] font-semibold text-text-primary">{tpa?.name ?? "Not assigned yet"}</p>
+              <p className="text-[12px] text-text-tertiary">{profile?.insurance ?? "Not added yet"}</p>
             </div>
           </div>
-          <StatusPill label="Active" tone="emerald" />
+          <StatusPill label={hasInsurance ? "Active" : "Not set up"} tone={hasInsurance ? "emerald" : "amber"} />
         </div>
 
-        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div className="rounded-2xl bg-black/[0.035] px-3 py-3">
-            <p className="truncate text-[13px] font-semibold text-text-primary">{patient.name}</p>
-            <p className="mt-0.5 text-[10.5px] text-text-tertiary">Cardholder</p>
-          </div>
-          <div className="rounded-2xl bg-black/[0.035] px-3 py-3">
-            <p className="truncate text-[13px] font-semibold text-text-primary">{patient.tpa.healthCardId}</p>
-            <p className="mt-0.5 text-[10.5px] text-text-tertiary">Health Card ID</p>
-          </div>
-          <div className="rounded-2xl bg-black/[0.035] px-3 py-3">
-            <p className="truncate text-[13px] font-semibold text-text-primary">{patient.tpa.policyNumber}</p>
-            <p className="mt-0.5 text-[10.5px] text-text-tertiary">Policy Number</p>
-          </div>
-          <a
-            href={`tel:${patient.tpa.helpline.replace(/\D/g, "")}`}
-            className="flex flex-col justify-center rounded-2xl bg-cyan/10 px-3 py-3 transition hover:bg-cyan/15"
-          >
-            <p className="flex items-center gap-1.5 truncate text-[13px] font-semibold text-cyan">
-              <Phone size={12} /> {patient.tpa.helpline}
-            </p>
-            <p className="mt-0.5 text-[10.5px] text-text-tertiary">TPA Helpline</p>
-          </a>
-        </div>
+        {hasInsurance ? (
+          <>
+            <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="rounded-2xl bg-black/[0.035] px-3 py-3">
+                <p className="truncate text-[13px] font-semibold text-text-primary">{profile?.name}</p>
+                <p className="mt-0.5 text-[10.5px] text-text-tertiary">Cardholder</p>
+              </div>
+              <div className="rounded-2xl bg-black/[0.035] px-3 py-3">
+                <p className="truncate text-[13px] font-semibold text-text-primary">{tpa?.healthCardId}</p>
+                <p className="mt-0.5 text-[10.5px] text-text-tertiary">Health Card ID</p>
+              </div>
+              <div className="rounded-2xl bg-black/[0.035] px-3 py-3">
+                <p className="truncate text-[13px] font-semibold text-text-primary">{tpa?.policyNumber}</p>
+                <p className="mt-0.5 text-[10.5px] text-text-tertiary">Policy Number</p>
+              </div>
+              <a
+                href={`tel:${tpa?.helpline.replace(/\D/g, "") ?? ""}`}
+                className="flex flex-col justify-center rounded-2xl bg-cyan/10 px-3 py-3 transition hover:bg-cyan/15"
+              >
+                <p className="flex items-center gap-1.5 truncate text-[13px] font-semibold text-cyan">
+                  <Phone size={12} /> {tpa?.helpline}
+                </p>
+                <p className="mt-0.5 text-[10.5px] text-text-tertiary">TPA Helpline</p>
+              </a>
+            </div>
 
-        <button
-          onClick={() =>
-            downloadTextFile(
-              "tpa-health-card.txt",
-              `${patient.tpa.name}\nCardholder: ${patient.name}\nHealth Card ID: ${patient.tpa.healthCardId}\nPolicy Number: ${patient.tpa.policyNumber}\nInsurer: ${patient.insurance}\nHelpline: ${patient.tpa.helpline}\n\nShow this card at any network hospital desk for cashless admission.`
-            )
-          }
-          className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-full border border-hairline py-2.5 text-[13px] font-medium text-text-secondary transition hover:border-cyan/30 hover:text-cyan sm:w-auto sm:px-6"
-        >
-          <Download size={14} /> Download health card
-        </button>
+            <button
+              onClick={() =>
+                downloadTextFile(
+                  "tpa-health-card.txt",
+                  `${tpa?.name}\nCardholder: ${profile?.name}\nHealth Card ID: ${tpa?.healthCardId}\nPolicy Number: ${tpa?.policyNumber}\nInsurer: ${profile?.insurance}\nHelpline: ${tpa?.helpline}\n\nShow this card at any network hospital desk for cashless admission.`
+                )
+              }
+              className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-full border border-hairline py-2.5 text-[13px] font-medium text-text-secondary transition hover:border-cyan/30 hover:text-cyan sm:w-auto sm:px-6"
+            >
+              <Download size={14} /> Download health card
+            </button>
+          </>
+        ) : (
+          <p className="mt-4 text-[13px] text-text-secondary">
+            No insurance on file yet. Add your provider from Account Settings to get a TPA health card.
+          </p>
+        )}
       </Card>
 
       <Card>
@@ -144,6 +157,9 @@ export function PatientInsuranceView() {
         <div className="border-b border-hairline p-5">
           <CardLabel>{t("label.claimsHistory")}</CardLabel>
         </div>
+        {insuranceClaims.length === 0 && (
+          <p className="px-5 py-6 text-center text-[13px] text-text-tertiary">No claims filed yet.</p>
+        )}
         <div className="divide-y divide-hairline">
           {insuranceClaims.map((c, i) => (
             <motion.div
@@ -168,9 +184,11 @@ export function PatientInsuranceView() {
             </motion.div>
           ))}
         </div>
-        <p className="border-t border-hairline px-5 py-3 text-[11.5px] text-text-tertiary">
-          {formatCurrency(totalClaimed)} claimed across {insuranceClaims.length} claims
-        </p>
+        {insuranceClaims.length > 0 && (
+          <p className="border-t border-hairline px-5 py-3 text-[11.5px] text-text-tertiary">
+            {formatCurrency(totalClaimed)} claimed across {insuranceClaims.length} claims
+          </p>
+        )}
       </Card>
 
       <Card>

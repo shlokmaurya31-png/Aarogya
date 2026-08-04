@@ -233,6 +233,18 @@ export interface AuthUser {
   verificationStatus?: VerificationStatus;
 }
 
+export interface PatientOnboardingInput {
+  age: number;
+  gender: string;
+  height: string;
+  weight: string;
+  bloodGroup: string;
+  allergies: string[];
+  emergencyContactName: string;
+  emergencyContactPhone: string;
+  insuranceProvider?: string;
+}
+
 export interface VerificationApplication {
   id: string;
   role: VerificationRole;

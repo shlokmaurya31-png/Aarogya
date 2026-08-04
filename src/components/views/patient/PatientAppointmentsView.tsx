@@ -2,10 +2,10 @@
 
 import { motion } from "framer-motion";
 import { CalendarDays, Video, MapPin, Plus } from "lucide-react";
-import { appointments } from "@/lib/mock-data";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { Card } from "@/components/ui/Card";
 import { useToastStore } from "@/store/useToastStore";
+import { usePatientStore } from "@/store/usePatientStore";
 import { openDirections } from "@/lib/download";
 import { useTranslation } from "@/hooks/useTranslation";
 
@@ -14,6 +14,7 @@ function formatDate(d: string) {
 }
 
 export function PatientAppointmentsView() {
+  const appointments = usePatientStore((s) => s.appointments);
   const upcoming = appointments.filter((a) => a.status === "upcoming");
   const past = appointments.filter((a) => a.status !== "upcoming");
   const push = useToastStore((s) => s.push);
@@ -87,6 +88,9 @@ export function PatientAppointmentsView() {
       <div>
         <p className="mb-2.5 text-[12px] font-medium text-text-secondary">Earlier visits</p>
         <Card className="divide-y divide-hairline p-0">
+          {past.length === 0 && (
+            <p className="px-5 py-6 text-center text-[13px] text-text-tertiary">No earlier visits yet.</p>
+          )}
           {past.map((a) => (
             <div key={a.id} className="flex items-center justify-between gap-4 px-5 py-3.5">
               <div className="min-w-0">

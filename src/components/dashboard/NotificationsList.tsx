@@ -5,6 +5,8 @@ import { FlaskConical, Pill, CalendarClock, MessageCircle } from "lucide-react";
 import { Card, CardLabel } from "@/components/ui/Card";
 import { RISK_COLOR } from "@/lib/risk";
 import { useRecordsStore } from "@/store/useRecordsStore";
+import { usePatientStore } from "@/store/usePatientStore";
+import { useUiStore } from "@/store/useUiStore";
 import { useTranslation } from "@/hooks/useTranslation";
 import type { NotificationItem } from "@/types";
 
@@ -16,12 +18,18 @@ const ICONS: Record<NotificationItem["kind"], typeof FlaskConical> = {
 };
 
 export function NotificationsList() {
-  const notifications = useRecordsStore((s) => s.notifications);
+  const isPatient = useUiStore((s) => s.mode === "patient");
+  const doctorNotifications = useRecordsStore((s) => s.notifications);
+  const patientNotifications = usePatientStore((s) => s.notifications);
+  const notifications = isPatient ? patientNotifications : doctorNotifications;
   const { t } = useTranslation();
 
   return (
     <Card>
       <CardLabel>{t("label.notifications")}</CardLabel>
+      {notifications.length === 0 && (
+        <p className="mt-3 py-4 text-center text-[12.5px] text-text-tertiary">Nothing new yet.</p>
+      )}
       <div className="mt-3 flex flex-col gap-1">
         {notifications.map((n, i) => {
           const Icon = ICONS[n.kind];

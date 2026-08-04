@@ -268,12 +268,6 @@ export const notifications: NotificationItem[] = [
   },
 ];
 
-export const upcomingMedicines = [
-  { id: "med1", name: "Metformin", dose: "500mg", time: "8:00 PM", taken: false },
-  { id: "med2", name: "Atorvastatin", dose: "10mg", time: "9:00 PM", taken: false },
-  { id: "med3", name: "Vitamin D3", dose: "60000 IU", time: "Sunday", taken: true },
-];
-
 export const appointments: Appointment[] = [
   {
     id: "a1",

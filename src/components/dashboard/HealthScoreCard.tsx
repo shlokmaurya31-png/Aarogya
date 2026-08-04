@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import { Card, CardLabel } from "@/components/ui/Card";
-import { vitals } from "@/lib/mock-data";
+import { usePatientStore } from "@/store/usePatientStore";
 import { overallStatus } from "@/lib/plain-language";
 import { Counter } from "@/components/landing/Counter";
 import { useTranslation } from "@/hooks/useTranslation";
@@ -12,8 +12,24 @@ const R = 64;
 const CIRC = 2 * Math.PI * R;
 
 export function HealthScoreCard() {
-  const status = overallStatus(vitals.map((v) => v.risk));
+  const vitals = usePatientStore((s) => s.vitals);
   const { t } = useTranslation();
+
+  if (vitals.length === 0) {
+    return (
+      <Card className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
+        <CardLabel>{t("label.healthScore")}</CardLabel>
+        <div className="flex h-40 w-40 items-center justify-center rounded-full border-2 border-dashed border-hairline-strong">
+          <span className="text-[11px] text-text-tertiary">No data yet</span>
+        </div>
+        <p className="max-w-[220px] text-[12.5px] leading-relaxed text-text-secondary">
+          Your score builds up once a report is uploaded or a doctor adds a checkup.
+        </p>
+      </Card>
+    );
+  }
+
+  const status = overallStatus(vitals.map((v) => v.risk));
 
   return (
     <Card className="flex h-full flex-col items-center justify-center gap-5 p-8 text-center">

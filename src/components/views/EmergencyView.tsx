@@ -9,11 +9,26 @@ import { Card, CardLabel } from "@/components/ui/Card";
 import { BedBookingCard } from "@/components/dashboard/BedBookingCard";
 import { useToastStore } from "@/store/useToastStore";
 import { useTranslation } from "@/hooks/useTranslation";
+import { useUiStore } from "@/store/useUiStore";
+import { usePatientStore } from "@/store/usePatientStore";
 
 export function EmergencyView() {
   const [sosState, setSosState] = useState<"idle" | "sending" | "sent">("idle");
   const push = useToastStore((s) => s.push);
   const { t } = useTranslation();
+
+  const isPatientMode = useUiStore((s) => s.mode === "patient");
+  const patientProfile = usePatientStore((s) => s.profile);
+  const myEmergencyContacts = usePatientStore((s) => s.emergencyContacts);
+
+  const bloodGroup = isPatientMode ? patientProfile?.bloodGroup ?? "Not provided" : patient.bloodGroup;
+  const allergiesText = isPatientMode
+    ? patientProfile?.allergies.join(", ") ?? "Not provided"
+    : patient.allergies.join(", ");
+  const age = isPatientMode ? patientProfile?.age ?? "Not set" : patient.age;
+  const abhaNumber = isPatientMode ? patientProfile?.abhaNumber ?? "Not linked" : patient.abhaNumber;
+  const tpa = isPatientMode ? patientProfile?.tpa : patient.tpa;
+  const contacts = isPatientMode ? myEmergencyContacts : emergencyContacts;
 
   function triggerSos() {
     if (sosState !== "idle") return;
@@ -65,21 +80,19 @@ export function EmergencyView() {
         </div>
         <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div className="rounded-2xl bg-black/[0.035] px-3 py-3 text-center">
-            <p className="text-[16px] font-semibold text-red">{patient.bloodGroup}</p>
+            <p className="text-[16px] font-semibold text-red">{bloodGroup}</p>
             <p className="mt-0.5 text-[10.5px] text-text-tertiary">Blood Group</p>
           </div>
           <div className="rounded-2xl bg-black/[0.035] px-3 py-3 text-center">
-            <p className="truncate text-[13px] font-semibold text-amber">
-              {patient.allergies.join(", ")}
-            </p>
+            <p className="truncate text-[13px] font-semibold text-amber">{allergiesText}</p>
             <p className="mt-0.5 text-[10.5px] text-text-tertiary">Allergies</p>
           </div>
           <div className="rounded-2xl bg-black/[0.035] px-3 py-3 text-center">
-            <p className="text-[13px] font-semibold text-text-primary">{patient.age} yrs</p>
+            <p className="text-[13px] font-semibold text-text-primary">{age} yrs</p>
             <p className="mt-0.5 text-[10.5px] text-text-tertiary">Age</p>
           </div>
           <div className="rounded-2xl bg-black/[0.035] px-3 py-3 text-center">
-            <p className="truncate text-[13px] font-semibold text-text-primary">{patient.abhaNumber}</p>
+            <p className="truncate text-[13px] font-semibold text-text-primary">{abhaNumber}</p>
             <p className="mt-0.5 text-[10.5px] text-text-tertiary">ABHA ID</p>
           </div>
         </div>
@@ -98,24 +111,26 @@ export function EmergencyView() {
               </p>
             </div>
           </div>
-          <a
-            href={`tel:${patient.tpa.helpline.replace(/\D/g, "")}`}
-            className="flex shrink-0 items-center gap-1.5 rounded-full bg-cyan px-4 py-2 text-[12.5px] font-medium text-ink transition hover:brightness-110"
-          >
-            <Phone size={12} /> {patient.tpa.helpline}
-          </a>
+          {tpa && (
+            <a
+              href={`tel:${tpa.helpline.replace(/\D/g, "")}`}
+              className="flex shrink-0 items-center gap-1.5 rounded-full bg-cyan px-4 py-2 text-[12.5px] font-medium text-ink transition hover:brightness-110"
+            >
+              <Phone size={12} /> {tpa.helpline}
+            </a>
+          )}
         </div>
         <div className="mt-4 grid grid-cols-3 gap-3">
           <div className="rounded-2xl bg-black/[0.035] px-3 py-3 text-center">
-            <p className="truncate text-[12.5px] font-semibold text-text-primary">{patient.tpa.name}</p>
+            <p className="truncate text-[12.5px] font-semibold text-text-primary">{tpa?.name ?? "Not assigned yet"}</p>
             <p className="mt-0.5 text-[10.5px] text-text-tertiary">TPA</p>
           </div>
           <div className="rounded-2xl bg-black/[0.035] px-3 py-3 text-center">
-            <p className="truncate text-[12.5px] font-semibold text-text-primary">{patient.tpa.healthCardId}</p>
+            <p className="truncate text-[12.5px] font-semibold text-text-primary">{tpa?.healthCardId ?? "Not assigned"}</p>
             <p className="mt-0.5 text-[10.5px] text-text-tertiary">Health Card ID</p>
           </div>
           <div className="rounded-2xl bg-black/[0.035] px-3 py-3 text-center">
-            <p className="truncate text-[12.5px] font-semibold text-text-primary">{patient.tpa.policyNumber}</p>
+            <p className="truncate text-[12.5px] font-semibold text-text-primary">{tpa?.policyNumber ?? "Not assigned"}</p>
             <p className="mt-0.5 text-[10.5px] text-text-tertiary">Policy Number</p>
           </div>
         </div>
@@ -125,8 +140,13 @@ export function EmergencyView() {
         <div className="border-b border-hairline p-5">
           <CardLabel>{t("label.contactsPriority")}</CardLabel>
         </div>
+        {contacts.length === 0 && (
+          <p className="px-5 py-6 text-center text-[12.5px] text-text-tertiary">
+            No emergency contacts on file yet.
+          </p>
+        )}
         <div className="divide-y divide-hairline">
-          {emergencyContacts.map((c, i) => (
+          {contacts.map((c, i) => (
             <motion.div
               key={c.id}
               initial={{ opacity: 0, y: 6 }}

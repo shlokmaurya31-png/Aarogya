@@ -6,7 +6,7 @@ import { REPORT_FRIENDLY } from "@/lib/plain-language";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { Card } from "@/components/ui/Card";
 import { downloadTextFile } from "@/lib/download";
-import { useRecordsStore } from "@/store/useRecordsStore";
+import { usePatientStore } from "@/store/usePatientStore";
 import { useTranslation } from "@/hooks/useTranslation";
 import type { ReportKind } from "@/types";
 
@@ -22,7 +22,7 @@ function formatDate(d: string) {
 }
 
 export function PatientReportsView() {
-  const reports = useRecordsStore((s) => s.reports);
+  const reports = usePatientStore((s) => s.reports);
   const { t } = useTranslation();
 
   return (
@@ -32,6 +32,14 @@ export function PatientReportsView() {
         title={t("reports.titlePatient")}
         subtitle="No medical jargon, just what it means for you"
       />
+
+      {reports.length === 0 && (
+        <Card>
+          <p className="text-center text-[13px] text-text-secondary">
+            No reports yet. Upload one from Ask Aarogya on your Home tab, or your doctor/lab will add results here.
+          </p>
+        </Card>
+      )}
 
       <div className="flex flex-col gap-3">
         {reports.map((r, i) => {

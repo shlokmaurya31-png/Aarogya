@@ -8,6 +8,7 @@ import { Card, CardLabel } from "@/components/ui/Card";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { useAuthStore } from "@/store/useAuthStore";
+import { usePatientStore } from "@/store/usePatientStore";
 import { useLanguageStore } from "@/store/useLanguageStore";
 import { useToastStore } from "@/store/useToastStore";
 import { LANGUAGES } from "@/lib/i18n";
@@ -53,6 +54,8 @@ function SettingsForm({ user }: { user: AuthUser }) {
   const router = useRouter();
   const updateProfile = useAuthStore((s) => s.updateProfile);
   const logout = useAuthStore((s) => s.logout);
+  const patientProfile = usePatientStore((s) => s.profile);
+  const updateInsuranceProvider = usePatientStore((s) => s.updateInsuranceProvider);
   const language = useLanguageStore((s) => s.language);
   const setLanguage = useLanguageStore((s) => s.setLanguage);
   const push = useToastStore((s) => s.push);
@@ -63,6 +66,9 @@ function SettingsForm({ user }: { user: AuthUser }) {
   const [specialty, setSpecialty] = useState(user.specialty ?? "");
   const [registrationId, setRegistrationId] = useState(user.registrationId ?? "");
   const [facility, setFacility] = useState(user.facility ?? "");
+  const [insuranceProvider, setInsuranceProvider] = useState(
+    patientProfile && patientProfile.insurance !== "Not added yet" ? patientProfile.insurance : ""
+  );
 
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -83,6 +89,9 @@ function SettingsForm({ user }: { user: AuthUser }) {
     if (!result.ok) {
       push(result.error, "amber");
       return;
+    }
+    if (user.role === "patient" && patientProfile) {
+      updateInsuranceProvider(insuranceProvider);
     }
     push("Profile updated", "emerald");
   }
@@ -203,6 +212,16 @@ function SettingsForm({ user }: { user: AuthUser }) {
                   <input value={facility} onChange={(e) => setFacility(e.target.value)} className={inputClass} />
                 </Field>
               </>
+            )}
+            {user.role === "patient" && (
+              <Field label="Health insurance provider">
+                <input
+                  value={insuranceProvider}
+                  onChange={(e) => setInsuranceProvider(e.target.value)}
+                  className={inputClass}
+                  placeholder="e.g. Star Health (leave blank to remove)"
+                />
+              </Field>
             )}
             <button
               type="submit"

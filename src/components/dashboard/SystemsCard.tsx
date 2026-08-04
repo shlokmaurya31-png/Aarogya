@@ -8,6 +8,7 @@ import { bodySystems } from "@/lib/mock-data";
 import { RISK_COLOR, RISK_LABEL } from "@/lib/risk";
 import { SYSTEM_FRIENDLY, RISK_FRIENDLY } from "@/lib/plain-language";
 import { useUiStore } from "@/store/useUiStore";
+import { usePatientStore } from "@/store/usePatientStore";
 import { useTranslation } from "@/hooks/useTranslation";
 import { cn } from "@/lib/utils";
 
@@ -15,15 +16,23 @@ import { cn } from "@/lib/utils";
 export function SystemsCard() {
   const [openId, setOpenId] = useState<string | null>(null);
   const isPatient = useUiStore((s) => s.mode === "patient");
+  const myBodySystems = usePatientStore((s) => s.bodySystems);
   const { t } = useTranslation();
+
+  const systems = isPatient ? myBodySystems : bodySystems;
 
   return (
     <Card className="h-full p-0">
       <div className="border-b border-hairline p-5">
         <CardLabel>{isPatient ? t("label.bodySystemsPatient") : t("label.bodySystemsDoctor")}</CardLabel>
       </div>
+      {systems.length === 0 && (
+        <p className="px-5 py-8 text-center text-[12.5px] text-text-tertiary">
+          Nothing tracked yet. Upload a report or visit a doctor to start building this out.
+        </p>
+      )}
       <div className="divide-y divide-hairline">
-        {bodySystems.map((sys) => {
+        {systems.map((sys) => {
           const isOpen = openId === sys.id;
           const color = RISK_COLOR[sys.status];
           return (
