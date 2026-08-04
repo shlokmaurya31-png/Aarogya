@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Plus, X } from "lucide-react";
+import { Plus, User, X } from "lucide-react";
 import { patient } from "@/lib/mock-data";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { Card } from "@/components/ui/Card";
 import { StatusPill } from "@/components/ui/StatusPill";
+import { Autocomplete } from "@/components/ui/Autocomplete";
 import { useToastStore } from "@/store/useToastStore";
 import { useRecordsStore } from "@/store/useRecordsStore";
 import { useTranslation } from "@/hooks/useTranslation";
@@ -236,7 +237,15 @@ export function PrescriptionsView() {
                   <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.1em] text-text-tertiary">
                     Prescribing for
                   </p>
-                  <p className="text-[13px] text-text-secondary">{patient.name} · {patient.patientId}</p>
+                  <div className="flex items-center gap-2.5 rounded-2xl bg-black/[0.035] px-3.5 py-2.5">
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-cyan/10 text-cyan">
+                      <User size={13} />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate text-[13px] font-medium text-text-primary">{patient.name}</p>
+                      <p className="truncate text-[11px] text-text-tertiary">{patient.patientId}</p>
+                    </div>
+                  </div>
                 </div>
 
                 <div>
@@ -244,18 +253,13 @@ export function PrescriptionsView() {
                     Medication
                   </p>
                   <div className="space-y-2">
-                    <input
+                    <Autocomplete
                       value={drug}
-                      onChange={(e) => setDrug(e.target.value)}
+                      onChange={setDrug}
+                      options={ESSENTIAL_MEDICINES}
                       placeholder="Drug name"
-                      list="essential-medicines"
                       className="w-full rounded-xl border border-hairline bg-black/[0.025] px-3.5 py-2.5 text-[13px] outline-none focus:border-cyan/40"
                     />
-                    <datalist id="essential-medicines">
-                      {ESSENTIAL_MEDICINES.map((med) => (
-                        <option key={med} value={med} />
-                      ))}
-                    </datalist>
                     <p className="text-[10.5px] text-text-tertiary">
                       Suggestions from India&rsquo;s National List of Essential Medicines (NLEM 2022)
                     </p>
