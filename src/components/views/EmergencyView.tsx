@@ -10,7 +10,11 @@ import { BedBookingCard } from "@/components/dashboard/BedBookingCard";
 import { useToastStore } from "@/store/useToastStore";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useUiStore } from "@/store/useUiStore";
-import { usePatientStore } from "@/store/usePatientStore";
+import { usePatientStore, PATIENT_PLACEHOLDER } from "@/store/usePatientStore";
+
+function resolveOrPlaceholder(value: string | undefined, placeholder: string, translated: string) {
+  return value && value !== placeholder ? value : translated;
+}
 
 export function EmergencyView() {
   const [sosState, setSosState] = useState<"idle" | "sending" | "sent">("idle");
@@ -21,13 +25,23 @@ export function EmergencyView() {
   const patientProfile = usePatientStore((s) => s.profile);
   const myEmergencyContacts = usePatientStore((s) => s.emergencyContacts);
 
-  const bloodGroup = isPatientMode ? patientProfile?.bloodGroup ?? "Not provided" : patient.bloodGroup;
+  const bloodGroup = isPatientMode
+    ? resolveOrPlaceholder(patientProfile?.bloodGroup, PATIENT_PLACEHOLDER.bloodGroupUnknown, t("onboarding.bloodGroup.unknown"))
+    : patient.bloodGroup;
   const allergiesText = isPatientMode
-    ? patientProfile?.allergies.join(", ") ?? "Not provided"
+    ? patientProfile && !(patientProfile.allergies.length === 1 && patientProfile.allergies[0] === PATIENT_PLACEHOLDER.noneReported)
+      ? patientProfile.allergies.join(", ")
+      : t("patientProfile.noneReported")
     : patient.allergies.join(", ");
-  const age = isPatientMode ? patientProfile?.age ?? "Not set" : patient.age;
-  const abhaNumber = isPatientMode ? patientProfile?.abhaNumber ?? "Not linked" : patient.abhaNumber;
+  const age = isPatientMode ? patientProfile?.age ?? t("emergencyView.notSet") : patient.age;
+  const abhaNumber = isPatientMode
+    ? resolveOrPlaceholder(patientProfile?.abhaNumber, PATIENT_PLACEHOLDER.notLinkedYet, t("emergencyView.notLinked"))
+    : patient.abhaNumber;
   const tpa = isPatientMode ? patientProfile?.tpa : patient.tpa;
+  const tpaName = resolveOrPlaceholder(tpa?.name, PATIENT_PLACEHOLDER.notAssignedYet, t("emergencyView.notAssignedYet"));
+  const tpaHealthCardId = resolveOrPlaceholder(tpa?.healthCardId, PATIENT_PLACEHOLDER.notAssigned, t("emergencyView.notAssigned"));
+  const tpaPolicyNumber = resolveOrPlaceholder(tpa?.policyNumber, PATIENT_PLACEHOLDER.notAssigned, t("emergencyView.notAssigned"));
+  const hasTpaHelpline = Boolean(tpa && tpa.helpline !== PATIENT_PLACEHOLDER.addInsuranceInSettings);
   const contacts = isPatientMode ? myEmergencyContacts : emergencyContacts;
 
   function triggerSos() {
@@ -35,7 +49,7 @@ export function EmergencyView() {
     setSosState("sending");
     setTimeout(() => {
       setSosState("sent");
-      push("SOS sent, contacts alerted and nearest ambulance notified", "red");
+      push(t("emergencyView.toastSosSent"), "red");
       setTimeout(() => setSosState("idle"), 4000);
     }, 900);
   }
@@ -43,9 +57,9 @@ export function EmergencyView() {
   return (
     <div className="space-y-5">
       <SectionHeader
-        eyebrow="Emergency"
+        eyebrow={t("nav.emergency")}
         title={t("emergency.title")}
-        subtitle="Blood group, allergies and contacts are shared instantly with responders on SOS"
+        subtitle={t("emergencyView.subtitle")}
       />
 
       <Card className="flex flex-col items-start justify-between gap-4 border-red/20 bg-red/[0.05] sm:flex-row sm:items-center">
@@ -54,9 +68,9 @@ export function EmergencyView() {
             <Siren size={20} />
           </span>
           <div>
-            <p className="text-[15px] font-semibold text-text-primary">Emergency SOS</p>
+            <p className="text-[15px] font-semibold text-text-primary">{t("emergencyView.sosTitle")}</p>
             <p className="text-[12px] text-text-secondary">
-              Alerts your contacts and shares live location with the nearest ambulance
+              {t("emergencyView.sosDescription")}
             </p>
           </div>
         </div>
@@ -81,19 +95,19 @@ export function EmergencyView() {
         <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div className="rounded-2xl bg-black/[0.035] px-3 py-3 text-center">
             <p className="text-[16px] font-semibold text-red">{bloodGroup}</p>
-            <p className="mt-0.5 text-[10.5px] text-text-tertiary">Blood Group</p>
+            <p className="mt-0.5 text-[10.5px] text-text-tertiary">{t("prescriptionDoc.label.bloodGroup")}</p>
           </div>
           <div className="rounded-2xl bg-black/[0.035] px-3 py-3 text-center">
             <p className="truncate text-[13px] font-semibold text-amber">{allergiesText}</p>
-            <p className="mt-0.5 text-[10.5px] text-text-tertiary">Allergies</p>
+            <p className="mt-0.5 text-[10.5px] text-text-tertiary">{t("emergencyView.allergiesLabel")}</p>
           </div>
           <div className="rounded-2xl bg-black/[0.035] px-3 py-3 text-center">
-            <p className="text-[13px] font-semibold text-text-primary">{age} yrs</p>
-            <p className="mt-0.5 text-[10.5px] text-text-tertiary">Age</p>
+            <p className="text-[13px] font-semibold text-text-primary">{age} {t("prescriptionDoc.label.yrs")}</p>
+            <p className="mt-0.5 text-[10.5px] text-text-tertiary">{t("onboarding.field.age")}</p>
           </div>
           <div className="rounded-2xl bg-black/[0.035] px-3 py-3 text-center">
             <p className="truncate text-[13px] font-semibold text-text-primary">{abhaNumber}</p>
-            <p className="mt-0.5 text-[10.5px] text-text-tertiary">ABHA ID</p>
+            <p className="mt-0.5 text-[10.5px] text-text-tertiary">{t("emergencyView.abhaIdLabel")}</p>
           </div>
         </div>
       </Card>
@@ -105,13 +119,13 @@ export function EmergencyView() {
               <ShieldCheck size={20} />
             </span>
             <div>
-              <p className="text-[15px] font-semibold text-text-primary">Cashless Treatment (TPA)</p>
+              <p className="text-[15px] font-semibold text-text-primary">{t("emergencyView.tpaTitle")}</p>
               <p className="text-[12px] text-text-secondary">
-                Show this at any network hospital desk to admit without paying upfront
+                {t("emergencyView.tpaDescription")}
               </p>
             </div>
           </div>
-          {tpa && (
+          {hasTpaHelpline && tpa && (
             <a
               href={`tel:${tpa.helpline.replace(/\D/g, "")}`}
               className="flex shrink-0 items-center gap-1.5 rounded-full bg-cyan px-4 py-2 text-[12.5px] font-medium text-ink transition hover:brightness-110"
@@ -122,16 +136,16 @@ export function EmergencyView() {
         </div>
         <div className="mt-4 grid grid-cols-3 gap-3">
           <div className="rounded-2xl bg-black/[0.035] px-3 py-3 text-center">
-            <p className="truncate text-[12.5px] font-semibold text-text-primary">{tpa?.name ?? "Not assigned yet"}</p>
-            <p className="mt-0.5 text-[10.5px] text-text-tertiary">TPA</p>
+            <p className="truncate text-[12.5px] font-semibold text-text-primary">{tpaName}</p>
+            <p className="mt-0.5 text-[10.5px] text-text-tertiary">{t("emergencyView.tpaLabel")}</p>
           </div>
           <div className="rounded-2xl bg-black/[0.035] px-3 py-3 text-center">
-            <p className="truncate text-[12.5px] font-semibold text-text-primary">{tpa?.healthCardId ?? "Not assigned"}</p>
-            <p className="mt-0.5 text-[10.5px] text-text-tertiary">Health Card ID</p>
+            <p className="truncate text-[12.5px] font-semibold text-text-primary">{tpaHealthCardId}</p>
+            <p className="mt-0.5 text-[10.5px] text-text-tertiary">{t("emergencyView.healthCardIdLabel")}</p>
           </div>
           <div className="rounded-2xl bg-black/[0.035] px-3 py-3 text-center">
-            <p className="truncate text-[12.5px] font-semibold text-text-primary">{tpa?.policyNumber ?? "Not assigned"}</p>
-            <p className="mt-0.5 text-[10.5px] text-text-tertiary">Policy Number</p>
+            <p className="truncate text-[12.5px] font-semibold text-text-primary">{tpaPolicyNumber}</p>
+            <p className="mt-0.5 text-[10.5px] text-text-tertiary">{t("emergencyView.policyNumberLabel")}</p>
           </div>
         </div>
       </Card>
@@ -142,7 +156,7 @@ export function EmergencyView() {
         </div>
         {contacts.length === 0 && (
           <p className="px-5 py-6 text-center text-[12.5px] text-text-tertiary">
-            No emergency contacts on file yet.
+            {t("emergencyView.noContacts")}
           </p>
         )}
         <div className="divide-y divide-hairline">

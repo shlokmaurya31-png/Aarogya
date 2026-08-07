@@ -10,8 +10,9 @@ import { useAuthStore } from "@/store/useAuthStore";
 import { usePatientStore } from "@/store/usePatientStore";
 import { useUiStore } from "@/store/useUiStore";
 import { useToastStore } from "@/store/useToastStore";
+import { useTranslation } from "@/hooks/useTranslation";
 
-type Role = "patient" | "doctor" | "lab";
+type Role = "patient" | "doctor" | "lab" | "hospital";
 type Mode = "signin" | "signup";
 
 const inputClass =
@@ -26,38 +27,52 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-const ROLE_OPTIONS: { id: Role; label: string }[] = [
-  { id: "patient", label: "Patient" },
-  { id: "doctor", label: "Doctor" },
-  { id: "lab", label: "Lab" },
-];
-const MODE_OPTIONS: { id: Mode; label: string }[] = [
-  { id: "signin", label: "Sign in" },
-  { id: "signup", label: "Sign up" },
-];
+function buildRoleOptions(t: (key: string) => string): { id: Role; label: string }[] {
+  return [
+    { id: "patient", label: t("login.role.patient") },
+    { id: "doctor", label: t("login.role.doctor") },
+    { id: "lab", label: t("login.role.lab") },
+    { id: "hospital", label: t("login.role.hospital") },
+  ];
+}
+function buildModeOptions(t: (key: string) => string): { id: Mode; label: string }[] {
+  return [
+    { id: "signin", label: t("login.mode.signin") },
+    { id: "signup", label: t("login.mode.signup") },
+  ];
+}
 
-const EYEBROW: Record<Role, string> = {
-  patient: "Patient access",
-  doctor: "Clinician access",
-  lab: "Lab / diagnostics access",
-};
+function buildEyebrow(t: (key: string) => string): Record<Role, string> {
+  return {
+    patient: t("login.eyebrow.patient"),
+    doctor: t("login.eyebrow.doctor"),
+    lab: t("login.eyebrow.lab"),
+    hospital: t("login.eyebrow.hospital"),
+  };
+}
 
-const SUBTITLE: Record<Role, string> = {
-  patient: "Your health record, your AI assistant, one place.",
-  doctor: "Verified clinical access to patient charts, labs, and prescriptions.",
-  lab: "Register accredited test reports directly into a patient's record.",
-};
+function buildSubtitle(t: (key: string) => string): Record<Role, string> {
+  return {
+    patient: t("login.subtitle.patient"),
+    doctor: t("login.subtitle.doctor"),
+    lab: t("login.subtitle.lab"),
+    hospital: t("login.subtitle.hospital"),
+  };
+}
 
 export default function LoginPage() {
+  const { t } = useTranslation();
   const router = useRouter();
   const push = useToastStore((s) => s.push);
   const setUiMode = useUiStore((s) => s.setMode);
   const signInPatient = useAuthStore((s) => s.signInPatient);
   const signInDoctor = useAuthStore((s) => s.signInDoctor);
   const signInLab = useAuthStore((s) => s.signInLab);
+  const signInHospital = useAuthStore((s) => s.signInHospital);
   const signUpPatient = useAuthStore((s) => s.signUpPatient);
   const signUpDoctor = useAuthStore((s) => s.signUpDoctor);
   const signUpLab = useAuthStore((s) => s.signUpLab);
+  const signUpHospital = useAuthStore((s) => s.signUpHospital);
 
   const [role, setRole] = useState<Role>("patient");
   const [mode, setMode] = useState<Mode>("signin");
@@ -72,8 +87,14 @@ export default function LoginPage() {
   const [specialty, setSpecialty] = useState("");
   const [registrationId, setRegistrationId] = useState("");
   const [facility, setFacility] = useState("");
+  const [city, setCity] = useState("");
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [proofError, setProofError] = useState<string | null>(null);
+
+  const ROLE_OPTIONS = buildRoleOptions(t);
+  const MODE_OPTIONS = buildModeOptions(t);
+  const EYEBROW = buildEyebrow(t);
+  const SUBTITLE = buildSubtitle(t);
 
   function switchMode(next: Mode) {
     setMode(next);
@@ -92,6 +113,10 @@ export default function LoginPage() {
       router.push("/lab");
       return;
     }
+    if (nextRole === "hospital") {
+      router.push("/hospital");
+      return;
+    }
     setUiMode(nextRole);
     if (nextRole === "patient" && !usePatientStore.getState().profile) {
       router.push("/onboarding");
@@ -104,12 +129,27 @@ export default function LoginPage() {
     e.preventDefault();
     setError(null);
     const result =
-      role === "patient" ? signInPatient(email, password) : role === "doctor" ? signInDoctor(email, password) : signInLab(email, password);
+      role === "patient"
+        ? signInPatient(email, password)
+        : role === "doctor"
+          ? signInDoctor(email, password)
+          : role === "lab"
+            ? signInLab(email, password)
+            : signInHospital(email, password);
     if (!result.ok) {
       setError(result.error);
       return;
     }
-    push(`Welcome back${role === "doctor" ? ", doctor" : role === "lab" ? " to the lab portal" : ""}.`, "emerald");
+    push(
+      role === "doctor"
+        ? t("login.toast.welcomeBackDoctor")
+        : role === "lab"
+          ? t("login.toast.welcomeBackLab")
+          : role === "hospital"
+            ? t("login.toast.welcomeBackHospital")
+            : t("login.toast.welcomeBackPatient"),
+      "emerald"
+    );
     enter(role);
   }
 
@@ -119,7 +159,7 @@ export default function LoginPage() {
     setProofError(null);
 
     if (password !== confirmPassword) {
-      setError("Passwords don't match.");
+      setError(t("login.error.passwordMismatch"));
       return;
     }
 
@@ -129,14 +169,18 @@ export default function LoginPage() {
         setError(result.error);
         return;
       }
-      push("Account created. Welcome to Aarogya.", "emerald");
+      push(t("login.toast.accountCreated"), "emerald");
       enter("patient");
       return;
     }
 
     if (!proofFile) {
       setProofError(
-        role === "doctor" ? "Upload a proof of practice document to continue." : "Upload a proof of accreditation to continue."
+        role === "doctor"
+          ? t("login.error.proofPractice")
+          : role === "hospital"
+            ? t("login.error.proofRegistration")
+            : t("login.error.proofAccreditation")
       );
       return;
     }
@@ -147,8 +191,19 @@ export default function LoginPage() {
         setError(result.error);
         return;
       }
-      push("Application submitted. Verification pending.", "amber");
+      push(t("login.toast.applicationSubmitted"), "amber");
       enter("doctor");
+      return;
+    }
+
+    if (role === "hospital") {
+      const result = signUpHospital({ name, email, phone, city, registrationId, password, proofFile });
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      push(t("login.toast.applicationSubmitted"), "amber");
+      enter("hospital");
       return;
     }
 
@@ -157,20 +212,20 @@ export default function LoginPage() {
       setError(result.error);
       return;
     }
-    push("Application submitted. Verification pending.", "amber");
+    push(t("login.toast.applicationSubmitted"), "amber");
     enter("lab");
   }
 
   return (
     <AuthLayout
       eyebrow={EYEBROW[role]}
-      title={mode === "signin" ? "Welcome back" : "Create your account"}
+      title={mode === "signin" ? t("login.title.signin") : t("login.title.signup")}
       subtitle={SUBTITLE[role]}
       footer={
         <p className="text-center text-[12px] text-text-tertiary">
-          Platform admin?{" "}
+          {t("login.footer.adminPrompt")}{" "}
           <Link href="/admin/login" className="text-cyan hover:underline">
-            Sign in here
+            {t("login.footer.adminLink")}
           </Link>
         </p>
       }
@@ -182,36 +237,50 @@ export default function LoginPage() {
 
       <form onSubmit={mode === "signin" ? handleSignIn : handleSignUp} className="mt-6 space-y-4">
         {mode === "signup" && (
-          <Field label={role === "lab" ? "Lab / diagnostic centre name" : "Full name"}>
+          <Field
+            label={
+              role === "lab"
+                ? t("login.field.labName")
+                : role === "hospital"
+                  ? t("login.field.hospitalName")
+                  : t("login.field.fullName")
+            }
+          >
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
               className={inputClass}
-              placeholder={role === "lab" ? "e.g. Dr Lal PathLabs, Pune Branch" : "e.g. Aditi Sharma"}
+              placeholder={
+                role === "lab"
+                  ? t("login.placeholder.labName")
+                  : role === "hospital"
+                    ? t("login.placeholder.hospitalName")
+                    : t("login.placeholder.fullName")
+              }
             />
           </Field>
         )}
 
-        <Field label="Email">
+        <Field label={t("login.field.email")}>
           <input
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
             className={inputClass}
-            placeholder="you@example.com"
+            placeholder={t("login.placeholder.email")}
           />
         </Field>
 
         {mode === "signup" && (
-          <Field label="Phone number">
+          <Field label={t("login.field.phone")}>
             <input
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               required
               className={inputClass}
-              placeholder="+91 98xxxxxxx"
+              placeholder={t("login.placeholder.phone")}
             />
           </Field>
         )}
@@ -219,37 +288,37 @@ export default function LoginPage() {
         {mode === "signup" && role === "doctor" && (
           <>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Specialty">
+              <Field label={t("login.field.specialty")}>
                 <input
                   value={specialty}
                   onChange={(e) => setSpecialty(e.target.value)}
                   required
                   className={inputClass}
-                  placeholder="Cardiology"
+                  placeholder={t("login.placeholder.specialty")}
                 />
               </Field>
-              <Field label="Registration ID">
+              <Field label={t("login.field.registrationId")}>
                 <input
                   value={registrationId}
                   onChange={(e) => setRegistrationId(e.target.value)}
                   required
                   className={inputClass}
-                  placeholder="MCI-XX-00000"
+                  placeholder={t("login.placeholder.registrationIdDoctor")}
                 />
               </Field>
             </div>
-            <Field label="Hospital / facility">
+            <Field label={t("login.field.hospitalFacility")}>
               <input
                 value={facility}
                 onChange={(e) => setFacility(e.target.value)}
                 required
                 className={inputClass}
-                placeholder="e.g. Fortis Hospital, Pune"
+                placeholder={t("login.placeholder.hospitalName")}
               />
             </Field>
             <FileDropField
-              label="Proof of practice"
-              hint="Medical registration certificate or license (PDF or image)."
+              label={t("login.proof.practiceLabel")}
+              hint={t("login.proof.practiceHint")}
               accept="image/*,.pdf"
               file={proofFile}
               onChange={(f) => {
@@ -263,27 +332,27 @@ export default function LoginPage() {
 
         {mode === "signup" && role === "lab" && (
           <>
-            <Field label="Accreditation ID">
+            <Field label={t("login.field.accreditationId")}>
               <input
                 value={registrationId}
                 onChange={(e) => setRegistrationId(e.target.value)}
                 required
                 className={inputClass}
-                placeholder="e.g. NABL-XX-00000 or CAP-00000"
+                placeholder={t("login.placeholder.accreditationId")}
               />
             </Field>
-            <Field label="Branch address / facility">
+            <Field label={t("login.field.branchAddress")}>
               <input
                 value={facility}
                 onChange={(e) => setFacility(e.target.value)}
                 required
                 className={inputClass}
-                placeholder="e.g. Dr Lal PathLabs, Camp Road, Pune"
+                placeholder={t("login.placeholder.branchAddress")}
               />
             </Field>
             <FileDropField
-              label="Proof of accreditation"
-              hint="NABL or CAP accreditation certificate, or lab registration license (PDF or image)."
+              label={t("login.proof.accreditationLabel")}
+              hint={t("login.proof.accreditationHint")}
               accept="image/*,.pdf"
               file={proofFile}
               onChange={(f) => {
@@ -295,7 +364,43 @@ export default function LoginPage() {
           </>
         )}
 
-        <Field label="Password">
+        {mode === "signup" && role === "hospital" && (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label={t("login.field.registrationId")}>
+                <input
+                  value={registrationId}
+                  onChange={(e) => setRegistrationId(e.target.value)}
+                  required
+                  className={inputClass}
+                  placeholder={t("login.placeholder.registrationIdHospital")}
+                />
+              </Field>
+              <Field label={t("login.field.city")}>
+                <input
+                  value={city}
+                  onChange={(e) => setCity(e.target.value)}
+                  required
+                  className={inputClass}
+                  placeholder={t("login.placeholder.city")}
+                />
+              </Field>
+            </div>
+            <FileDropField
+              label={t("login.proof.registrationLabel")}
+              hint={t("login.proof.registrationHint")}
+              accept="image/*,.pdf"
+              file={proofFile}
+              onChange={(f) => {
+                setProofFile(f);
+                setProofError(null);
+              }}
+              error={proofError ?? undefined}
+            />
+          </>
+        )}
+
+        <Field label={t("login.field.password")}>
           <input
             type="password"
             value={password}
@@ -303,19 +408,19 @@ export default function LoginPage() {
             required
             minLength={mode === "signup" ? 6 : undefined}
             className={inputClass}
-            placeholder="••••••••"
+            placeholder={t("login.placeholder.password")}
           />
         </Field>
 
         {mode === "signup" && (
-          <Field label="Confirm password">
+          <Field label={t("login.field.confirmPassword")}>
             <input
               type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               required
               className={inputClass}
-              placeholder="••••••••"
+              placeholder={t("login.placeholder.password")}
             />
           </Field>
         )}
@@ -324,10 +429,10 @@ export default function LoginPage() {
           <div className="flex justify-end">
             <button
               type="button"
-              onClick={() => push("Password reset isn't wired up in this prototype yet.", "amber")}
+              onClick={() => push(t("login.toast.forgotPasswordUnavailable"), "amber")}
               className="text-[11.5px] text-text-tertiary hover:text-cyan"
             >
-              Forgot password?
+              {t("login.forgotPassword")}
             </button>
           </div>
         )}
@@ -338,7 +443,11 @@ export default function LoginPage() {
           type="submit"
           className="w-full rounded-full bg-cyan py-3 text-[13.5px] font-medium text-ink transition hover:brightness-110 active:scale-[0.99]"
         >
-          {mode === "signin" ? "Sign in" : role === "patient" ? "Create account" : "Submit application"}
+          {mode === "signin"
+            ? t("login.submit.signin")
+            : role === "patient"
+              ? t("login.submit.createAccount")
+              : t("login.submit.submitApplication")}
         </button>
       </form>
     </AuthLayout>

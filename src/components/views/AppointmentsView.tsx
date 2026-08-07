@@ -16,6 +16,12 @@ const STATUS_TONE: Record<AppointmentStatus, "emerald" | "neutral" | "red"> = {
   cancelled: "red",
 };
 
+const STATUS_LABEL_KEY: Record<AppointmentStatus, string> = {
+  upcoming: "appointmentsView.upcoming",
+  completed: "appointmentsView.statusCompleted",
+  cancelled: "appointmentsView.statusCancelled",
+};
+
 function formatDate(d: string) {
   return new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 }
@@ -29,12 +35,12 @@ export function AppointmentsView() {
   return (
     <div className="space-y-5">
       <SectionHeader
-        eyebrow="Appointments"
+        eyebrow={t("nav.appointments")}
         title={t("appointments.title")}
-        subtitle={`${upcoming.length} upcoming · Next with ${upcoming[0]?.doctor ?? "None scheduled"}`}
+        subtitle={`${upcoming.length} ${t("appointmentsView.upcoming").toLowerCase()} · ${t("appointmentsView.nextWith")} ${upcoming[0]?.doctor ?? t("appointmentsView.noneScheduled")}`}
         action={
           <button
-            onClick={() => push("Appointment request sent, the patient will be notified to confirm a slot", "emerald")}
+            onClick={() => push(t("appointmentsView.bookRequestSent"), "emerald")}
             className="flex items-center gap-1.5 rounded-full bg-cyan px-4 py-2 text-[12.5px] font-medium text-ink transition hover:brightness-110 active:scale-[0.97]"
           >
             <Plus size={14} /> {t("btn.bookAppointment")}
@@ -43,7 +49,7 @@ export function AppointmentsView() {
       />
 
       <div>
-        <p className="mb-2.5 text-[12px] font-medium text-text-secondary">Upcoming</p>
+        <p className="mb-2.5 text-[12px] font-medium text-text-secondary">{t("appointmentsView.upcoming")}</p>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {upcoming.map((a, i) => (
             <motion.div
@@ -58,7 +64,7 @@ export function AppointmentsView() {
                     <p className="text-[14px] font-semibold">{a.doctor}</p>
                     <p className="text-[12px] text-text-tertiary">{a.specialty}</p>
                   </div>
-                  <StatusPill label={a.mode === "video" ? "Video" : "In person"} tone="cyan" />
+                  <StatusPill label={a.mode === "video" ? t("appointmentsView.video") : t("appointmentsView.inPerson")} tone="cyan" />
                 </div>
                 <div className="mt-4 flex items-center gap-2 text-[12.5px] text-text-secondary">
                   <CalendarDays size={14} className="text-text-tertiary" />
@@ -79,7 +85,7 @@ export function AppointmentsView() {
       </div>
 
       <div>
-        <p className="mb-2.5 text-[12px] font-medium text-text-secondary">Past</p>
+        <p className="mb-2.5 text-[12px] font-medium text-text-secondary">{t("appointmentsView.past")}</p>
         <Card className="divide-y divide-hairline p-0">
           {past.map((a) => (
             <div key={a.id} className="flex items-center justify-between gap-4 px-5 py-3.5">
@@ -93,7 +99,7 @@ export function AppointmentsView() {
                 <span className="tabular-nums text-[12px] text-text-tertiary">
                   {formatDate(a.date)}
                 </span>
-                <StatusPill label={a.status} tone={STATUS_TONE[a.status]} />
+                <StatusPill label={t(STATUS_LABEL_KEY[a.status])} tone={STATUS_TONE[a.status]} />
               </div>
             </div>
           ))}

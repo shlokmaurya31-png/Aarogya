@@ -10,12 +10,13 @@ import { usePatientStore } from "@/store/usePatientStore";
 import { openDirections } from "@/lib/download";
 import { patient } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/hooks/useTranslation";
 import type { BedCategory } from "@/types";
 
-const CATEGORY_LABEL: Record<BedCategory, string> = {
-  emergency: "Emergency",
-  icu: "ICU",
-  general: "General",
+const CATEGORY_KEY: Record<BedCategory, string> = {
+  emergency: "hospital.ward.emergency",
+  icu: "hospital.ward.icu",
+  general: "hospital.ward.general",
 };
 
 function formatTime(iso: string) {
@@ -23,6 +24,7 @@ function formatTime(iso: string) {
 }
 
 export function BedBookingCard() {
+  const { t } = useTranslation();
   const hospitals = useBedBookingStore((s) => s.hospitals);
   const activeBooking = useBedBookingStore((s) => s.activeBooking);
   const bookBed = useBedBookingStore((s) => s.bookBed);
@@ -30,7 +32,7 @@ export function BedBookingCard() {
   const push = useToastStore((s) => s.push);
   const isPatientMode = useUiStore((s) => s.mode === "patient");
   const patientProfile = usePatientStore((s) => s.profile);
-  const bookingName = isPatientMode ? patientProfile?.name ?? "You" : patient.name;
+  const bookingName = isPatientMode ? patientProfile?.name ?? t("bedBooking.you") : patient.name;
 
   function handleBook(hospitalId: string, category: BedCategory) {
     const result = bookBed(hospitalId, category, bookingName);
@@ -38,7 +40,10 @@ export function BedBookingCard() {
       push(result.error, "amber");
       return;
     }
-    push(`Bed reserved at ${result.booking.hospitalName}, show your code at the desk`, "emerald");
+    push(
+      `${t("bedBooking.bedReservedAt")} ${result.booking.hospitalName}${t("bedBooking.showCodeAtDesk")}`,
+      "emerald"
+    );
   }
 
   if (activeBooking) {
@@ -51,9 +56,10 @@ export function BedBookingCard() {
               <BedDouble size={20} />
             </span>
             <div>
-              <p className="text-[15px] font-semibold text-text-primary">Bed reserved, no ER wait</p>
+              <p className="text-[15px] font-semibold text-text-primary">{t("bedBooking.reserved")}</p>
               <p className="mt-0.5 text-[12px] text-text-secondary">
-                {CATEGORY_LABEL[activeBooking.category]} bed at {activeBooking.hospitalName}, booked{" "}
+                {t(CATEGORY_KEY[activeBooking.category])} {t("bedBooking.bedAt")} {activeBooking.hospitalName}
+                {t("bedBooking.bookedAt")}{" "}
                 {formatTime(activeBooking.bookedAt)}
               </p>
             </div>
@@ -61,9 +67,9 @@ export function BedBookingCard() {
           <button
             onClick={() => {
               cancelBooking();
-              push("Booking cancelled", "amber");
+              push(t("bedBooking.bookingCancelled"), "amber");
             }}
-            aria-label="Cancel booking"
+            aria-label={t("bedBooking.cancelBooking")}
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-text-tertiary transition hover:bg-black/[0.05] hover:text-red"
           >
             <X size={15} />
@@ -72,7 +78,7 @@ export function BedBookingCard() {
 
         <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl bg-black/[0.035] px-4 py-3.5">
           <div>
-            <p className="text-[11px] uppercase tracking-[0.1em] text-text-tertiary">Confirmation code</p>
+            <p className="text-[11px] uppercase tracking-[0.1em] text-text-tertiary">{t("bedBooking.confirmationCode")}</p>
             <p className="mt-0.5 font-mono text-[18px] font-semibold tracking-wide text-emerald">
               {activeBooking.confirmationCode}
             </p>
@@ -81,12 +87,12 @@ export function BedBookingCard() {
             onClick={() => openDirections(activeBooking.hospitalName)}
             className="flex shrink-0 items-center gap-1.5 rounded-full border border-hairline px-3.5 py-2 text-[12px] font-medium text-text-secondary transition hover:border-cyan/30 hover:text-cyan"
           >
-            <Navigation size={13} /> Directions
+            <Navigation size={13} /> {t("bedBooking.directions")}
           </button>
         </div>
         <p className="mt-2.5 text-[11.5px] text-text-tertiary">
-          Show this code at the {hospital?.name ?? activeBooking.hospitalName} admission desk for instant access, no
-          queueing at the ER.
+          {t("bedBooking.admissionDeskPrefix")} {hospital?.name ?? activeBooking.hospitalName}{" "}
+          {t("bedBooking.admissionDeskSuffix")}
         </p>
       </Card>
     );
@@ -99,9 +105,9 @@ export function BedBookingCard() {
           <BedDouble size={20} />
         </span>
         <div>
-          <p className="text-[15px] font-semibold text-text-primary">Instant Bed Booking</p>
+          <p className="text-[15px] font-semibold text-text-primary">{t("bedBooking.title")}</p>
           <p className="text-[12px] text-text-secondary">
-            Reserve a bed now, skip the ER queue and walk straight in
+            {t("bedBooking.subtitle")}
           </p>
         </div>
       </div>
@@ -123,14 +129,14 @@ export function BedBookingCard() {
                   <p className="truncate text-[13.5px] font-medium text-text-primary">{h.name}</p>
                   <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11.5px] text-text-tertiary">
                     <span className="flex items-center gap-1">
-                      <MapPinned size={11} /> {h.city} · {h.distanceKm} km
+                      <MapPinned size={11} /> {h.city} · {h.distanceKm} {t("bedBooking.kmUnit")}
                     </span>
                     <span className="flex items-center gap-1">
-                      <Clock size={11} /> ~{h.avgWaitMinutes} min ER wait without booking
+                      <Clock size={11} /> ~{h.avgWaitMinutes} {t("bedBooking.minErWaitWithoutBooking")}
                     </span>
                   </div>
                 </div>
-                {totalBeds === 0 && <CardLabel className="shrink-0 text-red">No beds free</CardLabel>}
+                {totalBeds === 0 && <CardLabel className="shrink-0 text-red">{t("bedBooking.noBedsFree")}</CardLabel>}
               </div>
 
               <div className="mt-2.5 flex flex-wrap gap-2">
@@ -150,7 +156,7 @@ export function BedBookingCard() {
                           : "border-cyan/30 text-cyan hover:bg-cyan/10 active:scale-[0.97]"
                       )}
                     >
-                      {CATEGORY_LABEL[cat]} · {count}
+                      {t(CATEGORY_KEY[cat])} · {count}
                     </button>
                   );
                 })}

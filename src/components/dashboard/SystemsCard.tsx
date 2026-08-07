@@ -28,7 +28,7 @@ export function SystemsCard() {
       </div>
       {systems.length === 0 && (
         <p className="px-5 py-8 text-center text-[12.5px] text-text-tertiary">
-          Nothing tracked yet. Upload a report or visit a doctor to start building this out.
+          {t("systemsCard.nothingTracked")}
         </p>
       )}
       <div className="divide-y divide-hairline">
@@ -87,7 +87,7 @@ export function SystemsCard() {
                             </div>
                           ))}
                           <p className="pt-1 text-[10.5px] text-text-tertiary">
-                            Last assessed {sys.lastChecked}
+                            {t("systemsCard.lastAssessed")} {sys.lastChecked}
                           </p>
                         </div>
                       )}

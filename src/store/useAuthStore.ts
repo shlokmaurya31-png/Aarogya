@@ -81,6 +81,16 @@ interface SignUpLabInput {
   proofFile: File;
 }
 
+interface SignUpHospitalInput {
+  name: string;
+  email: string;
+  phone: string;
+  city: string;
+  registrationId: string;
+  password: string;
+  proofFile: File;
+}
+
 export interface ProfileUpdate {
   name: string;
   email: string;
@@ -98,10 +108,12 @@ interface AuthState {
   signInPatient: (email: string, password: string) => ActionResult;
   signInDoctor: (email: string, password: string) => ActionResult;
   signInLab: (email: string, password: string) => ActionResult;
+  signInHospital: (email: string, password: string) => ActionResult;
   signInAdmin: (email: string, password: string) => Promise<ActionResult>;
   signUpPatient: (input: SignUpPatientInput) => ActionResult;
   signUpDoctor: (input: SignUpDoctorInput) => ActionResult;
   signUpLab: (input: SignUpLabInput) => ActionResult;
+  signUpHospital: (input: SignUpHospitalInput) => ActionResult;
   updateProfile: (updates: ProfileUpdate) => ActionResult;
   logout: () => void;
   approveApplication: (id: string) => void;
@@ -160,6 +172,24 @@ export const useAuthStore = create<AuthState>()(
           user: {
             id: nextId("lab"),
             role: "lab",
+            name: handle,
+            email,
+            avatarInitials: initials(handle),
+            verificationStatus: "verified",
+          },
+        });
+        return { ok: true };
+      },
+
+      signInHospital: (email, password) => {
+        if (!email.trim() || password.length < 4) {
+          return { ok: false, error: "Enter a valid email and password." };
+        }
+        const handle = email.split("@")[0]?.replace(/[._]/g, " ") || "Hospital";
+        set({
+          user: {
+            id: nextId("hosp"),
+            role: "hospital",
             name: handle,
             email,
             avatarInitials: initials(handle),
@@ -296,6 +326,49 @@ export const useAuthStore = create<AuthState>()(
             avatarInitials: initials(name),
             registrationId,
             facility,
+            verificationStatus: "pending",
+          },
+        }));
+        return { ok: true };
+      },
+
+      signUpHospital: ({ name, email, phone, city, registrationId, password, proofFile }) => {
+        if (
+          !name.trim() ||
+          !email.trim() ||
+          !phone.trim() ||
+          !city.trim() ||
+          !registrationId.trim() ||
+          password.length < 6
+        ) {
+          return { ok: false, error: "Fill every field. Password needs at least 6 characters." };
+        }
+        if (!proofFile) {
+          return { ok: false, error: "Upload proof of registration to continue." };
+        }
+        const application: VerificationApplication = {
+          id: nextId("app"),
+          role: "hospital",
+          name,
+          email,
+          registrationId,
+          facility: name,
+          proofFileName: proofFile.name,
+          submittedAt: new Date().toISOString().slice(0, 10),
+          status: "pending",
+        };
+        set((s) => ({
+          verificationApplications: [application, ...s.verificationApplications],
+          user: {
+            id: nextId("hosp"),
+            role: "hospital",
+            name,
+            email,
+            phone,
+            avatarInitials: initials(name),
+            registrationId,
+            facility: name,
+            city,
             verificationStatus: "pending",
           },
         }));

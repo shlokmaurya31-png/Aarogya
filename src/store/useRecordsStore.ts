@@ -9,6 +9,7 @@ import type { ReportDoc, NotificationItem, Prescription } from "@/types";
 
 export interface DoctorSignature {
   name: string;
+  qualification: string;
   registrationId: string;
   facility: string;
 }
@@ -30,6 +31,7 @@ export const useRecordsStore = create<RecordsState>((set) => ({
   prescriptions: initialPrescriptions,
   doctorSignature: {
     name: doctorProfile.name,
+    qualification: doctorProfile.qualification,
     registrationId: doctorProfile.registrationId,
     facility: doctorProfile.facility,
   },

@@ -14,6 +14,16 @@ import type {
   VitalSeries,
 } from "@/types";
 
+export const PATIENT_PLACEHOLDER = {
+  noneReported: "None reported",
+  notAddedYet: "Not added yet",
+  notLinkedYet: "Not linked yet",
+  notAssignedYet: "Not assigned yet",
+  notAssigned: "Not assigned",
+  addInsuranceInSettings: "Add insurance in Settings",
+  bloodGroupUnknown: "I don't know",
+} as const;
+
 function randomCode(prefix: string, len = 6) {
   return `${prefix}-${Math.random().toString(36).slice(2, 2 + len).toUpperCase()}`;
 }
@@ -35,10 +45,10 @@ function buildProfile(name: string, input: PatientOnboardingInput): PatientProfi
     height: input.height,
     weight: input.weight,
     bloodGroup: input.bloodGroup,
-    allergies: input.allergies.length ? input.allergies : ["None reported"],
-    insurance: hasInsurance ? input.insuranceProvider!.trim() : "Not added yet",
+    allergies: input.allergies.length ? input.allergies : [PATIENT_PLACEHOLDER.noneReported],
+    insurance: hasInsurance ? input.insuranceProvider!.trim() : PATIENT_PLACEHOLDER.notAddedYet,
     emergencyContact: `${input.emergencyContactName} (${input.emergencyContactPhone})`,
-    abhaNumber: "Not linked yet",
+    abhaNumber: PATIENT_PLACEHOLDER.notLinkedYet,
     aadhaarLinked: false,
     ayushmanBharat: "not-eligible",
     avatarInitials: initials(name),
@@ -50,10 +60,10 @@ function buildProfile(name: string, input: PatientOnboardingInput): PatientProfi
           helpline: "1800-425-9449",
         }
       : {
-          name: "Not assigned yet",
-          healthCardId: "Not assigned",
-          policyNumber: "Not assigned",
-          helpline: "Add insurance in Settings",
+          name: PATIENT_PLACEHOLDER.notAssignedYet,
+          healthCardId: PATIENT_PLACEHOLDER.notAssigned,
+          policyNumber: PATIENT_PLACEHOLDER.notAssigned,
+          helpline: PATIENT_PLACEHOLDER.addInsuranceInSettings,
         },
   };
 }
@@ -121,7 +131,7 @@ export const usePatientStore = create<PatientDataState>()(
           return {
             profile: {
               ...s.profile,
-              insurance: trimmed || "Not added yet",
+              insurance: trimmed || PATIENT_PLACEHOLDER.notAddedYet,
               tpa: trimmed
                 ? {
                     name: "Medi Assist Insurance TPA",
@@ -130,10 +140,10 @@ export const usePatientStore = create<PatientDataState>()(
                     helpline: "1800-425-9449",
                   }
                 : {
-                    name: "Not assigned yet",
-                    healthCardId: "Not assigned",
-                    policyNumber: "Not assigned",
-                    helpline: "Add insurance in Settings",
+                    name: PATIENT_PLACEHOLDER.notAssignedYet,
+                    healthCardId: PATIENT_PLACEHOLDER.notAssigned,
+                    policyNumber: PATIENT_PLACEHOLDER.notAssigned,
+                    helpline: PATIENT_PLACEHOLDER.addInsuranceInSettings,
                   },
             },
           };

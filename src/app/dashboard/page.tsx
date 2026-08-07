@@ -10,6 +10,7 @@ import { TopBar } from "@/components/navigation/TopBar";
 import { ViewSwitcher } from "@/components/views/ViewSwitcher";
 import { PatientViewSwitcher } from "@/components/views/PatientViewSwitcher";
 import { AiAssistantWidget } from "@/components/ai/AiAssistantWidget";
+import { useTranslation } from "@/hooks/useTranslation";
 import { useUiStore } from "@/store/useUiStore";
 import { useAuthStore } from "@/store/useAuthStore";
 import { usePatientStore } from "@/store/usePatientStore";
@@ -24,6 +25,7 @@ export default function DashboardPage() {
   const hasHydrated = useAuthStore((s) => s.hasHydrated);
   const patientProfile = usePatientStore((s) => s.profile);
   const showWidget = isDoctor || activePatientView !== "home";
+  const { t } = useTranslation();
 
   useEffect(() => {
     if (!hasHydrated) return;
@@ -39,6 +41,10 @@ export default function DashboardPage() {
       router.replace("/lab");
       return;
     }
+    if (user.role === "hospital") {
+      router.replace("/hospital");
+      return;
+    }
     if (user.role === "patient" && !patientProfile) {
       router.replace("/onboarding");
       return;
@@ -48,8 +54,8 @@ export default function DashboardPage() {
 
   const blockedForOnboarding = user?.role === "patient" && !patientProfile;
 
-  if (!hasHydrated || !user || user.role === "admin" || user.role === "lab" || blockedForOnboarding) {
-    return <div className="flex min-h-screen items-center justify-center bg-ink text-text-tertiary">Loading…</div>;
+  if (!hasHydrated || !user || user.role === "admin" || user.role === "lab" || user.role === "hospital" || blockedForOnboarding) {
+    return <div className="flex min-h-screen items-center justify-center bg-ink text-text-tertiary">{t("common.loading")}</div>;
   }
 
   return (

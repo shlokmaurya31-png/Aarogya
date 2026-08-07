@@ -2,14 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { useTranslation } from "@/hooks/useTranslation";
 
-const MESSAGES = [
-  "Initializing AI Engine",
-  "Connecting Hospitals",
-  "Loading Health Records",
-  "Verifying Encryption",
-  "Connecting National Health Grid",
-  "Preparing Dashboard",
+const MESSAGE_KEYS = [
+  "loadingScreen.initializingAiEngine",
+  "loadingScreen.connectingHospitals",
+  "loadingScreen.loadingHealthRecords",
+  "loadingScreen.verifyingEncryption",
+  "loadingScreen.connectingNationalHealthGrid",
+  "loadingScreen.preparingDashboard",
 ];
 
 const STEP_MS = 420;
@@ -35,6 +36,8 @@ function generateParticles(): Particle[] {
 }
 
 export function LoadingScreen({ onComplete }: { onComplete: () => void }) {
+  const { t } = useTranslation();
+  const MESSAGES = MESSAGE_KEYS.map((key) => t(key));
   const [step, setStep] = useState(0);
   const [leaving, setLeaving] = useState(false);
   const [particles, setParticles] = useState<Particle[]>([]);
@@ -47,7 +50,7 @@ export function LoadingScreen({ onComplete }: { onComplete: () => void }) {
   }, []);
 
   useEffect(() => {
-    if (step >= MESSAGES.length - 1) {
+    if (step >= MESSAGE_KEYS.length - 1) {
       const t = setTimeout(() => setLeaving(true), STEP_MS + 260);
       return () => clearTimeout(t);
     }

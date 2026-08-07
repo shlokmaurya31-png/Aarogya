@@ -22,7 +22,7 @@ export function PatientAppointmentsView() {
 
   function joinOrDirections(mode: "video" | "in-person", facility: string, doctor: string) {
     if (mode === "video") {
-      push(`Connecting your video call with ${doctor}…`, "cyan");
+      push(`${t("patientAppointments.connectingVideoCallWith")} ${doctor}…`, "cyan");
     } else {
       openDirections(facility);
     }
@@ -31,12 +31,12 @@ export function PatientAppointmentsView() {
   return (
     <div className="space-y-5">
       <SectionHeader
-        eyebrow="Appointments"
+        eyebrow={t("nav.appointments")}
         title={t("appointments.titlePatient")}
-        subtitle="Everything you have booked, in one place"
+        subtitle={t("patientAppointments.subtitle")}
         action={
           <button
-            onClick={() => push("Booking request sent, you'll get a confirmation shortly", "emerald")}
+            onClick={() => push(t("patientAppointments.bookingRequestSent"), "emerald")}
             className="flex items-center gap-1.5 rounded-full bg-cyan px-4 py-2.5 text-[13px] font-medium text-ink transition hover:brightness-110 active:scale-[0.97]"
           >
             <Plus size={15} /> {t("btn.bookVisit")}
@@ -79,17 +79,17 @@ export function PatientAppointmentsView() {
         {upcoming.length === 0 && (
           <Card className="md:col-span-2">
             <p className="text-[13px] text-text-secondary">
-              Nothing booked yet. Tap &ldquo;Book a visit&rdquo; whenever you&rsquo;re ready.
+              {t("patientAppointments.nothingBooked")}
             </p>
           </Card>
         )}
       </div>
 
       <div>
-        <p className="mb-2.5 text-[12px] font-medium text-text-secondary">Earlier visits</p>
+        <p className="mb-2.5 text-[12px] font-medium text-text-secondary">{t("patientAppointments.earlierVisits")}</p>
         <Card className="divide-y divide-hairline p-0">
           {past.length === 0 && (
-            <p className="px-5 py-6 text-center text-[13px] text-text-tertiary">No earlier visits yet.</p>
+            <p className="px-5 py-6 text-center text-[13px] text-text-tertiary">{t("patientAppointments.noEarlierVisits")}</p>
           )}
           {past.map((a) => (
             <div key={a.id} className="flex items-center justify-between gap-4 px-5 py-3.5">

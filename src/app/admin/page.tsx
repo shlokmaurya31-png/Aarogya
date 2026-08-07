@@ -10,6 +10,7 @@ import { StatusPill } from "@/components/ui/StatusPill";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useToastStore } from "@/store/useToastStore";
+import { useTranslation } from "@/hooks/useTranslation";
 import type { VerificationApplication } from "@/types";
 
 const STATUS_TONE: Record<VerificationApplication["status"], "amber" | "emerald" | "red"> = {
@@ -21,10 +22,11 @@ const STATUS_TONE: Record<VerificationApplication["status"], "amber" | "emerald"
 const STATUS_FILTERS = ["all", "pending", "verified", "rejected"] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
 
-const ROLE_FILTERS = ["all", "doctor", "lab"] as const;
+const ROLE_FILTERS = ["all", "doctor", "lab", "hospital"] as const;
 type RoleFilter = (typeof ROLE_FILTERS)[number];
 
 export default function AdminPage() {
+  const { t } = useTranslation();
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const hasHydrated = useAuthStore((s) => s.hasHydrated);
@@ -55,16 +57,20 @@ export default function AdminPage() {
 
   function handleApprove(app: VerificationApplication) {
     approveApplication(app.id);
-    push(`${app.name} verified and approved.`, "emerald");
+    push(`${app.name} ${t("admin.toast.approved")}`, "emerald");
   }
 
   function handleReject(app: VerificationApplication) {
     rejectApplication(app.id);
-    push(`${app.name}'s application rejected.`, "red");
+    push(`${app.name}'s ${t("admin.toast.rejected")}`, "red");
   }
 
   if (!hasHydrated || !user || user.role !== "admin") {
-    return <div className="flex min-h-screen items-center justify-center bg-ink text-text-tertiary">Loading…</div>;
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-ink text-text-tertiary">
+        {t("admin.loading")}
+      </div>
+    );
   }
 
   return (
@@ -80,7 +86,7 @@ export default function AdminPage() {
               href="/settings"
               className="flex items-center gap-1.5 rounded-full border border-hairline px-3.5 py-1.5 text-[12px] text-text-secondary transition hover:border-cyan/30 hover:text-cyan"
             >
-              <Settings size={13} /> Settings
+              <Settings size={13} /> {t("admin.nav.settings")}
             </Link>
             <button
               onClick={() => {
@@ -89,7 +95,7 @@ export default function AdminPage() {
               }}
               className="flex items-center gap-1.5 rounded-full border border-hairline px-3.5 py-1.5 text-[12px] text-text-secondary transition hover:border-red/30 hover:text-red"
             >
-              <LogOut size={13} /> Log out
+              <LogOut size={13} /> {t("admin.nav.logout")}
             </button>
           </div>
         </div>
@@ -98,25 +104,25 @@ export default function AdminPage() {
       <main className="mx-auto max-w-[1200px] px-5 py-8">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
           <Card>
-            <CardLabel>Pending verification</CardLabel>
+            <CardLabel>{t("admin.stat.pendingVerification")}</CardLabel>
             <p className="mt-2 text-[28px] font-semibold tabular-nums">{pendingCount}</p>
           </Card>
           <Card>
-            <CardLabel>Verified</CardLabel>
+            <CardLabel>{t("admin.stat.verified")}</CardLabel>
             <p className="mt-2 text-[28px] font-semibold tabular-nums">{verifiedCount}</p>
           </Card>
           <Card>
-            <CardLabel>Lab applications</CardLabel>
+            <CardLabel>{t("admin.stat.labApplications")}</CardLabel>
             <p className="mt-2 text-[28px] font-semibold tabular-nums">{labCount}</p>
           </Card>
           <Card>
-            <CardLabel>Total applications</CardLabel>
+            <CardLabel>{t("admin.stat.totalApplications")}</CardLabel>
             <p className="mt-2 text-[28px] font-semibold tabular-nums">{verificationApplications.length}</p>
           </Card>
         </div>
 
         <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-[15px] font-medium">Doctor & lab verification queue</h2>
+          <h2 className="text-[15px] font-medium">{t("admin.queue.title")}</h2>
           <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex rounded-full border border-hairline bg-black/[0.025] p-1">
               {ROLE_FILTERS.map((f) => (
@@ -127,7 +133,7 @@ export default function AdminPage() {
                     roleFilter === f ? "bg-cyan text-ink" : "text-text-secondary hover:text-text-primary"
                   }`}
                 >
-                  {f === "all" ? "All roles" : f}
+                  {f === "all" ? t("admin.filter.allRoles") : t(`admin.role.${f}`)}
                 </button>
               ))}
             </div>
@@ -140,7 +146,7 @@ export default function AdminPage() {
                     statusFilter === f ? "bg-cyan text-ink" : "text-text-secondary hover:text-text-primary"
                   }`}
                 >
-                  {f}
+                  {t(`admin.status.${f}`)}
                 </button>
               ))}
             </div>
@@ -149,7 +155,7 @@ export default function AdminPage() {
 
         <div className="mt-4 space-y-3">
           {visible.length === 0 && (
-            <Card className="text-center text-[13px] text-text-tertiary">No applications in this filter.</Card>
+            <Card className="text-center text-[13px] text-text-tertiary">{t("admin.empty.noApplications")}</Card>
           )}
           {visible.map((app) => (
             <motion.div
@@ -162,15 +168,15 @@ export default function AdminPage() {
                 <div>
                   <div className="flex flex-wrap items-center gap-2.5">
                     <p className="text-[13.5px] font-medium">{app.name}</p>
-                    <StatusPill label={app.role} tone="cyan" />
-                    <StatusPill label={app.status} tone={STATUS_TONE[app.status]} />
+                    <StatusPill label={t(`admin.role.${app.role}`)} tone="cyan" />
+                    <StatusPill label={t(`admin.status.${app.status}`)} tone={STATUS_TONE[app.status]} />
                   </div>
                   <p className="mt-1 text-[12px] text-text-tertiary">
                     {app.specialty ? `${app.specialty} · ` : ""}
-                    {app.facility} · {app.role === "lab" ? "Accreditation" : "Registration"} ID: {app.registrationId}
+                    {app.facility} · {app.role === "lab" ? t("admin.label.accreditation") : t("admin.label.registration")} {t("admin.label.id")}: {app.registrationId}
                   </p>
                   <p className="mt-1 text-[11.5px] text-text-tertiary">
-                    {app.email} · submitted {app.submittedAt} · proof: {app.proofFileName}
+                    {app.email} · {t("admin.label.submitted")} {app.submittedAt} · {t("admin.label.proof")}: {app.proofFileName}
                   </p>
                 </div>
                 {app.status === "pending" && (
@@ -179,13 +185,13 @@ export default function AdminPage() {
                       onClick={() => handleApprove(app)}
                       className="flex items-center gap-1.5 rounded-full bg-emerald px-3.5 py-2 text-[12px] font-medium text-white transition hover:brightness-110"
                     >
-                      <Check size={13} /> Approve
+                      <Check size={13} /> {t("admin.action.approve")}
                     </button>
                     <button
                       onClick={() => handleReject(app)}
                       className="flex items-center gap-1.5 rounded-full border border-red/30 px-3.5 py-2 text-[12px] font-medium text-red transition hover:bg-red/10"
                     >
-                      <X size={13} /> Reject
+                      <X size={13} /> {t("admin.action.reject")}
                     </button>
                   </div>
                 )}

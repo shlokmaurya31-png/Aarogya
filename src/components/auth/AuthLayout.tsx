@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
+import { useTranslation } from "@/hooks/useTranslation";
 
 export function AuthLayout({
   eyebrow,
@@ -16,6 +17,7 @@ export function AuthLayout({
   children: React.ReactNode;
   footer?: React.ReactNode;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="relative min-h-screen bg-ink text-text-primary lg:grid lg:grid-cols-2">
       <div className="holo-grid noise relative hidden overflow-hidden border-r border-hairline bg-surface lg:flex lg:flex-col lg:justify-between lg:p-10">
@@ -25,13 +27,13 @@ export function AuthLayout({
         </Link>
         <div className="max-w-sm">
           <p className="text-[28px] font-semibold leading-[1.15] tracking-tight">
-            One permanent health record, for every Indian.
+            {t("auth.layout.tagline")}
           </p>
           <p className="mt-4 text-[13.5px] leading-relaxed text-text-secondary">
-            Read by AI, verified by labs, understood by every doctor you&rsquo;ll ever meet.
+            {t("auth.layout.taglineSub")}
           </p>
         </div>
-        <p className="text-[11.5px] text-text-tertiary">© 2026 Aarogya AI · Aparix Ventures</p>
+        <p className="text-[11.5px] text-text-tertiary">{t("auth.layout.copyright")}</p>
       </div>
 
       <div className="flex min-h-screen flex-col justify-center px-6 py-12 sm:px-12 lg:px-16">

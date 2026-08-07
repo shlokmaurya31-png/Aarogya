@@ -167,6 +167,9 @@ export interface Prescription {
   dose: string;
   frequency: string;
   prescribedBy: string;
+  qualification: string;
+  registrationId: string;
+  facility: string;
   startDate: string;
   status: PrescriptionStatus;
   adherence: number;
@@ -202,6 +205,51 @@ export interface HospitalBedAvailability {
   emergencyBeds: number;
   icuBeds: number;
   generalBeds: number;
+  emergencyCapacity: number;
+  icuCapacity: number;
+  generalCapacity: number;
+}
+
+export type ShiftId = "morning" | "evening" | "night";
+
+export type StaffRole = "nurse" | "technician" | "ward-boy" | "receptionist" | "pharmacist" | "housekeeping";
+
+export interface HospitalDoctorEntry {
+  id: string;
+  name: string;
+  specialty: string;
+  qualification: string;
+  registrationId: string;
+  shift: ShiftId;
+  onDuty: boolean;
+  phone: string;
+}
+
+export interface HospitalStaffMember {
+  id: string;
+  name: string;
+  role: StaffRole;
+  ward: string;
+  shift: ShiftId;
+  onDuty: boolean;
+  phone: string;
+}
+
+export type AdmissionStatus = "admitted" | "critical" | "discharged";
+
+export interface HospitalAdmission {
+  id: string;
+  patientName: string;
+  age: number;
+  gender: string;
+  ward: BedCategory;
+  bedLabel: string;
+  doctorId: string;
+  doctorName: string;
+  diagnosis: string;
+  admittedAt: string;
+  status: AdmissionStatus;
+  dischargedAt?: string;
 }
 
 export interface BedBooking {
@@ -214,9 +262,9 @@ export interface BedBooking {
   bookedAt: string;
 }
 
-export type AuthRole = "patient" | "doctor" | "lab" | "admin";
+export type AuthRole = "patient" | "doctor" | "lab" | "hospital" | "admin";
 
-export type VerificationRole = "doctor" | "lab";
+export type VerificationRole = "doctor" | "lab" | "hospital";
 
 export type VerificationStatus = "pending" | "verified" | "rejected";
 
@@ -230,6 +278,7 @@ export interface AuthUser {
   specialty?: string;
   registrationId?: string;
   facility?: string;
+  city?: string;
   verificationStatus?: VerificationStatus;
 }
 

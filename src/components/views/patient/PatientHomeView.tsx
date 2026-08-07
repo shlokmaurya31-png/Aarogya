@@ -34,7 +34,7 @@ export function PatientHomeView() {
 
   function joinOrDirections(mode: "video" | "in-person", facility: string, doctor: string) {
     if (mode === "video") {
-      push(`Connecting your video call with ${doctor}…`, "cyan");
+      push(`${t("patientHome.connectingVideoCall")} ${doctor}…`, "cyan");
     } else {
       openDirections(facility);
     }
@@ -91,7 +91,7 @@ export function PatientHomeView() {
             <CardLabel>{t("patientHome.medicinesTitle")}</CardLabel>
             {activeMedicines.length === 0 ? (
               <p className="mt-3 text-[13px] text-text-secondary">
-                No medicines added yet. Your doctor&rsquo;s prescriptions will show up here.
+                {t("patientHome.noMedicines")}
               </p>
             ) : (
               <div className="mt-3 flex flex-col gap-2">
@@ -150,7 +150,7 @@ export function PatientHomeView() {
                 </button>
               </div>
             ) : (
-              <p className="mt-3 text-[13px] text-text-secondary">Nothing booked right now.</p>
+              <p className="mt-3 text-[13px] text-text-secondary">{t("patientHome.noAppointment")}</p>
             )}
           </Card>
         </motion.div>

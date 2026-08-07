@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { FileUp, Paperclip, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/hooks/useTranslation";
 
 export function FileDropField({
   label,
@@ -19,6 +20,7 @@ export function FileDropField({
   accept?: string;
   error?: string;
 }) {
+  const { t } = useTranslation();
   const [dragActive, setDragActive] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -69,7 +71,7 @@ export function FileDropField({
                 onChange(null);
               }}
               className="text-text-tertiary hover:text-red"
-              aria-label="Remove file"
+              aria-label={t("auth.fileDrop.removeFile")}
             >
               <X size={13} />
             </button>
@@ -78,7 +80,7 @@ export function FileDropField({
           <>
             <FileUp size={18} className="text-text-tertiary" />
             <p className="text-[12.5px] text-text-secondary">
-              Drop a file here or <span className="text-cyan">browse</span>
+              {t("auth.fileDrop.dragHint")} <span className="text-cyan">{t("auth.fileDrop.browse")}</span>
             </p>
           </>
         )}

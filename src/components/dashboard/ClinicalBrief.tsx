@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import { TriangleAlert } from "lucide-react";
 import { Card, CardLabel } from "@/components/ui/Card";
+import { useTranslation } from "@/hooks/useTranslation";
 
 const SOAP = [
   {
@@ -27,7 +28,15 @@ const SOAP = [
   },
 ];
 
+const SOAP_LABEL_KEY: Record<string, string> = {
+  S: "clinicalBrief.subjective",
+  O: "clinicalBrief.objective",
+  A: "clinicalBrief.assessment",
+  P: "clinicalBrief.plan",
+};
+
 export function ClinicalBrief() {
+  const { t } = useTranslation();
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
@@ -36,17 +45,16 @@ export function ClinicalBrief() {
     >
       <Card>
         <div className="flex items-center justify-between">
-          <CardLabel>AI Clinical Brief · SNOMED CT structured</CardLabel>
+          <CardLabel>{t("clinicalBrief.title")}</CardLabel>
           <span className="rounded-full border border-hairline px-2.5 py-1 text-[10.5px] text-text-tertiary">
-            Generated in 1.4s
+            {t("clinicalBrief.generatedIn")}
           </span>
         </div>
 
         <div className="mt-3 flex items-start gap-2 rounded-2xl border border-amber/25 bg-amber/[0.08] px-3.5 py-3">
           <TriangleAlert size={14} className="mt-0.5 shrink-0 text-amber" />
           <p className="text-[12px] leading-relaxed text-amber">
-            Interaction flag: existing ACE inhibitor (lisinopril, per Jan 2026 record) may
-            potentiate hypotensive effect with newly initiated statin. Recommend dose review.
+            {t("clinicalBrief.interactionFlag")}
           </p>
         </div>
 
@@ -58,7 +66,7 @@ export function ClinicalBrief() {
               </dt>
               <dd className="min-w-0 flex-1">
                 <p className="text-[11px] uppercase tracking-[0.08em] text-text-tertiary">
-                  {s.label}
+                  {t(SOAP_LABEL_KEY[s.key])}
                 </p>
                 <p className="mt-0.5 text-[13px] leading-relaxed text-text-secondary">{s.text}</p>
               </dd>

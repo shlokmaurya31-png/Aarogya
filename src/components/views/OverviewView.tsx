@@ -21,7 +21,7 @@ export function OverviewView() {
         action={
           <div className="flex items-center gap-2 rounded-full border border-hairline bg-card px-4 py-2 text-[12px]">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald" />
-            Risk stratification: <span className="font-medium text-emerald">Low</span>
+            {t("overviewView.riskStratification")} <span className="font-medium text-emerald">Low</span>
           </div>
         }
       />

@@ -28,7 +28,7 @@ export function NotificationsList() {
     <Card>
       <CardLabel>{t("label.notifications")}</CardLabel>
       {notifications.length === 0 && (
-        <p className="mt-3 py-4 text-center text-[12.5px] text-text-tertiary">Nothing new yet.</p>
+        <p className="mt-3 py-4 text-center text-[12.5px] text-text-tertiary">{t("notifications.empty")}</p>
       )}
       <div className="mt-3 flex flex-col gap-1">
         {notifications.map((n, i) => {

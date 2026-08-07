@@ -12,6 +12,7 @@ import { ToastViewport } from "@/components/shared/ToastViewport";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useRecordsStore } from "@/store/useRecordsStore";
 import { useToastStore } from "@/store/useToastStore";
+import { useTranslation } from "@/hooks/useTranslation";
 import { LAB_REPORT_CATEGORIES, LAB_CATEGORY_MAP } from "@/lib/lab-categories";
 import { patient } from "@/lib/mock-data";
 import type { LabReportCategory } from "@/types";
@@ -34,6 +35,7 @@ function formatDate(d: string) {
 
 export default function LabPage() {
   const router = useRouter();
+  const { t } = useTranslation();
   const user = useAuthStore((s) => s.user);
   const hasHydrated = useAuthStore((s) => s.hasHydrated);
   const logout = useAuthStore((s) => s.logout);
@@ -64,11 +66,11 @@ export default function LabPage() {
     e.preventDefault();
     if (!user) return;
     if (!file) {
-      setFileError("Attach the report file to register it.");
+      setFileError(t("lab.error.attachFile"));
       return;
     }
     if (!patientRef.trim()) {
-      push("Enter the patient ID this report belongs to.", "amber");
+      push(t("lab.error.enterPatientId"), "amber");
       return;
     }
 
@@ -89,20 +91,26 @@ export default function LabPage() {
     addNotification({
       id: `note-lab-${Date.now()}`,
       kind: "lab",
-      title: `New ${categoryDef.label} result`,
+      title: `${t("lab.notification.newResultPrefix")} ${categoryDef.label} ${t("lab.notification.newResultSuffix")}`,
+      // Left as-is: three interpolated values (title, facility, patient ID) make
+      // fragment-level translation unreliable across languages with different word order.
       detail: `${reportTitle}, uploaded by ${facility} for ${patientRef.trim()}`,
-      time: "Just now",
+      time: t("lab.time.justNow"),
       risk: "watch",
     });
 
-    push(`${reportTitle} registered for ${patientRef.trim()}.`, "emerald");
+    push(`${reportTitle} ${t("lab.toast.registeredFor")} ${patientRef.trim()}.`, "emerald");
     setTitle("");
     setFile(null);
     setFileError(null);
   }
 
   if (!hasHydrated || !user || user.role !== "lab") {
-    return <div className="flex min-h-screen items-center justify-center bg-ink text-text-tertiary">Loading…</div>;
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-ink text-text-tertiary">
+        {t("lab.loading")}
+      </div>
+    );
   }
 
   return (
@@ -113,7 +121,7 @@ export default function LabPage() {
             <FlaskConical size={16} className="text-cyan" />
             {user.name}
             {user.verificationStatus === "pending" && (
-              <StatusPill label="Verification pending" tone="amber" />
+              <StatusPill label={t("lab.header.verificationPending")} tone="amber" />
             )}
           </div>
           <div className="flex items-center gap-2">
@@ -121,7 +129,7 @@ export default function LabPage() {
               href="/settings"
               className="flex items-center gap-1.5 rounded-full border border-hairline px-3.5 py-1.5 text-[12px] text-text-secondary transition hover:border-cyan/30 hover:text-cyan"
             >
-              <Settings size={13} /> Settings
+              <Settings size={13} /> {t("lab.header.settings")}
             </Link>
             <button
               onClick={() => {
@@ -130,7 +138,7 @@ export default function LabPage() {
               }}
               className="flex items-center gap-1.5 rounded-full border border-hairline px-3.5 py-1.5 text-[12px] text-text-secondary transition hover:border-red/30 hover:text-red"
             >
-              <LogOut size={13} /> Log out
+              <LogOut size={13} /> {t("lab.header.logout")}
             </button>
           </div>
         </div>
@@ -139,19 +147,19 @@ export default function LabPage() {
       <main className="mx-auto max-w-[1200px] px-5 py-8">
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[400px_1fr]">
           <Card>
-            <CardLabel>Register a new report</CardLabel>
+            <CardLabel>{t("lab.card.registerReport")}</CardLabel>
             <form onSubmit={handleSubmit} className="mt-4 space-y-4">
-              <Field label="Patient ID">
+              <Field label={t("lab.field.patientId")}>
                 <input
                   value={patientRef}
                   onChange={(e) => setPatientRef(e.target.value)}
                   required
                   className={inputClass}
-                  placeholder="e.g. AAR-2941-7053"
+                  placeholder={t("lab.field.patientIdPlaceholder")}
                 />
               </Field>
 
-              <Field label="Report category">
+              <Field label={t("lab.field.reportCategory")}>
                 <select
                   value={category}
                   onChange={(e) => setCategory(e.target.value as LabReportCategory)}
@@ -163,10 +171,12 @@ export default function LabPage() {
                     </option>
                   ))}
                 </select>
-                <p className="mt-1.5 text-[11px] text-text-tertiary">Includes: {categoryDef.examples.join(", ")}</p>
+                <p className="mt-1.5 text-[11px] text-text-tertiary">
+                  {t("lab.field.categoryIncludes")}: {categoryDef.examples.join(", ")}
+                </p>
               </Field>
 
-              <Field label="Report title">
+              <Field label={t("lab.field.reportTitle")}>
                 <input
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
@@ -176,8 +186,8 @@ export default function LabPage() {
               </Field>
 
               <FileDropField
-                label="Report file"
-                hint="PDF or image of the finalized report."
+                label={t("lab.field.reportFile")}
+                hint={t("lab.field.reportFileHint")}
                 accept="image/*,.pdf"
                 file={file}
                 onChange={(f) => {
@@ -191,17 +201,19 @@ export default function LabPage() {
                 type="submit"
                 className="flex w-full items-center justify-center gap-2 rounded-full bg-cyan py-3 text-[13.5px] font-medium text-ink transition hover:brightness-110 active:scale-[0.99]"
               >
-                <UploadCloud size={15} /> Register report
+                <UploadCloud size={15} /> {t("lab.action.register")}
               </button>
             </form>
           </Card>
 
           <Card>
-            <CardLabel>Reports registered by {user.name}</CardLabel>
+            <CardLabel>
+              {t("lab.card.reportsRegisteredBy")} {user.name}
+            </CardLabel>
             <div className="mt-4 space-y-3">
               {myReports.length === 0 && (
                 <p className="py-8 text-center text-[13px] text-text-tertiary">
-                  Nothing registered yet. Submit your first report on the left.
+                  {t("lab.empty.noReports")}
                 </p>
               )}
               {myReports.map((r, i) => (
@@ -218,13 +230,13 @@ export default function LabPage() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13px] font-medium text-text-primary">{r.title}</p>
                     <p className="truncate text-[11.5px] text-text-tertiary">
-                      {r.labCategory ? LAB_CATEGORY_MAP[r.labCategory].label : "Lab report"}
-                      {r.patientRef ? ` · Patient ${r.patientRef}` : ""} · {formatDate(r.date)}
+                      {r.labCategory ? LAB_CATEGORY_MAP[r.labCategory].label : t("lab.reportItem.labReportFallback")}
+                      {r.patientRef ? ` · ${t("lab.reportItem.patientPrefix")} ${r.patientRef}` : ""} · {formatDate(r.date)}
                     </p>
                   </div>
                   {r.verified && (
                     <span className="flex shrink-0 items-center gap-1 rounded-full bg-emerald/10 px-2.5 py-1 text-[10.5px] font-medium text-emerald">
-                      <BadgeCheck size={11} /> Registered
+                      <BadgeCheck size={11} /> {t("lab.badge.registered")}
                     </span>
                   )}
                 </motion.div>

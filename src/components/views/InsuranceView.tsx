@@ -43,10 +43,12 @@ export function InsuranceView() {
           </span>
           <div>
             <p className="text-[15px] font-semibold">{patient.insurance}</p>
-            <p className="text-[12px] text-text-tertiary">Policy holder · {patient.name}</p>
+            <p className="text-[12px] text-text-tertiary">
+              {t("insuranceView.policyHolder")} · {patient.name}
+            </p>
           </div>
         </div>
-        <StatusPill label="Active" tone="emerald" />
+        <StatusPill label={t("insuranceView.active")} tone="emerald" />
       </Card>
 
       <Card className="p-0">

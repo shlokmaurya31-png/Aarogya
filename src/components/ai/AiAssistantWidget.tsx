@@ -4,9 +4,11 @@ import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Sparkles, X } from "lucide-react";
 import { AiAssistantPanel } from "./AiAssistantPanel";
+import { useTranslation } from "@/hooks/useTranslation";
 
 export function AiAssistantWidget() {
   const [open, setOpen] = useState(false);
+  const { t } = useTranslation();
 
   return (
     <>
@@ -30,7 +32,7 @@ export function AiAssistantWidget() {
         transition={{ duration: 0.3 }}
         onClick={() => setOpen((o) => !o)}
         className="fixed bottom-5 right-5 z-50 flex h-[52px] w-[52px] items-center justify-center rounded-full bg-cyan text-ink shadow-lg transition hover:brightness-110 active:scale-95 sm:right-6"
-        aria-label={open ? "Close Aarogya AI assistant" : "Open Aarogya AI assistant"}
+        aria-label={open ? t("ai.closeAssistant") : t("ai.openAssistant")}
       >
         {open ? <X size={20} /> : <Sparkles size={20} />}
         {!open && <span className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full border-2 border-ink bg-emerald" />}

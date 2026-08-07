@@ -115,7 +115,12 @@ export function AiAssistantPanel({ onClose }: { onClose?: () => void } = {}) {
   const content =
     mode === "patient"
       ? { ...CONTENT.patient, title: t("ai.title"), subtitle: t("ai.subtitle"), placeholder: t("ai.placeholder") }
-      : CONTENT.doctor;
+      : {
+          ...CONTENT.doctor,
+          title: t("ai.doctor.title"),
+          subtitle: t("ai.doctor.subtitle"),
+          placeholder: t("ai.doctor.placeholder"),
+        };
   const pageContext = getPageAiContext(mode, mode === "doctor" ? activeView : activePatientView);
   const push = useToastStore((s) => s.push);
   const addDoctorReport = useRecordsStore((s) => s.addReport);
@@ -182,7 +187,7 @@ export function AiAssistantPanel({ onClose }: { onClose?: () => void } = {}) {
       setMessages((m) =>
         m.map((msg) => (msg.id === loadingId ? { id: loadingId, role: "ai", text: fallback } : msg))
       );
-      push("AI service unavailable, showing a fallback response", "amber");
+      push(t("ai.error.serviceUnavailable"), "amber");
     }
   }
 
@@ -195,7 +200,7 @@ export function AiAssistantPanel({ onClose }: { onClose?: () => void } = {}) {
     const SpeechRecognitionCtor =
       (window as WindowWithSpeech).SpeechRecognition ?? (window as WindowWithSpeech).webkitSpeechRecognition;
     if (!SpeechRecognitionCtor) {
-      push("Voice input isn't supported in this browser", "amber");
+      push(t("ai.error.voiceNotSupported"), "amber");
       return;
     }
     const recognition = new SpeechRecognitionCtor();
@@ -220,8 +225,8 @@ export function AiAssistantPanel({ onClose }: { onClose?: () => void } = {}) {
 
     setMessages((m) => [
       ...m,
-      { id: nextId(), role: "user", text: `📎 Uploaded ${file.name}` },
-      { id: loadingId, role: "ai", text: "Reading and analyzing your report…", loading: true },
+      { id: nextId(), role: "user", text: `📎 ${t("ai.status.uploadedFilePrefix")} ${file.name}` },
+      { id: loadingId, role: "ai", text: t("ai.status.analyzingReport"), loading: true },
     ]);
 
     setTimeout(() => {
@@ -230,7 +235,7 @@ export function AiAssistantPanel({ onClose }: { onClose?: () => void } = {}) {
         id: reportId,
         title,
         kind,
-        facility: "Uploaded by you",
+        facility: t("ai.record.uploadedByYou"),
         date: new Date().toISOString().slice(0, 10),
         sizeKb: Math.max(1, Math.round(file.size / 1024)),
         verified: false,
@@ -238,9 +243,9 @@ export function AiAssistantPanel({ onClose }: { onClose?: () => void } = {}) {
       addNotification({
         id: `note-${reportId}`,
         kind: "lab",
-        title: "New record uploaded",
-        detail: `${title}, analyzed by Aarogya AI and added to your records`,
-        time: "Just now",
+        title: t("ai.notification.newRecordUploaded"),
+        detail: `${title}, ${t("ai.notification.analyzedAndAddedSuffix")}`,
+        time: t("ai.time.justNow"),
         risk: "watch",
       });
       setMessages((m) =>
@@ -254,7 +259,7 @@ export function AiAssistantPanel({ onClose }: { onClose?: () => void } = {}) {
             : msg
         )
       );
-      push("Record analyzed and added to your health records", "emerald");
+      push(t("ai.toast.recordAnalyzedAdded"), "emerald");
     }, 1600);
   }
 
@@ -300,7 +305,7 @@ export function AiAssistantPanel({ onClose }: { onClose?: () => void } = {}) {
           {onClose && (
             <button
               onClick={onClose}
-              aria-label="Close assistant"
+              aria-label={t("ai.aria.closeAssistant")}
               className="flex h-7 w-7 items-center justify-center rounded-full text-text-tertiary transition hover:bg-black/[0.05] hover:text-text-primary"
             >
               <X size={15} />
@@ -320,8 +325,7 @@ export function AiAssistantPanel({ onClose }: { onClose?: () => void } = {}) {
         <div className="mt-3 flex items-start gap-2 rounded-2xl border border-amber/25 bg-amber/[0.08] px-3.5 py-3">
           <TriangleAlert size={14} className="mt-0.5 shrink-0 text-amber" />
           <p className="text-[12px] leading-relaxed text-amber">
-            Drug interaction flag: current ACE inhibitor (patient history) may interact with
-            newly prescribed statin. Consider dose adjustment.
+            {t("ai.doctorWarning.drugInteraction")}
           </p>
         </div>
       )}
@@ -358,7 +362,7 @@ export function AiAssistantPanel({ onClose }: { onClose?: () => void } = {}) {
         ))}
         {mode === "patient" && (
           <p className="pt-1 text-center text-[11px] text-text-tertiary">
-            Drop a file here or use Upload a record above
+            {t("ai.hint.dropFilePrefix")} {t("ai.uploadRecord")} {t("ai.hint.dropFileSuffix")}
           </p>
         )}
       </div>
@@ -389,7 +393,7 @@ export function AiAssistantPanel({ onClose }: { onClose?: () => void } = {}) {
           <button
             onClick={() => fileInputRef.current?.click()}
             className="text-text-tertiary transition hover:text-cyan"
-            aria-label="Upload a record"
+            aria-label={t("ai.uploadRecord")}
           >
             <Paperclip size={15} />
           </button>
@@ -400,7 +404,7 @@ export function AiAssistantPanel({ onClose }: { onClose?: () => void } = {}) {
             "transition hover:text-cyan",
             listening ? "animate-pulse text-cyan" : "text-text-tertiary"
           )}
-          aria-label="Voice input"
+          aria-label={t("ai.aria.voiceInput")}
           aria-pressed={listening}
         >
           <Mic size={15} />
@@ -408,7 +412,7 @@ export function AiAssistantPanel({ onClose }: { onClose?: () => void } = {}) {
         <button
           onClick={() => handleSend()}
           className="flex h-6 w-6 items-center justify-center rounded-full bg-cyan text-ink transition hover:scale-105 active:scale-95"
-          aria-label="Send"
+          aria-label={t("ai.aria.send")}
         >
           <ArrowUp size={13} />
         </button>

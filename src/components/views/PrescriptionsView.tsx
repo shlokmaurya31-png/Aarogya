@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
-import { Plus, User, X } from "lucide-react";
+import { FileText, Plus, User, X } from "lucide-react";
 import { patient } from "@/lib/mock-data";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { Card } from "@/components/ui/Card";
@@ -20,10 +21,10 @@ const STATUS_TONE: Record<PrescriptionStatus, "emerald" | "amber" | "neutral"> =
   completed: "neutral",
 };
 
-const STATUS_LABEL: Record<PrescriptionStatus, string> = {
-  active: "Active",
-  "refill-due": "Refill due",
-  completed: "Completed",
+const STATUS_LABEL_KEY: Record<PrescriptionStatus, string> = {
+  active: "prescriptionsView.statusActive",
+  "refill-due": "prescriptionsView.statusRefillDue",
+  completed: "prescriptionsView.statusCompleted",
 };
 
 function formatDate(d: string) {
@@ -51,6 +52,7 @@ export function PrescriptionsView() {
 
   const [formOpen, setFormOpen] = useState(false);
   const [doctorName, setDoctorName] = useState(doctorSignature.name);
+  const [qualification, setQualification] = useState(doctorSignature.qualification);
   const [registrationId, setRegistrationId] = useState(doctorSignature.registrationId);
   const [facility, setFacility] = useState(doctorSignature.facility);
   const [drug, setDrug] = useState("");
@@ -60,11 +62,12 @@ export function PrescriptionsView() {
 
   function requestRefill(id: string, drug: string) {
     setRequested((s) => new Set(s).add(id));
-    push(`Refill requested for ${drug}, pharmacy notified`, "amber");
+    push(`${t("prescriptionsView.toast.refillRequestedPrefix")} ${drug}${t("prescriptionsView.toast.refillRequestedSuffix")}`, "amber");
   }
 
   function openForm() {
     setDoctorName(doctorSignature.name);
+    setQualification(doctorSignature.qualification);
     setRegistrationId(doctorSignature.registrationId);
     setFacility(doctorSignature.facility);
     setDrug("");
@@ -76,16 +79,24 @@ export function PrescriptionsView() {
 
   function submitPrescription() {
     if (!doctorName.trim() || !drug.trim() || !dose.trim() || !frequency.trim()) {
-      push("Fill in the doctor details, drug, dose and frequency to issue this prescription", "amber");
+      push(t("prescriptionsView.toast.fillRequiredFields"), "amber");
       return;
     }
-    setDoctorSignature({ name: doctorName.trim(), registrationId: registrationId.trim(), facility: facility.trim() });
+    setDoctorSignature({
+      name: doctorName.trim(),
+      qualification: qualification.trim(),
+      registrationId: registrationId.trim(),
+      facility: facility.trim(),
+    });
     addPrescription({
       id: nextId(),
       drug: drug.trim(),
       dose: dose.trim(),
       frequency: frequency.trim(),
       prescribedBy: doctorName.trim(),
+      qualification: qualification.trim(),
+      registrationId: registrationId.trim(),
+      facility: facility.trim(),
       startDate,
       status: "active",
       adherence: 100,
@@ -93,24 +104,24 @@ export function PrescriptionsView() {
     addNotification({
       id: `note-${nextId()}`,
       kind: "medicine",
-      title: "New prescription issued",
-      detail: `${drug.trim()} ${dose.trim()} prescribed by ${doctorName.trim()}`,
-      time: "Just now",
+      title: t("prescriptionsView.notification.title"),
+      detail: `${drug.trim()} ${dose.trim()} ${t("prescriptionsView.notification.prescribedBySuffix")} ${doctorName.trim()}`,
+      time: t("lab.time.justNow"),
       risk: "watch",
     });
-    push(`Prescription for ${drug.trim()} sent to ${patient.name}`, "emerald");
+    push(`${t("prescriptionsView.toast.prescriptionSentPrefix")} ${drug.trim()} ${t("prescriptionsView.toast.prescriptionSentMiddle")} ${patient.name}`, "emerald");
     setFormOpen(false);
   }
 
   return (
     <div className="space-y-5">
       <SectionHeader
-        eyebrow="Prescriptions"
+        eyebrow={t("prescriptionsView.eyebrow")}
         title={t("prescriptions.title")}
         subtitle={
           refillDue > 0
-            ? `${refillDue} medication needs a refill soon`
-            : "All medications are up to date"
+            ? `${refillDue} ${t("prescriptionsView.refillNeededSuffix")}`
+            : t("prescriptionsView.allUpToDate")
         }
         action={
           <button
@@ -138,17 +149,17 @@ export function PrescriptionsView() {
                   </p>
                   <p className="mt-0.5 text-[12px] text-text-secondary">{p.frequency}</p>
                 </div>
-                <StatusPill label={STATUS_LABEL[p.status]} tone={STATUS_TONE[p.status]} />
+                <StatusPill label={t(STATUS_LABEL_KEY[p.status])} tone={STATUS_TONE[p.status]} />
               </div>
 
               <div className="mt-4 flex items-center justify-between text-[11.5px] text-text-tertiary">
-                <span>Prescribed by {p.prescribedBy}</span>
-                <span className="tabular-nums">since {formatDate(p.startDate)}</span>
+                <span>{t("prescriptionsView.prescribedByLabel")} {p.prescribedBy}</span>
+                <span className="tabular-nums">{t("prescriptionsView.since")} {formatDate(p.startDate)}</span>
               </div>
 
               <div className="mt-3">
                 <div className="mb-1.5 flex items-center justify-between text-[11px] text-text-tertiary">
-                  <span>Adherence</span>
+                  <span>{t("prescriptionsView.adherence")}</span>
                   <span className="tabular-nums font-medium text-text-secondary">{p.adherence}%</span>
                 </div>
                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-black/[0.07]">
@@ -161,15 +172,23 @@ export function PrescriptionsView() {
                 </div>
               </div>
 
-              {p.status === "refill-due" && (
-                <button
-                  onClick={() => requestRefill(p.id, p.drug)}
-                  disabled={requested.has(p.id)}
-                  className="mt-4 w-full rounded-full border border-amber/30 bg-amber/10 py-2 text-[12px] font-medium text-amber transition hover:bg-amber/15 disabled:cursor-default disabled:opacity-60"
+              <div className="mt-4 flex items-center gap-2">
+                <Link
+                  href={`/prescriptions/${p.id}`}
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-full border border-hairline py-2 text-[12px] font-medium text-text-secondary transition hover:border-hairline-strong hover:text-text-primary"
                 >
-                  {requested.has(p.id) ? t("btn.refillRequested") : t("btn.requestRefill")}
-                </button>
-              )}
+                  <FileText size={13} /> {t("prescriptionsView.viewDocument")}
+                </Link>
+                {p.status === "refill-due" && (
+                  <button
+                    onClick={() => requestRefill(p.id, p.drug)}
+                    disabled={requested.has(p.id)}
+                    className="flex-1 rounded-full border border-amber/30 bg-amber/10 py-2 text-[12px] font-medium text-amber transition hover:bg-amber/15 disabled:cursor-default disabled:opacity-60"
+                  >
+                    {requested.has(p.id) ? t("btn.refillRequested") : t("btn.requestRefill")}
+                  </button>
+                )}
+              </div>
             </Card>
           </motion.div>
         ))}
@@ -197,7 +216,7 @@ export function PrescriptionsView() {
                 <p className="text-[14px] font-semibold text-text-primary">{t("btn.newPrescription")}</p>
                 <button
                   onClick={() => setFormOpen(false)}
-                  aria-label="Close"
+                  aria-label={t("prescriptionsView.closeAria")}
                   className="text-text-tertiary transition hover:text-text-secondary"
                 >
                   <X size={16} />
@@ -207,26 +226,32 @@ export function PrescriptionsView() {
               <div className="space-y-4 px-5 py-4">
                 <div>
                   <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.1em] text-text-tertiary">
-                    Prescribing doctor
+                    {t("prescriptionsView.sectionPrescribingDoctor")}
                   </p>
                   <div className="space-y-2">
                     <input
                       value={doctorName}
                       onChange={(e) => setDoctorName(e.target.value)}
-                      placeholder="Doctor name"
+                      placeholder={t("hospital.doctors.placeholderName")}
+                      className="w-full rounded-xl border border-hairline bg-black/[0.025] px-3.5 py-2.5 text-[13px] outline-none focus:border-cyan/40"
+                    />
+                    <input
+                      value={qualification}
+                      onChange={(e) => setQualification(e.target.value)}
+                      placeholder={t("hospital.doctors.placeholderQualification")}
                       className="w-full rounded-xl border border-hairline bg-black/[0.025] px-3.5 py-2.5 text-[13px] outline-none focus:border-cyan/40"
                     />
                     <div className="grid grid-cols-2 gap-2">
                       <input
                         value={registrationId}
                         onChange={(e) => setRegistrationId(e.target.value)}
-                        placeholder="Registration ID"
+                        placeholder={t("login.field.registrationId")}
                         className="w-full rounded-xl border border-hairline bg-black/[0.025] px-3.5 py-2.5 text-[13px] outline-none focus:border-cyan/40"
                       />
                       <input
                         value={facility}
                         onChange={(e) => setFacility(e.target.value)}
-                        placeholder="Facility"
+                        placeholder={t("prescriptionsView.placeholderFacility")}
                         className="w-full rounded-xl border border-hairline bg-black/[0.025] px-3.5 py-2.5 text-[13px] outline-none focus:border-cyan/40"
                       />
                     </div>
@@ -235,7 +260,7 @@ export function PrescriptionsView() {
 
                 <div>
                   <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.1em] text-text-tertiary">
-                    Prescribing for
+                    {t("prescriptionsView.sectionPrescribingFor")}
                   </p>
                   <div className="flex items-center gap-2.5 rounded-2xl bg-black/[0.035] px-3.5 py-2.5">
                     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-cyan/10 text-cyan">
@@ -250,24 +275,24 @@ export function PrescriptionsView() {
 
                 <div>
                   <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.1em] text-text-tertiary">
-                    Medication
+                    {t("prescriptionsView.sectionMedication")}
                   </p>
                   <div className="space-y-2">
                     <Autocomplete
                       value={drug}
                       onChange={setDrug}
                       options={ESSENTIAL_MEDICINES}
-                      placeholder="Drug name"
+                      placeholder={t("prescriptionsView.placeholderDrugName")}
                       className="w-full rounded-xl border border-hairline bg-black/[0.025] px-3.5 py-2.5 text-[13px] outline-none focus:border-cyan/40"
                     />
                     <p className="text-[10.5px] text-text-tertiary">
-                      Suggestions from India&rsquo;s National List of Essential Medicines (NLEM 2022)
+                      {t("prescriptionsView.nlemHint")}
                     </p>
                     <div className="grid grid-cols-2 gap-2">
                       <input
                         value={dose}
                         onChange={(e) => setDose(e.target.value)}
-                        placeholder="Dose (e.g. 500mg)"
+                        placeholder={t("prescriptionsView.placeholderDose")}
                         className="w-full rounded-xl border border-hairline bg-black/[0.025] px-3.5 py-2.5 text-[13px] outline-none focus:border-cyan/40"
                       />
                       <input
@@ -280,7 +305,7 @@ export function PrescriptionsView() {
                     <input
                       value={frequency}
                       onChange={(e) => setFrequency(e.target.value)}
-                      placeholder="Frequency (e.g. Twice daily, after meals)"
+                      placeholder={t("prescriptionsView.placeholderFrequency")}
                       className="w-full rounded-xl border border-hairline bg-black/[0.025] px-3.5 py-2.5 text-[13px] outline-none focus:border-cyan/40"
                     />
                   </div>

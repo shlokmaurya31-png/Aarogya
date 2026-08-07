@@ -12,6 +12,7 @@ import { usePatientStore } from "@/store/usePatientStore";
 import { useLanguageStore } from "@/store/useLanguageStore";
 import { useThemeStore } from "@/store/useThemeStore";
 import { useToastStore } from "@/store/useToastStore";
+import { useTranslation } from "@/hooks/useTranslation";
 import { LANGUAGES } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { AuthUser } from "@/types";
@@ -38,6 +39,7 @@ export default function SettingsPage() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const hasHydrated = useAuthStore((s) => s.hasHydrated);
+  const { t } = useTranslation();
 
   useEffect(() => {
     if (!hasHydrated) return;
@@ -45,7 +47,11 @@ export default function SettingsPage() {
   }, [hasHydrated, user, router]);
 
   if (!hasHydrated || !user) {
-    return <div className="flex min-h-screen items-center justify-center bg-ink text-text-tertiary">Loading…</div>;
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-ink text-text-tertiary">
+        {t("settings.loading")}
+      </div>
+    );
   }
 
   return <SettingsForm key={user.id} user={user} />;
@@ -53,6 +59,7 @@ export default function SettingsPage() {
 
 function SettingsForm({ user }: { user: AuthUser }) {
   const router = useRouter();
+  const { t } = useTranslation();
   const updateProfile = useAuthStore((s) => s.updateProfile);
   const logout = useAuthStore((s) => s.logout);
   const patientProfile = usePatientStore((s) => s.profile);
@@ -96,27 +103,27 @@ function SettingsForm({ user }: { user: AuthUser }) {
     if (user.role === "patient" && patientProfile) {
       updateInsuranceProvider(insuranceProvider);
     }
-    push("Profile updated", "emerald");
+    push(t("settings.toast.profileUpdated"), "emerald");
   }
 
   function handleChangePassword(e: React.FormEvent) {
     e.preventDefault();
     if (!currentPassword || !newPassword) {
-      push("Fill in your current and new password.", "amber");
+      push(t("settings.toast.fillPasswords"), "amber");
       return;
     }
     if (newPassword.length < 6) {
-      push("New password needs at least 6 characters.", "amber");
+      push(t("settings.toast.passwordTooShort"), "amber");
       return;
     }
     if (newPassword !== confirmPassword) {
-      push("New passwords don't match.", "amber");
+      push(t("settings.toast.passwordMismatch"), "amber");
       return;
     }
     setCurrentPassword("");
     setNewPassword("");
     setConfirmPassword("");
-    push("Password updated", "emerald");
+    push(t("settings.toast.passwordUpdated"), "emerald");
   }
 
   function handleLogout() {
@@ -132,9 +139,9 @@ function SettingsForm({ user }: { user: AuthUser }) {
             href={backHref}
             className="flex items-center gap-1.5 rounded-full border border-hairline px-3 py-1.5 text-[12px] text-text-secondary transition hover:border-cyan/30 hover:text-cyan"
           >
-            <ArrowLeft size={13} /> Back
+            <ArrowLeft size={13} /> {t("settings.back")}
           </Link>
-          <p className="text-[13.5px] font-semibold">Account Settings</p>
+          <p className="text-[13.5px] font-semibold">{t("settings.title")}</p>
         </div>
       </header>
 
@@ -146,11 +153,13 @@ function SettingsForm({ user }: { user: AuthUser }) {
             </div>
             <div>
               <p className="text-[15px] font-semibold text-text-primary">{user.name}</p>
-              <p className="text-[12px] capitalize text-text-tertiary">{user.role} account</p>
+              <p className="text-[12px] capitalize text-text-tertiary">
+                {user.role} {t("settings.label.account")}
+              </p>
             </div>
             {user.verificationStatus && (
               <StatusPill
-                label={user.verificationStatus}
+                label={t(`settings.status.${user.verificationStatus}`)}
                 tone={STATUS_TONE[user.verificationStatus]}
                 className="ml-auto"
               />
@@ -159,12 +168,12 @@ function SettingsForm({ user }: { user: AuthUser }) {
         </Card>
 
         <Card>
-          <CardLabel>Personal information</CardLabel>
+          <CardLabel>{t("settings.section.personalInfo")}</CardLabel>
           <form onSubmit={handleSaveProfile} className="mt-4 space-y-4">
-            <Field label={user.role === "lab" ? "Lab / diagnostic centre name" : "Full name"}>
+            <Field label={user.role === "lab" ? t("settings.field.labName") : t("settings.field.fullName")}>
               <input value={name} onChange={(e) => setName(e.target.value)} className={inputClass} required />
             </Field>
-            <Field label="Email">
+            <Field label={t("settings.field.email")}>
               <input
                 type="email"
                 value={email}
@@ -174,7 +183,7 @@ function SettingsForm({ user }: { user: AuthUser }) {
               />
             </Field>
             {user.role !== "admin" && (
-              <Field label="Phone number">
+              <Field label={t("settings.field.phone")}>
                 <input
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
@@ -185,10 +194,10 @@ function SettingsForm({ user }: { user: AuthUser }) {
             )}
             {user.role === "doctor" && (
               <div className="grid grid-cols-2 gap-3">
-                <Field label="Specialty">
+                <Field label={t("settings.field.specialty")}>
                   <input value={specialty} onChange={(e) => setSpecialty(e.target.value)} className={inputClass} />
                 </Field>
-                <Field label="Registration ID">
+                <Field label={t("settings.field.registrationId")}>
                   <input
                     value={registrationId}
                     onChange={(e) => setRegistrationId(e.target.value)}
@@ -198,31 +207,31 @@ function SettingsForm({ user }: { user: AuthUser }) {
               </div>
             )}
             {user.role === "doctor" && (
-              <Field label="Hospital / facility">
+              <Field label={t("settings.field.facility")}>
                 <input value={facility} onChange={(e) => setFacility(e.target.value)} className={inputClass} />
               </Field>
             )}
             {user.role === "lab" && (
               <>
-                <Field label="Accreditation ID">
+                <Field label={t("settings.field.accreditationId")}>
                   <input
                     value={registrationId}
                     onChange={(e) => setRegistrationId(e.target.value)}
                     className={inputClass}
                   />
                 </Field>
-                <Field label="Branch address / facility">
+                <Field label={t("settings.field.branchAddress")}>
                   <input value={facility} onChange={(e) => setFacility(e.target.value)} className={inputClass} />
                 </Field>
               </>
             )}
             {user.role === "patient" && (
-              <Field label="Health insurance provider">
+              <Field label={t("settings.field.insuranceProvider")}>
                 <input
                   value={insuranceProvider}
                   onChange={(e) => setInsuranceProvider(e.target.value)}
                   className={inputClass}
-                  placeholder="e.g. Star Health (leave blank to remove)"
+                  placeholder={t("settings.field.insurancePlaceholder")}
                 />
               </Field>
             )}
@@ -230,15 +239,15 @@ function SettingsForm({ user }: { user: AuthUser }) {
               type="submit"
               className="flex items-center gap-1.5 rounded-full bg-cyan px-4 py-2.5 text-[13px] font-medium text-ink transition hover:brightness-110 active:scale-[0.98]"
             >
-              <Save size={14} /> Save changes
+              <Save size={14} /> {t("settings.btn.saveChanges")}
             </button>
           </form>
         </Card>
 
         <Card>
-          <CardLabel>Security</CardLabel>
+          <CardLabel>{t("settings.section.security")}</CardLabel>
           <form onSubmit={handleChangePassword} className="mt-4 space-y-4">
-            <Field label="Current password">
+            <Field label={t("settings.field.currentPassword")}>
               <input
                 type="password"
                 value={currentPassword}
@@ -248,7 +257,7 @@ function SettingsForm({ user }: { user: AuthUser }) {
               />
             </Field>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="New password">
+              <Field label={t("settings.field.newPassword")}>
                 <input
                   type="password"
                   value={newPassword}
@@ -257,7 +266,7 @@ function SettingsForm({ user }: { user: AuthUser }) {
                   placeholder="••••••••"
                 />
               </Field>
-              <Field label="Confirm new password">
+              <Field label={t("settings.field.confirmPassword")}>
                 <input
                   type="password"
                   value={confirmPassword}
@@ -271,34 +280,34 @@ function SettingsForm({ user }: { user: AuthUser }) {
               type="submit"
               className="rounded-full border border-hairline px-4 py-2.5 text-[13px] font-medium text-text-secondary transition hover:border-cyan/30 hover:text-cyan"
             >
-              Update password
+              {t("settings.btn.updatePassword")}
             </button>
           </form>
         </Card>
 
         <Card>
-          <CardLabel>Appearance</CardLabel>
+          <CardLabel>{t("settings.section.appearance")}</CardLabel>
           <div className="mt-3 flex flex-wrap gap-2">
-            {(["light", "dark"] as const).map((t) => (
+            {(["light", "dark"] as const).map((themeOption) => (
               <button
-                key={t}
-                onClick={() => setTheme(t)}
+                key={themeOption}
+                onClick={() => setTheme(themeOption)}
                 className={cn(
                   "flex items-center gap-1.5 rounded-full border px-3.5 py-2 text-[12.5px] capitalize transition",
-                  theme === t
+                  theme === themeOption
                     ? "border-cyan/40 bg-cyan/10 text-cyan"
                     : "border-hairline text-text-secondary hover:border-hairline-strong"
                 )}
               >
-                {theme === t && <Check size={12} />}
-                {t}
+                {theme === themeOption && <Check size={12} />}
+                {t(`settings.theme.${themeOption}`)}
               </button>
             ))}
           </div>
         </Card>
 
         <Card>
-          <CardLabel>Language</CardLabel>
+          <CardLabel>{t("settings.section.language")}</CardLabel>
           <div className="mt-3 flex flex-wrap gap-2">
             {LANGUAGES.map((l) => (
               <button
@@ -320,16 +329,14 @@ function SettingsForm({ user }: { user: AuthUser }) {
 
         <Card className="flex items-center justify-between">
           <div>
-            <p className="text-[13.5px] font-medium text-text-primary">Log out</p>
-            <p className="mt-0.5 text-[12px] text-text-tertiary">
-              You&rsquo;ll need to sign in again to access your account.
-            </p>
+            <p className="text-[13.5px] font-medium text-text-primary">{t("settings.section.logout")}</p>
+            <p className="mt-0.5 text-[12px] text-text-tertiary">{t("settings.logout.description")}</p>
           </div>
           <button
             onClick={handleLogout}
             className="flex shrink-0 items-center gap-1.5 rounded-full border border-red/30 px-4 py-2 text-[12.5px] font-medium text-red transition hover:bg-red/10"
           >
-            <LogOut size={13} /> Log out
+            <LogOut size={13} /> {t("settings.section.logout")}
           </button>
         </Card>
       </main>

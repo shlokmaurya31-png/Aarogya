@@ -53,7 +53,7 @@ export function LabResultsView() {
   return (
     <div className="space-y-5">
       <SectionHeader
-        eyebrow="Lab Results"
+        eyebrow={t("labs.eyebrow")}
         title={t("labs.title")}
         subtitle={`${labResults.length} results across ${groups.length} panels · ${flagged} flagged for review`}
       />
@@ -74,7 +74,7 @@ export function LabResultsView() {
                     <div className="col-span-4 sm:col-span-3">
                       <p className="text-[13px] font-medium text-text-primary">{r.test}</p>
                       <p className="text-[11px] text-text-tertiary">
-                        Ref {r.refLow}–{r.refHigh} {r.unit}
+                        {t("labs.ref")} {r.refLow}–{r.refHigh} {r.unit}
                       </p>
                     </div>
                     <div className="col-span-4 hidden sm:block">

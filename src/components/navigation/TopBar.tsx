@@ -166,7 +166,7 @@ export function TopBar() {
           <button
             onClick={() => setSearchOpen(true)}
             className="hidden items-center gap-2 rounded-full border border-hairline px-3 py-1.5 text-[12px] text-text-tertiary transition hover:border-hairline-strong hover:text-text-secondary lg:flex"
-            aria-label="Search"
+            aria-label={t("topbar.search")}
           >
             <Search size={13} />
             {t("topbar.search")}
@@ -181,7 +181,7 @@ export function TopBar() {
             <Link
               href="/settings"
               className="flex items-center gap-2.5 rounded-full py-1 pl-1 pr-2.5 transition hover:bg-black/[0.04]"
-              aria-label="Account settings"
+              aria-label={t("topbar.accountSettings")}
             >
               <div className="hidden text-right md:block">
                 <p className="text-[12px] font-medium leading-tight text-text-primary">{displayName}</p>
@@ -196,7 +196,7 @@ export function TopBar() {
             <button
               onClick={handleLogout}
               className="text-text-tertiary transition hover:text-red"
-              aria-label="Log out"
+              aria-label={t("common.logout")}
             >
               <LogOut size={15} />
             </button>
@@ -212,7 +212,7 @@ export function TopBar() {
             <span className="font-medium text-text-primary">{patient.name}</span>
             <span className="tabular-nums text-text-tertiary">{patient.patientId}</span>
             {authUser?.verificationStatus === "pending" && (
-              <StatusPill label="Verification pending" tone="amber" />
+              <StatusPill label={t("common.verificationPending")} tone="amber" />
             )}
             <span className="ml-auto hidden items-center gap-1.5 text-text-tertiary sm:flex">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald" />

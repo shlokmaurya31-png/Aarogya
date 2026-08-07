@@ -28,15 +28,15 @@ export function PatientReportsView() {
   return (
     <div className="space-y-5">
       <SectionHeader
-        eyebrow="Reports"
+        eyebrow={t("nav.reports")}
         title={t("reports.titlePatient")}
-        subtitle="No medical jargon, just what it means for you"
+        subtitle={t("patientReports.subtitle")}
       />
 
       {reports.length === 0 && (
         <Card>
           <p className="text-center text-[13px] text-text-secondary">
-            No reports yet. Upload one from Ask Aarogya on your Home tab, or your doctor/lab will add results here.
+            {t("patientReports.emptyState")}
           </p>
         </Card>
       )}
@@ -64,12 +64,12 @@ export function PatientReportsView() {
                           downloadTextFile(
                             `${r.title.replace(/\s+/g, "-")}.txt`,
                             `${r.title}\n${r.facility}\nDate: ${formatDate(r.date)}\n\n${
-                              REPORT_FRIENDLY[r.id] ?? "Ask Aarogya AI to explain this report to you."
+                              REPORT_FRIENDLY[r.id] ?? t("patientReports.aiExplainFallback")
                             }`
                           )
                         }
                         className="shrink-0 rounded-full border border-hairline p-2 text-text-tertiary transition hover:border-cyan/30 hover:text-cyan"
-                        aria-label={`Download ${r.title}`}
+                        aria-label={`${t("patientReports.download")} ${r.title}`}
                       >
                         <Download size={14} />
                       </button>
@@ -78,7 +78,7 @@ export function PatientReportsView() {
                       {r.facility} · {formatDate(r.date)}
                     </p>
                     <p className="mt-2.5 text-[13px] leading-relaxed text-text-secondary">
-                      {REPORT_FRIENDLY[r.id] ?? "Ask Aarogya AI to explain this report to you."}
+                      {REPORT_FRIENDLY[r.id] ?? t("patientReports.aiExplainFallback")}
                     </p>
                   </div>
                 </div>

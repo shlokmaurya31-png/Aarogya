@@ -17,27 +17,25 @@ export function PatientMedicinesView() {
 
   function orderRefill(id: string, drug: string) {
     setOrdered((s) => new Set(s).add(id));
-    push(`Refill ordered for ${drug}, on its way`, "amber");
+    push(`${t("patientMedicines.refillOrderedFor")} ${drug}${t("patientMedicines.onItsWay")}`, "amber");
   }
 
   return (
     <div className="space-y-5">
       <SectionHeader
-        eyebrow="Medicines"
+        eyebrow={t("nav.medicines")}
         title={t("patientHome.medicinesTitle")}
-        subtitle="Prescribed by your doctor, kept up to date here"
+        subtitle={t("patientMedicines.subtitle")}
       />
 
       <Card>
-        <CardLabel>Your regular medicines</CardLabel>
+        <CardLabel>{t("patientMedicines.regularMedicines")}</CardLabel>
         {active.length === 0 ? (
           <div className="mt-4 flex flex-col items-center gap-2 py-8 text-center">
             <span className="flex h-11 w-11 items-center justify-center rounded-full bg-black/[0.045] text-text-tertiary">
               <Pill size={18} />
             </span>
-            <p className="text-[13px] text-text-secondary">
-              No medicines added yet. Your doctor&rsquo;s prescriptions will show up here.
-            </p>
+            <p className="text-[13px] text-text-secondary">{t("patientMedicines.emptyState")}</p>
           </div>
         ) : (
           <div className="mt-3 divide-y divide-hairline">

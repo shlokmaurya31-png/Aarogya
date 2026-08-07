@@ -3,6 +3,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { CheckCircle2, TriangleAlert, XCircle, Info, X } from "lucide-react";
 import { useToastStore, type ToastTone } from "@/store/useToastStore";
+import { useTranslation } from "@/hooks/useTranslation";
 
 const TONE_ICON: Record<ToastTone, typeof CheckCircle2> = {
   emerald: CheckCircle2,
@@ -21,16 +22,17 @@ const TONE_COLOR: Record<ToastTone, string> = {
 export function ToastViewport() {
   const toasts = useToastStore((s) => s.toasts);
   const dismiss = useToastStore((s) => s.dismiss);
+  const { t } = useTranslation();
 
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-5 z-[200] flex flex-col items-center gap-2 px-4">
       <AnimatePresence>
-        {toasts.map((t) => {
-          const Icon = TONE_ICON[t.tone];
-          const color = TONE_COLOR[t.tone];
+        {toasts.map((toast) => {
+          const Icon = TONE_ICON[toast.tone];
+          const color = TONE_COLOR[toast.tone];
           return (
             <motion.div
-              key={t.id}
+              key={toast.id}
               layout
               initial={{ opacity: 0, y: 16, scale: 0.96 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -39,10 +41,10 @@ export function ToastViewport() {
               className="glass-strong card-shadow pointer-events-auto flex w-full max-w-sm items-center gap-2.5 rounded-full px-4 py-2.5"
             >
               <Icon size={16} className="shrink-0" style={{ color }} />
-              <p className="flex-1 text-[12.5px] font-medium text-text-primary">{t.message}</p>
+              <p className="flex-1 text-[12.5px] font-medium text-text-primary">{toast.message}</p>
               <button
-                onClick={() => dismiss(t.id)}
-                aria-label="Dismiss"
+                onClick={() => dismiss(toast.id)}
+                aria-label={t("common.dismiss")}
                 className="shrink-0 text-text-tertiary transition hover:text-text-secondary"
               >
                 <X size={13} />

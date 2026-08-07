@@ -10,19 +10,19 @@ import { useTranslation } from "@/hooks/useTranslation";
 import { LAB_CATEGORY_MAP } from "@/lib/lab-categories";
 import type { ReportKind } from "@/types";
 
-const KIND_META: Record<ReportKind, { icon: typeof FileText; label: string; color: string }> = {
-  lab: { icon: FlaskConical, label: "Lab Report", color: "#dc2626" },
-  radiology: { icon: Scan, label: "Radiology", color: "#0e7490" },
-  discharge: { icon: FileHeart, label: "Discharge Summary", color: "#b45309" },
-  prescription: { icon: FileText, label: "Prescription", color: "#15803d" },
+const KIND_META: Record<ReportKind, { icon: typeof FileText; labelKey: string; color: string }> = {
+  lab: { icon: FlaskConical, labelKey: "reportsView.kind.lab", color: "#dc2626" },
+  radiology: { icon: Scan, labelKey: "reportsView.kind.radiology", color: "#0e7490" },
+  discharge: { icon: FileHeart, labelKey: "reportsView.kind.discharge", color: "#b45309" },
+  prescription: { icon: FileText, labelKey: "reportsView.kind.prescription", color: "#15803d" },
 };
 
 function formatDate(d: string) {
   return new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-function formatSize(kb: number) {
-  return kb > 1024 ? `${(kb / 1024).toFixed(1)} MB` : `${kb} KB`;
+function formatSize(kb: number, t: (key: string) => string) {
+  return kb > 1024 ? `${(kb / 1024).toFixed(1)} ${t("reportsView.unitMb")}` : `${kb} ${t("reportsView.unitKb")}`;
 }
 
 export function ReportsView() {
@@ -32,9 +32,9 @@ export function ReportsView() {
   return (
     <div className="space-y-5">
       <SectionHeader
-        eyebrow="Reports"
+        eyebrow={t("nav.reports")}
         title={t("reports.title")}
-        subtitle={`${reports.length} documents · Uploaded directly by labs and hospitals, no paper involved`}
+        subtitle={`${reports.length} ${t("reportsView.subtitle")}`}
       />
 
       <Card className="p-0">
@@ -59,13 +59,13 @@ export function ReportsView() {
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13.5px] font-medium text-text-primary">{r.title}</p>
                   <p className="truncate text-[12px] text-text-tertiary">
-                    {r.labCategory ? LAB_CATEGORY_MAP[r.labCategory].label : meta.label} · {r.facility}
+                    {r.labCategory ? LAB_CATEGORY_MAP[r.labCategory].label : t(meta.labelKey)} · {r.facility}
                   </p>
                 </div>
                 <div className="hidden shrink-0 items-center gap-1.5 sm:flex">
                   {r.verified && (
                     <span className="flex items-center gap-1 rounded-full bg-emerald/10 px-2.5 py-1 text-[10.5px] font-medium text-emerald">
-                      <BadgeCheck size={11} /> Verified
+                      <BadgeCheck size={11} /> {t("reportsView.verified")}
                     </span>
                   )}
                 </div>
@@ -73,17 +73,17 @@ export function ReportsView() {
                   {formatDate(r.date)}
                 </span>
                 <span className="hidden w-14 shrink-0 tabular-nums text-[11.5px] text-text-tertiary lg:block">
-                  {formatSize(r.sizeKb)}
+                  {formatSize(r.sizeKb, t)}
                 </span>
                 <button
                   onClick={() =>
                     downloadTextFile(
                       `${r.title.replace(/\s+/g, "-")}.txt`,
-                      `${r.title}\n${meta.label} · ${r.facility}\nDate: ${formatDate(r.date)}\n\nThis is a placeholder export from Aarogya AI.`
+                      `${r.title}\n${t(meta.labelKey)} · ${r.facility}\n${t("reportsView.downloadDateLabel")} ${formatDate(r.date)}\n\n${t("reportsView.downloadPlaceholder")}`
                     )
                   }
                   className="shrink-0 rounded-full border border-hairline p-2 text-text-tertiary transition hover:border-cyan/30 hover:text-cyan"
-                  aria-label={`Download ${r.title}`}
+                  aria-label={`${t("reportsView.download")} ${r.title}`}
                 >
                   <Download size={14} />
                 </button>

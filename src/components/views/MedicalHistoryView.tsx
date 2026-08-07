@@ -11,14 +11,14 @@ import { cn } from "@/lib/utils";
 import { useTranslation } from "@/hooks/useTranslation";
 import type { TimelineEventType } from "@/types";
 
-const FILTERS: { id: TimelineEventType | "all"; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "doctor-visit", label: "Doctor Visits" },
-  { id: "blood-test", label: "Blood Tests" },
-  { id: "ct-scan", label: "CT Scans" },
-  { id: "mri", label: "MRI" },
-  { id: "vaccination", label: "Vaccinations" },
-  { id: "hospitalization", label: "Hospitalizations" },
+const FILTERS: { id: TimelineEventType | "all"; labelKey: string }[] = [
+  { id: "all", labelKey: "medicalHistory.filter.all" },
+  { id: "doctor-visit", labelKey: "medicalHistory.filter.doctorVisits" },
+  { id: "blood-test", labelKey: "medicalHistory.filter.bloodTests" },
+  { id: "ct-scan", labelKey: "medicalHistory.filter.ctScans" },
+  { id: "mri", labelKey: "medicalHistory.filter.mri" },
+  { id: "vaccination", labelKey: "medicalHistory.filter.vaccinations" },
+  { id: "hospitalization", labelKey: "medicalHistory.filter.hospitalizations" },
 ];
 
 export function MedicalHistoryView() {
@@ -33,9 +33,9 @@ export function MedicalHistoryView() {
   return (
     <div className="space-y-5">
       <SectionHeader
-        eyebrow="Medical History"
+        eyebrow={t("medicalHistory.eyebrow")}
         title={t("history.title")}
-        subtitle={`${timeline.length} events across 5 facilities since 2025`}
+        subtitle={`${timeline.length} ${t("medicalHistory.subtitle")}`}
       />
 
       <HealthTimeline />
@@ -53,7 +53,7 @@ export function MedicalHistoryView() {
                   : "border-hairline text-text-secondary hover:border-hairline-strong"
               )}
             >
-              {f.label}
+              {t(f.labelKey)}
             </button>
           ))}
         </div>

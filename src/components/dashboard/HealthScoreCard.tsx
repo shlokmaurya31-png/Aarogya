@@ -20,10 +20,10 @@ export function HealthScoreCard() {
       <Card className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
         <CardLabel>{t("label.healthScore")}</CardLabel>
         <div className="flex h-40 w-40 items-center justify-center rounded-full border-2 border-dashed border-hairline-strong">
-          <span className="text-[11px] text-text-tertiary">No data yet</span>
+          <span className="text-[11px] text-text-tertiary">{t("healthScore.noDataYet")}</span>
         </div>
         <p className="max-w-[220px] text-[12.5px] leading-relaxed text-text-secondary">
-          Your score builds up once a report is uploaded or a doctor adds a checkup.
+          {t("healthScore.buildsUpDescription")}
         </p>
       </Card>
     );

@@ -15,6 +15,17 @@ function bedsFor(hospital: HospitalBedAvailability, category: BedCategory): numb
   }
 }
 
+export function capacityFor(hospital: HospitalBedAvailability, category: BedCategory): number {
+  switch (category) {
+    case "emergency":
+      return hospital.emergencyCapacity;
+    case "icu":
+      return hospital.icuCapacity;
+    case "general":
+      return hospital.generalCapacity;
+  }
+}
+
 function adjustBeds(
   hospital: HospitalBedAvailability,
   category: BedCategory,
@@ -39,6 +50,8 @@ interface BedBookingState {
   activeBooking: BedBooking | null;
   bookBed: (hospitalId: string, category: BedCategory, patientName: string) => BookResult;
   cancelBooking: () => void;
+  registerHospital: (hospital: HospitalBedAvailability) => void;
+  setBedCount: (hospitalId: string, category: BedCategory, count: number) => void;
 }
 
 export const useBedBookingStore = create<BedBookingState>((set, get) => ({
@@ -81,4 +94,23 @@ export const useBedBookingStore = create<BedBookingState>((set, get) => ({
         activeBooking: null,
       };
     }),
+
+  registerHospital: (hospital) =>
+    set((s) => (s.hospitals.some((h) => h.id === hospital.id) ? s : { hospitals: [hospital, ...s.hospitals] })),
+
+  setBedCount: (hospitalId, category, count) =>
+    set((s) => ({
+      hospitals: s.hospitals.map((h) => {
+        if (h.id !== hospitalId) return h;
+        const next = Math.min(Math.max(0, count), capacityFor(h, category));
+        switch (category) {
+          case "emergency":
+            return { ...h, emergencyBeds: next };
+          case "icu":
+            return { ...h, icuBeds: next };
+          case "general":
+            return { ...h, generalBeds: next };
+        }
+      }),
+    })),
 }));
