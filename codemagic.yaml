@@ -6,7 +6,6 @@ workflows:
     environment:
       node: 20
       java: 17
-      groups: []
     scripts:
       - name: Install dependencies
         script: npm ci
@@ -18,6 +17,3 @@ workflows:
           ./gradlew assembleDebug --no-daemon
     artifacts:
       - android/app/build/outputs/**/*.apk
-    publishing:
-      email:
-        recipients: []
