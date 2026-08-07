@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
-import { FileText, Plus, User, X } from "lucide-react";
+import { FileText, Plus, Trash2, User, X } from "lucide-react";
 import { patient } from "@/lib/mock-data";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { Card } from "@/components/ui/Card";
@@ -39,6 +39,10 @@ function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
+type MedLine = { drug: string; dose: string; frequency: string };
+
+const emptyMedLine: MedLine = { drug: "", dose: "", frequency: "" };
+
 export function PrescriptionsView() {
   const prescriptions = useRecordsStore((s) => s.prescriptions);
   const addPrescription = useRecordsStore((s) => s.addPrescription);
@@ -55,10 +59,20 @@ export function PrescriptionsView() {
   const [qualification, setQualification] = useState(doctorSignature.qualification);
   const [registrationId, setRegistrationId] = useState(doctorSignature.registrationId);
   const [facility, setFacility] = useState(doctorSignature.facility);
-  const [drug, setDrug] = useState("");
-  const [dose, setDose] = useState("");
-  const [frequency, setFrequency] = useState("");
+  const [meds, setMeds] = useState<MedLine[]>([emptyMedLine]);
   const [startDate, setStartDate] = useState(todayIso());
+
+  function updateMed(index: number, field: keyof MedLine, value: string) {
+    setMeds((rows) => rows.map((r, i) => (i === index ? { ...r, [field]: value } : r)));
+  }
+
+  function addMedLine() {
+    setMeds((rows) => [...rows, { ...emptyMedLine }]);
+  }
+
+  function removeMedLine(index: number) {
+    setMeds((rows) => rows.filter((_, i) => i !== index));
+  }
 
   function requestRefill(id: string, drug: string) {
     setRequested((s) => new Set(s).add(id));
@@ -70,15 +84,14 @@ export function PrescriptionsView() {
     setQualification(doctorSignature.qualification);
     setRegistrationId(doctorSignature.registrationId);
     setFacility(doctorSignature.facility);
-    setDrug("");
-    setDose("");
-    setFrequency("");
+    setMeds([{ ...emptyMedLine }]);
     setStartDate(todayIso());
     setFormOpen(true);
   }
 
   function submitPrescription() {
-    if (!doctorName.trim() || !drug.trim() || !dose.trim() || !frequency.trim()) {
+    const validMeds = meds.filter((m) => m.drug.trim() && m.dose.trim() && m.frequency.trim());
+    if (!doctorName.trim() || validMeds.length === 0) {
       push(t("prescriptionsView.toast.fillRequiredFields"), "amber");
       return;
     }
@@ -88,28 +101,34 @@ export function PrescriptionsView() {
       registrationId: registrationId.trim(),
       facility: facility.trim(),
     });
-    addPrescription({
-      id: nextId(),
-      drug: drug.trim(),
-      dose: dose.trim(),
-      frequency: frequency.trim(),
-      prescribedBy: doctorName.trim(),
-      qualification: qualification.trim(),
-      registrationId: registrationId.trim(),
-      facility: facility.trim(),
-      startDate,
-      status: "active",
-      adherence: 100,
-    });
-    addNotification({
-      id: `note-${nextId()}`,
-      kind: "medicine",
-      title: t("prescriptionsView.notification.title"),
-      detail: `${drug.trim()} ${dose.trim()} ${t("prescriptionsView.notification.prescribedBySuffix")} ${doctorName.trim()}`,
-      time: t("lab.time.justNow"),
-      risk: "watch",
-    });
-    push(`${t("prescriptionsView.toast.prescriptionSentPrefix")} ${drug.trim()} ${t("prescriptionsView.toast.prescriptionSentMiddle")} ${patient.name}`, "emerald");
+    for (const m of validMeds) {
+      addPrescription({
+        id: nextId(),
+        drug: m.drug.trim(),
+        dose: m.dose.trim(),
+        frequency: m.frequency.trim(),
+        prescribedBy: doctorName.trim(),
+        qualification: qualification.trim(),
+        registrationId: registrationId.trim(),
+        facility: facility.trim(),
+        startDate,
+        status: "active",
+        adherence: 100,
+      });
+      addNotification({
+        id: `note-${nextId()}`,
+        kind: "medicine",
+        title: t("prescriptionsView.notification.title"),
+        detail: `${m.drug.trim()} ${m.dose.trim()} ${t("prescriptionsView.notification.prescribedBySuffix")} ${doctorName.trim()}`,
+        time: t("lab.time.justNow"),
+        risk: "watch",
+      });
+    }
+    const summary =
+      validMeds.length === 1
+        ? validMeds[0].drug.trim()
+        : `${validMeds.length} ${t("prescriptionsView.toast.medicinesSuffix")}`;
+    push(`${t("prescriptionsView.toast.prescriptionSentPrefix")} ${summary} ${t("prescriptionsView.toast.prescriptionSentMiddle")} ${patient.name}`, "emerald");
     setFormOpen(false);
   }
 
@@ -274,40 +293,66 @@ export function PrescriptionsView() {
                 </div>
 
                 <div>
-                  <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.1em] text-text-tertiary">
-                    {t("prescriptionsView.sectionMedication")}
-                  </p>
-                  <div className="space-y-2">
-                    <Autocomplete
-                      value={drug}
-                      onChange={setDrug}
-                      options={ESSENTIAL_MEDICINES}
-                      placeholder={t("prescriptionsView.placeholderDrugName")}
-                      className="w-full rounded-xl border border-hairline bg-black/[0.025] px-3.5 py-2.5 text-[13px] outline-none focus:border-cyan/40"
-                    />
-                    <p className="text-[10.5px] text-text-tertiary">
-                      {t("prescriptionsView.nlemHint")}
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="text-[11px] font-medium uppercase tracking-[0.1em] text-text-tertiary">
+                      {t("prescriptionsView.sectionMedication")}
                     </p>
-                    <div className="grid grid-cols-2 gap-2">
-                      <input
-                        value={dose}
-                        onChange={(e) => setDose(e.target.value)}
-                        placeholder={t("prescriptionsView.placeholderDose")}
-                        className="w-full rounded-xl border border-hairline bg-black/[0.025] px-3.5 py-2.5 text-[13px] outline-none focus:border-cyan/40"
-                      />
-                      <input
-                        type="date"
-                        value={startDate}
-                        onChange={(e) => setStartDate(e.target.value)}
-                        className="w-full rounded-xl border border-hairline bg-black/[0.025] px-3.5 py-2.5 text-[13px] outline-none focus:border-cyan/40"
-                      />
-                    </div>
                     <input
-                      value={frequency}
-                      onChange={(e) => setFrequency(e.target.value)}
-                      placeholder={t("prescriptionsView.placeholderFrequency")}
-                      className="w-full rounded-xl border border-hairline bg-black/[0.025] px-3.5 py-2.5 text-[13px] outline-none focus:border-cyan/40"
+                      type="date"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      className="rounded-lg border border-hairline bg-black/[0.025] px-2.5 py-1 text-[11.5px] outline-none focus:border-cyan/40"
                     />
+                  </div>
+                  <p className="mb-2 text-[10.5px] text-text-tertiary">{t("prescriptionsView.nlemHint")}</p>
+                  <div className="space-y-3">
+                    {meds.map((m, i) => (
+                      <div key={i} className="rounded-2xl border border-hairline p-3">
+                        <div className="mb-2 flex items-center justify-between">
+                          <span className="text-[10.5px] font-medium uppercase tracking-[0.08em] text-text-tertiary">
+                            {t("prescriptionsView.medicineNumber")} {i + 1}
+                          </span>
+                          {meds.length > 1 && (
+                            <button
+                              onClick={() => removeMedLine(i)}
+                              aria-label={t("prescriptionsView.removeMedicineAria")}
+                              className="text-text-tertiary transition hover:text-red"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </div>
+                        <div className="space-y-2">
+                          <Autocomplete
+                            value={m.drug}
+                            onChange={(v) => updateMed(i, "drug", v)}
+                            options={ESSENTIAL_MEDICINES}
+                            placeholder={t("prescriptionsView.placeholderDrugName")}
+                            className="w-full rounded-xl border border-hairline bg-black/[0.025] px-3.5 py-2.5 text-[13px] outline-none focus:border-cyan/40"
+                          />
+                          <div className="grid grid-cols-2 gap-2">
+                            <input
+                              value={m.dose}
+                              onChange={(e) => updateMed(i, "dose", e.target.value)}
+                              placeholder={t("prescriptionsView.placeholderDose")}
+                              className="w-full rounded-xl border border-hairline bg-black/[0.025] px-3.5 py-2.5 text-[13px] outline-none focus:border-cyan/40"
+                            />
+                            <input
+                              value={m.frequency}
+                              onChange={(e) => updateMed(i, "frequency", e.target.value)}
+                              placeholder={t("prescriptionsView.placeholderFrequency")}
+                              className="w-full rounded-xl border border-hairline bg-black/[0.025] px-3.5 py-2.5 text-[13px] outline-none focus:border-cyan/40"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    <button
+                      onClick={addMedLine}
+                      className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-hairline-strong py-2.5 text-[12px] font-medium text-text-secondary transition hover:border-cyan/40 hover:text-cyan"
+                    >
+                      <Plus size={13} /> {t("prescriptionsView.addAnotherMedicine")}
+                    </button>
                   </div>
                 </div>
               </div>

@@ -223,6 +223,9 @@ export interface HospitalDoctorEntry {
   shift: ShiftId;
   onDuty: boolean;
   phone: string;
+  department: string;
+  yearsExperience: number;
+  consultationFee: number;
 }
 
 export interface HospitalStaffMember {
@@ -233,9 +236,27 @@ export interface HospitalStaffMember {
   shift: ShiftId;
   onDuty: boolean;
   phone: string;
+  employeeId: string;
+  department: string;
 }
 
 export type AdmissionStatus = "admitted" | "critical" | "discharged";
+
+export interface VitalReading {
+  bp: string;
+  heartRate: number;
+  temperatureF: number;
+  spo2: number;
+  recordedAt: string;
+}
+
+export interface ClinicalNote {
+  id: string;
+  authorName: string;
+  authorRole: "doctor" | "nurse";
+  timestamp: string;
+  text: string;
+}
 
 export interface HospitalAdmission {
   id: string;
@@ -247,9 +268,15 @@ export interface HospitalAdmission {
   doctorId: string;
   doctorName: string;
   diagnosis: string;
+  diagnosisCode: string;
   admittedAt: string;
   status: AdmissionStatus;
   dischargedAt?: string;
+  vitals: VitalReading;
+  notes: ClinicalNote[];
+  insuranceProvider: string;
+  emergencyContactName: string;
+  emergencyContactPhone: string;
 }
 
 export interface BedBooking {

@@ -12,6 +12,8 @@ import { BedsTab } from "@/components/hospital/BedsTab";
 import { PatientsTab } from "@/components/hospital/PatientsTab";
 import { DoctorsTab } from "@/components/hospital/DoctorsTab";
 import { StaffTab } from "@/components/hospital/StaffTab";
+import { DepartmentsTab } from "@/components/hospital/DepartmentsTab";
+import { AnalyticsTab } from "@/components/hospital/AnalyticsTab";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useBedBookingStore } from "@/store/useBedBookingStore";
@@ -27,9 +29,9 @@ const STARTER_BEDS = {
   generalCapacity: 13,
 };
 
-type TabId = "overview" | "beds" | "patients" | "doctors" | "staff";
+type TabId = "overview" | "beds" | "patients" | "doctors" | "staff" | "departments" | "analytics";
 
-const TAB_IDS: TabId[] = ["overview", "beds", "patients", "doctors", "staff"];
+const TAB_IDS: TabId[] = ["overview", "beds", "patients", "doctors", "staff", "departments", "analytics"];
 
 export default function HospitalPage() {
   const router = useRouter();
@@ -56,6 +58,8 @@ export default function HospitalPage() {
     patients: "hospital.tab.patients",
     doctors: "hospital.tab.doctors",
     staff: "hospital.tab.staff",
+    departments: "hospital.tab.departments",
+    analytics: "hospital.tab.analytics",
   };
   const TAB_OPTIONS: { id: TabId; label: string }[] = TAB_IDS.map((id) => ({
     id,
@@ -153,6 +157,10 @@ export default function HospitalPage() {
         )}
         {tab === "doctors" && <DoctorsTab hospitalId={myHospitalId} doctors={doctors} admissions={admissions} />}
         {tab === "staff" && <StaffTab hospitalId={myHospitalId} staff={staff} />}
+        {tab === "departments" && <DepartmentsTab doctors={doctors} staff={staff} admissions={admissions} />}
+        {tab === "analytics" && (
+          <AnalyticsTab hospital={myHospital} doctors={doctors} staff={staff} admissions={admissions} />
+        )}
       </main>
       <ToastViewport />
     </div>

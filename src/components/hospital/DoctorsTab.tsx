@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Pencil, Phone, Plus, Stethoscope, Trash2, UserCog, Users } from "lucide-react";
+import { Award, IndianRupee, Pencil, Phone, Plus, Stethoscope, Trash2, UserCog, Users } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { FormModal, hospitalInputClass } from "@/components/hospital/FormModal";
@@ -11,7 +11,17 @@ import { useToastStore } from "@/store/useToastStore";
 import { useTranslation } from "@/hooks/useTranslation";
 import type { HospitalAdmission, HospitalDoctorEntry, ShiftId } from "@/types";
 
-const emptyForm = { name: "", specialty: "", qualification: "", registrationId: "", phone: "", shift: "morning" as ShiftId };
+const emptyForm = {
+  name: "",
+  specialty: "",
+  qualification: "",
+  registrationId: "",
+  phone: "",
+  shift: "morning" as ShiftId,
+  department: "",
+  yearsExperience: "",
+  consultationFee: "",
+};
 
 export function DoctorsTab({
   hospitalId,
@@ -60,6 +70,9 @@ export function DoctorsTab({
       registrationId: d.registrationId,
       phone: d.phone,
       shift: d.shift,
+      department: d.department,
+      yearsExperience: String(d.yearsExperience),
+      consultationFee: String(d.consultationFee),
     });
     setOpen(true);
   }
@@ -76,6 +89,9 @@ export function DoctorsTab({
       registrationId: form.registrationId.trim(),
       phone: form.phone.trim() || t("hospital.doctors.notProvided"),
       shift: form.shift,
+      department: form.department.trim() || form.specialty.trim(),
+      yearsExperience: Number(form.yearsExperience) || 0,
+      consultationFee: Number(form.consultationFee) || 0,
     };
     if (editingId) {
       updateDoctor(hospitalId, editingId, payload);
@@ -160,6 +176,18 @@ export function DoctorsTab({
                 </span>
               </div>
 
+              <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-text-tertiary">
+                <span className="rounded-full border border-hairline px-2 py-0.5 text-[10.5px] font-medium text-text-secondary">
+                  {d.department}
+                </span>
+                <span className="flex items-center gap-1">
+                  <Award size={11} /> {d.yearsExperience} {t("hospital.doctors.yearsExperience")}
+                </span>
+                <span className="flex items-center gap-1">
+                  <IndianRupee size={11} /> {d.consultationFee} {t("hospital.doctors.perConsultation")}
+                </span>
+              </div>
+
               <div className="mt-3 flex items-center justify-between">
                 <span className="text-[11px] text-text-tertiary">{SHIFT_LABEL[d.shift]}</span>
                 <button onClick={() => toggleDoctorDuty(hospitalId, d.id)}>
@@ -236,6 +264,38 @@ export function DoctorsTab({
                   </option>
                 ))}
               </select>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.1em] text-text-tertiary">
+            {t("hospital.doctors.rosterExtraHeading")}
+          </p>
+          <div className="space-y-2">
+            <input
+              value={form.department}
+              onChange={(e) => setForm((f) => ({ ...f, department: e.target.value }))}
+              placeholder={t("hospital.doctors.placeholderDepartment")}
+              className={hospitalInputClass}
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                type="number"
+                min={0}
+                value={form.yearsExperience}
+                onChange={(e) => setForm((f) => ({ ...f, yearsExperience: e.target.value }))}
+                placeholder={t("hospital.doctors.placeholderExperience")}
+                className={hospitalInputClass}
+              />
+              <input
+                type="number"
+                min={0}
+                value={form.consultationFee}
+                onChange={(e) => setForm((f) => ({ ...f, consultationFee: e.target.value }))}
+                placeholder={t("hospital.doctors.placeholderFee")}
+                className={hospitalInputClass}
+              />
             </div>
           </div>
         </div>

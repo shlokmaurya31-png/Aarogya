@@ -1,7 +1,14 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { useBedBookingStore } from "@/store/useBedBookingStore";
-import type { BedCategory, HospitalAdmission, HospitalDoctorEntry, HospitalStaffMember } from "@/types";
+import type {
+  BedCategory,
+  ClinicalNote,
+  HospitalAdmission,
+  HospitalDoctorEntry,
+  HospitalStaffMember,
+  VitalReading,
+} from "@/types";
 
 type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -26,6 +33,9 @@ function seedDoctors(): HospitalDoctorEntry[] {
       shift: "morning",
       onDuty: true,
       phone: "+91 98221 40011",
+      department: "Cardiology",
+      yearsExperience: 14,
+      consultationFee: 1500,
     },
     {
       id: nextId("doc"),
@@ -36,6 +46,9 @@ function seedDoctors(): HospitalDoctorEntry[] {
       shift: "evening",
       onDuty: true,
       phone: "+91 98221 40022",
+      department: "Orthopedics",
+      yearsExperience: 9,
+      consultationFee: 1000,
     },
     {
       id: nextId("doc"),
@@ -46,6 +59,9 @@ function seedDoctors(): HospitalDoctorEntry[] {
       shift: "night",
       onDuty: false,
       phone: "+91 98221 40033",
+      department: "General Medicine",
+      yearsExperience: 6,
+      consultationFee: 600,
     },
     {
       id: nextId("doc"),
@@ -56,20 +72,27 @@ function seedDoctors(): HospitalDoctorEntry[] {
       shift: "morning",
       onDuty: true,
       phone: "+91 98221 40044",
+      department: "Pediatrics",
+      yearsExperience: 11,
+      consultationFee: 900,
     },
   ];
 }
 
 function seedStaff(): HospitalStaffMember[] {
   return [
-    { id: nextId("stf"), name: "Sunita Pillai", role: "nurse", ward: "ICU", shift: "morning", onDuty: true, phone: "+91 98222 10011" },
-    { id: nextId("stf"), name: "Ramesh Yadav", role: "nurse", ward: "General Ward", shift: "morning", onDuty: true, phone: "+91 98222 10022" },
-    { id: nextId("stf"), name: "Ayesha Khan", role: "nurse", ward: "Emergency", shift: "night", onDuty: true, phone: "+91 98222 10033" },
-    { id: nextId("stf"), name: "Vikram Solanki", role: "technician", ward: "Radiology", shift: "morning", onDuty: true, phone: "+91 98222 10044" },
-    { id: nextId("stf"), name: "Meena Joshi", role: "receptionist", ward: "Front Desk", shift: "morning", onDuty: true, phone: "+91 98222 10055" },
-    { id: nextId("stf"), name: "Suresh Naik", role: "ward-boy", ward: "General Ward", shift: "evening", onDuty: false, phone: "+91 98222 10066" },
-    { id: nextId("stf"), name: "Divya Iyer", role: "pharmacist", ward: "Pharmacy", shift: "morning", onDuty: true, phone: "+91 98222 10077" },
+    { id: nextId("stf"), name: "Sunita Pillai", role: "nurse", ward: "ICU", shift: "morning", onDuty: true, phone: "+91 98222 10011", employeeId: "EMP-1001", department: "Nursing" },
+    { id: nextId("stf"), name: "Ramesh Yadav", role: "nurse", ward: "General Ward", shift: "morning", onDuty: true, phone: "+91 98222 10022", employeeId: "EMP-1002", department: "Nursing" },
+    { id: nextId("stf"), name: "Ayesha Khan", role: "nurse", ward: "Emergency", shift: "night", onDuty: true, phone: "+91 98222 10033", employeeId: "EMP-1003", department: "Nursing" },
+    { id: nextId("stf"), name: "Vikram Solanki", role: "technician", ward: "Radiology", shift: "morning", onDuty: true, phone: "+91 98222 10044", employeeId: "EMP-1004", department: "Diagnostics" },
+    { id: nextId("stf"), name: "Meena Joshi", role: "receptionist", ward: "Front Desk", shift: "morning", onDuty: true, phone: "+91 98222 10055", employeeId: "EMP-1005", department: "Administration" },
+    { id: nextId("stf"), name: "Suresh Naik", role: "ward-boy", ward: "General Ward", shift: "evening", onDuty: false, phone: "+91 98222 10066", employeeId: "EMP-1006", department: "Support Services" },
+    { id: nextId("stf"), name: "Divya Iyer", role: "pharmacist", ward: "Pharmacy", shift: "morning", onDuty: true, phone: "+91 98222 10077", employeeId: "EMP-1007", department: "Pharmacy" },
   ];
+}
+
+function note(authorName: string, authorRole: "doctor" | "nurse", text: string, timestamp: string): ClinicalNote {
+  return { id: nextId("note"), authorName, authorRole, text, timestamp };
 }
 
 function seedAdmissions(doctors: HospitalDoctorEntry[]): HospitalAdmission[] {
@@ -85,8 +108,17 @@ function seedAdmissions(doctors: HospitalDoctorEntry[]): HospitalAdmission[] {
       doctorId: doctorFor("Cardiology").id,
       doctorName: doctorFor("Cardiology").name,
       diagnosis: "Post-cardiac observation",
+      diagnosisCode: "I25.10",
       admittedAt: "2026-08-03",
       status: "critical",
+      vitals: { bp: "150/95", heartRate: 102, temperatureF: 99.1, spo2: 94, recordedAt: "2026-08-07T07:15:00" },
+      notes: [
+        note("Dr. Nikhil Bhatt", "doctor", "Post-cardiac observation stable overnight, continue current medication and monitor troponin trend.", "2026-08-06T21:10:00"),
+        note("Sunita Pillai", "nurse", "Patient reports mild chest discomfort around 2 AM, vitals stable, duty doctor informed.", "2026-08-07T02:05:00"),
+      ],
+      insuranceProvider: "Star Health",
+      emergencyContactName: "Meena Kadam",
+      emergencyContactPhone: "+91 98220 55011",
     },
     {
       id: nextId("adm"),
@@ -98,8 +130,16 @@ function seedAdmissions(doctors: HospitalDoctorEntry[]): HospitalAdmission[] {
       doctorId: doctorFor("General Medicine").id,
       doctorName: doctorFor("General Medicine").name,
       diagnosis: "Severe dengue, platelet monitoring",
+      diagnosisCode: "A91",
       admittedAt: "2026-08-04",
       status: "critical",
+      vitals: { bp: "100/65", heartRate: 118, temperatureF: 102.4, spo2: 91, recordedAt: "2026-08-07T06:40:00" },
+      notes: [
+        note("Dr. Farhan Sheikh", "doctor", "Platelet count trending down, started on IV fluids, repeat CBC ordered for this evening.", "2026-08-06T18:30:00"),
+      ],
+      insuranceProvider: "ICICI Lombard",
+      emergencyContactName: "Arjun Kulkarni",
+      emergencyContactPhone: "+91 98220 55022",
     },
     {
       id: nextId("adm"),
@@ -111,8 +151,16 @@ function seedAdmissions(doctors: HospitalDoctorEntry[]): HospitalAdmission[] {
       doctorId: doctorFor("General Medicine").id,
       doctorName: doctorFor("General Medicine").name,
       diagnosis: "Road traffic accident, fracture stabilization",
+      diagnosisCode: "S72.001A",
       admittedAt: "2026-08-05",
       status: "admitted",
+      vitals: { bp: "128/84", heartRate: 88, temperatureF: 98.6, spo2: 97, recordedAt: "2026-08-07T08:00:00" },
+      notes: [
+        note("Ayesha Khan", "nurse", "Splint checked, pain managed with prescribed analgesics, patient resting comfortably.", "2026-08-07T06:00:00"),
+      ],
+      insuranceProvider: "Not insured",
+      emergencyContactName: "Lata Rao",
+      emergencyContactPhone: "+91 98220 55033",
     },
     {
       id: nextId("adm"),
@@ -124,8 +172,16 @@ function seedAdmissions(doctors: HospitalDoctorEntry[]): HospitalAdmission[] {
       doctorId: doctorFor("Orthopedics").id,
       doctorName: doctorFor("Orthopedics").name,
       diagnosis: "Acute appendicitis, pre-op",
+      diagnosisCode: "K35.80",
       admittedAt: "2026-08-05",
       status: "admitted",
+      vitals: { bp: "118/76", heartRate: 92, temperatureF: 100.2, spo2: 98, recordedAt: "2026-08-07T07:50:00" },
+      notes: [
+        note("Dr. Priya Menon", "doctor", "Scheduled for laparoscopic appendectomy tomorrow morning, pre-op labs ordered.", "2026-08-06T20:15:00"),
+      ],
+      insuranceProvider: "HDFC ERGO",
+      emergencyContactName: "Imran Ansari",
+      emergencyContactPhone: "+91 98220 55044",
     },
     {
       id: nextId("adm"),
@@ -137,8 +193,16 @@ function seedAdmissions(doctors: HospitalDoctorEntry[]): HospitalAdmission[] {
       doctorId: doctorFor("Cardiology").id,
       doctorName: doctorFor("Cardiology").name,
       diagnosis: "Hypertension management",
+      diagnosisCode: "I10",
       admittedAt: "2026-08-02",
       status: "admitted",
+      vitals: { bp: "138/88", heartRate: 76, temperatureF: 98.4, spo2: 97, recordedAt: "2026-08-07T07:00:00" },
+      notes: [
+        note("Dr. Nikhil Bhatt", "doctor", "BP responding well to adjusted dosage, plan to discharge in 2 days with follow-up.", "2026-08-06T11:20:00"),
+      ],
+      insuranceProvider: "National Insurance Co.",
+      emergencyContactName: "Rekha Tiwari",
+      emergencyContactPhone: "+91 98220 55055",
     },
     {
       id: nextId("adm"),
@@ -150,8 +214,16 @@ function seedAdmissions(doctors: HospitalDoctorEntry[]): HospitalAdmission[] {
       doctorId: doctorFor("Pediatrics").id,
       doctorName: doctorFor("Pediatrics").name,
       diagnosis: "Viral fever, hydration therapy",
+      diagnosisCode: "B34.9",
       admittedAt: "2026-08-05",
       status: "admitted",
+      vitals: { bp: "96/60", heartRate: 100, temperatureF: 101.5, spo2: 98, recordedAt: "2026-08-07T07:30:00" },
+      notes: [
+        note("Dr. Kavita Deshmukh", "doctor", "Fever trending down with paracetamol, tolerating oral fluids well.", "2026-08-06T16:45:00"),
+      ],
+      insuranceProvider: "Star Health",
+      emergencyContactName: "Kavita Bhatt",
+      emergencyContactPhone: "+91 98220 55066",
     },
     {
       id: nextId("adm"),
@@ -163,8 +235,16 @@ function seedAdmissions(doctors: HospitalDoctorEntry[]): HospitalAdmission[] {
       doctorId: doctorFor("General Medicine").id,
       doctorName: doctorFor("General Medicine").name,
       diagnosis: "Post-op recovery",
+      diagnosisCode: "Z48.815",
       admittedAt: "2026-08-01",
       status: "admitted",
+      vitals: { bp: "122/80", heartRate: 80, temperatureF: 98.7, spo2: 96, recordedAt: "2026-08-07T07:45:00" },
+      notes: [
+        note("Ramesh Yadav", "nurse", "Wound dressing changed, no signs of infection, ambulating with assistance.", "2026-08-07T06:30:00"),
+      ],
+      insuranceProvider: "Not insured",
+      emergencyContactName: "Pooja Chauhan",
+      emergencyContactPhone: "+91 98220 55077",
     },
   ];
 }
@@ -177,6 +257,10 @@ interface AdmitInput {
   doctorId: string;
   doctorName: string;
   diagnosis: string;
+  diagnosisCode: string;
+  insuranceProvider: string;
+  emergencyContactName: string;
+  emergencyContactPhone: string;
 }
 
 interface HospitalOpsState {
@@ -196,6 +280,8 @@ interface HospitalOpsState {
   dischargePatient: (hospitalId: string, admissionId: string) => void;
   transferPatient: (hospitalId: string, admissionId: string, newWard: BedCategory) => ActionResult;
   setAdmissionCritical: (hospitalId: string, admissionId: string, critical: boolean) => void;
+  addClinicalNote: (hospitalId: string, admissionId: string, note: { authorName: string; authorRole: "doctor" | "nurse"; text: string }) => void;
+  updateVitals: (hospitalId: string, admissionId: string, vitals: Omit<VitalReading, "recordedAt">) => void;
 }
 
 const WARD_PREFIX: Record<BedCategory, string> = { emergency: "ER", icu: "ICU", general: "GW" };
@@ -302,6 +388,8 @@ export const useHospitalOpsStore = create<HospitalOpsState>()(
           bedLabel: `${WARD_PREFIX[input.ward]}-${wardOccupancy + 1}`,
           admittedAt: new Date().toISOString().slice(0, 10),
           status: "admitted",
+          vitals: { bp: "—", heartRate: 0, temperatureF: 0, spo2: 0, recordedAt: new Date().toISOString() },
+          notes: [],
         };
 
         useBedBookingStore.getState().setBedCount(hospitalId, input.ward, free - 1);
@@ -372,6 +460,34 @@ export const useHospitalOpsStore = create<HospitalOpsState>()(
               a.id === admissionId && a.status !== "discharged"
                 ? { ...a, status: critical ? "critical" : "admitted" }
                 : a
+            ),
+          },
+        })),
+
+      addClinicalNote: (hospitalId, admissionId, noteInput) =>
+        set((s) => ({
+          admissionsByHospital: {
+            ...s.admissionsByHospital,
+            [hospitalId]: (s.admissionsByHospital[hospitalId] ?? []).map((a) =>
+              a.id === admissionId
+                ? {
+                    ...a,
+                    notes: [
+                      { id: nextId("note"), timestamp: new Date().toISOString(), ...noteInput },
+                      ...a.notes,
+                    ],
+                  }
+                : a
+            ),
+          },
+        })),
+
+      updateVitals: (hospitalId, admissionId, vitals) =>
+        set((s) => ({
+          admissionsByHospital: {
+            ...s.admissionsByHospital,
+            [hospitalId]: (s.admissionsByHospital[hospitalId] ?? []).map((a) =>
+              a.id === admissionId ? { ...a, vitals: { ...vitals, recordedAt: new Date().toISOString() } } : a
             ),
           },
         })),

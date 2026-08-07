@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Pencil, Phone, Plus, Trash2, Users } from "lucide-react";
+import { IdCard, Pencil, Phone, Plus, Trash2, Users } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { FormModal, hospitalInputClass } from "@/components/hospital/FormModal";
@@ -11,7 +11,15 @@ import { useToastStore } from "@/store/useToastStore";
 import { useTranslation } from "@/hooks/useTranslation";
 import type { HospitalStaffMember, ShiftId, StaffRole } from "@/types";
 
-const emptyForm = { name: "", role: "nurse" as StaffRole, ward: "", phone: "", shift: "morning" as ShiftId };
+const emptyForm = {
+  name: "",
+  role: "nurse" as StaffRole,
+  ward: "",
+  phone: "",
+  shift: "morning" as ShiftId,
+  employeeId: "",
+  department: "",
+};
 
 export function StaffTab({ hospitalId, staff }: { hospitalId: string; staff: HospitalStaffMember[] }) {
   const { t } = useTranslation();
@@ -51,7 +59,15 @@ export function StaffTab({ hospitalId, staff }: { hospitalId: string; staff: Hos
 
   function openEdit(m: HospitalStaffMember) {
     setEditingId(m.id);
-    setForm({ name: m.name, role: m.role, ward: m.ward, phone: m.phone, shift: m.shift });
+    setForm({
+      name: m.name,
+      role: m.role,
+      ward: m.ward,
+      phone: m.phone,
+      shift: m.shift,
+      employeeId: m.employeeId,
+      department: m.department,
+    });
     setOpen(true);
   }
 
@@ -66,6 +82,8 @@ export function StaffTab({ hospitalId, staff }: { hospitalId: string; staff: Hos
       ward: form.ward.trim(),
       phone: form.phone.trim() || t("hospital.staff.notProvided"),
       shift: form.shift,
+      employeeId: form.employeeId.trim() || `EMP-${Math.floor(1000 + Math.random() * 9000)}`,
+      department: form.department.trim() || ROLE_LABEL[form.role],
     };
     if (editingId) {
       updateStaff(hospitalId, editingId, payload);
@@ -112,6 +130,9 @@ export function StaffTab({ hospitalId, staff }: { hospitalId: string; staff: Hos
                   <p className="text-[13px] font-medium text-text-primary">{m.name}</p>
                   <p className="text-[11.5px] text-text-tertiary">
                     {ROLE_LABEL[m.role]} · {m.ward} · {SHIFT_LABEL[m.shift]}
+                  </p>
+                  <p className="mt-0.5 flex items-center gap-1 text-[10.5px] text-text-tertiary">
+                    <IdCard size={10} /> {m.employeeId} · {m.department}
                   </p>
                 </div>
               </div>
@@ -210,6 +231,20 @@ export function StaffTab({ hospitalId, staff }: { hospitalId: string; staff: Hos
                   </option>
                 ))}
               </select>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                value={form.employeeId}
+                onChange={(e) => setForm((f) => ({ ...f, employeeId: e.target.value }))}
+                placeholder={t("hospital.staff.placeholderEmployeeId")}
+                className={hospitalInputClass}
+              />
+              <input
+                value={form.department}
+                onChange={(e) => setForm((f) => ({ ...f, department: e.target.value }))}
+                placeholder={t("hospital.staff.placeholderDepartment")}
+                className={hospitalInputClass}
+              />
             </div>
           </div>
         </div>
