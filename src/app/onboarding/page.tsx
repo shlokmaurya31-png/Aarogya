@@ -59,7 +59,7 @@ export default function OnboardingPage() {
       return;
     }
     if (user.role !== "patient") {
-      router.replace(user.role === "admin" ? "/admin" : user.role === "lab" ? "/lab" : "/dashboard");
+      router.replace(user.role === "admin" || user.role === "staff" ? "/admin" : user.role === "lab" ? "/lab" : "/dashboard");
       return;
     }
     if (profile) {

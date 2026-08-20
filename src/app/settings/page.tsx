@@ -84,7 +84,7 @@ function SettingsForm({ user }: { user: AuthUser }) {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
-  const backHref = user.role === "admin" ? "/admin" : user.role === "lab" ? "/lab" : "/dashboard";
+  const backHref = user.role === "admin" || user.role === "staff" ? "/admin" : user.role === "lab" ? "/lab" : "/dashboard";
 
   function handleSaveProfile(e: React.FormEvent) {
     e.preventDefault();
@@ -182,7 +182,7 @@ function SettingsForm({ user }: { user: AuthUser }) {
                 required
               />
             </Field>
-            {user.role !== "admin" && (
+            {user.role !== "admin" && user.role !== "staff" && (
               <Field label={t("settings.field.phone")}>
                 <input
                   value={phone}

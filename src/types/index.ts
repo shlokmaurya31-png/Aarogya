@@ -289,7 +289,7 @@ export interface BedBooking {
   bookedAt: string;
 }
 
-export type AuthRole = "patient" | "doctor" | "lab" | "hospital" | "admin";
+export type AuthRole = "patient" | "doctor" | "lab" | "hospital" | "admin" | "staff";
 
 export type VerificationRole = "doctor" | "lab" | "hospital";
 
@@ -332,4 +332,12 @@ export interface VerificationApplication {
   proofFileName: string;
   submittedAt: string;
   status: VerificationStatus;
+}
+
+export interface AdminStaffAccount {
+  id: string;
+  name: string;
+  email: string;
+  password: string;
+  createdAt: string;
 }

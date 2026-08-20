@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { usePatientStore } from "@/store/usePatientStore";
-import type { AuthUser, VerificationApplication } from "@/types";
+import type { AdminStaffAccount, AuthUser, VerificationApplication } from "@/types";
 
 type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -81,6 +81,12 @@ interface SignUpLabInput {
   proofFile: File;
 }
 
+interface AddStaffAccountInput {
+  name: string;
+  email: string;
+  password: string;
+}
+
 interface SignUpHospitalInput {
   name: string;
   email: string;
@@ -104,12 +110,14 @@ interface AuthState {
   user: AuthUser | null;
   hasHydrated: boolean;
   verificationApplications: VerificationApplication[];
+  staffAccounts: AdminStaffAccount[];
   setHasHydrated: (v: boolean) => void;
   signInPatient: (email: string, password: string) => ActionResult;
   signInDoctor: (email: string, password: string) => ActionResult;
   signInLab: (email: string, password: string) => ActionResult;
   signInHospital: (email: string, password: string) => ActionResult;
   signInAdmin: (email: string, password: string) => Promise<ActionResult>;
+  signInStaff: (email: string, password: string) => ActionResult;
   signUpPatient: (input: SignUpPatientInput) => ActionResult;
   signUpDoctor: (input: SignUpDoctorInput) => ActionResult;
   signUpLab: (input: SignUpLabInput) => ActionResult;
@@ -118,14 +126,18 @@ interface AuthState {
   logout: () => void;
   approveApplication: (id: string) => void;
   rejectApplication: (id: string) => void;
+  resetApplication: (id: string) => void;
+  addStaffAccount: (input: AddStaffAccountInput) => ActionResult;
+  removeStaffAccount: (id: string) => void;
 }
 
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       user: null,
       hasHydrated: false,
       verificationApplications: SEED_APPLICATIONS,
+      staffAccounts: [],
       setHasHydrated: (v) => set({ hasHydrated: v }),
 
       signInPatient: (email, password) => {
@@ -223,6 +235,25 @@ export const useAuthStore = create<AuthState>()(
             name: "Platform Admin",
             email,
             avatarInitials: "PA",
+          },
+        });
+        return { ok: true };
+      },
+
+      signInStaff: (email, password) => {
+        const account = get().staffAccounts.find(
+          (a) => a.email.toLowerCase() === email.trim().toLowerCase() && a.password === password
+        );
+        if (!account) {
+          return { ok: false, error: "Invalid staff credentials." };
+        }
+        set({
+          user: {
+            id: account.id,
+            role: "staff",
+            name: account.name,
+            email: account.email,
+            avatarInitials: initials(account.name),
           },
         });
         return { ok: true };
@@ -410,10 +441,38 @@ export const useAuthStore = create<AuthState>()(
             a.id === id ? { ...a, status: "rejected" as const } : a
           ),
         })),
+
+      resetApplication: (id) =>
+        set((s) => ({
+          verificationApplications: s.verificationApplications.map((a) =>
+            a.id === id ? { ...a, status: "pending" as const } : a
+          ),
+        })),
+
+      addStaffAccount: ({ name, email, password }) => {
+        if (!name.trim() || !email.trim() || password.length < 6) {
+          return { ok: false, error: "Fill every field. Password needs at least 6 characters." };
+        }
+        if (get().staffAccounts.some((a) => a.email.toLowerCase() === email.trim().toLowerCase())) {
+          return { ok: false, error: "A staff account with this email already exists." };
+        }
+        const account: AdminStaffAccount = {
+          id: nextId("staff"),
+          name,
+          email,
+          password,
+          createdAt: new Date().toISOString().slice(0, 10),
+        };
+        set((s) => ({ staffAccounts: [account, ...s.staffAccounts] }));
+        return { ok: true };
+      },
+
+      removeStaffAccount: (id) =>
+        set((s) => ({ staffAccounts: s.staffAccounts.filter((a) => a.id !== id) })),
     }),
     {
       name: "aarogya-auth",
-      partialize: (s) => ({ user: s.user, verificationApplications: s.verificationApplications }),
+      partialize: (s) => ({ user: s.user, verificationApplications: s.verificationApplications, staffAccounts: s.staffAccounts }),
       onRehydrateStorage: () => (state) => {
         state?.setHasHydrated(true);
       },

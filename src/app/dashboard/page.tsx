@@ -33,7 +33,7 @@ export default function DashboardPage() {
       router.replace("/login");
       return;
     }
-    if (user.role === "admin") {
+    if (user.role === "admin" || user.role === "staff") {
       router.replace("/admin");
       return;
     }
@@ -54,7 +54,7 @@ export default function DashboardPage() {
 
   const blockedForOnboarding = user?.role === "patient" && !patientProfile;
 
-  if (!hasHydrated || !user || user.role === "admin" || user.role === "lab" || user.role === "hospital" || blockedForOnboarding) {
+  if (!hasHydrated || !user || user.role === "admin" || user.role === "staff" || user.role === "lab" || user.role === "hospital" || blockedForOnboarding) {
     return <div className="flex min-h-screen items-center justify-center bg-ink text-text-tertiary">{t("common.loading")}</div>;
   }
 
