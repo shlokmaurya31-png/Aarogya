@@ -2,13 +2,31 @@
 
 import Link from "next/link";
 import { useMemo } from "react";
+import { motion } from "framer-motion";
+import { Bed, Building2 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Card, CardLabel } from "@/components/ui/Card";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { DashboardHero } from "@/components/admin/DashboardHero";
 import { useAuthStore } from "@/store/useAuthStore";
+import { useBedBookingStore } from "@/store/useBedBookingStore";
 import { useTranslation } from "@/hooks/useTranslation";
-import type { VerificationApplication } from "@/types";
+import type { BedCategory, VerificationApplication } from "@/types";
+
+function freeFor(h: { emergencyBeds: number; icuBeds: number; generalBeds: number }, category: BedCategory) {
+  if (category === "emergency") return h.emergencyBeds;
+  if (category === "icu") return h.icuBeds;
+  return h.generalBeds;
+}
+
+function capacityOf(
+  h: { emergencyCapacity: number; icuCapacity: number; generalCapacity: number },
+  category: BedCategory
+) {
+  if (category === "emergency") return h.emergencyCapacity;
+  if (category === "icu") return h.icuCapacity;
+  return h.generalCapacity;
+}
 
 const STATUS_TONE: Record<VerificationApplication["status"], "amber" | "emerald" | "red"> = {
   pending: "amber",
@@ -21,6 +39,12 @@ const STATUS_COLOR: Record<VerificationApplication["status"], string> = {
   verified: "#15803d",
   rejected: "#dc2626",
 };
+
+const BED_CATEGORIES: { id: BedCategory; labelKey: string; color: string }[] = [
+  { id: "emergency", labelKey: "admin.capacity.emergency", color: "#dc2626" },
+  { id: "icu", labelKey: "admin.capacity.icu", color: "#b45309" },
+  { id: "general", labelKey: "admin.capacity.general", color: "#0e7490" },
+];
 
 const ROLE_COLOR: Record<VerificationApplication["role"], string> = {
   doctor: "#0e7490",
@@ -47,6 +71,7 @@ export default function AdminOverviewPage() {
   const { t } = useTranslation();
   const user = useAuthStore((s) => s.user);
   const verificationApplications = useAuthStore((s) => s.verificationApplications);
+  const hospitals = useBedBookingStore((s) => s.hospitals);
 
   const pendingCount = verificationApplications.filter((a) => a.status === "pending").length;
   const verifiedCount = verificationApplications.filter((a) => a.status === "verified").length;
@@ -87,6 +112,23 @@ export default function AdminOverviewPage() {
     () => [...verificationApplications].sort((a, b) => b.submittedAt.localeCompare(a.submittedAt)).slice(0, 5),
     [verificationApplications]
   );
+
+  const criticalHospitals = useMemo(() => {
+    return hospitals
+      .map((h) => {
+        const ratios = BED_CATEGORIES.map((c) => ({
+          category: c.id,
+          free: freeFor(h, c.id),
+          capacity: capacityOf(h, c.id),
+          ratio: capacityOf(h, c.id) > 0 ? freeFor(h, c.id) / capacityOf(h, c.id) : 1,
+        }));
+        const worst = ratios.reduce((a, b) => (b.ratio < a.ratio ? b : a));
+        return { hospital: h, worst };
+      })
+      .filter((x) => x.worst.ratio < 0.25)
+      .sort((a, b) => a.worst.ratio - b.worst.ratio)
+      .slice(0, 4);
+  }, [hospitals]);
 
   if (!user) return null;
 
@@ -172,6 +214,70 @@ export default function AdminOverviewPage() {
           </div>
         </Card>
       </div>
+
+      <Card className="mt-4 rounded-lg">
+        <div className="flex items-center justify-between">
+          <div>
+            <CardLabel>{t("admin.capacity.title")}</CardLabel>
+            <p className="mt-1 text-[12px] text-text-secondary">{t("admin.capacity.subtitle")}</p>
+          </div>
+          <Bed size={14} className="text-text-tertiary" />
+        </div>
+        <div className="mt-4 grid grid-cols-1 gap-5 lg:grid-cols-2">
+          <div className="space-y-4">
+            {BED_CATEGORIES.map((cat) => {
+              const free = hospitals.reduce((sum, h) => sum + freeFor(h, cat.id), 0);
+              const capacity = hospitals.reduce((sum, h) => sum + capacityOf(h, cat.id), 0);
+              const pct = capacity > 0 ? Math.round((free / capacity) * 100) : 0;
+              return (
+                <div key={cat.id}>
+                  <div className="flex items-center justify-between text-[12px]">
+                    <span className="text-text-secondary">{t(cat.labelKey)}</span>
+                    <span className="tabular-nums text-text-tertiary">
+                      {free} / {capacity} {t("admin.capacity.free")}
+                    </span>
+                  </div>
+                  <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-black/[0.06]">
+                    <motion.div
+                      className="h-full rounded-full"
+                      style={{ backgroundColor: cat.color }}
+                      initial={{ width: 0 }}
+                      animate={{ width: `${pct}%` }}
+                      transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+            <p className="text-[11px] text-text-tertiary">
+              {hospitals.length} {t("admin.capacity.acrossSuffix")}
+            </p>
+          </div>
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.12em] text-text-tertiary">{t("admin.capacity.nearCapacityTitle")}</p>
+            {criticalHospitals.length === 0 ? (
+              <p className="mt-2 text-[12.5px] text-text-tertiary">{t("admin.capacity.nearCapacityEmpty")}</p>
+            ) : (
+              <div className="mt-2 space-y-2">
+                {criticalHospitals.map(({ hospital, worst }) => (
+                  <div key={hospital.id} className="flex items-center justify-between rounded-md border border-hairline px-3 py-2">
+                    <div className="flex items-center gap-2 text-[12.5px]">
+                      <Building2 size={13} className="text-text-tertiary" />
+                      <span className="font-medium">{hospital.name}</span>
+                      <span className="text-text-tertiary">· {hospital.city}</span>
+                    </div>
+                    <StatusPill
+                      label={`${t(BED_CATEGORIES.find((c) => c.id === worst.category)?.labelKey ?? "")} ${worst.free}/${worst.capacity}`}
+                      tone="red"
+                      className="rounded-md"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </Card>
 
       <div className="mt-6 flex items-center justify-between">
         <h2 className="text-[15px] font-medium">{t("admin.overview.recentActivityTitle")}</h2>

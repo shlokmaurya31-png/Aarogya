@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { usePatientStore } from "@/store/usePatientStore";
-import type { AdminStaffAccount, AuthUser, VerificationApplication } from "@/types";
+import type { AdminActivityEvent, AdminStaffAccount, AuthUser, VerificationApplication } from "@/types";
 
 type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -111,6 +111,7 @@ interface AuthState {
   hasHydrated: boolean;
   verificationApplications: VerificationApplication[];
   staffAccounts: AdminStaffAccount[];
+  activityLog: AdminActivityEvent[];
   setHasHydrated: (v: boolean) => void;
   signInPatient: (email: string, password: string) => ActionResult;
   signInDoctor: (email: string, password: string) => ActionResult;
@@ -138,6 +139,7 @@ export const useAuthStore = create<AuthState>()(
       hasHydrated: false,
       verificationApplications: SEED_APPLICATIONS,
       staffAccounts: [],
+      activityLog: [],
       setHasHydrated: (v) => set({ hasHydrated: v }),
 
       signInPatient: (email, password) => {
@@ -429,18 +431,48 @@ export const useAuthStore = create<AuthState>()(
       },
 
       approveApplication: (id) =>
-        set((s) => ({
-          verificationApplications: s.verificationApplications.map((a) =>
-            a.id === id ? { ...a, status: "verified" as const } : a
-          ),
-        })),
+        set((s) => {
+          const app = s.verificationApplications.find((a) => a.id === id);
+          const event: AdminActivityEvent[] = app
+            ? [
+                {
+                  id: nextId("evt"),
+                  type: "approved",
+                  applicantName: app.name,
+                  role: app.role,
+                  timestamp: new Date().toISOString(),
+                },
+              ]
+            : [];
+          return {
+            verificationApplications: s.verificationApplications.map((a) =>
+              a.id === id ? { ...a, status: "verified" as const } : a
+            ),
+            activityLog: [...event, ...s.activityLog].slice(0, 50),
+          };
+        }),
 
       rejectApplication: (id) =>
-        set((s) => ({
-          verificationApplications: s.verificationApplications.map((a) =>
-            a.id === id ? { ...a, status: "rejected" as const } : a
-          ),
-        })),
+        set((s) => {
+          const app = s.verificationApplications.find((a) => a.id === id);
+          const event: AdminActivityEvent[] = app
+            ? [
+                {
+                  id: nextId("evt"),
+                  type: "rejected",
+                  applicantName: app.name,
+                  role: app.role,
+                  timestamp: new Date().toISOString(),
+                },
+              ]
+            : [];
+          return {
+            verificationApplications: s.verificationApplications.map((a) =>
+              a.id === id ? { ...a, status: "rejected" as const } : a
+            ),
+            activityLog: [...event, ...s.activityLog].slice(0, 50),
+          };
+        }),
 
       resetApplication: (id) =>
         set((s) => ({
@@ -472,7 +504,12 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: "aarogya-auth",
-      partialize: (s) => ({ user: s.user, verificationApplications: s.verificationApplications, staffAccounts: s.staffAccounts }),
+      partialize: (s) => ({
+        user: s.user,
+        verificationApplications: s.verificationApplications,
+        staffAccounts: s.staffAccounts,
+        activityLog: s.activityLog,
+      }),
       onRehydrateStorage: () => (state) => {
         state?.setHasHydrated(true);
       },

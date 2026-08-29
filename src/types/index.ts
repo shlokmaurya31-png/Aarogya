@@ -341,3 +341,11 @@ export interface AdminStaffAccount {
   password: string;
   createdAt: string;
 }
+
+export interface AdminActivityEvent {
+  id: string;
+  type: "approved" | "rejected";
+  applicantName: string;
+  role: VerificationRole;
+  timestamp: string;
+}
