@@ -117,6 +117,12 @@ function HeroNav() {
       <div className="flex items-center gap-2.5">
         <ThemeToggle />
         <Link
+          href="/student"
+          className="rounded-full border border-black/10 bg-black/[0.05] px-4 py-2 text-[12.5px] font-medium text-text-primary backdrop-blur transition hover:border-emerald/40 hover:bg-emerald/10 hover:text-emerald"
+        >
+          Aarogya Scholar
+        </Link>
+        <Link
           href="/login"
           className="rounded-full border border-black/10 bg-black/[0.05] px-4 py-2 text-[12.5px] font-medium text-text-primary backdrop-blur transition hover:border-cyan/40 hover:bg-cyan/10 hover:text-cyan"
         >

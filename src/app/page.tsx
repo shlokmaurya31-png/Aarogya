@@ -1,6 +1,7 @@
 import { SmoothScroll } from "@/components/landing/SmoothScroll";
 import { Hero } from "@/components/landing/Hero";
 import { FeaturesSection } from "@/components/landing/FeaturesSection";
+import { ScholarSection } from "@/components/landing/ScholarSection";
 import { AiDiagnosisSection } from "@/components/landing/AiDiagnosisSection";
 import { TimelineSection } from "@/components/landing/TimelineSection";
 import { SymptomsSection } from "@/components/landing/SymptomsSection";
@@ -19,6 +20,7 @@ export default function LandingPage() {
         <Hero />
         <main>
           <FeaturesSection />
+          <ScholarSection />
           <AiDiagnosisSection />
           <TimelineSection />
           <SymptomsSection />

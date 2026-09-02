@@ -43,3 +43,8 @@ next-env.d.ts
 
 .vercel
 .env*
+
+# Aarogya Scholar local dev database + restricted verification-document store
+/prisma/dev.db
+/prisma/dev.db-journal
+/.data/

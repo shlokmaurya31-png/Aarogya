@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, LogOut, Settings, ShieldCheck, UserCog, Users } from "lucide-react";
+import { GraduationCap, LayoutDashboard, LogOut, Settings, ShieldCheck, UserCog, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useTranslation } from "@/hooks/useTranslation";
@@ -16,6 +16,7 @@ export function AdminSidebar({ pendingCount, role }: { pendingCount: number; rol
   const NAV = [
     { href: "/admin", label: t("admin.sidebar.overview"), icon: LayoutDashboard },
     { href: "/admin/verifications", label: t("admin.sidebar.verifications"), icon: ShieldCheck, badge: pendingCount },
+    { href: "/admin/student-verifications", label: "Aarogya Scholar", icon: GraduationCap, badge: undefined },
     ...(role === "admin"
       ? [
           { href: "/admin/directory", label: t("admin.sidebar.directory"), icon: Users, badge: undefined },

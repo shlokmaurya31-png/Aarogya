@@ -2,7 +2,7 @@
 
 India's unified health intelligence platform: one permanent health record for every patient, read by AI, verified by labs, and understood by every doctor they'll ever meet.
 
-Aarogya AI is a prototype health-record and clinical-workflow platform connecting **patients**, **doctors**, **hospitals**, **labs**, and **insurers** around a single longitudinal record. It ships as a cinematic marketing site plus a fully interactive command-center dashboard with separate patient and doctor experiences.
+Aarogya AI is a prototype health-record and clinical-workflow platform connecting **patients**, **doctors**, **hospitals**, **labs**, and **insurers** around a single longitudinal record. It ships as a cinematic marketing site plus a fully interactive command-center dashboard with separate patient and doctor experiences — and, as of this change, **Aarogya Scholar**, a medical-education ecosystem for verified healthcare students. See [`docs/STUDENT_PLATFORM_ARCHITECTURE.md`](docs/STUDENT_PLATFORM_ARCHITECTURE.md) for the full design.
 
 ## Features
 
@@ -18,49 +18,101 @@ Aarogya AI is a prototype health-record and clinical-workflow platform connectin
 - [Next.js 16](https://nextjs.org) (App Router) + React 19 + TypeScript
 - [Tailwind CSS 4](https://tailwindcss.com) with a custom design-token system (light theme)
 - [Framer Motion](https://www.framer.com/motion/) for animation, [Lenis](https://github.com/darkroomengineering/lenis) for smooth scroll
-- [Zustand](https://github.com/pmndrs/zustand) for shared client state (UI mode, records, prescriptions, toasts, language)
-- [Recharts](https://recharts.org) for vitals charts, [lucide-react](https://lucide.dev) for icons
+- [Zustand](https://github.com/pmndrs/zustand) for shared client state (UI mode, records, prescriptions, toasts, language) — used by the original Patient/Doctor prototype
+- [Prisma](https://www.prisma.io) + SQLite for Aarogya Scholar's persistence (real accounts, verification, case attempts, scoring, competencies)
+- [Recharts](https://recharts.org) for vitals/competency charts, [lucide-react](https://lucide.dev) for icons
 - [React Three Fiber](https://docs.pmnd.rs/react-three-fiber) / drei (available for 3D work, not currently on the critical path)
+- [Vitest](https://vitest.dev) for unit tests (RBAC, de-identification, scoring, case engine, RxLab rules)
 
 ## Getting started
 
 ```bash
 npm install
+npx prisma migrate dev   # creates prisma/dev.db and applies the Scholar schema
+npm run db:seed          # seeds demo accounts + 25 synthetic teaching cases
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) for the landing page, or [http://localhost:3000/dashboard](http://localhost:3000/dashboard) to jump straight into the app.
+Open [http://localhost:3000](http://localhost:3000) for the landing page,
+[http://localhost:3000/dashboard](http://localhost:3000/dashboard) for the Patient/Doctor prototype, or
+[http://localhost:3000/student](http://localhost:3000/student) for **Aarogya Scholar**.
 
 Other scripts:
 
 ```bash
-npm run build   # production build
-npm run start   # serve the production build
-npm run lint    # run ESLint
+npm run build      # production build
+npm run start      # serve the production build
+npm run lint        # run ESLint
+npm run test        # run the Vitest suite
+npm run db:migrate  # create/apply a new Prisma migration
+npm run db:seed     # re-seed demo accounts + synthetic cases (idempotent)
+npm run db:studio   # browse the local database
 ```
+
+### Aarogya Scholar demo accounts (dev only — password `Scholar@123` for all)
+
+| Email | Role |
+|---|---|
+| `student@demo.aarogya` | Verified MBBS final-year student |
+| `student.firstyear@demo.aarogya` | Verified MBBS first-year student |
+| `student.nursing@demo.aarogya` | Verified BSc Nursing student |
+| `student.pharmacy@demo.aarogya` | Verified PharmD student |
+| `educator@demo.aarogya` | Educator (case authoring) |
+| `admin@demo.aarogya` | Aarogya Scholar admin (student verification review) |
+| `doctor@demo.aarogya` | Placeholder for a future Patient/Doctor migration onto this auth system |
+
+## Aarogya Scholar
+
+A medical-education ecosystem layered onto the existing Patient/Doctor prototype for **verified healthcare students** — MBBS, BDS, nursing, pharmacy, physiotherapy, diagnostics, and public health. Students work through a server-authoritative case engine (history → examination → differential → investigations → diagnosis → management → prescription → viva → debrief) built on 25 distinct synthetic teaching cases, with deterministic rubric scoring, an RxLab prescription simulator, an AI-backed (with deterministic fallback) viva examiner, and competency/progress analytics.
+
+Full design: [`docs/STUDENT_PLATFORM_ARCHITECTURE.md`](docs/STUDENT_PLATFORM_ARCHITECTURE.md).
+Privacy architecture: [`docs/CLINICAL_EDUCATION_PRIVACY.md`](docs/CLINICAL_EDUCATION_PRIVACY.md).
+Threat model: [`docs/STUDENT_PLATFORM_THREAT_MODEL.md`](docs/STUDENT_PLATFORM_THREAT_MODEL.md).
+Future real-data integration (architecture only — not implemented): [`docs/REAL_CLINICAL_DATA_INTEGRATION.md`](docs/REAL_CLINICAL_DATA_INTEGRATION.md).
+
+**Privacy disclaimer**: every case in this build is synthetic/fictional (`CLINICAL_DATA_MODE=synthetic` is the only implemented mode — see `src/lib/clinical/config.ts`). There is no code path to a real clinical data source. Verification documents are stored in a restricted, gitignored local directory (`.data/verification-uploads/`), never served by any route, and never shown in a student's own profile.
+
+**Educational disclaimer**: Aarogya Scholar is for education and simulation only, not for direct patient-care decisions. RxLab prescriptions are watermarked "EDUCATIONAL SIMULATION — NOT A VALID PRESCRIPTION" and carry no legal prescribing weight. Achievements and the Clinical Passport are gamified learning artifacts, not formal medical credentials or licenses.
+
+### Environment variables
+
+See [`.env.example`](.env.example). New variables added for Scholar: `DATABASE_URL`, `AUTH_SECRET`, `CLINICAL_DATA_MODE`, `AI_PROVIDER`, `ENABLE_DEV_VERIFICATION`.
 
 ## Project structure
 
 ```
 src/
-  app/                # Next.js routes (landing page, /dashboard)
+  app/                     # Next.js routes
+    student/                # Aarogya Scholar: landing, verify, and the authenticated app shell
+    educator/                # Educator case list + minimal authoring
+    admin/                   # Existing Patient/Doctor admin panel + /admin/student-verifications
+    api/
+      student/, educator/, admin/, scholar-auth/   # Scholar API routes
+      admin-auth/, chat/                            # original Patient/Doctor API routes
+    dashboard/, hospital/, lab/, login/, onboarding/, prescriptions/, settings/   # original Patient/Doctor routes
   components/
-    ai/                # AI assistant panel
-    charts/            # vitals charts
-    dashboard/         # health score, systems, notifications, clinical brief
-    landing/           # hero, nav, and marketing sections
-    navigation/        # top bar, mode toggle, language switcher
-    patient/           # patient profile card
-    shared/            # loading screen, toasts, language effect
-    timeline/          # health event timeline
-    ui/                # low-level building blocks (Card, StatusPill, ...)
-    views/             # per-tab dashboard screens, doctor + patient
-  hooks/               # useTranslation
-  lib/                 # mock data, i18n dictionary, risk/plain-language helpers
-  store/               # Zustand stores (UI, records, toasts, language)
-  types/               # shared TypeScript types
+    student/                # Scholar UI: dashboard, case workspace, RxLab, viva, notebook, passport, verification
+    ai/, charts/, dashboard/, landing/, navigation/, patient/, shared/, timeline/, ui/, views/, admin/, auth/, hospital/   # original components
+  lib/
+    auth/                    # password hashing, signed-cookie sessions, RBAC, permissions, audit
+    privacy/                 # de-identification pipeline (Clinical Learning Data Gateway)
+    clinical/                 # ClinicalCaseProvider interface + SyntheticCaseProvider + gateway
+    caseEngine/               # case state machine + public-view stripping
+    scoring/                  # deterministic CaseScoringEngine + competency roll-up + achievements
+    rxlab/                    # prescription validation rules
+    ai/                       # AIProvider abstraction (Anthropic + deterministic mock)
+    verification/             # verification-document storage boundary
+    i18n.ts, mock-data.ts, ...   # original Patient/Doctor helpers
+  store/                    # Zustand stores (original Patient/Doctor client state — untouched)
+  types/                    # shared TypeScript types (clinicalCase.ts added for Scholar)
+prisma/
+  schema.prisma              # Scholar's persistence layer (SQLite dev, Postgres-portable)
+  seed.ts, seedData/          # demo accounts, achievements, 25 synthetic teaching cases
+docs/                       # architecture, privacy, threat model, future-integration docs
 ```
 
 ## Notes
 
-This is a prototype built on mock data with no backend. All "records," "prescriptions," and "AI analysis" are simulated client-side via shared state, and translations are hand-written rather than sourced from a verified translation service. Both should be reviewed before any real clinical or production use.
+The original Patient/Doctor prototype is built on mock data with **no backend**: all "records," "prescriptions," and "AI analysis" are simulated client-side via Zustand, and translations are hand-written. Both should be reviewed before any real clinical or production use.
+
+Aarogya Scholar, added alongside it, introduces this repository's **first real backend** (Prisma + SQLite, hashed passwords, signed sessions, server-side RBAC) — but only for the student/educator/admin surfaces described above. The two systems currently run side by side rather than being unified; see `docs/STUDENT_PLATFORM_ARCHITECTURE.md` §2.10 for the migration path.

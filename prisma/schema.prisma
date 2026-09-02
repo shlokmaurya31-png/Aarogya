@@ -1,0 +1,946 @@
+// Aarogya Scholar persistence layer.
+//
+// Datasource is SQLite for zero-setup local dev (no Docker/Postgres required).
+// Every type used below (String/Int/Float/Boolean/DateTime/Json) has a direct
+// Postgres equivalent, so moving to production is a one-line datasource change:
+//   provider = "postgresql"
+//   url      = env("DATABASE_URL")   // postgres://...
+// See docs/STUDENT_PLATFORM_ARCHITECTURE.md §2.10 and
+// docs/REAL_CLINICAL_DATA_INTEGRATION.md for the migration path.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Identity & roles
+// ─────────────────────────────────────────────────────────────────────────
+
+enum Role {
+  PATIENT
+  DOCTOR
+  STUDENT
+  EDUCATOR
+  INSTITUTION_ADMIN
+  AAROGYA_ADMIN
+  // Hospital OS roles (see docs/ENTERPRISE_HOSPITAL_ARCHITECTURE.md §4 —
+  // a deliberately narrowed subset of the brief's ~35-role list, matching
+  // what Phase 1 actually implements).
+  HOSPITAL_ADMIN
+  NURSE
+  LAB_TECHNICIAN
+  RADIOLOGY_TECH
+  PHARMACIST
+  BILLING_STAFF
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  role         Role
+  displayName  String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  studentProfile   StudentProfile?
+  hospitalStaffProfile HospitalStaffProfile?
+  authoredCases    ClinicalCase[]      @relation("CaseAuthor")
+  caseAttempts     CaseAttempt[]
+  notebookEntries  NotebookEntry[]
+  achievements     StudentAchievement[]
+  auditEvents      AuditEvent[]
+  competencies     StudentCompetency[]
+  cohortMemberships CohortMembership[]
+  submissions      AssignmentSubmission[]
+
+  @@index([role])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Institutions & cohorts
+// ─────────────────────────────────────────────────────────────────────────
+
+model Institution {
+  id        String   @id @default(cuid())
+  name      String
+  type      String // "medical-college" | "nursing-college" | "pharmacy-college" | "allied-health" | "university" | "other"
+  city      String?
+  domains   InstitutionDomain[]
+  cohorts   Cohort[]
+  students  StudentProfile[]
+  createdAt DateTime @default(now())
+}
+
+model InstitutionDomain {
+  id            String      @id @default(cuid())
+  domain        String      @unique // e.g. "aiimsdelhi.edu.in" — used by METHOD A academic-email verification
+  institution    Institution @relation(fields: [institutionId], references: [id])
+  institutionId String
+}
+
+model Cohort {
+  id            String   @id @default(cuid())
+  name          String // "MBBS 2027 — Internal Medicine Rotation B"
+  institution    Institution @relation(fields: [institutionId], references: [id])
+  institutionId String
+  createdAt     DateTime @default(now())
+
+  memberships CohortMembership[]
+  assignments Assignment[]
+}
+
+model CohortMembership {
+  id       String @id @default(cuid())
+  cohort   Cohort @relation(fields: [cohortId], references: [id])
+  cohortId String
+  user     User   @relation(fields: [userId], references: [id])
+  userId   String
+  joinedAt DateTime @default(now())
+
+  @@unique([cohortId, userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Student verification (extends the existing VerificationApplication pattern
+// used for doctor/lab/hospital in useAuthStore, now reviewed from the same
+// admin queue for role="student")
+// ─────────────────────────────────────────────────────────────────────────
+
+enum VerificationStatus {
+  UNVERIFIED
+  EMAIL_PENDING
+  DOCUMENT_PENDING
+  UNDER_REVIEW
+  VERIFIED
+  REJECTED
+  EXPIRED
+  SUSPENDED
+}
+
+enum VerificationMethod {
+  INSTITUTIONAL_EMAIL
+  STUDENT_ID_CARD
+  ENROLLMENT_DOCUMENT
+  MANUAL_REVIEW
+  ADMIN_INVITATION
+}
+
+enum Course {
+  MBBS
+  BDS
+  BAMS
+  BHMS
+  BUMS
+  BSC_NURSING
+  GNM
+  ANM
+  PHARM_D
+  B_PHARM
+  M_PHARM
+  BPT
+  MPT
+  OCCUPATIONAL_THERAPY
+  RADIOLOGY_IMAGING
+  MEDICAL_LAB_TECHNOLOGY
+  PARAMEDICAL
+  PUBLIC_HEALTH
+  PSYCHOLOGY
+  NUTRITION_DIETETICS
+  OTHER
+}
+
+enum LearningTrack {
+  MEDICINE
+  NURSING
+  PHARMACY
+  DIAGNOSTICS
+  PHYSIOTHERAPY
+  PUBLIC_HEALTH
+}
+
+model StudentProfile {
+  id                  String   @id @default(cuid())
+  user                User     @relation(fields: [userId], references: [id])
+  userId              String   @unique
+  fullLegalName       String
+  preferredName       String?
+  institution          Institution? @relation(fields: [institutionId], references: [id])
+  institutionId       String?
+  institutionNameFreeText String? // used before an Institution row is matched/created
+  course              Course
+  learningTrack       LearningTrack
+  specialization       String?
+  academicYear        Int
+  enrollmentYear       Int
+  expectedGraduation   Int
+  studentIdentifier    String?
+  institutionEmail     String?
+  currentRotation      String?
+  clinicalInterests    String // JSON-encoded string[]
+
+  verificationStatus   VerificationStatus @default(UNVERIFIED)
+  verificationMethod   VerificationMethod?
+  verifiedAt           DateTime?
+  expiresAt            DateTime?
+
+  streakDays           Int      @default(0)
+  clinicalXp           Int      @default(0)
+  lastActiveAt         DateTime?
+
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  verification VerificationDocument[]
+}
+
+// Verification documents are stored out-of-band (see src/lib/verification/provider.ts);
+// this table records only a reference, hash and status — never raw bytes, and is never
+// joined into any response the student or the general case-browsing UI can see.
+model VerificationDocument {
+  id               String   @id @default(cuid())
+  studentProfile   StudentProfile @relation(fields: [studentProfileId], references: [id])
+  studentProfileId String
+  kind             String // "student-id-card" | "enrollment-letter" | ...
+  storageRef       String // opaque path in the restricted local upload store
+  sha256           String
+  uploadedAt       DateTime @default(now())
+  reviewedByAdmin  Boolean  @default(false)
+  reviewNote       String?
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Clinical Learning Data Gateway output: the educational case itself.
+// This table NEVER stores source-patient identifiers. See
+// docs/CLINICAL_EDUCATION_PRIVACY.md.
+// ─────────────────────────────────────────────────────────────────────────
+
+enum CaseSourceType {
+  SYNTHETIC
+  DEIDENTIFIED_CLINICAL
+  HISTORICAL_TEACHING
+  INSTITUTION_AUTHORED
+}
+
+enum Difficulty {
+  FOUNDATION
+  INTERMEDIATE
+  ADVANCED
+  RESIDENT_LEVEL
+  EXPERT
+}
+
+enum Acuity {
+  ROUTINE
+  URGENT
+  EMERGENCY
+}
+
+model ClinicalCase {
+  id             String         @id @default(cuid())
+  slug           String         @unique // e.g. "EDU-CARD-STEMI-001"
+  title          String
+  specialty      String
+  subspecialty   String?
+  difficulty     Difficulty
+  acuity         Acuity
+  sourceType     CaseSourceType @default(SYNTHETIC)
+  learnerTracks  String // JSON-encoded LearningTrack[]
+
+  // Educational patient (never a real identity — see educationalIdentity.ts)
+  patientName     String
+  patientAgeBand  String
+  patientAgeExact Int?
+  patientSex      String
+
+  chiefComplaint      String
+  learningObjectives  String // JSON string[]
+
+  // Full case content — server-only fields live here and are stripped by
+  // src/lib/caseEngine/publicView.ts before ever reaching an HTTP response
+  // that isn't already gated by "attempt is submitted".
+  content        Json // { presentation, historyTree, examFindings, investigations, imaging, management, prescriptionReference, redFlags, criticalActions, unsafeActions, debrief }
+  referenceDx    String
+  rubric         Json // ScoringRubric
+  viva           Json // VivaQuestion[]
+
+  author         User?  @relation("CaseAuthor", fields: [authorId], references: [id])
+  authorId       String?
+  isPublished    Boolean @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  attempts       CaseAttempt[]
+  assignments    Assignment[]
+
+  @@index([specialty])
+  @@index([difficulty])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Case attempts (the state machine instance) & actions (audit + replay log)
+// ─────────────────────────────────────────────────────────────────────────
+
+enum CaseStage {
+  TRIAGE
+  HISTORY
+  PHYSICAL
+  DIFFERENTIAL
+  INVESTIGATIONS
+  INTERPRETATION
+  DIAGNOSIS
+  MANAGEMENT
+  PRESCRIPTION
+  MONITORING
+  DISPOSITION
+  DOCUMENTATION
+  VIVA
+  DEBRIEF
+  COMPLETE
+}
+
+enum AttemptMode {
+  PRACTICE
+  EXAM
+}
+
+model CaseAttempt {
+  id             String      @id @default(cuid())
+  case           ClinicalCase @relation(fields: [caseId], references: [id])
+  caseId         String
+  student        User        @relation(fields: [studentId], references: [id])
+  studentId      String
+  mode           AttemptMode @default(PRACTICE)
+  stage          CaseStage   @default(TRIAGE)
+  revealedState  Json        // accumulated facts the engine has unlocked for this attempt
+  differential   Json?       // student-submitted ranked differential
+  diagnosis      String?
+  managementPlan Json?
+  prescriptions  Json?       // RxLab entries submitted within this case
+  hintsUsed      Int         @default(0)
+  score          Json?       // computed CaseScoreBreakdown once submitted
+  startedAt      DateTime    @default(now())
+  submittedAt    DateTime?
+
+  actions        CaseAction[]
+
+  @@index([studentId])
+  @@index([caseId])
+}
+
+model CaseAction {
+  id         String      @id @default(cuid())
+  attempt    CaseAttempt @relation(fields: [attemptId], references: [id])
+  attemptId  String
+  stage      CaseStage
+  type       String // "ask-history" | "select-exam" | "order-investigation" | "submit-differential" | "hint" | ...
+  payload    Json
+  scoreDelta Float?
+  createdAt  DateTime @default(now())
+
+  @@index([attemptId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Competency tracking, achievements
+// ─────────────────────────────────────────────────────────────────────────
+
+model StudentCompetency {
+  id        String   @id @default(cuid())
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String
+  domain    String // "Clinical Reasoning" | "History Taking" | ...
+  score     Float    @default(0) // 0-100 rolling
+  attempts  Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, domain])
+}
+
+model Achievement {
+  id          String @id @default(cuid())
+  code        String @unique // "FIRST_DIAGNOSIS" | "SEVEN_DAY_STREAK" | ...
+  title       String
+  description String
+  icon        String
+
+  studentAchievements StudentAchievement[]
+}
+
+model StudentAchievement {
+  id            String      @id @default(cuid())
+  user          User        @relation(fields: [userId], references: [id])
+  userId        String
+  achievement   Achievement @relation(fields: [achievementId], references: [id])
+  achievementId String
+  earnedAt      DateTime    @default(now())
+
+  @@unique([userId, achievementId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Notebook, recommendations, assignments, audit
+// ─────────────────────────────────────────────────────────────────────────
+
+model NotebookEntry {
+  id        String   @id @default(cuid())
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String
+  title     String
+  body      String
+  specialty String?
+  caseId    String?
+  tags      String // JSON string[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model LearningRecommendation {
+  id          String   @id @default(cuid())
+  userId      String
+  reason      String
+  caseIds     String // JSON string[]
+  createdAt   DateTime @default(now())
+}
+
+model Assignment {
+  id         String   @id @default(cuid())
+  cohort     Cohort   @relation(fields: [cohortId], references: [id])
+  cohortId   String
+  case       ClinicalCase @relation(fields: [caseId], references: [id])
+  caseId     String
+  dueAt      DateTime?
+  minScore   Int?
+  createdAt  DateTime @default(now())
+
+  submissions AssignmentSubmission[]
+}
+
+model AssignmentSubmission {
+  id           String     @id @default(cuid())
+  assignment   Assignment @relation(fields: [assignmentId], references: [id])
+  assignmentId String
+  student      User       @relation(fields: [studentId], references: [id])
+  studentId    String
+  attemptId    String?
+  submittedAt  DateTime   @default(now())
+}
+
+model AuditEvent {
+  id        String   @id @default(cuid())
+  type      String // "student.verification.submitted" | "student.case.opened" | ...
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  detail    Json?
+  createdAt DateTime @default(now())
+
+  @@index([type])
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Aarogya Hospital OS — tenancy, beds, staff
+// See docs/ENTERPRISE_HOSPITAL_ARCHITECTURE.md for the full design and for
+// why this lives under /hospital-os rather than the pre-existing /hospital
+// mock portal (untouched — see architecture doc §1.1).
+// ─────────────────────────────────────────────────────────────────────────
+
+model Organization {
+  id        String     @id @default(cuid())
+  name      String
+  createdAt DateTime   @default(now())
+  facilities Facility[]
+}
+
+model Facility {
+  id             String       @id @default(cuid())
+  name           String
+  city           String?
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+  createdAt      DateTime     @default(now())
+
+  departments Department[]
+  wards       Ward[]
+  beds        Bed[]
+  staff       HospitalStaffProfile[]
+  patients    Patient[]
+  encounters  Encounter[]
+  charges     Charge[]
+  bills       Bill[]
+}
+
+model Department {
+  id         String   @id @default(cuid())
+  name       String
+  code       String?
+  facility   Facility @relation(fields: [facilityId], references: [id])
+  facilityId String
+  createdAt  DateTime @default(now())
+
+  wards   Ward[]
+  staff   HospitalStaffProfile[]
+  encounters Encounter[]
+
+  @@unique([facilityId, name])
+}
+
+enum WardType {
+  GENERAL
+  ICU
+  HDU
+  NICU
+  PICU
+  EMERGENCY
+  PRIVATE
+  SEMI_PRIVATE
+  ISOLATION
+  OT_RECOVERY
+}
+
+model Ward {
+  id           String     @id @default(cuid())
+  name         String
+  wardType     WardType
+  facility     Facility   @relation(fields: [facilityId], references: [id])
+  facilityId   String
+  department   Department? @relation(fields: [departmentId], references: [id])
+  departmentId String?
+  createdAt    DateTime   @default(now())
+
+  beds Bed[]
+
+  @@unique([facilityId, name])
+}
+
+enum BedStatus {
+  AVAILABLE
+  OCCUPIED
+  RESERVED
+  CLEANING
+  BLOCKED
+  MAINTENANCE
+  ISOLATION
+  TRANSFER_PENDING
+}
+
+model Bed {
+  id                String    @id @default(cuid())
+  label             String
+  ward              Ward      @relation(fields: [wardId], references: [id])
+  wardId            String
+  facility          Facility  @relation(fields: [facilityId], references: [id])
+  facilityId        String
+  status            BedStatus @default(AVAILABLE)
+  genderRestriction String?   // "male" | "female" | null (no restriction)
+  isolationRequired Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  stateEvents BedStateEvent[]
+  admissions  Admission[]
+  transfersFrom Transfer[] @relation("TransferFromBed")
+  transfersTo   Transfer[] @relation("TransferToBed")
+
+  @@unique([facilityId, label])
+  @@index([status])
+}
+
+model BedStateEvent {
+  id          String   @id @default(cuid())
+  bed         Bed      @relation(fields: [bedId], references: [id])
+  bedId       String
+  fromStatus  BedStatus
+  toStatus    BedStatus
+  reason      String?
+  patientId   String?
+  encounterId String?
+  byUserId    String?
+  createdAt   DateTime @default(now())
+
+  @@index([bedId])
+}
+
+enum StaffStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+model HospitalStaffProfile {
+  id           String       @id @default(cuid())
+  user         User         @relation(fields: [userId], references: [id])
+  userId       String       @unique
+  facility     Facility     @relation(fields: [facilityId], references: [id])
+  facilityId   String
+  department   Department?  @relation(fields: [departmentId], references: [id])
+  departmentId String?
+  displayRole  String       // human label e.g. "Cardiologist", "ICU Nurse", "Lab Technician"
+  employeeId   String?
+  specialty    String?
+  licenseNumber String?
+  licenseExpiry DateTime?
+  status       StaffStatus  @default(ACTIVE)
+  createdAt    DateTime     @default(now())
+
+  encountersAttended Encounter[] @relation("AttendingStaff")
+  admissionsCreated  Admission[] @relation("AdmittingStaff")
+  notes              ClinicalNote[] @relation("NoteAuthor")
+  medicationOrders   MedicationOrder[] @relation("MedicationOrderer")
+  medicationAdmins   MedicationAdministration[] @relation("MedicationAdministrator")
+  labOrders          LabOrder[] @relation("LabOrderer")
+  labResultsReleased LabResult[] @relation("LabResultReleaser")
+  imagingOrders      ImagingOrder[] @relation("ImagingOrderer")
+  imagingReports     ImagingReport[] @relation("ImagingReporter")
+
+  @@index([facilityId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Patient master + longitudinal encounter record
+// ─────────────────────────────────────────────────────────────────────────
+
+model Patient {
+  id         String   @id @default(cuid())
+  uhid       String   @unique
+  facility   Facility @relation(fields: [facilityId], references: [id])
+  facilityId String
+  fullName   String
+  sex        String
+  dob        DateTime?
+  ageYears   Int?
+  phone      String?
+  bloodGroup String?
+  createdAt  DateTime @default(now())
+
+  identifiers PatientIdentifier[]
+  allergies   Allergy[]
+  problems    Problem[]
+  encounters  Encounter[]
+  medicationOrders MedicationOrder[]
+  labOrders        LabOrder[]
+  imagingOrders    ImagingOrder[]
+  charges          Charge[]
+  bills            Bill[]
+
+  @@index([facilityId])
+}
+
+model PatientIdentifier {
+  id        String  @id @default(cuid())
+  patient   Patient @relation(fields: [patientId], references: [id])
+  patientId String
+  type      String  // "ABHA" | "INSURANCE_MEMBER_ID" | "EXTERNAL_MRN"
+  value     String
+
+  @@index([patientId])
+}
+
+model Allergy {
+  id         String   @id @default(cuid())
+  patient    Patient  @relation(fields: [patientId], references: [id])
+  patientId  String
+  substance  String
+  reaction   String?
+  severity   String   // "mild" | "moderate" | "severe"
+  recordedAt DateTime @default(now())
+
+  @@index([patientId])
+}
+
+enum EncounterType {
+  OPD
+  ED
+  IPD
+  DAYCARE
+  TELEMEDICINE
+}
+
+enum EncounterStatus {
+  REGISTERED
+  TRIAGED
+  IN_CONSULTATION
+  INVESTIGATING
+  ADMITTED
+  DISCHARGED
+  CLOSED
+}
+
+model Encounter {
+  id           String          @id @default(cuid())
+  patient      Patient         @relation(fields: [patientId], references: [id])
+  patientId    String
+  facility     Facility        @relation(fields: [facilityId], references: [id])
+  facilityId   String
+  department   Department?     @relation(fields: [departmentId], references: [id])
+  departmentId String?
+  type         EncounterType
+  status       EncounterStatus @default(REGISTERED)
+  chiefComplaint String?
+  triageLevel  Int?            // 1 (resuscitation) - 5 (non-urgent), ED only
+  attendingStaff HospitalStaffProfile? @relation("AttendingStaff", fields: [attendingStaffId], references: [id])
+  attendingStaffId String?
+  registeredAt DateTime        @default(now())
+  closedAt     DateTime?
+
+  vitals     Vital[]
+  notes      ClinicalNote[]
+  medicationOrders MedicationOrder[]
+  labOrders        LabOrder[]
+  imagingOrders    ImagingOrder[]
+  admission  Admission?
+  charges    Charge[]
+  bill       Bill?
+
+  @@index([facilityId])
+  @@index([status])
+  @@index([patientId])
+}
+
+model Admission {
+  id            String    @id @default(cuid())
+  encounter     Encounter @relation(fields: [encounterId], references: [id])
+  encounterId   String    @unique
+  bed           Bed       @relation(fields: [bedId], references: [id])
+  bedId         String
+  reason        String
+  expectedLosDays Int?
+  admittingStaff HospitalStaffProfile @relation("AdmittingStaff", fields: [admittingStaffId], references: [id])
+  admittingStaffId String
+  admittedAt    DateTime  @default(now())
+
+  transfers Transfer[]
+  discharge Discharge?
+
+  @@index([bedId])
+}
+
+model Transfer {
+  id          String   @id @default(cuid())
+  admission   Admission @relation(fields: [admissionId], references: [id])
+  admissionId String
+  fromBed     Bed      @relation("TransferFromBed", fields: [fromBedId], references: [id])
+  fromBedId   String
+  toBed       Bed      @relation("TransferToBed", fields: [toBedId], references: [id])
+  toBedId     String
+  reason      String
+  byUserId    String
+  transferredAt DateTime @default(now())
+
+  @@index([admissionId])
+}
+
+model Discharge {
+  id                 String    @id @default(cuid())
+  admission          Admission @relation(fields: [admissionId], references: [id])
+  admissionId        String    @unique
+  clinicallyReady    Boolean   @default(false)
+  documentationReady Boolean   @default(false)
+  billingReady       Boolean   @default(false)
+  insuranceReady     Boolean   @default(false)
+  pharmacyReady      Boolean   @default(false)
+  transportReady     Boolean   @default(false)
+  dischargeSummary   Json?
+  signedByStaffId    String?
+  initiatedAt        DateTime  @default(now())
+  dischargedAt       DateTime?
+}
+
+model ClinicalNote {
+  id          String    @id @default(cuid())
+  encounter   Encounter @relation(fields: [encounterId], references: [id])
+  encounterId String
+  author      HospitalStaffProfile @relation("NoteAuthor", fields: [authorStaffId], references: [id])
+  authorStaffId String
+  type        String    // "SOAP" | "PROGRESS" | "ADMISSION" | "CONSULT" | "DISCHARGE_SUMMARY" | "HANDOVER"
+  content     Json
+  status      String    @default("SIGNED") // "DRAFT" | "SIGNED" | "AMENDED" | "SUPERSEDED"
+  supersedesId String?
+  createdAt   DateTime  @default(now())
+  signedAt    DateTime?
+
+  @@index([encounterId])
+}
+
+model Problem {
+  id         String   @id @default(cuid())
+  patient    Patient  @relation(fields: [patientId], references: [id])
+  patientId  String
+  diagnosis  String
+  status     String   // "active" | "resolved" | "suspected"
+  severity   String?
+  onsetDate  DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([patientId])
+}
+
+model Vital {
+  id          String    @id @default(cuid())
+  encounter   Encounter @relation(fields: [encounterId], references: [id])
+  encounterId String
+  recordedByStaffId String
+  hr          Int?
+  sbp         Int?
+  dbp         Int?
+  rr          Int?
+  spo2        Int?
+  tempC       Float?
+  painScore   Int?
+  recordedAt  DateTime  @default(now())
+
+  @@index([encounterId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Orders: medication, lab, imaging
+// ─────────────────────────────────────────────────────────────────────────
+
+model MedicationOrder {
+  id            String    @id @default(cuid())
+  encounter     Encounter @relation(fields: [encounterId], references: [id])
+  encounterId   String
+  patient       Patient   @relation(fields: [patientId], references: [id])
+  patientId     String
+  drugName      String
+  genericName   String?
+  dose          String
+  route         String
+  frequency     String
+  durationDays  Int?
+  orderedBy     HospitalStaffProfile @relation("MedicationOrderer", fields: [orderedByStaffId], references: [id])
+  orderedByStaffId String
+  status        String    @default("ORDERED") // ORDERED | VERIFIED | DISPENSED | DISCONTINUED | HELD
+  safetyFlags   Json?     // CDS output at order time — see src/lib/hospital/clinicalSafety.ts
+  overrideReason String?
+  orderedAt     DateTime  @default(now())
+
+  administrations MedicationAdministration[]
+
+  @@index([encounterId])
+  @@index([patientId])
+}
+
+model MedicationAdministration {
+  id                String   @id @default(cuid())
+  medicationOrder   MedicationOrder @relation(fields: [medicationOrderId], references: [id])
+  medicationOrderId String
+  administeredBy    HospitalStaffProfile? @relation("MedicationAdministrator", fields: [administeredByStaffId], references: [id])
+  administeredByStaffId String?
+  scheduledAt       DateTime
+  administeredAt    DateTime?
+  status            String   @default("DUE") // DUE | GIVEN | HELD | MISSED
+  notes             String?
+
+  @@index([medicationOrderId])
+}
+
+model LabOrder {
+  id            String    @id @default(cuid())
+  encounter     Encounter @relation(fields: [encounterId], references: [id])
+  encounterId   String
+  patient       Patient   @relation(fields: [patientId], references: [id])
+  patientId     String
+  testName      String
+  category      String
+  priority      String    @default("ROUTINE") // ROUTINE | URGENT | STAT
+  orderedBy     HospitalStaffProfile @relation("LabOrderer", fields: [orderedByStaffId], references: [id])
+  orderedByStaffId String
+  status        String    @default("ORDERED") // ORDERED | COLLECTED | IN_PROGRESS | RESULTED | CANCELLED
+  orderedAt     DateTime  @default(now())
+
+  result LabResult?
+
+  @@index([encounterId])
+  @@index([status])
+}
+
+model LabResult {
+  id              String   @id @default(cuid())
+  labOrder        LabOrder @relation(fields: [labOrderId], references: [id])
+  labOrderId      String   @unique
+  value           String
+  unit            String?
+  referenceRange  String?
+  isCritical      Boolean  @default(false)
+  releasedBy      HospitalStaffProfile? @relation("LabResultReleaser", fields: [releasedByStaffId], references: [id])
+  releasedByStaffId String?
+  resultedAt      DateTime @default(now())
+  acknowledgedByStaffId String?
+  acknowledgedAt  DateTime?
+}
+
+model ImagingOrder {
+  id            String    @id @default(cuid())
+  encounter     Encounter @relation(fields: [encounterId], references: [id])
+  encounterId   String
+  patient       Patient   @relation(fields: [patientId], references: [id])
+  patientId     String
+  modality      String    // XRAY | CT | MRI | USG | MAMMOGRAPHY | INTERVENTIONAL
+  studyDescription String
+  priority      String    @default("ROUTINE")
+  orderedBy     HospitalStaffProfile @relation("ImagingOrderer", fields: [orderedByStaffId], references: [id])
+  orderedByStaffId String
+  status        String    @default("ORDERED") // ORDERED | SCHEDULED | ACQUIRED | REPORTED | CANCELLED
+  orderedAt     DateTime  @default(now())
+
+  report ImagingReport?
+
+  @@index([encounterId])
+  @@index([status])
+}
+
+model ImagingReport {
+  id              String   @id @default(cuid())
+  imagingOrder    ImagingOrder @relation(fields: [imagingOrderId], references: [id])
+  imagingOrderId  String   @unique
+  findings        String
+  impression      String
+  isCritical      Boolean  @default(false)
+  reportedBy      HospitalStaffProfile @relation("ImagingReporter", fields: [reportedByStaffId], references: [id])
+  reportedByStaffId String
+  reportedAt      DateTime @default(now())
+  verifiedByStaffId String?
+  verifiedAt      DateTime?
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Billing (charge engine — not a full accounting ERP, see architecture doc)
+// ─────────────────────────────────────────────────────────────────────────
+
+model Charge {
+  id          String    @id @default(cuid())
+  encounter   Encounter @relation(fields: [encounterId], references: [id])
+  encounterId String
+  patient     Patient   @relation(fields: [patientId], references: [id])
+  patientId   String
+  facility    Facility  @relation(fields: [facilityId], references: [id])
+  facilityId  String
+  description String
+  category    String    // CONSULTATION | BED | PROCEDURE | LAB | IMAGING | PHARMACY | NURSING | OTHER
+  amount      Float
+  sourceType  String?   // e.g. "LabOrder", "MedicationOrder"
+  sourceId    String?
+  createdAt   DateTime  @default(now())
+
+  @@index([encounterId])
+}
+
+model Bill {
+  id          String    @id @default(cuid())
+  encounter   Encounter @relation(fields: [encounterId], references: [id])
+  encounterId String    @unique
+  patient     Patient   @relation(fields: [patientId], references: [id])
+  patientId   String
+  facility    Facility  @relation(fields: [facilityId], references: [id])
+  facilityId  String
+  totalAmount Float     @default(0)
+  paidAmount  Float     @default(0)
+  status      String    @default("OPEN") // OPEN | PARTIALLY_PAID | PAID | WAIVED
+  generatedAt DateTime  @default(now())
+}
