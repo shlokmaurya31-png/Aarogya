@@ -1,9 +1,18 @@
-# Data Model Audit — Phase 0
+# Data Model Audit — Phase 0 (see addendum below for Phase 1 changes)
 
 Audit of `prisma/schema.prisma` as it exists today: **40 models, 15 enums,
 946 lines**, single SQLite datasource shared by Scholar and Hospital OS.
 The original Patient/Doctor/Hospital prototype has **zero** database
 presence — every model below is exclusively Scholar's or Hospital OS's.
+
+> **Phase 1 addendum**: the schema has since grown to include
+> `DepartmentMembership`, `EpisodeOfCare`, `Diagnosis`, `Task`,
+> `ClinicalDocument`, `Consent`, `Referral`, and `PatientMergeRecord`, plus
+> extensions to `Patient`, `PatientIdentifier`, `Allergy`, and `Encounter`.
+> The original Phase 0 audit text below is left unchanged as a historical
+> record of what existed before Phase 1; see the addendum at the bottom of
+> this file (§10) for what changed and why, and `docs/CLINICAL_CORE.md`
+> for the full reasoning behind each addition.
 
 ## 1. Identity core
 
@@ -307,3 +316,45 @@ found and fixed (see `docs/SECURITY_AUDIT.md` S-06,
 6. **No soft-delete/archival pattern anywhere** — every model is either
    kept forever or hard-deleted; no `deletedAt` convention. Relevant to
    `docs/DATABASE_PRODUCTION_READINESS.md` (retention/legal hold).
+
+## 10. Phase 1 addendum — schema changes and what they close
+
+**`Patient` extended**: `preferredName`, `dobPrecision`, `address`,
+`language`, `communicationPreference`, `registrationStatus`,
+`deceasedAt`, `userId` (nullable unique — self-service portal linkage,
+closes the "Role.PATIENT does nothing" gap from §1 of this doc),
+`mergedIntoId`/`mergedAt` + self-relation `PatientMerge` (closes the "two
+unrelated Patient rows for the same person" gap from §4), `updatedAt`.
+`fullName` deliberately **not** renamed — see `docs/CLINICAL_CORE.md` §1.
+
+**`PatientIdentifier` extended**: `issuer`, `status`. The `@@unique([type,
+value])` gap noted in §4 above is **still open** — not fixed this phase.
+
+**`Allergy` extended**: `status`, `verification` — closes part of the
+"severity is free-text" gap (severity itself is still free-text; status/
+verification are now real fields with defaults).
+
+**New: `EpisodeOfCare`** — closes the §4 "no grouping of related
+encounters" gap. `Encounter.episodeOfCareId` is optional (an encounter
+need not belong to an episode), consistent with not forcing every walk-in
+OPD visit into episode bookkeeping it doesn't need.
+
+**New: `Diagnosis`**, distinct from `Problem` — see `docs/CLINICAL_CORE.md`
+§5 for the distinction. `Encounter` gained a `CANCELLED` status and
+`cancelledReason`.
+
+**New: `Task`, `ClinicalDocument`, `Consent`, `Referral`,
+`PatientMergeRecord`, `DepartmentMembership`** — see
+`docs/CLINICAL_CORE.md` §2–§9 for the reasoning behind each; none of
+these existed even as a gap note in the original Phase 0 audit above
+because the target-model sections they implement (`TARGET_DOMAIN_
+ARCHITECTURE.md` §2.3 for Task, the identity scoping model for
+DepartmentMembership) were architecture-only until this phase.
+
+**Still open, unchanged by Phase 1** (confirmed still true after this
+phase's schema work): `Float` for money, no `Room` entity, several
+enum-shaped fields remain free-text (`sex`, `Allergy.severity`, order
+`status` fields), no soft-delete/archival pattern, the plain-string
+"foreign key" audit fields (`BedStateEvent.patientId/encounterId/
+byUserId`, `Transfer.byUserId`, `Discharge.signedByStaffId`,
+`Vital.recordedByStaffId`).

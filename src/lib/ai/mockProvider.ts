@@ -20,11 +20,7 @@ export class MockAIProvider implements AIProvider {
     return "I'm not sure, doctor — that wasn't something anyone's asked me about yet.";
   }
 
-  async vivaExaminer(input: {
-    stage: string;
-    caseTitle: string;
-    priorQuestions: { prompt: string; studentAnswer: string }[];
-  }): Promise<string> {
+  async vivaExaminer(input: Parameters<AIProvider["vivaExaminer"]>[0]): Promise<string> {
     const bank = [
       "What is your provisional diagnosis, and what single finding most strongly supports it?",
       "What dangerous alternative diagnosis must you exclude here, and why?",
@@ -35,7 +31,7 @@ export class MockAIProvider implements AIProvider {
     return bank[input.priorQuestions.length % bank.length];
   }
 
-  async tutorFeedback(input: { mode: string; weakDimension?: string }): Promise<string> {
+  async tutorFeedback(input: Parameters<AIProvider["tutorFeedback"]>[0]): Promise<string> {
     if (input.mode === "DEBRIEF") {
       return "Structured debrief (AI Tutor unavailable — using rule-based summary): review the reference differential and management pathway shown below, paying particular attention to any missed critical actions.";
     }

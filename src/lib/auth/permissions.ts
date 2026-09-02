@@ -57,6 +57,21 @@ export const PERMISSIONS = [
   "admission:discharge:finalize",
   "billing:view",
   "billing:charge:create",
+
+  // Phase 1 — Unified Clinical Core additions.
+  "diagnosis:manage",
+  "problem:manage",
+  "allergy:manage",
+  "episode:manage",
+  "task:manage",
+  "task:view",
+  "document:manage",
+  "consent:manage",
+  "referral:create",
+  "referral:respond",
+  "patient:merge",
+  "patient:duplicate:review",
+  "patient:self:read",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -76,7 +91,7 @@ export const OPERATIONAL_ONLY_ACTIONS = [
 ] as const;
 
 const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
-  PATIENT: [],
+  PATIENT: ["patient:self:read"],
   DOCTOR: [
     "hospital:command-center:view",
     "patient:read",
@@ -97,6 +112,18 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "lab:result:acknowledge",
     "imaging:report:verify",
     "billing:view",
+    "diagnosis:manage",
+    "problem:manage",
+    "allergy:manage",
+    "episode:manage",
+    "task:manage",
+    "task:view",
+    "document:manage",
+    "consent:manage",
+    "referral:create",
+    "referral:respond",
+    "patient:merge",
+    "patient:duplicate:review",
   ],
   NURSE: [
     "hospital:command-center:view",
@@ -106,6 +133,10 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "clinical:note:create",
     "medication:administer",
     "bed:manage",
+    "allergy:manage",
+    "task:manage",
+    "task:view",
+    "document:manage",
   ],
   LAB_TECHNICIAN: [
     "hospital:command-center:view",
@@ -144,6 +175,11 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "admission:discharge:initiate",
     "admission:discharge:finalize",
     "billing:view",
+    "task:view",
+    "task:manage",
+    "document:manage",
+    "patient:merge",
+    "patient:duplicate:review",
   ],
   STUDENT: [
     "student:case:view",

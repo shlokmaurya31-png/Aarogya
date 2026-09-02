@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
-import { admitPatient, BedNotAvailableError } from "@/lib/hospital/admission";
+import { admitPatient, BedNotAvailableError, InvalidEncounterTransitionError } from "@/lib/hospital/admission";
 
 export async function GET(req: NextRequest) {
   return withApiErrors(async () => {
@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
       });
       return { admission };
     } catch (err) {
-      if (err instanceof BedNotAvailableError) throw new BadRequestError(err.message);
+      if (err instanceof BedNotAvailableError || err instanceof InvalidEncounterTransitionError) throw new BadRequestError(err.message);
       throw err;
     }
   });

@@ -30,7 +30,29 @@ export type AuditEventType =
   | "hospital.imaging.ordered"
   | "hospital.imaging.reportEntered"
   | "hospital.imaging.criticalReportVerified"
-  | "hospital.billing.chargeCreated";
+  | "hospital.billing.chargeCreated"
+  // Phase 1 — Unified Clinical Core. Named to match the target event
+  // catalog in docs/EVENT_ARCHITECTURE.md §4 (PATIENT_CREATED-style),
+  // recorded today via the existing synchronous AuditEvent mechanism, not
+  // a new event bus — see docs/CLINICAL_CORE.md §6.
+  | "hospital.patient.created"
+  | "hospital.patient.updated"
+  | "hospital.patient.merged"
+  | "hospital.patient.viewed"
+  | "hospital.encounter.cancelled"
+  | "hospital.diagnosis.added"
+  | "hospital.problem.added"
+  | "hospital.allergy.added"
+  | "hospital.episode.created"
+  | "hospital.episode.closed"
+  | "hospital.task.created"
+  | "hospital.task.completed"
+  | "hospital.document.created"
+  | "hospital.consent.recorded"
+  | "hospital.consent.revoked"
+  | "hospital.referral.created"
+  | "hospital.referral.updated"
+  | "patient.account.registered";
 
 export async function recordAuditEvent(
   type: AuditEventType,

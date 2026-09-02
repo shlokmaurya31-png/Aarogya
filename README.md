@@ -2,7 +2,7 @@
 
 India's unified health intelligence platform: one permanent health record for every patient, read by AI, verified by labs, and understood by every doctor they'll ever meet.
 
-Aarogya AI is a prototype health-record and clinical-workflow platform connecting **patients**, **doctors**, **hospitals**, **labs**, and **insurers** around a single longitudinal record. It ships as a cinematic marketing site plus a fully interactive command-center dashboard with separate patient and doctor experiences — plus two newer, database-backed systems: **Aarogya Scholar** (a medical-education ecosystem for verified healthcare students — see [`docs/STUDENT_PLATFORM_ARCHITECTURE.md`](docs/STUDENT_PLATFORM_ARCHITECTURE.md)) and **Aarogya Hospital OS** (a real hospital operations platform — see [`docs/ENTERPRISE_HOSPITAL_ARCHITECTURE.md`](docs/ENTERPRISE_HOSPITAL_ARCHITECTURE.md)).
+Aarogya AI is a prototype health-record and clinical-workflow platform connecting **patients**, **doctors**, **hospitals**, **labs**, and **insurers** around a single longitudinal record. It ships as a cinematic marketing site plus a fully interactive command-center dashboard with separate patient and doctor experiences — plus three newer, database-backed systems built on a **unified clinical core**: **Aarogya Scholar** (a medical-education ecosystem for verified healthcare students — see [`docs/STUDENT_PLATFORM_ARCHITECTURE.md`](docs/STUDENT_PLATFORM_ARCHITECTURE.md), intentionally isolated from real clinical data), **Aarogya Hospital OS** (a real, multi-facility hospital operations platform — see [`docs/ENTERPRISE_HOSPITAL_ARCHITECTURE.md`](docs/ENTERPRISE_HOSPITAL_ARCHITECTURE.md)), and a **Patient self-service portal** reading the same longitudinal record Hospital OS's doctors write to (see [`docs/CLINICAL_CORE.md`](docs/CLINICAL_CORE.md)).
 
 ## Features
 
@@ -34,8 +34,10 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) for the landing page,
-[http://localhost:3000/dashboard](http://localhost:3000/dashboard) for the Patient/Doctor prototype, or
-[http://localhost:3000/student](http://localhost:3000/student) for **Aarogya Scholar**.
+[http://localhost:3000/dashboard](http://localhost:3000/dashboard) for the Patient/Doctor prototype,
+[http://localhost:3000/student](http://localhost:3000/student) for **Aarogya Scholar**,
+[http://localhost:3000/hospital-os/login](http://localhost:3000/hospital-os/login) for **Aarogya Hospital OS**, or
+[http://localhost:3000/patient/login](http://localhost:3000/patient/login) for the **patient self-service portal**.
 
 Other scripts:
 
@@ -87,17 +89,42 @@ Threat model: [`docs/HOSPITAL_THREAT_MODEL.md`](docs/HOSPITAL_THREAT_MODEL.md).
 
 **Important**: this lives at `/hospital-os`, not `/hospital` — the existing `/hospital` route is a separate, working, client-side (Zustand) hospital-admin portal for the original `hospital` auth role, left untouched. See the architecture doc §1.1 for why.
 
-Demo login: [http://localhost:3000/hospital-os/login](http://localhost:3000/hospital-os/login) — accounts below, password `Hospital@123` for all.
+Demo login: [http://localhost:3000/hospital-os/login](http://localhost:3000/hospital-os/login) — accounts below, password `Hospital@123` for all. Two facilities exist under one demo `Organization`, each independently tenant-isolated (verified: a Pune account gets a `404`, not another facility's data, on every cross-facility patient lookup — see [`docs/CLINICAL_CORE.md`](docs/CLINICAL_CORE.md) §6/Phase 1 final report):
 
-| Email | Role |
-|---|---|
-| `admin@amc-demo.aarogya` | Hospital Administrator |
-| `doctor1@amc-demo.aarogya` … `doctor8@amc-demo.aarogya` | Doctors (Cardiology, Orthopedics, General Medicine, Pediatrics, Emergency Medicine, Neurology, General Surgery, OB/GYN) |
-| `nurse1@amc-demo.aarogya` … `nurse10@amc-demo.aarogya` | Nurses |
-| `labtech@amc-demo.aarogya` | Lab Technician |
-| `radtech@amc-demo.aarogya` | Radiology Technician |
-| `pharmacist@amc-demo.aarogya` | Pharmacist |
-| `billing@amc-demo.aarogya` | Billing Officer |
+| Email | Role | Facility |
+|---|---|---|
+| `admin@amc-demo.aarogya` | Hospital Administrator | Pune |
+| `doctor1@amc-demo.aarogya` … `doctor8@amc-demo.aarogya` | Doctors (Cardiology, Orthopedics, General Medicine, Pediatrics, Emergency Medicine, Neurology, General Surgery, OB/GYN) | Pune |
+| `nurse1@amc-demo.aarogya` … `nurse10@amc-demo.aarogya` | Nurses | Pune |
+| `labtech@amc-demo.aarogya` | Lab Technician | Pune |
+| `radtech@amc-demo.aarogya` | Radiology Technician | Pune |
+| `pharmacist@amc-demo.aarogya` | Pharmacist | Pune |
+| `billing@amc-demo.aarogya` | Billing Officer | Pune |
+| `admin@noida-demo.aarogya` | Hospital Administrator | Noida |
+| `doctor1@noida-demo.aarogya` | Doctor (Orthopedics) | Noida |
+
+## Aarogya Unified Clinical Core (Phase 1)
+
+Built on top of Hospital OS's schema: one `Patient` → many `Encounter`s →
+many clinical facts (`Diagnosis`, `Problem`, `Allergy`, `Vital`,
+`ClinicalNote`, orders), aggregated at request time into a real
+server-side Patient Summary and a clickable Longitudinal Timeline —
+consumed by both the Doctor Workspace's patient chart and a new patient
+self-service portal at `/patient/login`. Adds deterministic (non-fuzzy)
+duplicate-patient detection with a safe, non-destructive logical merge
+(never deletes clinical rows), a controlled encounter state-transition
+service (illegal transitions like `CLOSED → IN_CONSULTATION` are rejected
+server-side), signed/amendable clinical notes (a signed note is never
+mutated — an amendment is a new note superseding the old one), and
+foundational `Task`/`Document`/`Consent`/`Referral`/`EpisodeOfCare`
+entities. Full reasoning for every design decision, including where the
+brief's idealized target model was deliberately not adopted in favor of
+the existing working schema: [`docs/CLINICAL_CORE.md`](docs/CLINICAL_CORE.md).
+
+**Aarogya Scholar is deliberately not part of this unification** — it
+remains fully isolated from real hospital clinical data behind its
+existing Clinical Learning Data Gateway / de-identification architecture;
+see `docs/CLINICAL_CORE.md` §7.
 
 ## Project structure
 
@@ -108,14 +135,17 @@ src/
     educator/                # Educator case list + minimal authoring
     admin/                   # Existing Patient/Doctor admin panel + /admin/student-verifications
     hospital-os/             # Aarogya Hospital OS: login + role-guarded command surfaces
+    patient/                 # Patient self-service portal: login + guarded (app) route group
     api/
       student/, educator/, admin/, scholar-auth/   # Scholar API routes
-      hospital/                                     # Hospital OS API routes
+      hospital/                                     # Hospital OS API routes (includes Phase 1 clinical-core routes)
+      patient/                                       # Patient self-service API routes (register, me)
       admin-auth/, chat/                            # original Patient/Doctor API routes
     dashboard/, hospital/, lab/, login/, onboarding/, prescriptions/, settings/   # original Patient/Doctor routes
   components/
     student/                # Scholar UI: dashboard, case workspace, RxLab, viva, notebook, passport, verification
     hospital-os/             # Hospital OS UI: command center, bed board, admissions, discharge, doctor/nurse/lab/radiology/billing
+    patient-portal/          # Patient self-service UI: shell + longitudinal record view
     ai/, charts/, dashboard/, landing/, navigation/, patient/, shared/, timeline/, ui/, views/, admin/, auth/, hospital/   # original components
   lib/
     auth/                    # password hashing, signed-cookie sessions, RBAC, permissions, audit, tenant scoping (hospitalRbac.ts)
@@ -126,7 +156,8 @@ src/
     rxlab/                    # prescription validation rules
     ai/                       # AIProvider abstraction (Anthropic + deterministic mock)
     verification/             # verification-document storage boundary
-    hospital/                 # bed state machine, admission/transfer/discharge transactions, clinical safety checks, alert engine, command-center aggregation
+    hospital/                 # bed + encounter state machines, admission/transfer/discharge transactions, clinical safety checks, alert engine, command-center aggregation
+    patient/                  # duplicate detection, logical merge, longitudinal timeline + summary aggregation (unified clinical core)
     i18n.ts, mock-data.ts, ...   # original Patient/Doctor helpers
   store/                    # Zustand stores (original Patient/Doctor client state — untouched)
   types/                    # shared TypeScript types (clinicalCase.ts added for Scholar)

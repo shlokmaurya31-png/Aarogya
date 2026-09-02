@@ -1,12 +1,15 @@
 import { prisma } from "@/lib/db";
 import { BedStatus, EncounterStatus } from "@prisma/client";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { isEncounterTransitionAllowed, InvalidEncounterTransitionError } from "./encounterStateMachine";
 
 export class BedNotAvailableError extends Error {
   constructor() {
     super("Selected bed is not available.");
   }
 }
+
+export { InvalidEncounterTransitionError };
 
 /**
  * Admission is a single atomic operation across three tables (brief §129):
@@ -27,6 +30,9 @@ export async function admitPatient(input: {
     if (bed.status !== BedStatus.AVAILABLE) throw new BedNotAvailableError();
 
     const encounter = await tx.encounter.findUniqueOrThrow({ where: { id: input.encounterId } });
+    if (!isEncounterTransitionAllowed(encounter.status, EncounterStatus.ADMITTED)) {
+      throw new InvalidEncounterTransitionError(encounter.status, EncounterStatus.ADMITTED);
+    }
 
     await tx.bed.update({ where: { id: input.bedId }, data: { status: BedStatus.OCCUPIED } });
     await tx.bedStateEvent.create({
@@ -131,11 +137,14 @@ export class DischargeNotReadyError extends Error {
 /** Finalizes discharge: requires every readiness flag true, then frees the bed to CLEANING (brief §50 — bed workflow: discharged -> cleaning requested -> ... -> available). */
 export async function finalizeDischarge(dischargeId: string, byUserId: string, dischargeSummary: unknown) {
   const result = await prisma.$transaction(async (tx) => {
-    const discharge = await tx.discharge.findUniqueOrThrow({ where: { id: dischargeId }, include: { admission: true } });
+    const discharge = await tx.discharge.findUniqueOrThrow({ where: { id: dischargeId }, include: { admission: { include: { encounter: true } } } });
     const missing = (["clinicallyReady", "documentationReady", "billingReady", "insuranceReady", "pharmacyReady", "transportReady"] as const).filter(
       (k) => !discharge[k]
     );
     if (missing.length > 0) throw new DischargeNotReadyError(missing);
+    if (!isEncounterTransitionAllowed(discharge.admission.encounter.status, EncounterStatus.DISCHARGED)) {
+      throw new InvalidEncounterTransitionError(discharge.admission.encounter.status, EncounterStatus.DISCHARGED);
+    }
 
     const bed = await tx.bed.findUniqueOrThrow({ where: { id: discharge.admission.bedId } });
     await tx.bed.update({ where: { id: bed.id }, data: { status: BedStatus.CLEANING } });

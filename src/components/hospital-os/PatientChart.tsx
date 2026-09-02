@@ -2,16 +2,19 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
-import { AlertTriangle, FlaskConical, ScanLine, Pill, FileText, ShieldAlert } from "lucide-react";
+import { AlertTriangle, FlaskConical, ScanLine, Pill, FileText, ShieldAlert, Stethoscope, History } from "lucide-react";
 import { Card, CardLabel } from "@/components/ui/Card";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 
+interface TimelineEntry { id: string; timestamp: string; type: string; summary: string; department?: string | null }
+
 interface ChartData {
   patient: { id: string; uhid: string; fullName: string; sex: string; ageYears: number | null; bloodGroup: string | null };
   allergies: { id: string; substance: string; severity: string; reaction: string | null }[];
   problems: { id: string; diagnosis: string; status: string }[];
+  diagnoses: { id: string; diagnosis: string; type: string; status: string }[];
   encounters: { id: string; type: string; status: string; chiefComplaint: string | null; registeredAt: string }[];
   notes: { id: string; type: string; content: { assessment?: string; plan?: string; [k: string]: unknown }; author: { user: { displayName: string } }; createdAt: string }[];
   vitals: { id: string; hr: number | null; sbp: number | null; dbp: number | null; spo2: number | null; tempC: number | null; recordedAt: string }[];
@@ -25,7 +28,15 @@ export function PatientChart({ patientId }: { patientId: string }) {
   const encounterId = searchParams.get("encounterId");
   const push = useToastStore((s) => s.push);
   const [data, setData] = useState<ChartData | null>(null);
-  const [tab, setTab] = useState<"orders" | "notes">("orders");
+  const [tab, setTab] = useState<"orders" | "notes" | "clinical" | "timeline">("orders");
+  const [timeline, setTimeline] = useState<TimelineEntry[] | null>(null);
+
+  // Clinical-core composer state (brief §33 / Phase 1)
+  const [diagnosisText, setDiagnosisText] = useState("");
+  const [diagnosisType, setDiagnosisType] = useState("PROVISIONAL");
+  const [problemText, setProblemText] = useState("");
+  const [allergySubstance, setAllergySubstance] = useState("");
+  const [allergySeverity, setAllergySeverity] = useState("moderate");
 
   // Order composer state
   const [drugName, setDrugName] = useState("");
@@ -100,6 +111,40 @@ export function PatientChart({ patientId }: { patientId: string }) {
     push("Critical finding verified.", "emerald"); load();
   }
 
+  async function addDiagnosis() {
+    if (!encounterId || !diagnosisText.trim()) return;
+    const res = await fetch(`/api/hospital/encounters/${encounterId}/diagnoses`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ diagnosis: diagnosisText, type: diagnosisType }),
+    });
+    if (!res.ok) { push((await res.json()).error ?? "Failed to add diagnosis.", "red"); return; }
+    push("Diagnosis recorded.", "emerald"); setDiagnosisText(""); load();
+  }
+
+  async function addProblem() {
+    if (!problemText.trim()) return;
+    const res = await fetch(`/api/hospital/patients/${patientId}/problems`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ diagnosis: problemText }),
+    });
+    if (!res.ok) { push((await res.json()).error ?? "Failed to add problem.", "red"); return; }
+    push("Added to problem list.", "emerald"); setProblemText(""); load();
+  }
+
+  async function addAllergy() {
+    if (!allergySubstance.trim()) return;
+    const res = await fetch(`/api/hospital/patients/${patientId}/allergies`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ substance: allergySubstance, severity: allergySeverity }),
+    });
+    if (!res.ok) { push((await res.json()).error ?? "Failed to add allergy.", "red"); return; }
+    push("Allergy recorded.", "emerald"); setAllergySubstance(""); load();
+  }
+
+  function loadTimeline() {
+    fetch(`/api/hospital/patients/${patientId}/timeline`).then((r) => r.json()).then((d) => setTimeline(d.timeline ?? []));
+  }
+
   if (!data) return <div className="mx-auto max-w-5xl animate-pulse"><div className="h-64 rounded-[20px] bg-black/[0.04]" /></div>;
 
   return (
@@ -125,9 +170,11 @@ export function PatientChart({ patientId }: { patientId: string }) {
 
       <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
         <div className="space-y-4">
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <TabButton active={tab === "orders"} onClick={() => setTab("orders")}>Orders</TabButton>
-            <TabButton active={tab === "notes"} onClick={() => setTab("notes")}>Notes & Timeline</TabButton>
+            <TabButton active={tab === "clinical"} onClick={() => setTab("clinical")}>Diagnoses & Problems</TabButton>
+            <TabButton active={tab === "notes"} onClick={() => setTab("notes")}>Notes</TabButton>
+            <TabButton active={tab === "timeline"} onClick={() => { setTab("timeline"); loadTimeline(); }}>Timeline</TabButton>
           </div>
 
           {tab === "orders" && (
@@ -175,6 +222,57 @@ export function PatientChart({ patientId }: { patientId: string }) {
             </>
           )}
 
+          {tab === "clinical" && (
+            <>
+              <Card className="rounded-[20px]">
+                <div className="flex items-center gap-2"><Stethoscope size={14} className="text-cyan" /><CardLabel>Add diagnosis</CardLabel></div>
+                <p className="mt-1 text-[11.5px] text-text-tertiary">Tied to this encounter — distinct from the problem list, which persists across encounters.</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <input value={diagnosisText} onChange={(e) => setDiagnosisText(e.target.value)} placeholder="Diagnosis" className="flex-1 rounded-md border border-hairline bg-black/[0.02] px-2.5 py-2 text-[12.5px] outline-none focus:border-cyan/40" />
+                  <select value={diagnosisType} onChange={(e) => setDiagnosisType(e.target.value)} className="rounded-md border border-hairline bg-black/[0.02] px-2.5 py-2 text-[12.5px] outline-none focus:border-cyan/40">
+                    {["PRIMARY", "SECONDARY", "PROVISIONAL", "RULE_OUT", "FINAL"].map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  <button onClick={addDiagnosis} disabled={!encounterId} className="rounded-md bg-cyan px-4 py-1.5 text-[12.5px] font-medium text-ink hover:brightness-110 disabled:opacity-40">Add</button>
+                </div>
+              </Card>
+
+              <Card className="rounded-[20px]">
+                <CardLabel>Add to problem list</CardLabel>
+                <div className="mt-3 flex gap-2">
+                  <input value={problemText} onChange={(e) => setProblemText(e.target.value)} placeholder="Problem" className="flex-1 rounded-md border border-hairline bg-black/[0.02] px-2.5 py-2 text-[12.5px] outline-none focus:border-cyan/40" />
+                  <button onClick={addProblem} className="rounded-md bg-cyan px-4 py-1.5 text-[12.5px] font-medium text-ink hover:brightness-110">Add</button>
+                </div>
+              </Card>
+
+              <Card className="rounded-[20px]">
+                <div className="flex items-center gap-2"><ShieldAlert size={14} className="text-red" /><CardLabel>Record allergy</CardLabel></div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <input value={allergySubstance} onChange={(e) => setAllergySubstance(e.target.value)} placeholder="Substance" className="flex-1 rounded-md border border-hairline bg-black/[0.02] px-2.5 py-2 text-[12.5px] outline-none focus:border-cyan/40" />
+                  <select value={allergySeverity} onChange={(e) => setAllergySeverity(e.target.value)} className="rounded-md border border-hairline bg-black/[0.02] px-2.5 py-2 text-[12.5px] outline-none focus:border-cyan/40">
+                    {["mild", "moderate", "severe"].map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <button onClick={addAllergy} className="rounded-md bg-red px-4 py-1.5 text-[12.5px] font-medium text-white hover:brightness-110">Record</button>
+                </div>
+              </Card>
+            </>
+          )}
+
+          {tab === "timeline" && (
+            <Card className="rounded-[20px]">
+              <div className="flex items-center gap-2"><History size={14} className="text-cyan" /><CardLabel>Longitudinal timeline</CardLabel></div>
+              <div className="mt-3 space-y-2.5">
+                {timeline === null && <p className="text-[12px] text-text-tertiary">Loading...</p>}
+                {timeline?.map((t) => (
+                  <div key={t.id} className="flex gap-3 text-[12.5px]">
+                    <span className="w-32 shrink-0 text-[11px] text-text-tertiary">{new Date(t.timestamp).toLocaleString()}</span>
+                    <span><span className="font-medium">{t.type}:</span> {t.summary}{t.department ? ` (${t.department})` : ""}</span>
+                  </div>
+                ))}
+                {timeline?.length === 0 && <p className="text-[12px] text-text-tertiary">No history recorded yet.</p>}
+              </div>
+            </Card>
+          )}
+
           {tab === "notes" && (
             <>
               <Card className="rounded-[20px]">
@@ -199,6 +297,18 @@ export function PatientChart({ patientId }: { patientId: string }) {
         </div>
 
         <div className="space-y-4">
+          <Card className="rounded-[20px]">
+            <CardLabel>Diagnoses</CardLabel>
+            <div className="mt-2 space-y-1.5">
+              {data.diagnoses.map((d) => (
+                <div key={d.id} className="text-[11.5px]">
+                  <span className="font-medium">{d.diagnosis}</span> <span className="text-text-tertiary">({d.type})</span>
+                </div>
+              ))}
+              {data.diagnoses.length === 0 && <p className="text-[11.5px] text-text-tertiary">No diagnoses recorded.</p>}
+            </div>
+          </Card>
+
           <Card className="rounded-[20px]">
             <CardLabel>Problem list</CardLabel>
             <div className="mt-2 space-y-1.5">

@@ -46,3 +46,36 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return { note };
   });
 }
+
+/**
+ * Signs an existing DRAFT note in place (brief §18/§57 item 13). Locking a
+ * draft is not "overwriting" content — only DRAFT -> SIGNED is allowed here;
+ * a SIGNED or SUPERSEDED note is immutable and must be amended via a new
+ * POST with `supersedesId` instead (see docs/CLINICAL_CORE.md §5).
+ */
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  return withApiErrors(async () => {
+    const { id } = await params;
+    const body = await req.json().catch(() => null);
+    const { session, facilityId, staff } = await requireFacilityStaff("clinical:note:create", body?.facilityId);
+    if (!staff) throw new BadRequestError("Notes must be signed by a staff account.");
+
+    const encounter = await prisma.encounter.findUnique({ where: { id } });
+    if (!encounter || encounter.facilityId !== facilityId) throw new NotFoundError("Encounter not found.");
+
+    const noteId = body?.noteId as string | undefined;
+    if (!noteId || body?.action !== "sign") throw new BadRequestError("noteId and action=\"sign\" are required.");
+
+    const existing = await prisma.clinicalNote.findUnique({ where: { id: noteId } });
+    if (!existing || existing.encounterId !== id) throw new NotFoundError("Note not found.");
+    if (existing.status !== "DRAFT") throw new BadRequestError(`Only a DRAFT note can be signed (current status: ${existing.status}).`);
+
+    const note = await prisma.clinicalNote.update({
+      where: { id: noteId },
+      data: { status: "SIGNED", signedAt: new Date() },
+    });
+
+    await recordAuditEvent("hospital.note.created", session.userId, { encounterId: id, noteId: note.id, action: "signed" });
+    return { note };
+  });
+}

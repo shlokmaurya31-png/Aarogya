@@ -8,6 +8,7 @@ import { hashPassword } from "../src/lib/auth/password";
 import { allCaseDefs } from "./seedData";
 import { buildCase } from "./seedData/builder";
 import { seedHospital } from "./seedData/hospital";
+import { seedPhase1Extensions } from "./seedData/hospitalPhase1";
 
 const prisma = new PrismaClient();
 
@@ -172,6 +173,7 @@ async function main() {
   await seedAchievements();
   await seedCases();
   await seedHospital(prisma);
+  await seedPhase1Extensions(prisma);
 }
 
 main()

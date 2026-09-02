@@ -25,9 +25,23 @@ that should be left alone (not deleted) but not extended further.
   currently reads these stores onto the Clinical Core's real API/DB, not
   promoting the stores themselves.
 - **Gap to close before this is a complete clinical core**: `Procedure`,
-  `Referral`, `CarePlan`, `EpisodeOfCare` (see
-  `docs/TARGET_DOMAIN_ARCHITECTURE.md`), and code/terminology binding on
-  diagnosis/drug/test fields.
+  `CarePlan` (see `docs/TARGET_DOMAIN_ARCHITECTURE.md`), and code/terminology
+  binding on diagnosis/drug/test fields.
+- **Phase 1 status**: `EpisodeOfCare`, `Diagnosis` (distinct from
+  `Problem`), and `Referral` were built this phase — see
+  `docs/CLINICAL_CORE.md` §5 for `Diagnosis`/`Referral` specifically. A
+  server-side `Patient Summary` API and a real, request-time-aggregated
+  `Longitudinal Timeline` (`src/lib/patient/{summary,timeline}.ts`) now
+  exist and are wired into both the Doctor Workspace's `PatientChart` and
+  a new patient self-service portal — this is the concrete implementation
+  of "one longitudinal record per patient" referenced above, not just its
+  precondition. Duplicate-patient detection and a safe, non-destructive
+  logical merge (`src/lib/patient/{duplicateDetection,merge}.ts`) also
+  shipped this phase, closing part of the `Patient` §4 gap noted in
+  `docs/DATA_MODEL_AUDIT.md` (a patient seen at two facilities within the
+  same organization can now at least be logically linked post-hoc, though
+  cross-facility merge is still deliberately rejected — merge only
+  resolves duplicates *within* one facility).
 
 ## Operational Core (Beds, Tasks, Queues, Departments, Staff)
 
@@ -42,6 +56,13 @@ that should be left alone (not deleted) but not extended further.
   `docs/TARGET_DOMAIN_ARCHITECTURE.md` §2.3) — this is the one place the
   Operational Core needs a genuine new entity before it can generalize
   beyond the two task types it has today.
+- **Phase 1 status**: a real `Task` table now exists
+  (`/api/hospital/tasks`) for task types with no natural home table
+  (follow-ups, manual to-dos). Medication-due and vitals-due tasks
+  deliberately were **not** migrated onto it — they remain computed views
+  over `MedicationAdministration`/`Vital`, since duplicating rows that
+  already have a natural home table would create a second source of
+  truth. See `docs/CLINICAL_CORE.md` §4 for the full reasoning.
 - **Not a foundation candidate**: `useHospitalOpsStore`/
   `useBedBookingStore` (original mock portal) — tracks bed *counts*, not
   bed *identity*, and has no staff/department real relational structure
@@ -117,17 +138,28 @@ that should be left alone (not deleted) but not extended further.
 - **Gap**: no session revocation, no rate limiting (both flagged CRITICAL/
   HIGH in `docs/SECURITY_AUDIT.md`) — these are Identity/IAM gaps that
   block calling this "production-ready" identity infrastructure, even
-  though the RBAC/tenancy *shape* is correct.
+  though the RBAC/tenancy *shape* is correct. **Still open after Phase 1**
+  — not addressed this phase, which was scoped to clinical-core and
+  multi-facility tenancy, not to the session-security gaps themselves.
 - **Not a foundation candidate**: `useAuthStore` (original prototype) —
   see `docs/SECURITY_AUDIT.md` S-01. This is the system Identity/IAM
   needs to eventually replace, not extend.
+- **Phase 1 status**: `DepartmentMembership` was added (see
+  `docs/CLINICAL_CORE.md` §2) — the one piece of scoped-role membership
+  beyond a staff member's single primary `HospitalStaffProfile` facility/
+  department. Multi-facility organization tenancy is now real (a second
+  facility, Noida, exists alongside Pune under the same demo
+  `Organization`, each with its own departments/wards/beds/staff/patients)
+  and cross-facility tenant isolation was live-verified end-to-end this
+  phase — see `docs/AAROGYA_TARGET_ARCHITECTURE.md` §6 and the Phase 1
+  final report's Security Test Results.
 
 ## Summary table
 
 | Core | Foundation exists? | Where | Biggest gap |
 |---|---|---|---|
-| Clinical | Yes, solid | Hospital OS schema + case engine (Scholar's, different purpose) | Procedure/Referral/CarePlan/EpisodeOfCare, terminology binding |
-| Operational | Yes, solid | Hospital OS bed/admission/staff model | Generic Task entity, real queues |
+| Clinical | Yes, solid | Hospital OS schema + Phase 1 additions (EpisodeOfCare/Diagnosis/Referral, timeline/summary aggregation) | Procedure/CarePlan, terminology binding, generalized Order table |
+| Operational | Yes, solid | Hospital OS bed/admission/staff model + Phase 1 `Task` table | Real queues; medication/vitals tasks still computed views (deliberately) |
 | Financial | Yes, narrow | Hospital OS charge/bill engine | Payments, Decimal money, Insurance |
 | Intelligence | Partial | Alert engine yes, events/analytics/AI-for-hospital no | Analytics + hospital AI copilot both unbuilt |
-| Identity/IAM + Tenant | Yes, correct shape, gaps in maturity | Scholar's auth stack, shared | Session revocation, rate limiting |
+| Identity/IAM + Tenant | Yes, correct shape, gaps in maturity | Scholar's auth stack, shared; multi-facility tenancy now real (Phase 1) | Session revocation, rate limiting (unchanged by Phase 1) |

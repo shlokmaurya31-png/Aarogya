@@ -144,3 +144,38 @@ today — see `docs/DATA_MODEL_AUDIT.md` §1) whose data comes from the same
 is what makes "one authoritative clinical backend" (the brief's stated
 goal) actually true, rather than three backends that happen to use
 similar names.
+
+**Status as of Phase 1 (Unified Platform Foundation)**: `Role.PATIENT` is
+no longer unused. A real self-service surface now exists —
+`/patient/login`, `/api/patient/register`, `/api/patient/me` — where a
+`User` account links 1:1 to a real `Patient` row (`Patient.userId`) and
+reads the same `Patient`/`Encounter`/`Diagnosis`/`Problem`/`Allergy` data
+Hospital OS's `DOCTOR` role writes, through the same tenant-scoped tables,
+not a parallel store. This is the first working slice of the unification
+target described above, not the whole migration — the *original*
+Zustand-backed Patient/Doctor prototype pages (`/dashboard`, `/hospital`)
+were left untouched this phase (per the explicit "do not attempt to
+migrate every feature in one pass" instruction); only patient identity,
+retrieval, and the clinical timeline were built against the unified core,
+matching the brief's own stated priority order. See
+`docs/CLINICAL_CORE.md` §7 for what was and wasn't built, and why Scholar
+specifically stays isolated from this unification.
+
+## 6. Multi-facility organizations: now real, not aspirational
+
+Phase 0 above (§3) still correctly describes the *design* target
+(`Organization → Facility → Department → Ward → Bed`, one shared Identity
+Core, multiple independent tenancy models). Phase 1 made the multi-facility
+half of that concrete: a second facility ("Aarogya Noida Hospital") was
+added under the same demo `Organization`, with its own departments, wards,
+beds, staff, and 20 patients, alongside the original Pune facility's 32.
+Cross-facility tenant isolation was live-verified this phase (not just
+reasoned about, as it was in Phase 0's S-05 finding) — a Pune doctor
+reading a Noida patient's chart or timeline gets a genuine `404`, and vice
+versa; each facility's Command Center shows only its own bed counts. See
+the Phase 1 final report's Security Test Results for the exact requests
+and responses. `DepartmentMembership` (docs/CLINICAL_CORE.md §2) is the
+one piece of cross-department (not cross-facility) staff scoping built
+this phase — full `OrganizationMembership`/`FacilityMembership` spanning
+multiple facilities remains unbuilt, since nothing yet needs a single
+staff member to hold standing at two different facilities.

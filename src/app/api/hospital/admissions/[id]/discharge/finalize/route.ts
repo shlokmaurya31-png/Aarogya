@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
-import { finalizeDischarge, DischargeNotReadyError } from "@/lib/hospital/admission";
+import { finalizeDischarge, DischargeNotReadyError, InvalidEncounterTransitionError } from "@/lib/hospital/admission";
 
 /** Requires clinician sign-off (brief §37) and every readiness flag true; frees the bed to CLEANING. */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -20,7 +20,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const discharge = await finalizeDischarge(admission.discharge.id, session.userId, summary);
       return { discharge };
     } catch (err) {
-      if (err instanceof DischargeNotReadyError) throw new BadRequestError(err.message);
+      if (err instanceof DischargeNotReadyError || err instanceof InvalidEncounterTransitionError) throw new BadRequestError(err.message);
       throw err;
     }
   });

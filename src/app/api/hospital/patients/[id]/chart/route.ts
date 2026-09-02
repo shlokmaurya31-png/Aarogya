@@ -33,12 +33,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
     const encounterIds = patient.encounters.map((e) => e.id);
 
-    const [notes, vitals, medicationOrders, labOrders, imagingOrders] = await Promise.all([
+    const [notes, vitals, medicationOrders, labOrders, imagingOrders, diagnoses] = await Promise.all([
       prisma.clinicalNote.findMany({ where: { encounterId: { in: encounterIds } }, include: { author: { include: { user: true } } }, orderBy: { createdAt: "desc" } }),
       prisma.vital.findMany({ where: { encounterId: { in: encounterIds } }, orderBy: { recordedAt: "desc" }, take: 50 }),
       prisma.medicationOrder.findMany({ where: { encounterId: { in: encounterIds } }, include: { orderedBy: { include: { user: true } }, administrations: true }, orderBy: { orderedAt: "desc" } }),
       prisma.labOrder.findMany({ where: { encounterId: { in: encounterIds } }, include: { result: true }, orderBy: { orderedAt: "desc" } }),
       prisma.imagingOrder.findMany({ where: { encounterId: { in: encounterIds } }, include: { report: true }, orderBy: { orderedAt: "desc" } }),
+      prisma.diagnosis.findMany({ where: { encounterId: { in: encounterIds } }, orderBy: { createdAt: "desc" } }),
     ]);
 
     return {
@@ -53,6 +54,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       },
       allergies: patient.allergies,
       problems: patient.problems,
+      diagnoses,
       encounters: patient.encounters,
       notes,
       vitals,
