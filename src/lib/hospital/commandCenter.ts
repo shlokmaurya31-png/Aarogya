@@ -31,6 +31,15 @@ export async function getCommandCenterSnapshot(facilityId: string) {
     pendingDischarges,
     totalBeds,
     availableBeds,
+    appointmentsToday,
+    noShowsToday,
+    opdWaiting,
+    edWaiting,
+    queueByTypeStatus,
+    pendingAdmissionRequests,
+    reservedNotAdmitted,
+    pendingTransfers,
+    readyDischarges,
   ] = await Promise.all([
     prisma.bed.groupBy({ by: ["status"], where: { facilityId }, _count: true }),
     prisma.bed.findMany({ where: { facilityId }, include: { ward: true } }),
@@ -48,6 +57,15 @@ export async function getCommandCenterSnapshot(facilityId: string) {
     prisma.discharge.count({ where: { dischargedAt: null, admission: { encounter: { facilityId } } } }),
     prisma.bed.count({ where: { facilityId } }),
     prisma.bed.count({ where: { facilityId, status: "AVAILABLE" } }),
+    prisma.appointment.count({ where: { facilityId, scheduledStart: { gte: today } } }),
+    prisma.appointment.count({ where: { facilityId, status: "NO_SHOW", noShowAt: { gte: today } } }),
+    prisma.queueEntry.count({ where: { facilityId, queueType: "OPD_DOCTOR", status: "WAITING" } }),
+    prisma.queueEntry.count({ where: { facilityId, queueType: "ED", status: "WAITING" } }),
+    prisma.queueEntry.groupBy({ by: ["queueType", "status"], where: { facilityId, status: { in: ["WAITING", "CALLED", "IN_SERVICE"] } }, _count: true }),
+    prisma.admissionRequest.count({ where: { facilityId, status: { in: ["PENDING", "DEFERRED"] } } }),
+    prisma.admissionRequest.count({ where: { facilityId, status: "BED_RESERVED" } }),
+    prisma.transferRequest.count({ where: { facilityId, status: { notIn: ["COMPLETED", "CANCELLED", "REJECTED"] } } }),
+    prisma.discharge.count({ where: { dischargedAt: null, clinicallyReady: true, admission: { encounter: { facilityId } } } }),
   ]);
 
   const avgDailyAdmissionsLast7 = admissionsLast7Days / 7;
@@ -93,6 +111,22 @@ export async function getCommandCenterSnapshot(facilityId: string) {
       unacknowledgedCriticalLabs: criticalLabCount,
       unverifiedCriticalImaging: criticalImagingCount,
       pendingDischarges,
+    },
+    // Phase 2 — Patient Flow (brief §50): every number below is a live
+    // Prisma aggregate over the same request/queue tables the operational
+    // routes write to, not a decorative estimate.
+    access: {
+      appointmentsToday,
+      noShowsToday,
+      opdWaiting,
+      edWaiting,
+    },
+    patientFlowOps: {
+      queues: queueByTypeStatus.map((q) => ({ queueType: q.queueType, status: q.status, count: q._count })),
+      admissionRequestsPending: pendingAdmissionRequests,
+      admissionRequestsBedReserved: reservedNotAdmitted,
+      transferBacklog: pendingTransfers,
+      dischargeReadyNotLeft: readyDischarges,
     },
     operationalStatus,
     alerts,

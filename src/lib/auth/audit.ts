@@ -52,7 +52,34 @@ export type AuditEventType =
   | "hospital.consent.revoked"
   | "hospital.referral.created"
   | "hospital.referral.updated"
-  | "patient.account.registered";
+  | "patient.account.registered"
+  // Phase 2 — Patient Flow / ADT. Named to match the brief §59 event
+  // catalog; recorded through the same synchronous AuditEvent mechanism
+  // (docs/EVENT_ARCHITECTURE.md — no new event bus this phase either).
+  | "hospital.appointment.created"
+  | "hospital.appointment.cancelled"
+  | "hospital.appointment.noShow"
+  | "hospital.appointment.checkedIn"
+  | "hospital.queue.entered"
+  | "hospital.queue.priorityChanged"
+  | "hospital.queue.called"
+  | "hospital.queue.completed"
+  | "hospital.triage.recorded"
+  | "hospital.consultation.started"
+  | "hospital.consultation.completed"
+  | "hospital.admissionRequest.created"
+  | "hospital.admissionRequest.bedReserved"
+  | "hospital.admissionRequest.confirmed"
+  | "hospital.admissionRequest.rejected"
+  | "hospital.admissionRequest.cancelled"
+  | "hospital.transferRequest.created"
+  | "hospital.transferRequest.accepted"
+  | "hospital.transferRequest.bedReserved"
+  | "hospital.transferRequest.completed"
+  | "hospital.transferRequest.cancelled"
+  | "hospital.discharge.blockerChanged"
+  | "hospital.discharge.expectedDateChanged"
+  | "hospital.location.assigned";
 
 export async function recordAuditEvent(
   type: AuditEventType,

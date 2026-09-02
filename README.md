@@ -102,6 +102,25 @@ Demo login: [http://localhost:3000/hospital-os/login](http://localhost:3000/hosp
 | `billing@amc-demo.aarogya` | Billing Officer | Pune |
 | `admin@noida-demo.aarogya` | Hospital Administrator | Noida |
 | `doctor1@noida-demo.aarogya` | Doctor (Orthopedics) | Noida |
+| `frontdesk@amc-demo.aarogya` | Front Desk Coordinator (Phase 2) | Pune |
+
+## Aarogya Patient Flow / ADT (Phase 2)
+
+Turns the clinical core into a usable Access + OPD + Emergency + ADT
+system: registration desk with duplicate-aware patient search, doctor
+scheduling and appointment booking with real slot/conflict checking, a
+database-backed priority queue engine (front desk, triage, OPD, ED — one
+`QueueEntry` table, deterministic non-AI priority scoring), structured ED
+triage with a live ED board, and an admission-request → bed-matching →
+reservation → confirmation workflow plus an internal-transfer-request
+workflow layered on top of the existing bed/admission machinery (never
+duplicated). Discharge gained a computed barrier engine that tells staff
+*why* a patient hasn't left (pending lab/imaging, unacknowledged critical
+result, billing/insurance/pharmacy/transport) instead of just *that*
+discharge is pending. Full reasoning: [`docs/PATIENT_FLOW.md`](docs/PATIENT_FLOW.md),
+[`docs/ADT_ARCHITECTURE.md`](docs/ADT_ARCHITECTURE.md),
+[`docs/OPD_WORKFLOW.md`](docs/OPD_WORKFLOW.md),
+[`docs/EMERGENCY_WORKFLOW.md`](docs/EMERGENCY_WORKFLOW.md).
 
 ## Aarogya Unified Clinical Core (Phase 1)
 

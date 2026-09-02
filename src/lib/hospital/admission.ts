@@ -27,7 +27,11 @@ export async function admitPatient(input: {
 }) {
   const admission = await prisma.$transaction(async (tx) => {
     const bed = await tx.bed.findUniqueOrThrow({ where: { id: input.bedId } });
-    if (bed.status !== BedStatus.AVAILABLE) throw new BedNotAvailableError();
+    // A bed reserved by THIS admission (via the Phase 2 AdmissionRequest flow,
+    // src/lib/hospital/admissionRequest.ts) is also a legal starting state —
+    // reservation exists precisely so staff can hold a bed ahead of the
+    // patient physically arriving, without a second admission racing for it.
+    if (bed.status !== BedStatus.AVAILABLE && bed.status !== BedStatus.RESERVED) throw new BedNotAvailableError();
 
     const encounter = await tx.encounter.findUniqueOrThrow({ where: { id: input.encounterId } });
     if (!isEncounterTransitionAllowed(encounter.status, EncounterStatus.ADMITTED)) {
@@ -81,7 +85,8 @@ export async function transferPatient(input: {
   const transfer = await prisma.$transaction(async (tx) => {
     const admission = await tx.admission.findUniqueOrThrow({ where: { id: input.admissionId } });
     const toBed = await tx.bed.findUniqueOrThrow({ where: { id: input.toBedId } });
-    if (toBed.status !== BedStatus.AVAILABLE) throw new BedNotAvailableError();
+    // Same reasoning as admitPatient() above — a bed this transfer itself reserved is legal.
+    if (toBed.status !== BedStatus.AVAILABLE && toBed.status !== BedStatus.RESERVED) throw new BedNotAvailableError();
 
     const fromBed = await tx.bed.findUniqueOrThrow({ where: { id: admission.bedId } });
 
@@ -115,8 +120,8 @@ export async function transferPatient(input: {
 }
 
 /** Initiates the discharge workflow (brief §36) — creates a Discharge row with readiness flags, all false initially. Does NOT free the bed yet; that happens at finalizeDischarge(). */
-export async function initiateDischarge(admissionId: string, byUserId: string) {
-  const discharge = await prisma.discharge.create({ data: { admissionId } });
+export async function initiateDischarge(admissionId: string, byUserId: string, initiatedByStaffId?: string) {
+  const discharge = await prisma.discharge.create({ data: { admissionId, initiatedByStaffId } });
   await recordAuditEvent("hospital.discharge.initiated", byUserId, { admissionId });
   return discharge;
 }

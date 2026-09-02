@@ -9,6 +9,7 @@ import { allCaseDefs } from "./seedData";
 import { buildCase } from "./seedData/builder";
 import { seedHospital } from "./seedData/hospital";
 import { seedPhase1Extensions } from "./seedData/hospitalPhase1";
+import { seedPhase2PatientFlow } from "./seedData/hospitalPhase2";
 
 const prisma = new PrismaClient();
 
@@ -174,6 +175,7 @@ async function main() {
   await seedCases();
   await seedHospital(prisma);
   await seedPhase1Extensions(prisma);
+  await seedPhase2PatientFlow(prisma);
 }
 
 main()

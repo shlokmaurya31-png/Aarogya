@@ -272,6 +272,37 @@ component (brief §131/§201).
    flows (already superset-covered by the new bed-transaction system),
    then redirect `/hospital` → `/hospital-os` and retire
    `useHospitalOpsStore`/`useBedBookingStore`.
-3. Later: build Phase 2 modules (Emergency triage depth, ICU, OT,
-   Inventory, Insurance, Quality, Infection Control, Workforce) on the same
-   tenancy/RBAC/audit foundation.
+3. Later: build further modules (ICU, OT, Inventory, Insurance, Quality,
+   Infection Control, Workforce) on the same tenancy/RBAC/audit
+   foundation. (This point originally said "Phase 2 modules" — written
+   before the phase-by-phase execution plan gave that term a concrete
+   meaning. The actual Phase 2, delivered, is Patient Flow/Access/ADT —
+   see §13 below, and `docs/PATIENT_FLOW.md`.)
+
+## 13. Phase 2 — Patient Flow, Access, OPD, Emergency, ADT
+
+Delivered on top of everything above without modifying its core shape.
+Full detail: `docs/PATIENT_FLOW.md`, `docs/ADT_ARCHITECTURE.md`,
+`docs/OPD_WORKFLOW.md`, `docs/EMERGENCY_WORKFLOW.md`. Summary of what
+changed relative to this document's earlier sections:
+
+- **§4 Roles**: one new role, `FRONT_DESK` — registration/appointments/
+  check-in/queue only. Triage nurse, emergency doctor, and bed manager
+  remain `NURSE`/`DOCTOR`/`HOSPITAL_ADMIN` with an appropriate
+  department/displayRole, per the brief's own "if role exists" allowance
+  — no new role was added for any of those three.
+- **§6 Bed state machine**: `RESERVED` and `TRANSFER_PENDING` existed in
+  the legal-transition table since Phase 0 but had no caller — Phase 2 is
+  the first code that actually reaches `RESERVED` (via the admission-
+  request and transfer-request bed-reservation steps). The transition
+  table itself did not change.
+- **§7 Command Center**: `getCommandCenterSnapshot()` gained `access`
+  (appointments/no-shows/OPD+ED waiting) and `patientFlowOps` (queue
+  counts, admission-request/transfer/discharge backlog) sections, all
+  live Prisma aggregates, matching this document's existing "why, not
+  just numbers" principle.
+- **New models**: `Appointment`, `DoctorScheduleBlock`, `QueueEntry`,
+  `TriageAssessment`, `EncounterLocation`, `AdmissionRequest`,
+  `TransferRequest`, `SlaPolicy` — see `docs/PATIENT_FLOW.md` §3 for the
+  full reasoning, including what was deliberately NOT built as a new
+  table (a patient-flow event log, a persisted alerts table).

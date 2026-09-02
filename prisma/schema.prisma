@@ -37,6 +37,12 @@ enum Role {
   RADIOLOGY_TECH
   PHARMACIST
   BILLING_STAFF
+  // Phase 2 — Patient Flow: front-office registration/appointments/check-in.
+  // Triage nurses, emergency doctors and bed managers are NOT separate
+  // roles — they are NURSE/DOCTOR/HOSPITAL_ADMIN accounts with a
+  // department/displayRole that says so (brief §66's "if role exists"),
+  // consistent with "do not create duplicate users/roles unnecessarily".
+  FRONT_DESK
 }
 
 model User {
@@ -466,17 +472,25 @@ model Facility {
   organizationId String
   createdAt      DateTime     @default(now())
 
-  departments    Department[]
-  wards          Ward[]
-  beds           Bed[]
-  staff          HospitalStaffProfile[]
-  patients       Patient[]
-  encounters     Encounter[]
-  episodesOfCare EpisodeOfCare[]
-  charges        Charge[]
-  bills          Bill[]
-  tasks          Task[]
-  documents      ClinicalDocument[]
+  departments        Department[]
+  wards              Ward[]
+  beds               Bed[]
+  staff              HospitalStaffProfile[]
+  patients           Patient[]
+  encounters         Encounter[]
+  episodesOfCare     EpisodeOfCare[]
+  charges            Charge[]
+  bills              Bill[]
+  tasks              Task[]
+  documents          ClinicalDocument[]
+  appointments       Appointment[]
+  scheduleBlocks     DoctorScheduleBlock[]
+  queueEntries       QueueEntry[]
+  triageAssessments  TriageAssessment[]
+  encounterLocations EncounterLocation[]
+  admissionRequests  AdmissionRequest[]
+  transferRequests   TransferRequest[]
+  slaPolicies        SlaPolicy[]
 }
 
 model Department {
@@ -487,13 +501,17 @@ model Department {
   facilityId String
   createdAt  DateTime @default(now())
 
-  wards         Ward[]
-  staff         HospitalStaffProfile[]
-  encounters    Encounter[]
-  memberships   DepartmentMembership[]
-  referralsFrom Referral[]             @relation("ReferralFromDept")
-  referralsTo   Referral[]             @relation("ReferralToDept")
-  tasks         Task[]
+  wards             Ward[]
+  staff             HospitalStaffProfile[]
+  encounters        Encounter[]
+  memberships       DepartmentMembership[]
+  referralsFrom     Referral[]             @relation("ReferralFromDept")
+  referralsTo       Referral[]             @relation("ReferralToDept")
+  tasks             Task[]
+  appointments      Appointment[]
+  scheduleBlocks    DoctorScheduleBlock[]
+  queueEntries      QueueEntry[]
+  admissionRequests AdmissionRequest[]
 
   @@unique([facilityId, name])
 }
@@ -571,10 +589,13 @@ model Bed {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  stateEvents   BedStateEvent[]
-  admissions    Admission[]
-  transfersFrom Transfer[]      @relation("TransferFromBed")
-  transfersTo   Transfer[]      @relation("TransferToBed")
+  stateEvents        BedStateEvent[]
+  admissions         Admission[]
+  transfersFrom      Transfer[]          @relation("TransferFromBed")
+  transfersTo        Transfer[]          @relation("TransferToBed")
+  admissionRequests  AdmissionRequest[]
+  transferRequests   TransferRequest[]
+  encounterLocations EncounterLocation[]
 
   @@unique([facilityId, label])
   @@index([status])
@@ -617,26 +638,34 @@ model HospitalStaffProfile {
   status        StaffStatus @default(ACTIVE)
   createdAt     DateTime    @default(now())
 
-  encountersAttended    Encounter[]                @relation("AttendingStaff")
-  admissionsCreated     Admission[]                @relation("AdmittingStaff")
-  notes                 ClinicalNote[]             @relation("NoteAuthor")
-  medicationOrders      MedicationOrder[]          @relation("MedicationOrderer")
-  medicationAdmins      MedicationAdministration[] @relation("MedicationAdministrator")
-  labOrders             LabOrder[]                 @relation("LabOrderer")
-  labResultsReleased    LabResult[]                @relation("LabResultReleaser")
-  imagingOrders         ImagingOrder[]             @relation("ImagingOrderer")
-  imagingReports        ImagingReport[]            @relation("ImagingReporter")
-  departmentMemberships DepartmentMembership[]
-  diagnosesRecorded     Diagnosis[]
-  tasksCreated          Task[]                     @relation("TaskCreatedBy")
-  tasksOwned            Task[]                     @relation("TaskOwner")
-  tasksCompleted        Task[]                     @relation("TaskCompletedBy")
-  documentsAuthored     ClinicalDocument[]         @relation("DocumentAuthor")
-  documentsUploaded     ClinicalDocument[]         @relation("DocumentUploadedBy")
-  consentsRecorded      Consent[]
-  referralsMade         Referral[]                 @relation("ReferralFromStaff")
-  referralsReceived     Referral[]                 @relation("ReferralToStaff")
-  patientMerges         PatientMergeRecord[]
+  encountersAttended         Encounter[]                @relation("AttendingStaff")
+  admissionsCreated          Admission[]                @relation("AdmittingStaff")
+  notes                      ClinicalNote[]             @relation("NoteAuthor")
+  medicationOrders           MedicationOrder[]          @relation("MedicationOrderer")
+  medicationAdmins           MedicationAdministration[] @relation("MedicationAdministrator")
+  labOrders                  LabOrder[]                 @relation("LabOrderer")
+  labResultsReleased         LabResult[]                @relation("LabResultReleaser")
+  imagingOrders              ImagingOrder[]             @relation("ImagingOrderer")
+  imagingReports             ImagingReport[]            @relation("ImagingReporter")
+  departmentMemberships      DepartmentMembership[]
+  diagnosesRecorded          Diagnosis[]
+  tasksCreated               Task[]                     @relation("TaskCreatedBy")
+  tasksOwned                 Task[]                     @relation("TaskOwner")
+  tasksCompleted             Task[]                     @relation("TaskCompletedBy")
+  documentsAuthored          ClinicalDocument[]         @relation("DocumentAuthor")
+  documentsUploaded          ClinicalDocument[]         @relation("DocumentUploadedBy")
+  consentsRecorded           Consent[]
+  referralsMade              Referral[]                 @relation("ReferralFromStaff")
+  referralsReceived          Referral[]                 @relation("ReferralToStaff")
+  patientMerges              PatientMergeRecord[]
+  appointmentsAsDoctor       Appointment[]              @relation("AppointmentDoctor")
+  scheduleBlocks             DoctorScheduleBlock[]
+  queueEntriesAsPractitioner QueueEntry[]               @relation("QueuePractitioner")
+  triageAssessments          TriageAssessment[]
+  admissionRequestsMade      AdmissionRequest[]         @relation("AdmissionRequestedBy")
+  admissionRequestsReviewed  AdmissionRequest[]         @relation("AdmissionReviewedBy")
+  transferRequestsMade       TransferRequest[]          @relation("TransferRequestedBy")
+  transferRequestsAccepted   TransferRequest[]          @relation("TransferAcceptedBy")
 
   @@index([facilityId])
 }
@@ -700,6 +729,10 @@ model Patient {
   referrals            Referral[]
   mergeRecordsAsSource PatientMergeRecord[]      @relation("MergeSource")
   mergeRecordsAsTarget PatientMergeRecord[]      @relation("MergeTarget")
+  appointments         Appointment[]
+  queueEntries         QueueEntry[]
+  admissionRequests    AdmissionRequest[]
+  transferRequests     TransferRequest[]
 
   @@index([facilityId])
   @@index([mergedIntoId])
@@ -836,17 +869,36 @@ model Encounter {
   closedAt         DateTime?
   cancelledReason  String?
 
-  vitals           Vital[]
-  notes            ClinicalNote[]
-  diagnoses        Diagnosis[]
-  medicationOrders MedicationOrder[]
-  labOrders        LabOrder[]
-  imagingOrders    ImagingOrder[]
-  referrals        Referral[]
-  documents        ClinicalDocument[]
-  admission        Admission?
-  charges          Charge[]
-  bill             Bill?
+  // Phase 2 — Patient Flow arrival/access metadata (brief §6/§18/§45-47).
+  // Nullable, encounter-scoped fields rather than a separate "EDArrival"
+  // table — these are 1:1 with an encounter and most are only meaningful
+  // for ED/emergency arrivals, matching how Patient's nullable fields were
+  // extended in Phase 1 rather than splitting into a new table.
+  accessSource          AccessSource?
+  arrivalMode           String? // "WALK_IN" | "AMBULANCE" | "WHEELCHAIR" | "STRETCHER"
+  traumaIndicator       Boolean       @default(false)
+  ambulanceRef          String? // ambulance identifier (brief §47) — data capture only, no live integration
+  accompanyingPerson    String?
+  referringProviderName String? // external referral intake (brief §46) — full referral management deferred
+  referringFacilityName String?
+  referralUrgency       String?
+
+  vitals            Vital[]
+  notes             ClinicalNote[]
+  diagnoses         Diagnosis[]
+  medicationOrders  MedicationOrder[]
+  labOrders         LabOrder[]
+  imagingOrders     ImagingOrder[]
+  referrals         Referral[]
+  documents         ClinicalDocument[]
+  admission         Admission?
+  charges           Charge[]
+  bill              Bill?
+  appointments      Appointment[]
+  triageAssessments TriageAssessment[]
+  queueEntries      QueueEntry[]
+  locations         EncounterLocation[]
+  admissionRequests AdmissionRequest[]
 
   @@index([facilityId])
   @@index([episodeOfCareId])
@@ -866,8 +918,10 @@ model Admission {
   admittingStaffId String
   admittedAt       DateTime             @default(now())
 
-  transfers Transfer[]
-  discharge Discharge?
+  transfers        Transfer[]
+  discharge        Discharge?
+  admissionRequest AdmissionRequest?
+  transferRequests TransferRequest[]
 
   @@index([bedId])
 }
@@ -883,6 +937,8 @@ model Transfer {
   reason        String
   byUserId      String
   transferredAt DateTime  @default(now())
+
+  transferRequest TransferRequest?
 
   @@index([admissionId])
 }
@@ -901,6 +957,15 @@ model Discharge {
   signedByStaffId    String?
   initiatedAt        DateTime  @default(now())
   dischargedAt       DateTime?
+
+  // Phase 2 — discharge planning (brief §37/§39). Blockers themselves are
+  // NOT a stored field — see src/lib/hospital/dischargeBarrierEngine.ts,
+  // computed live from these readiness flags plus pending
+  // lab/imaging/referral state, matching this repo's established
+  // computed-aggregation-over-duplicated-table pattern (docs/CLINICAL_CORE.md §4).
+  initiatedByStaffId      String?
+  expectedDischargeAt     DateTime?
+  expectedDischargeReason String?
 }
 
 model ClinicalNote {
@@ -1250,4 +1315,306 @@ model PatientMergeRecord {
 
   @@index([sourcePatientId])
   @@index([targetPatientId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 2 — Patient Flow + Access + OPD + Emergency + ADT
+// (Admission/Transfer/Discharge requests, queueing, triage, scheduling).
+// See docs/PATIENT_FLOW.md and docs/ADT_ARCHITECTURE.md. Deliberately does
+// NOT touch Bed/Admission/Transfer/Discharge/BedStateEvent's core shape —
+// this phase adds a request/reservation layer ON TOP of that existing,
+// working, transactional machinery (src/lib/hospital/{bed,admission}.ts),
+// per the explicit "do not duplicate existing admission/bed logic"
+// instruction. Existing EncounterStatus/BedStatus enums are reused as-is.
+// ─────────────────────────────────────────────────────────────────────────
+
+enum AppointmentType {
+  NEW
+  FOLLOW_UP
+  PROCEDURE
+  REVIEW
+  TELEMEDICINE
+  EMERGENCY_OVERRIDE
+}
+
+/**
+ * How the patient reached this appointment/encounter — brief §6/§17/§45-47.
+ */
+enum AccessSource {
+  APPOINTMENT
+  WALK_IN
+  REFERRAL
+  EMERGENCY
+  FOLLOW_UP
+  AMBULANCE
+}
+
+/**
+ * Shared priority vocabulary for admission/transfer requests (brief §28/§34) — deliberately NOT a clinical acuity scale (see TriageAssessment.acuity for that).
+ */
+enum RequestPriority {
+  ROUTINE
+  URGENT
+  EMERGENCY
+}
+
+model Appointment {
+  id                 String               @id @default(cuid())
+  facility           Facility             @relation(fields: [facilityId], references: [id])
+  facilityId         String
+  department         Department?          @relation(fields: [departmentId], references: [id])
+  departmentId       String?
+  doctor             HospitalStaffProfile @relation("AppointmentDoctor", fields: [doctorStaffId], references: [id])
+  doctorStaffId      String
+  patient            Patient              @relation(fields: [patientId], references: [id])
+  patientId          String
+  type               AppointmentType      @default(NEW)
+  source             AccessSource         @default(APPOINTMENT)
+  priority           RequestPriority      @default(ROUTINE)
+  roomLabel          String?
+  scheduledStart     DateTime
+  scheduledEnd       DateTime
+  reason             String?
+  status             String               @default("REQUESTED") // REQUESTED|CONFIRMED|RESCHEDULED|ARRIVED|CHECKED_IN|WAITING|IN_CONSULTATION|COMPLETED|CANCELLED|NO_SHOW
+  encounter          Encounter?           @relation(fields: [encounterId], references: [id])
+  encounterId        String?
+  cancelledReason    String?
+  cancelledAt        DateTime?
+  cancelledByStaffId String?
+  noShowAt           DateTime?
+  createdByStaffId   String
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  queueEntries QueueEntry[]
+
+  @@index([facilityId])
+  @@index([doctorStaffId, scheduledStart])
+  @@index([status])
+  @@index([patientId])
+}
+
+/**
+ * Doctor scheduling foundation (brief §7) — working hours, sessions,
+ * leave/holiday/blocked periods, only. No payroll/HR. A recurring session
+ * is `dayOfWeek` + `startMinute`/`endMinute` (minutes from midnight, since
+ * SQLite has no TIME type); a one-off leave/holiday/block uses
+ * `specificDate` instead, which takes precedence over any recurring
+ * session that day when computing available slots.
+ */
+model DoctorScheduleBlock {
+  id                        String               @id @default(cuid())
+  staff                     HospitalStaffProfile @relation(fields: [staffId], references: [id])
+  staffId                   String
+  facility                  Facility             @relation(fields: [facilityId], references: [id])
+  facilityId                String
+  department                Department?          @relation(fields: [departmentId], references: [id])
+  departmentId              String?
+  type                      String // "CLINIC_SESSION" | "BLOCKED" | "LEAVE" | "HOLIDAY"
+  dayOfWeek                 Int? // 0 (Sun) - 6 (Sat); null when specificDate is a one-off override
+  specificDate              DateTime? // date-only one-off (leave/holiday/single block); time part ignored
+  startMinute               Int? // minutes from midnight; null for a whole-day LEAVE/HOLIDAY
+  endMinute                 Int?
+  slotDurationMinutes       Int?                 @default(15) // only meaningful for CLINIC_SESSION
+  maxConcurrentAppointments Int                  @default(1) // overbooking policy — 1 = no overbooking
+  roomLabel                 String?
+  reason                    String? // for BLOCKED/LEAVE
+  createdAt                 DateTime             @default(now())
+
+  @@index([staffId])
+  @@index([facilityId])
+}
+
+/**
+ * Generalized, database-backed patient queue (brief §8) — every waiting
+ * line (front-desk registration, triage, a doctor's OPD queue, the ED
+ * board) is a `queueType` on this one table rather than a bespoke table
+ * per queue. `priorityScore` is written by the priority-rules engine
+ * (src/lib/hospital/queue.ts, brief §9) — lower sorts first — and is
+ * recomputed, not silently reordered, whenever a triage/priority change
+ * happens (see `priorityReason`).
+ */
+model QueueEntry {
+  id                  String                @id @default(cuid())
+  facility            Facility              @relation(fields: [facilityId], references: [id])
+  facilityId          String
+  department          Department?           @relation(fields: [departmentId], references: [id])
+  departmentId        String?
+  queueType           String // "REGISTRATION" | "TRIAGE" | "OPD_DOCTOR" | "ED"
+  patient             Patient               @relation(fields: [patientId], references: [id])
+  patientId           String
+  encounter           Encounter?            @relation(fields: [encounterId], references: [id])
+  encounterId         String?
+  appointment         Appointment?          @relation(fields: [appointmentId], references: [id])
+  appointmentId       String?
+  practitioner        HospitalStaffProfile? @relation("QueuePractitioner", fields: [practitionerStaffId], references: [id])
+  practitionerStaffId String?
+  priorityScore       Int                   @default(100) // lower = seen sooner
+  priorityReason      String?
+  status              String                @default("WAITING") // WAITING | CALLED | IN_SERVICE | COMPLETED | SKIPPED | CANCELLED
+  enteredAt           DateTime              @default(now())
+  calledAt            DateTime?
+  startedAt           DateTime?
+  completedAt         DateTime?
+  createdByStaffId    String?
+
+  @@index([facilityId])
+  @@index([queueType])
+  @@index([status])
+  @@index([patientId])
+}
+
+/**
+ * A recorded triage assessment (brief §19-20) — the clinician/nurse
+ * records the acuity; the software never determines it autonomously.
+ * Distinct from `Encounter.triageLevel` (a denormalized "current" cache
+ * updated alongside this, so existing ED-list/order-triggering code that
+ * already reads `Encounter.triageLevel` keeps working unchanged) — this
+ * table is the full auditable record: who, when, red flags, and the area
+ * assigned as a result.
+ */
+model TriageAssessment {
+  id                String               @id @default(cuid())
+  encounter         Encounter            @relation(fields: [encounterId], references: [id])
+  encounterId       String
+  facility          Facility             @relation(fields: [facilityId], references: [id])
+  facilityId        String
+  recordedBy        HospitalStaffProfile @relation(fields: [recordedByStaffId], references: [id])
+  recordedByStaffId String
+  acuity            Int // 1 (resuscitation) - 5 (non-urgent) — configurable scale, not an AI decision
+  chiefComplaint    String?
+  redFlags          String?
+  assignedArea      String? // "RESUSCITATION" | "HIGH_PRIORITY" | "STANDARD" | "OBSERVATION"
+  notes             String?
+  createdAt         DateTime             @default(now())
+
+  @@index([encounterId])
+  @@index([facilityId])
+}
+
+/**
+ * Where a patient physically is right now, independent of clinical
+ * encounter status (brief §22/§33/§54) — reuses `Bed` when the location
+ * IS a real bed resource (an ED bay is a `Bed` row in an EMERGENCY ward,
+ * same as an inpatient bed), and falls back to a free-text `areaLabel`
+ * for genuinely non-bed/temporary locations ("CT", "Waiting Area").
+ * Latest row with `releasedAt: null` for an encounter is its current
+ * location. Deliberately lighter-weight than `Admission` — an ED patient
+ * is not admitted, so this does not touch `Bed.status`/occupancy.
+ */
+model EncounterLocation {
+  id                String    @id @default(cuid())
+  encounter         Encounter @relation(fields: [encounterId], references: [id])
+  encounterId       String
+  facility          Facility  @relation(fields: [facilityId], references: [id])
+  facilityId        String
+  bed               Bed?      @relation(fields: [bedId], references: [id])
+  bedId             String?
+  areaLabel         String?
+  assignedByStaffId String?
+  assignedAt        DateTime  @default(now())
+  releasedAt        DateTime?
+
+  @@index([encounterId])
+  @@index([bedId])
+}
+
+/**
+ * A request to admit a patient — does NOT itself touch `Bed`/`Admission`
+ * (brief §28: "do not directly mutate the bed simply because a doctor
+ * clicked admit"). `reservedBedId` is populated by the bed-matching +
+ * reservation step (src/lib/hospital/admissionRequest.ts), which flips
+ * the bed to `RESERVED` via the EXISTING `transitionBed()` service — not
+ * a new bed state machine. Confirming admission calls the EXISTING
+ * `admitPatient()` (relaxed to also accept a bed this request itself
+ * reserved) — not a new admission path.
+ */
+model AdmissionRequest {
+  id                 String                @id @default(cuid())
+  patient            Patient               @relation(fields: [patientId], references: [id])
+  patientId          String
+  encounter          Encounter             @relation(fields: [encounterId], references: [id])
+  encounterId        String
+  facility           Facility              @relation(fields: [facilityId], references: [id])
+  facilityId         String
+  department         Department?           @relation(fields: [departmentId], references: [id])
+  departmentId       String?
+  requestedBy        HospitalStaffProfile  @relation("AdmissionRequestedBy", fields: [requestedByStaffId], references: [id])
+  requestedByStaffId String
+  requestedWardType  WardType?
+  isolationRequired  Boolean               @default(false)
+  genderRestriction  String?
+  priority           RequestPriority       @default(ROUTINE)
+  reason             String
+  expectedLosDays    Int?
+  status             String                @default("PENDING") // PENDING | DEFERRED | BED_RESERVED | ADMITTED | REJECTED | CANCELLED
+  reviewedBy         HospitalStaffProfile? @relation("AdmissionReviewedBy", fields: [reviewedByStaffId], references: [id])
+  reviewedByStaffId  String?
+  reviewedAt         DateTime?
+  rejectionReason    String?
+  reservedBed        Bed?                  @relation(fields: [reservedBedId], references: [id])
+  reservedBedId      String?
+  admission          Admission?            @relation(fields: [admissionId], references: [id])
+  admissionId        String?               @unique
+  createdAt          DateTime              @default(now())
+
+  @@index([facilityId])
+  @@index([status])
+  @@index([encounterId])
+}
+
+/**
+ * A request to move an admitted patient to a different bed (brief §34) —
+ * layered on the existing `Admission`/`Transfer` models, not a
+ * replacement. Completing a request calls the EXISTING `transferPatient()`
+ * (relaxed to accept a bed this request itself reserved), which creates
+ * the real `Transfer` row this request then links to.
+ */
+model TransferRequest {
+  id                       String                @id @default(cuid())
+  admission                Admission             @relation(fields: [admissionId], references: [id])
+  admissionId              String
+  facility                 Facility              @relation(fields: [facilityId], references: [id])
+  facilityId               String
+  patient                  Patient               @relation(fields: [patientId], references: [id])
+  patientId                String
+  requestedBy              HospitalStaffProfile  @relation("TransferRequestedBy", fields: [requestedByStaffId], references: [id])
+  requestedByStaffId       String
+  reason                   String
+  destinationWardType      WardType?
+  isolationRequired        Boolean               @default(false)
+  genderRestriction        String?
+  priority                 RequestPriority       @default(ROUTINE)
+  transportRequired        Boolean               @default(false)
+  clinicalHandoverRequired Boolean               @default(true)
+  status                   String                @default("REQUESTED") // REQUESTED | ACCEPTED | BED_RESERVED | PATIENT_IN_TRANSIT | COMPLETED | CANCELLED | REJECTED
+  acceptedBy               HospitalStaffProfile? @relation("TransferAcceptedBy", fields: [acceptedByStaffId], references: [id])
+  acceptedByStaffId        String?
+  reservedBed              Bed?                  @relation(fields: [reservedBedId], references: [id])
+  reservedBedId            String?
+  transfer                 Transfer?             @relation(fields: [transferId], references: [id])
+  transferId               String?               @unique
+  createdAt                DateTime              @default(now())
+  completedAt              DateTime?
+
+  @@index([facilityId])
+  @@index([status])
+  @@index([admissionId])
+}
+
+/**
+ * Configurable operational SLA thresholds (brief §52) — hospital
+ * operational configuration, explicitly NOT a hard-coded clinical
+ * standard. Read by the alert engine (src/lib/hospital/alertEngine.ts)
+ * instead of the fixed constants it used before this phase.
+ */
+model SlaPolicy {
+  id               String   @id @default(cuid())
+  facility         Facility @relation(fields: [facilityId], references: [id])
+  facilityId       String
+  metric           String // "REGISTRATION_WAIT" | "ED_DOCTOR_WAIT" | "ADMISSION_ALLOCATION" | "TRANSFER" | "DISCHARGE_READY"
+  thresholdMinutes Int
+  updatedAt        DateTime @updatedAt
+
+  @@unique([facilityId, metric])
 }

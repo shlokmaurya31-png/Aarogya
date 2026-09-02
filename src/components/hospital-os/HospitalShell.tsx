@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutGrid, BedDouble, ClipboardList, LogOut, Building2, Stethoscope,
   ClipboardCheck, FlaskConical, ScanLine, Receipt, DoorOpen,
+  UserPlus, Siren, ArrowRightLeft,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusPill } from "@/components/ui/StatusPill";
@@ -15,8 +16,11 @@ type NavItem = { href: string; label: string; icon: typeof LayoutGrid };
 const NAV_BY_ROLE: Record<string, NavItem[]> = {
   HOSPITAL_ADMIN: [
     { href: "/hospital-os", label: "Command Center", icon: LayoutGrid },
+    { href: "/hospital-os/front-desk", label: "Front Desk", icon: UserPlus },
+    { href: "/hospital-os/ed", label: "ED Board", icon: Siren },
     { href: "/hospital-os/beds", label: "Beds", icon: BedDouble },
     { href: "/hospital-os/admissions", label: "Admissions", icon: ClipboardList },
+    { href: "/hospital-os/transfers", label: "Transfers", icon: ArrowRightLeft },
     { href: "/hospital-os/discharge", label: "Discharge", icon: DoorOpen },
     { href: "/hospital-os/billing", label: "Billing", icon: Receipt },
   ],
@@ -24,24 +28,30 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     { href: "/hospital-os", label: "Command Center", icon: LayoutGrid },
     { href: "/hospital-os/beds", label: "Beds", icon: BedDouble },
     { href: "/hospital-os/admissions", label: "Admissions", icon: ClipboardList },
+    { href: "/hospital-os/transfers", label: "Transfers", icon: ArrowRightLeft },
     { href: "/hospital-os/discharge", label: "Discharge", icon: DoorOpen },
     { href: "/hospital-os/billing", label: "Billing", icon: Receipt },
   ],
   DOCTOR: [
     { href: "/hospital-os/doctor", label: "My Patients", icon: Stethoscope },
+    { href: "/hospital-os/ed", label: "ED Board", icon: Siren },
     { href: "/hospital-os", label: "Command Center", icon: LayoutGrid },
     { href: "/hospital-os/beds", label: "Beds", icon: BedDouble },
     { href: "/hospital-os/admissions", label: "Admissions", icon: ClipboardList },
+    { href: "/hospital-os/transfers", label: "Transfers", icon: ArrowRightLeft },
     { href: "/hospital-os/discharge", label: "Discharge", icon: DoorOpen },
   ],
   NURSE: [
     { href: "/hospital-os/nurse", label: "My Shift", icon: ClipboardCheck },
+    { href: "/hospital-os/ed", label: "ED Board", icon: Siren },
     { href: "/hospital-os/beds", label: "Beds", icon: BedDouble },
+    { href: "/hospital-os/transfers", label: "Transfers", icon: ArrowRightLeft },
   ],
   LAB_TECHNICIAN: [{ href: "/hospital-os/lab", label: "Lab Queue", icon: FlaskConical }],
   RADIOLOGY_TECH: [{ href: "/hospital-os/radiology", label: "Imaging Queue", icon: ScanLine }],
   PHARMACIST: [{ href: "/hospital-os", label: "Command Center", icon: LayoutGrid }],
   BILLING_STAFF: [{ href: "/hospital-os/billing", label: "Billing", icon: Receipt }],
+  FRONT_DESK: [{ href: "/hospital-os/front-desk", label: "Front Desk", icon: UserPlus }],
 };
 
 export function HospitalShell({

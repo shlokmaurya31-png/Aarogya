@@ -11,6 +11,14 @@ interface Snapshot {
   beds: { total: number; available: number; occupancyPct: number; byStatus: Record<string, number>; byWard: { wardName: string; wardType: string; occupied: number; total: number }[] };
   patientFlow: Record<string, number>;
   safety: { unacknowledgedCriticalLabs: number; unverifiedCriticalImaging: number; pendingDischarges: number };
+  access: { appointmentsToday: number; noShowsToday: number; opdWaiting: number; edWaiting: number };
+  patientFlowOps: {
+    queues: { queueType: string; status: string; count: number }[];
+    admissionRequestsPending: number;
+    admissionRequestsBedReserved: number;
+    transferBacklog: number;
+    dischargeReadyNotLeft: number;
+  };
   operationalStatus: "green" | "watch" | "critical";
   alerts: { id: string; severity: "info" | "watch" | "critical"; department: string; message: string; ownerRole: string; createdAt: string }[];
 }
@@ -51,6 +59,13 @@ export function CommandCenter() {
         <StatTile label="Discharges today" value={data.today.discharges} />
         <StatTile label="ED visits today" value={data.today.edVisits} />
         <StatTile label="OPD visits today" value={data.today.opdVisits} />
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatTile label="Appointments today" value={data.access.appointmentsToday} />
+        <StatTile label="No-shows today" value={data.access.noShowsToday} />
+        <StatTile label="OPD waiting" value={data.access.opdWaiting} />
+        <StatTile label="ED waiting" value={data.access.edWaiting} />
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -132,6 +147,16 @@ export function CommandCenter() {
               <SafetyRow label="Unacknowledged critical labs" value={data.safety.unacknowledgedCriticalLabs} />
               <SafetyRow label="Unverified critical imaging" value={data.safety.unverifiedCriticalImaging} />
               <SafetyRow label="Pending discharges" value={data.safety.pendingDischarges} />
+            </div>
+          </Card>
+
+          <Card className="rounded-[20px]">
+            <CardLabel>Patient flow — ADT backlog</CardLabel>
+            <div className="mt-2 space-y-2.5">
+              <SafetyRow label="Admission requests pending" value={data.patientFlowOps.admissionRequestsPending} />
+              <SafetyRow label="Beds reserved, not yet admitted" value={data.patientFlowOps.admissionRequestsBedReserved} />
+              <SafetyRow label="Transfer backlog" value={data.patientFlowOps.transferBacklog} />
+              <SafetyRow label="Discharge-ready, still in bed" value={data.patientFlowOps.dischargeReadyNotLeft} />
             </div>
           </Card>
         </div>

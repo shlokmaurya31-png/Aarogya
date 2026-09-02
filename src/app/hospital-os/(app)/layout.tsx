@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth/getCurrentUser";
 import { HospitalShell } from "@/components/hospital-os/HospitalShell";
 
-const HOSPITAL_ROLES = new Set(["HOSPITAL_ADMIN", "DOCTOR", "NURSE", "LAB_TECHNICIAN", "RADIOLOGY_TECH", "PHARMACIST", "BILLING_STAFF", "AAROGYA_ADMIN"]);
+const HOSPITAL_ROLES = new Set(["HOSPITAL_ADMIN", "DOCTOR", "NURSE", "LAB_TECHNICIAN", "RADIOLOGY_TECH", "PHARMACIST", "BILLING_STAFF", "AAROGYA_ADMIN", "FRONT_DESK"]);
 
 export default async function HospitalOsLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser();

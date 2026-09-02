@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { getSlaThresholds } from "./sla";
 
 /**
  * Deterministic rule engine — not an LLM (brief §138 "do not invent
@@ -115,6 +116,105 @@ export async function computeAlerts(facilityId: string): Promise<HospitalAlert[]
         message: `Bed occupancy is at ${occupancyPct}% (${available}/${total} available) — approaching capacity.`,
         ownerRole: "HOSPITAL_ADMIN",
         createdAt: new Date().toISOString(),
+      });
+    }
+  }
+
+  // Phase 2 — Patient Flow SLA breaches (brief §51-52). Thresholds come from
+  // getSlaThresholds() — configurable hospital operational policy, not a
+  // hard-coded clinical standard (brief §52's explicit instruction).
+  const sla = await getSlaThresholds(facilityId);
+
+  const waitingEd = await prisma.queueEntry.findMany({
+    where: { facilityId, queueType: "ED", status: "WAITING" },
+    include: { patient: true },
+  });
+  for (const q of waitingEd) {
+    const minutes = (now - q.enteredAt.getTime()) / 60_000;
+    if (minutes >= sla.ED_DOCTOR_WAIT) {
+      alerts.push({
+        id: `ed-wait-${q.id}`,
+        severity: minutes >= sla.ED_DOCTOR_WAIT * 2 ? "critical" : "watch",
+        department: "Emergency",
+        message: `${q.patient.fullName} has been waiting ${Math.round(minutes)} min for an ED doctor (SLA ${sla.ED_DOCTOR_WAIT} min).`,
+        ownerRole: "DOCTOR",
+        createdAt: q.enteredAt.toISOString(),
+      });
+    }
+  }
+
+  const pendingAdmissionRequests = await prisma.admissionRequest.findMany({
+    where: { facilityId, status: { in: ["PENDING", "DEFERRED"] } },
+    include: { patient: true },
+  });
+  for (const r of pendingAdmissionRequests) {
+    const minutes = (now - r.createdAt.getTime()) / 60_000;
+    if (minutes >= sla.ADMISSION_ALLOCATION) {
+      alerts.push({
+        id: `admission-request-sla-${r.id}`,
+        severity: minutes >= sla.ADMISSION_ALLOCATION * 2 ? "critical" : "watch",
+        department: "Bed Management",
+        message: `Admission request for ${r.patient.fullName} has waited ${Math.round(minutes)} min for bed allocation (SLA ${sla.ADMISSION_ALLOCATION} min).`,
+        ownerRole: "HOSPITAL_ADMIN",
+        createdAt: r.createdAt.toISOString(),
+      });
+    }
+  }
+
+  const reservedNotAdmitted = await prisma.admissionRequest.findMany({
+    where: { facilityId, status: "BED_RESERVED" },
+    include: { patient: true, reservedBed: true },
+  });
+  for (const r of reservedNotAdmitted) {
+    const minutes = r.reviewedAt ? (now - r.reviewedAt.getTime()) / 60_000 : 0;
+    if (minutes >= sla.ADMISSION_ALLOCATION) {
+      alerts.push({
+        id: `bed-reserved-stalled-${r.id}`,
+        severity: "watch",
+        department: "Bed Management",
+        message: `Bed ${r.reservedBed?.label ?? "?"} reserved for ${r.patient.fullName} but admission not yet confirmed (${Math.round(minutes)} min).`,
+        ownerRole: "HOSPITAL_ADMIN",
+        createdAt: (r.reviewedAt ?? r.createdAt).toISOString(),
+      });
+    }
+  }
+
+  const pendingTransfers = await prisma.transferRequest.findMany({
+    where: { facilityId, status: { notIn: ["COMPLETED", "CANCELLED", "REJECTED"] } },
+    include: { patient: true },
+  });
+  for (const t of pendingTransfers) {
+    const minutes = (now - t.createdAt.getTime()) / 60_000;
+    if (minutes >= sla.TRANSFER) {
+      alerts.push({
+        id: `transfer-sla-${t.id}`,
+        severity: minutes >= sla.TRANSFER * 2 ? "critical" : "watch",
+        department: "Bed Management",
+        message: `Transfer request for ${t.patient.fullName} has been pending ${Math.round(minutes)} min (SLA ${sla.TRANSFER} min).`,
+        ownerRole: "HOSPITAL_ADMIN",
+        createdAt: t.createdAt.toISOString(),
+      });
+    }
+  }
+
+  const readyDischarges = await prisma.discharge.findMany({
+    where: {
+      dischargedAt: null,
+      clinicallyReady: true,
+      admission: { encounter: { facilityId } },
+    },
+    include: { admission: { include: { encounter: { include: { patient: true } }, bed: true } } },
+  });
+  for (const d of readyDischarges) {
+    const minutes = (now - d.initiatedAt.getTime()) / 60_000;
+    if (minutes >= sla.DISCHARGE_READY) {
+      alerts.push({
+        id: `discharge-ready-sla-${d.id}`,
+        severity: minutes >= sla.DISCHARGE_READY * 2 ? "critical" : "watch",
+        department: "Discharge",
+        message: `${d.admission.encounter.patient.fullName} has been medically ready to leave for ${Math.round(minutes)} min (bed ${d.admission.bed.label}) — SLA ${sla.DISCHARGE_READY} min.`,
+        ownerRole: "HOSPITAL_ADMIN",
+        createdAt: d.initiatedAt.toISOString(),
       });
     }
   }

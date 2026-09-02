@@ -14,21 +14,29 @@ Priority reflects dependency order and business value, not effort.
 | Login rate limiting | | | ✅ | Identity Core | 1 | High |
 | RBAC / permission table | ✅ | | | Identity Core | done | — |
 | Facility tenant scoping | ✅ | | | Identity Core | done | — |
-| Cross-facility isolation (tested, 2+ tenants) | | ✅ | | Tenant Core | 10 | Medium |
+| Cross-facility isolation (tested, 2+ tenants) | ✅ (live-verified: chart/timeline/admission-requests/ED board all correctly return 404/empty cross-facility, not data) | | | Tenant Core | done (Phase 1 + 2) | — |
 | Patient self-service accounts (real) | | | ✅ | Identity Core | 1 | Critical |
 | Unified single clinical backend (retire prototype's Zustand data) | | | ✅ | Clinical Core | 1 | Critical |
 | Patient registration (staff-entered) | ✅ | | | Patient Admin | done | — |
 | Patient self-registration | | | ✅ | Patient Admin | 1 | High |
 | Patient identifier linkage (ABHA etc.) | | ✅ (modeled, unpopulated) | | Patient Admin | 9 | Medium |
 | Patient merge/dedup | | | ✅ | Patient Admin | later | Low |
-| Appointment scheduling | | | ✅ | Scheduling | 2 | High |
-| Queue/token management | | | ✅ | Scheduling | 2 | Medium |
+| Appointment scheduling | ✅ | | | Scheduling | done (Phase 2) | — |
+| Doctor scheduling (sessions/leave/holiday/block, no payroll) | ✅ | | | Scheduling | done (Phase 2) | — |
+| Queue/token management | ✅ (priority-ordered, no formal ticket numbers) | | | Scheduling | done (Phase 2) | — |
 | OPD registration/consultation | ✅ (via generic Encounter) | | | Emergency/OPD | done | — |
-| ED triage (structured) | ✅ | | | Emergency | done | — |
-| ED-specific board/metrics | | | ✅ | Emergency | 2 | Medium |
+| ED triage (structured) | ✅ (dedicated `TriageAssessment` record, not just a status field) | | | Emergency | done (Phase 2) | — |
+| ED-specific board/metrics | ✅ | | | Emergency | done (Phase 2) | — |
 | Admission (bed assignment, transactional) | ✅ | | | Admissions | done | — |
+| Admission request / bed-reservation / allocation workflow | ✅ | | | Admissions | done (Phase 2) | — |
+| Bed matching (ward-type/isolation/gender ranked candidates) | ✅ | | | Admissions | done (Phase 2) | — |
+| Internal transfer request workflow (accept/reserve/complete) | ✅ | | | Admissions | done (Phase 2) | — |
 | Transfer | ✅ | | | Admissions | done | — |
 | Discharge (readiness flags, sign-off) | ✅ | | | Admissions | done | — |
+| Discharge barrier engine (computed, tells staff WHY not just THAT) | ✅ | | | Admissions | done (Phase 2) | — |
+| Expected discharge date / LOS variance tracking | ✅ (captured; variance analytics not built) | | | Admissions | done (Phase 2) | — |
+| Configurable operational SLA policy + breach alerts | ✅ | | | Intelligence | done (Phase 2) | — |
+| Patient physical location tracking (bed or non-bed area) | ✅ | | | Operational Core | done (Phase 2) | — |
 | Discharge clinical-validity cross-check (vs. active alerts) | | | ✅ | Admissions + Clinical Safety | 7 | Medium |
 | Bed state machine + audit trail | ✅ | | | Operational Core | done | — |
 | Isolation/gender bed-matching enforcement | | | ✅ | Operational Core + Clinical Safety | 7 | Medium |
@@ -38,7 +46,7 @@ Priority reflects dependency order and business value, not effort.
 | Problem list | ✅ (free-text) | | | Clinical EMR | done | — |
 | Terminology binding (ICD/SNOMED/LOINC/RxNorm) | | | ✅ | Clinical EMR | 9 | Medium |
 | Procedure tracking | | | ✅ | Clinical EMR / OT | 6 | Medium |
-| Referral management | | | ✅ | Clinical EMR / Nursing | 3 | Medium |
+| Referral management | ✅ (internal specialist consult; external inbound referral is intake metadata only) | | | Clinical EMR / Nursing | done (Phase 1) | — |
 | Care plan | | | ✅ | Nursing | 3 | Medium |
 | Vitals recording | ✅ | | | Clinical EMR | done | — |
 | Allergy documentation | ✅ | | | Clinical EMR | done | — |
@@ -50,7 +58,7 @@ Priority reflects dependency order and business value, not effort.
 | Medication administration record | ✅ | | | Nursing | done | — |
 | MAR auto-transition DUE → MISSED | | ✅ (computed at read time, not stored) | | Nursing | 3 | Low |
 | Nursing task engine (medications, vitals) | ✅ | | | Nursing | done | — |
-| Generic Task entity (all task types) | | | ✅ | Nursing | 3 | Medium |
+| Generic Task entity (all task types) | ✅ (medication/vitals tasks stay computed views, deliberately) | | | Nursing | done (Phase 1) | — |
 | Nursing handover (SBAR) | | | ✅ | Nursing | 3 | Medium |
 | Pharmacy dispensing/verification | | | ✅ | Pharmacy | 3 | High |
 | Pharmacy inventory | | | ✅ | Pharmacy / Inventory | 6 | Medium |
@@ -67,7 +75,7 @@ Priority reflects dependency order and business value, not effort.
 | Payment recording | | | ✅ | Billing | 5 | Critical |
 | Decimal money (not Float) | | | ✅ | Billing | 5 | High |
 | Insurance policy / claim lifecycle | | | ✅ | Insurance | 5 | High |
-| Episode of Care (cross-encounter grouping) | | | ✅ | Billing + Clinical EMR | 5/3 | Medium |
+| Episode of Care (cross-encounter grouping) | ✅ (clinical grouping only; billing consolidation across an episode not built) | | | Billing + Clinical EMR | done (Phase 1) | — |
 | Packages/discounts | | | ✅ | Billing | later | Low |
 | Inventory (general, non-pharmacy) | | | ✅ | Inventory | 6 | Medium |
 | Procurement workflow | | | ✅ | Procurement | 6 | Low |
