@@ -19,6 +19,11 @@ export class InvalidBedTransitionError extends Error {
   }
 }
 
+/** Pure legality check, exported separately so it's unit-testable without a database. */
+export function isTransitionAllowed(from: BedStatus, to: BedStatus): boolean {
+  return (ALLOWED_TRANSITIONS[from] ?? []).includes(to);
+}
+
 /** Every bed-status change goes through here so a BedStateEvent is always written — this is what lets the Command Center answer "why is this bed blocked" instead of just "this bed is blocked". */
 export async function transitionBed(
   bedId: string,

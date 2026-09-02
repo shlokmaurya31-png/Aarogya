@@ -7,6 +7,7 @@ import { PrismaClient, Role, Course, LearningTrack, VerificationStatus, Verifica
 import { hashPassword } from "../src/lib/auth/password";
 import { allCaseDefs } from "./seedData";
 import { buildCase } from "./seedData/builder";
+import { seedHospital } from "./seedData/hospital";
 
 const prisma = new PrismaClient();
 
@@ -170,6 +171,7 @@ async function main() {
   await seedUsers();
   await seedAchievements();
   await seedCases();
+  await seedHospital(prisma);
 }
 
 main()

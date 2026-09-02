@@ -93,6 +93,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "admission:create",
     "admission:transfer",
     "admission:discharge:initiate",
+    "admission:discharge:finalize",
     "lab:result:acknowledge",
     "imaging:report:verify",
     "billing:view",

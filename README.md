@@ -2,7 +2,7 @@
 
 India's unified health intelligence platform: one permanent health record for every patient, read by AI, verified by labs, and understood by every doctor they'll ever meet.
 
-Aarogya AI is a prototype health-record and clinical-workflow platform connecting **patients**, **doctors**, **hospitals**, **labs**, and **insurers** around a single longitudinal record. It ships as a cinematic marketing site plus a fully interactive command-center dashboard with separate patient and doctor experiences — and, as of this change, **Aarogya Scholar**, a medical-education ecosystem for verified healthcare students. See [`docs/STUDENT_PLATFORM_ARCHITECTURE.md`](docs/STUDENT_PLATFORM_ARCHITECTURE.md) for the full design.
+Aarogya AI is a prototype health-record and clinical-workflow platform connecting **patients**, **doctors**, **hospitals**, **labs**, and **insurers** around a single longitudinal record. It ships as a cinematic marketing site plus a fully interactive command-center dashboard with separate patient and doctor experiences — plus two newer, database-backed systems: **Aarogya Scholar** (a medical-education ecosystem for verified healthcare students — see [`docs/STUDENT_PLATFORM_ARCHITECTURE.md`](docs/STUDENT_PLATFORM_ARCHITECTURE.md)) and **Aarogya Hospital OS** (a real hospital operations platform — see [`docs/ENTERPRISE_HOSPITAL_ARCHITECTURE.md`](docs/ENTERPRISE_HOSPITAL_ARCHITECTURE.md)).
 
 ## Features
 
@@ -78,6 +78,27 @@ Future real-data integration (architecture only — not implemented): [`docs/REA
 
 See [`.env.example`](.env.example). New variables added for Scholar: `DATABASE_URL`, `AUTH_SECRET`, `CLINICAL_DATA_MODE`, `AI_PROVIDER`, `ENABLE_DEV_VERIFICATION`.
 
+## Aarogya Hospital OS
+
+A real, database-backed hospital operations platform under `/hospital-os` — tenancy (Organization → Facility → Department → Ward → Bed), a longitudinal patient/encounter record spanning OPD/ED/IPD, transactional bed admission/transfer/discharge (every state change writes an auditable `BedStateEvent`), a Doctor Workspace with order entry (medication/lab/imaging) and allergy/duplicate-medication safety checks, a Nursing task engine with a real medication administration record, Lab and Radiology order→result/report queues with critical-value acknowledgement workflows, a billing charge engine, and a Hospital Command Center whose every widget — including the alert feed — is computed live from the database, not decorative.
+
+Full design, phasing, and what's deliberately deferred: [`docs/ENTERPRISE_HOSPITAL_ARCHITECTURE.md`](docs/ENTERPRISE_HOSPITAL_ARCHITECTURE.md).
+Threat model: [`docs/HOSPITAL_THREAT_MODEL.md`](docs/HOSPITAL_THREAT_MODEL.md).
+
+**Important**: this lives at `/hospital-os`, not `/hospital` — the existing `/hospital` route is a separate, working, client-side (Zustand) hospital-admin portal for the original `hospital` auth role, left untouched. See the architecture doc §1.1 for why.
+
+Demo login: [http://localhost:3000/hospital-os/login](http://localhost:3000/hospital-os/login) — accounts below, password `Hospital@123` for all.
+
+| Email | Role |
+|---|---|
+| `admin@amc-demo.aarogya` | Hospital Administrator |
+| `doctor1@amc-demo.aarogya` … `doctor8@amc-demo.aarogya` | Doctors (Cardiology, Orthopedics, General Medicine, Pediatrics, Emergency Medicine, Neurology, General Surgery, OB/GYN) |
+| `nurse1@amc-demo.aarogya` … `nurse10@amc-demo.aarogya` | Nurses |
+| `labtech@amc-demo.aarogya` | Lab Technician |
+| `radtech@amc-demo.aarogya` | Radiology Technician |
+| `pharmacist@amc-demo.aarogya` | Pharmacist |
+| `billing@amc-demo.aarogya` | Billing Officer |
+
 ## Project structure
 
 ```
@@ -86,15 +107,18 @@ src/
     student/                # Aarogya Scholar: landing, verify, and the authenticated app shell
     educator/                # Educator case list + minimal authoring
     admin/                   # Existing Patient/Doctor admin panel + /admin/student-verifications
+    hospital-os/             # Aarogya Hospital OS: login + role-guarded command surfaces
     api/
       student/, educator/, admin/, scholar-auth/   # Scholar API routes
+      hospital/                                     # Hospital OS API routes
       admin-auth/, chat/                            # original Patient/Doctor API routes
     dashboard/, hospital/, lab/, login/, onboarding/, prescriptions/, settings/   # original Patient/Doctor routes
   components/
     student/                # Scholar UI: dashboard, case workspace, RxLab, viva, notebook, passport, verification
+    hospital-os/             # Hospital OS UI: command center, bed board, admissions, discharge, doctor/nurse/lab/radiology/billing
     ai/, charts/, dashboard/, landing/, navigation/, patient/, shared/, timeline/, ui/, views/, admin/, auth/, hospital/   # original components
   lib/
-    auth/                    # password hashing, signed-cookie sessions, RBAC, permissions, audit
+    auth/                    # password hashing, signed-cookie sessions, RBAC, permissions, audit, tenant scoping (hospitalRbac.ts)
     privacy/                 # de-identification pipeline (Clinical Learning Data Gateway)
     clinical/                 # ClinicalCaseProvider interface + SyntheticCaseProvider + gateway
     caseEngine/               # case state machine + public-view stripping
@@ -102,12 +126,13 @@ src/
     rxlab/                    # prescription validation rules
     ai/                       # AIProvider abstraction (Anthropic + deterministic mock)
     verification/             # verification-document storage boundary
+    hospital/                 # bed state machine, admission/transfer/discharge transactions, clinical safety checks, alert engine, command-center aggregation
     i18n.ts, mock-data.ts, ...   # original Patient/Doctor helpers
   store/                    # Zustand stores (original Patient/Doctor client state — untouched)
   types/                    # shared TypeScript types (clinicalCase.ts added for Scholar)
 prisma/
-  schema.prisma              # Scholar's persistence layer (SQLite dev, Postgres-portable)
-  seed.ts, seedData/          # demo accounts, achievements, 25 synthetic teaching cases
+  schema.prisma              # shared persistence layer for Scholar + Hospital OS (SQLite dev, Postgres-portable)
+  seed.ts, seedData/          # demo accounts, achievements, 25 synthetic teaching cases, demo hospital (Aarogya Medical Centre)
 docs/                       # architecture, privacy, threat model, future-integration docs
 ```
 
