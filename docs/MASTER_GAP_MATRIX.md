@@ -47,7 +47,7 @@ Priority reflects dependency order and business value, not effort.
 | Terminology binding (ICD/SNOMED/LOINC/RxNorm) | | | ✅ | Clinical EMR | 9 | Medium |
 | Procedure tracking | | | ✅ | Clinical EMR / OT | 6 | Medium |
 | Referral management | ✅ (internal specialist consult; external inbound referral is intake metadata only) | | | Clinical EMR / Nursing | done (Phase 1) | — |
-| Care plan | | | ✅ | Nursing | 3 | Medium |
+| Care plan | ✅ | | | Nursing | done (Phase 3) | — |
 | Vitals recording | ✅ | | | Clinical EMR | done | — |
 | Allergy documentation | ✅ | | | Clinical EMR | done | — |
 | Medication ordering | ✅ | | | Medication | done | — |
@@ -58,9 +58,22 @@ Priority reflects dependency order and business value, not effort.
 | Medication administration record | ✅ | | | Nursing | done | — |
 | MAR auto-transition DUE → MISSED | | ✅ (computed at read time, not stored) | | Nursing | 3 | Low |
 | Nursing task engine (medications, vitals) | ✅ | | | Nursing | done | — |
+| Generalized Order envelope (cross-type order query) | ✅ (Medication + Referral linked; Lab/Imaging not yet) | | | Clinical EMR | done (Phase 3) | — |
+| Medication order state machine (server-validated lifecycle) | ✅ | | | Medication | done (Phase 3) | — |
+| Pharmacist verification workflow + audit trail | ✅ | | | Pharmacy | done (Phase 3) | — |
+| Medication dispensing (full/partial/substitution) | ✅ | | | Pharmacy | done (Phase 3) | — |
+| Controlled-medication witness co-sign | ✅ (single boolean flag, not a jurisdiction-specific rule engine) | | | Pharmacy | done (Phase 3) | — |
+| Medication safety warning audit trail (acknowledge/override) | ✅ | | | Clinical Safety | done (Phase 3) | — |
+| Route/frequency-mismatch safety checks | ✅ | | | Clinical Safety | done (Phase 3) | — |
+| Medication reconciliation (admission/transfer/discharge) | ✅ | | | Medication | done (Phase 3) | — |
+| Nurse-to-patient assignment (historical) | ✅ | | | Nursing | done (Phase 3) | — |
+| Intake/output documentation | ✅ | | | Nursing | done (Phase 3) | — |
+| Configurable abnormal-vital detection | ✅ (facility-configured thresholds, same pattern as SlaPolicy) | | | Nursing | done (Phase 3) | — |
+| Structured clinical handoff (doctor + nurse) | ✅ | | | Clinical EMR / Nursing | done (Phase 3) | — |
+| Signed-note amendment with required reason | ✅ | | | Clinical EMR | done (Phase 3) | — |
 | Generic Task entity (all task types) | ✅ (medication/vitals tasks stay computed views, deliberately) | | | Nursing | done (Phase 1) | — |
-| Nursing handover (SBAR) | | | ✅ | Nursing | 3 | Medium |
-| Pharmacy dispensing/verification | | | ✅ | Pharmacy | 3 | High |
+| Nursing handover (SBAR) | ✅ (structured handoff — summary/problems/meds/tasks/safety concerns/acknowledgement; not SBAR-labeled fields specifically) | | | Nursing | done (Phase 3) | — |
+| Pharmacy dispensing/verification | ✅ | | | Pharmacy | done (Phase 3) | — |
 | Pharmacy inventory | | | ✅ | Pharmacy / Inventory | 6 | Medium |
 | Lab order → result | ✅ | | | Laboratory | done | — |
 | Lab sample collection/accession/rejection tracking | | | ✅ | Laboratory | 4 | Medium |

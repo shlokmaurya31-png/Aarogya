@@ -219,6 +219,93 @@ export async function computeAlerts(facilityId: string): Promise<HospitalAlert[]
     }
   }
 
+  // Phase 3 — Doctor OS / Nursing OS / Medication Lifecycle / Pharmacy
+  // alerts (brief §27). Every one computed live from real order/task/
+  // warning state, same pattern as everything above.
+  const OVERDUE_MED_MINUTES = 30;
+  const overdueMeds = await prisma.medicationAdministration.findMany({
+    where: { status: "DUE", scheduledAt: { lte: new Date(now - OVERDUE_MED_MINUTES * 60_000) }, medicationOrder: { encounter: { facilityId } } },
+    include: { medicationOrder: { include: { patient: true } } },
+  });
+  for (const m of overdueMeds) {
+    const minutes = Math.round((now - m.scheduledAt.getTime()) / 60_000);
+    alerts.push({
+      id: `med-overdue-${m.id}`,
+      severity: minutes >= OVERDUE_MED_MINUTES * 3 ? "critical" : "watch",
+      department: "Nursing",
+      message: `${m.medicationOrder.patient.fullName}'s ${m.medicationOrder.drugName} dose is ${minutes} min overdue.`,
+      ownerRole: "NURSE",
+      createdAt: m.scheduledAt.toISOString(),
+    });
+  }
+
+  const overdueTasks = await prisma.task.findMany({
+    where: { facilityId, status: { in: ["OPEN", "ASSIGNED", "IN_PROGRESS"] }, dueAt: { lte: new Date(now) } },
+    include: { patient: true },
+    take: 30,
+  });
+  for (const t of overdueTasks) {
+    if (!t.dueAt) continue;
+    const minutes = Math.round((now - t.dueAt.getTime()) / 60_000);
+    alerts.push({
+      id: `task-overdue-${t.id}`,
+      severity: minutes >= 120 ? "critical" : "watch",
+      department: "Nursing",
+      message: `${t.title}${t.patient ? ` for ${t.patient.fullName}` : ""} is ${minutes} min overdue.`,
+      ownerRole: "NURSE",
+      createdAt: t.dueAt.toISOString(),
+    });
+  }
+
+  const unresolvedDangerWarnings = await prisma.medicationSafetyWarning.findMany({
+    where: { severity: "DANGER", acknowledgedAt: null, medicationOrder: { encounter: { facilityId } } },
+    include: { medicationOrder: { include: { patient: true } } },
+  });
+  for (const w of unresolvedDangerWarnings) {
+    alerts.push({
+      id: `safety-unresolved-${w.id}`,
+      severity: "critical",
+      department: "Pharmacy",
+      message: `Unresolved DANGER safety warning for ${w.medicationOrder.patient.fullName}'s ${w.medicationOrder.drugName}: ${w.message}`,
+      ownerRole: "PHARMACIST",
+      createdAt: w.createdAt.toISOString(),
+    });
+  }
+
+  const PENDING_VERIFICATION_MINUTES = 30;
+  const pendingVerification = await prisma.medicationOrder.findMany({
+    where: { status: "PHARMACY_REVIEW", encounter: { facilityId }, orderedAt: { lte: new Date(now - PENDING_VERIFICATION_MINUTES * 60_000) } },
+    include: { patient: true },
+  });
+  for (const o of pendingVerification) {
+    const minutes = Math.round((now - o.orderedAt.getTime()) / 60_000);
+    alerts.push({
+      id: `pharmacy-pending-${o.id}`,
+      severity: minutes >= PENDING_VERIFICATION_MINUTES * 2 ? "critical" : "watch",
+      department: "Pharmacy",
+      message: `${o.patient.fullName}'s ${o.drugName} order has waited ${minutes} min for pharmacist review.`,
+      ownerRole: "PHARMACIST",
+      createdAt: o.orderedAt.toISOString(),
+    });
+  }
+
+  const heldOrClarification = await prisma.medicationOrder.findMany({
+    where: { status: "HELD", encounter: { facilityId } },
+    include: { patient: true, verifications: { orderBy: { createdAt: "desc" }, take: 1 } },
+  });
+  for (const o of heldOrClarification) {
+    const v = o.verifications[0];
+    if (v?.decision !== "CLARIFICATION_REQUESTED") continue;
+    alerts.push({
+      id: `pharmacy-clarification-${o.id}`,
+      severity: "watch",
+      department: "Pharmacy",
+      message: `Pharmacist requested clarification on ${o.patient.fullName}'s ${o.drugName} order: ${v.reason ?? ""}`,
+      ownerRole: "DOCTOR",
+      createdAt: v.createdAt.toISOString(),
+    });
+  }
+
   const severityOrder = { critical: 0, watch: 1, info: 2 };
   return alerts.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
 }

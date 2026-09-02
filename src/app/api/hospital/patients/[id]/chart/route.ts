@@ -33,13 +33,19 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
     const encounterIds = patient.encounters.map((e) => e.id);
 
-    const [notes, vitals, medicationOrders, labOrders, imagingOrders, diagnoses] = await Promise.all([
+    const [notes, vitals, medicationOrders, labOrders, imagingOrders, diagnoses, carePlans, handoffs] = await Promise.all([
       prisma.clinicalNote.findMany({ where: { encounterId: { in: encounterIds } }, include: { author: { include: { user: true } } }, orderBy: { createdAt: "desc" } }),
       prisma.vital.findMany({ where: { encounterId: { in: encounterIds } }, orderBy: { recordedAt: "desc" }, take: 50 }),
-      prisma.medicationOrder.findMany({ where: { encounterId: { in: encounterIds } }, include: { orderedBy: { include: { user: true } }, administrations: true }, orderBy: { orderedAt: "desc" } }),
+      prisma.medicationOrder.findMany({
+        where: { encounterId: { in: encounterIds } },
+        include: { orderedBy: { include: { user: true } }, administrations: true, safetyWarnings: true, verifications: { orderBy: { createdAt: "desc" }, take: 1 }, dispensingRecords: true },
+        orderBy: { orderedAt: "desc" },
+      }),
       prisma.labOrder.findMany({ where: { encounterId: { in: encounterIds } }, include: { result: true }, orderBy: { orderedAt: "desc" } }),
       prisma.imagingOrder.findMany({ where: { encounterId: { in: encounterIds } }, include: { report: true }, orderBy: { orderedAt: "desc" } }),
       prisma.diagnosis.findMany({ where: { encounterId: { in: encounterIds } }, orderBy: { createdAt: "desc" } }),
+      prisma.carePlan.findMany({ where: { patientId: id }, include: { interventions: true }, orderBy: { createdAt: "desc" } }),
+      prisma.clinicalHandoff.findMany({ where: { patientId: id }, include: { fromStaff: { include: { user: true } }, toStaff: { include: { user: true } } }, orderBy: { createdAt: "desc" }, take: 10 }),
     ]);
 
     return {
@@ -61,6 +67,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       medicationOrders,
       labOrders,
       imagingOrders,
+      carePlans,
+      handoffs,
     };
   });
 }

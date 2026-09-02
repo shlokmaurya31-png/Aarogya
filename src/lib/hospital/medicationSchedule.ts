@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { MedicationAdministrationStatus } from "@prisma/client";
 
 const FREQUENCY_INTERVAL_HOURS: Record<string, number> = {
   OD: 24, "ONCE DAILY": 24,
@@ -16,7 +17,7 @@ export async function generateAdministrationSchedule(medicationOrderId: string, 
   const rows = Array.from({ length: intervalHours === 0 ? 1 : count }, (_, i) => ({
     medicationOrderId,
     scheduledAt: new Date(Date.now() + i * intervalHours * 3_600_000),
-    status: "DUE",
+    status: MedicationAdministrationStatus.DUE,
   }));
 
   await prisma.medicationAdministration.createMany({ data: rows });

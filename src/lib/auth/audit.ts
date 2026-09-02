@@ -79,7 +79,36 @@ export type AuditEventType =
   | "hospital.transferRequest.cancelled"
   | "hospital.discharge.blockerChanged"
   | "hospital.discharge.expectedDateChanged"
-  | "hospital.location.assigned";
+  | "hospital.location.assigned"
+  // Phase 3 — Doctor OS / Nursing OS / Medication Lifecycle / Pharmacy.
+  // Recorded through the same synchronous AuditEvent mechanism as every
+  // prior phase — no new event bus (brief §34/§27).
+  | "hospital.note.signed"
+  | "hospital.note.amended"
+  | "hospital.order.created"
+  | "hospital.order.cancelled"
+  | "hospital.order.discontinued"
+  | "hospital.medication.statusChanged"
+  | "hospital.medication.verified"
+  | "hospital.medication.rejected"
+  | "hospital.medication.held"
+  | "hospital.medication.clarificationRequested"
+  | "hospital.medication.dispensed"
+  | "hospital.medication.cancelled"
+  | "hospital.medication.discontinued"
+  | "hospital.medication.refused"
+  | "hospital.medication.missed"
+  | "hospital.medication.safetyOverridden"
+  | "hospital.medication.reconciled"
+  | "hospital.nursing.assignmentChanged"
+  | "hospital.task.skipped"
+  | "hospital.handoff.created"
+  | "hospital.handoff.acknowledged"
+  | "hospital.carePlan.created"
+  | "hospital.carePlan.closed"
+  | "hospital.consult.accepted"
+  | "hospital.consult.completed"
+  | "hospital.vital.abnormalDetected";
 
 export async function recordAuditEvent(
   type: AuditEventType,

@@ -472,25 +472,32 @@ model Facility {
   organizationId String
   createdAt      DateTime     @default(now())
 
-  departments        Department[]
-  wards              Ward[]
-  beds               Bed[]
-  staff              HospitalStaffProfile[]
-  patients           Patient[]
-  encounters         Encounter[]
-  episodesOfCare     EpisodeOfCare[]
-  charges            Charge[]
-  bills              Bill[]
-  tasks              Task[]
-  documents          ClinicalDocument[]
-  appointments       Appointment[]
-  scheduleBlocks     DoctorScheduleBlock[]
-  queueEntries       QueueEntry[]
-  triageAssessments  TriageAssessment[]
-  encounterLocations EncounterLocation[]
-  admissionRequests  AdmissionRequest[]
-  transferRequests   TransferRequest[]
-  slaPolicies        SlaPolicy[]
+  departments               Department[]
+  wards                     Ward[]
+  beds                      Bed[]
+  staff                     HospitalStaffProfile[]
+  patients                  Patient[]
+  encounters                Encounter[]
+  episodesOfCare            EpisodeOfCare[]
+  charges                   Charge[]
+  bills                     Bill[]
+  tasks                     Task[]
+  documents                 ClinicalDocument[]
+  appointments              Appointment[]
+  scheduleBlocks            DoctorScheduleBlock[]
+  queueEntries              QueueEntry[]
+  triageAssessments         TriageAssessment[]
+  encounterLocations        EncounterLocation[]
+  admissionRequests         AdmissionRequest[]
+  transferRequests          TransferRequest[]
+  slaPolicies               SlaPolicy[]
+  orders                    Order[]
+  carePlans                 CarePlan[]
+  handoffs                  ClinicalHandoff[]
+  nursingAssignments        NursingAssignment[]
+  vitalThresholds           VitalThreshold[]
+  intakeOutputRecords       IntakeOutputRecord[]
+  medicationReconciliations MedicationReconciliation[]
 }
 
 model Department {
@@ -501,17 +508,18 @@ model Department {
   facilityId String
   createdAt  DateTime @default(now())
 
-  wards             Ward[]
-  staff             HospitalStaffProfile[]
-  encounters        Encounter[]
-  memberships       DepartmentMembership[]
-  referralsFrom     Referral[]             @relation("ReferralFromDept")
-  referralsTo       Referral[]             @relation("ReferralToDept")
-  tasks             Task[]
-  appointments      Appointment[]
-  scheduleBlocks    DoctorScheduleBlock[]
-  queueEntries      QueueEntry[]
-  admissionRequests AdmissionRequest[]
+  wards              Ward[]
+  staff              HospitalStaffProfile[]
+  encounters         Encounter[]
+  memberships        DepartmentMembership[]
+  referralsFrom      Referral[]             @relation("ReferralFromDept")
+  referralsTo        Referral[]             @relation("ReferralToDept")
+  tasks              Task[]
+  appointments       Appointment[]
+  scheduleBlocks     DoctorScheduleBlock[]
+  queueEntries       QueueEntry[]
+  admissionRequests  AdmissionRequest[]
+  nursingAssignments NursingAssignment[]
 
   @@unique([facilityId, name])
 }
@@ -596,6 +604,7 @@ model Bed {
   admissionRequests  AdmissionRequest[]
   transferRequests   TransferRequest[]
   encounterLocations EncounterLocation[]
+  nursingAssignments NursingAssignment[]
 
   @@unique([facilityId, label])
   @@index([status])
@@ -666,6 +675,14 @@ model HospitalStaffProfile {
   admissionRequestsReviewed  AdmissionRequest[]         @relation("AdmissionReviewedBy")
   transferRequestsMade       TransferRequest[]          @relation("TransferRequestedBy")
   transferRequestsAccepted   TransferRequest[]          @relation("TransferAcceptedBy")
+  ordersPlaced               Order[]
+  handoffsGiven              ClinicalHandoff[]          @relation("HandoffFrom")
+  handoffsReceived           ClinicalHandoff[]          @relation("HandoffTo")
+  nursingAssignments         NursingAssignment[]        @relation("NurseAssigned")
+  medicationVerifications    MedicationVerification[]
+  dispensingRecords          DispensingRecord[]         @relation("DispensingPharmacist")
+  dispensingWitnessed        DispensingRecord[]         @relation("DispensingWitness")
+  administrationsWitnessed   MedicationAdministration[] @relation("AdministrationWitness")
 
   @@index([facilityId])
 }
@@ -711,28 +728,33 @@ model Patient {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  identifiers          PatientIdentifier[]
-  emergencyContacts    PatientEmergencyContact[]
-  allergies            Allergy[]
-  problems             Problem[]
-  diagnoses            Diagnosis[]
-  episodesOfCare       EpisodeOfCare[]
-  encounters           Encounter[]
-  medicationOrders     MedicationOrder[]
-  labOrders            LabOrder[]
-  imagingOrders        ImagingOrder[]
-  charges              Charge[]
-  bills                Bill[]
-  tasks                Task[]
-  documents            ClinicalDocument[]
-  consents             Consent[]
-  referrals            Referral[]
-  mergeRecordsAsSource PatientMergeRecord[]      @relation("MergeSource")
-  mergeRecordsAsTarget PatientMergeRecord[]      @relation("MergeTarget")
-  appointments         Appointment[]
-  queueEntries         QueueEntry[]
-  admissionRequests    AdmissionRequest[]
-  transferRequests     TransferRequest[]
+  identifiers               PatientIdentifier[]
+  emergencyContacts         PatientEmergencyContact[]
+  allergies                 Allergy[]
+  problems                  Problem[]
+  diagnoses                 Diagnosis[]
+  episodesOfCare            EpisodeOfCare[]
+  encounters                Encounter[]
+  medicationOrders          MedicationOrder[]
+  labOrders                 LabOrder[]
+  imagingOrders             ImagingOrder[]
+  charges                   Charge[]
+  bills                     Bill[]
+  tasks                     Task[]
+  documents                 ClinicalDocument[]
+  consents                  Consent[]
+  referrals                 Referral[]
+  mergeRecordsAsSource      PatientMergeRecord[]       @relation("MergeSource")
+  mergeRecordsAsTarget      PatientMergeRecord[]       @relation("MergeTarget")
+  appointments              Appointment[]
+  queueEntries              QueueEntry[]
+  admissionRequests         AdmissionRequest[]
+  transferRequests          TransferRequest[]
+  orders                    Order[]
+  carePlans                 CarePlan[]
+  handoffs                  ClinicalHandoff[]
+  nursingAssignments        NursingAssignment[]
+  medicationReconciliations MedicationReconciliation[]
 
   @@index([facilityId])
   @@index([mergedIntoId])
@@ -883,22 +905,28 @@ model Encounter {
   referringFacilityName String?
   referralUrgency       String?
 
-  vitals            Vital[]
-  notes             ClinicalNote[]
-  diagnoses         Diagnosis[]
-  medicationOrders  MedicationOrder[]
-  labOrders         LabOrder[]
-  imagingOrders     ImagingOrder[]
-  referrals         Referral[]
-  documents         ClinicalDocument[]
-  admission         Admission?
-  charges           Charge[]
-  bill              Bill?
-  appointments      Appointment[]
-  triageAssessments TriageAssessment[]
-  queueEntries      QueueEntry[]
-  locations         EncounterLocation[]
-  admissionRequests AdmissionRequest[]
+  vitals                    Vital[]
+  notes                     ClinicalNote[]
+  diagnoses                 Diagnosis[]
+  medicationOrders          MedicationOrder[]
+  labOrders                 LabOrder[]
+  imagingOrders             ImagingOrder[]
+  referrals                 Referral[]
+  documents                 ClinicalDocument[]
+  admission                 Admission?
+  charges                   Charge[]
+  bill                      Bill?
+  appointments              Appointment[]
+  triageAssessments         TriageAssessment[]
+  queueEntries              QueueEntry[]
+  locations                 EncounterLocation[]
+  admissionRequests         AdmissionRequest[]
+  orders                    Order[]
+  carePlans                 CarePlan[]
+  handoffs                  ClinicalHandoff[]
+  nursingAssignments        NursingAssignment[]
+  intakeOutputRecords       IntakeOutputRecord[]
+  medicationReconciliations MedicationReconciliation[]
 
   @@index([facilityId])
   @@index([episodeOfCareId])
@@ -969,17 +997,24 @@ model Discharge {
 }
 
 model ClinicalNote {
-  id            String               @id @default(cuid())
-  encounter     Encounter            @relation(fields: [encounterId], references: [id])
-  encounterId   String
-  author        HospitalStaffProfile @relation("NoteAuthor", fields: [authorStaffId], references: [id])
-  authorStaffId String
-  type          String // "SOAP" | "PROGRESS" | "ADMISSION" | "CONSULT" | "DISCHARGE_SUMMARY" | "HANDOVER"
-  content       Json
-  status        String               @default("SIGNED") // "DRAFT" | "SIGNED" | "AMENDED" | "SUPERSEDED"
-  supersedesId  String?
-  createdAt     DateTime             @default(now())
-  signedAt      DateTime?
+  id              String               @id @default(cuid())
+  encounter       Encounter            @relation(fields: [encounterId], references: [id])
+  encounterId     String
+  author          HospitalStaffProfile @relation("NoteAuthor", fields: [authorStaffId], references: [id])
+  authorStaffId   String
+  // "SOAP" | "PROGRESS" | "ADMISSION" | "CONSULT" | "DISCHARGE_SUMMARY" | "HANDOVER" | "DAILY_ROUND" | "PROCEDURE" | "FOLLOW_UP" (brief §4 note types — free text, same convention as before)
+  type            String
+  // structured + narrative (brief §5): content may hold any of presentingComplaint/hpi/pastMedicalHistory/
+  // surgicalHistory/familyHistory/socialHistory/examination/assessment/diagnosis/treatmentPlan/
+  // investigationPlan/medicationPlan/followUpPlan as optional keys, or just free narrative — never forced into one rigid shape.
+  content         Json
+  status          String               @default("SIGNED") // "DRAFT" | "SIGNED" | "AMENDED" | "SUPERSEDED"
+  supersedesId    String?
+  authorRole      String? // denormalized at creation time (brief §4 "author role") — a later role change doesn't retroactively alter history
+  createdAt       DateTime             @default(now())
+  signedAt        DateTime?
+  amendedAt       DateTime?
+  amendmentReason String?
 
   @@index([encounterId])
 }
@@ -1009,6 +1044,10 @@ model Vital {
   spo2              Int?
   tempC             Float?
   painScore         Int?
+  // Phase 3 (brief §13) — free-text, not a coded scale (never inventing GCS/AVPU semantics).
+  consciousness     String?
+  o2DeliveryMethod  String? // "room air" | "nasal cannula" | "face mask" | ...
+  o2FlowRate        Float?
   recordedAt        DateTime  @default(now())
 
   @@index([encounterId])
@@ -1019,10 +1058,10 @@ model Vital {
 // ─────────────────────────────────────────────────────────────────────────
 
 model MedicationOrder {
-  id               String               @id @default(cuid())
-  encounter        Encounter            @relation(fields: [encounterId], references: [id])
+  id               String                @id @default(cuid())
+  encounter        Encounter             @relation(fields: [encounterId], references: [id])
   encounterId      String
-  patient          Patient              @relation(fields: [patientId], references: [id])
+  patient          Patient               @relation(fields: [patientId], references: [id])
   patientId        String
   drugName         String
   genericName      String?
@@ -1030,31 +1069,67 @@ model MedicationOrder {
   route            String
   frequency        String
   durationDays     Int?
-  orderedBy        HospitalStaffProfile @relation("MedicationOrderer", fields: [orderedByStaffId], references: [id])
+  orderedBy        HospitalStaffProfile  @relation("MedicationOrderer", fields: [orderedByStaffId], references: [id])
   orderedByStaffId String
-  status           String               @default("ORDERED") // ORDERED | VERIFIED | DISPENSED | DISCONTINUED | HELD
-  safetyFlags      Json? // CDS output at order time — see src/lib/hospital/clinicalSafety.ts
+  status           MedicationOrderStatus @default(ORDERED)
+  safetyFlags      Json? // CDS output at order time (Phase 0) — see src/lib/hospital/clinicalSafety.ts; MedicationSafetyWarning (Phase 3) is the actionable/auditable version of this
   overrideReason   String?
-  orderedAt        DateTime             @default(now())
+  orderedAt        DateTime              @default(now())
 
-  administrations MedicationAdministration[]
+  // Phase 3 — medication lifecycle deepening (brief §15). All nullable/defaulted so
+  // every pre-Phase-3 row (dose/route/frequency as free strings, status="ORDERED") keeps working unchanged.
+  order                 Order?    @relation(fields: [orderId], references: [id])
+  orderId               String?   @unique
+  formulation           String?
+  strengthValue         Float?
+  strengthUnit          String?
+  doseValue             Float?
+  doseUnit              String?
+  timing                String?
+  startAt               DateTime?
+  stopAt                DateTime?
+  prn                   Boolean   @default(false)
+  prnReason             String?
+  specialInstructions   String?
+  indication            String?
+  isControlled          Boolean   @default(false)
+  discontinuedAt        DateTime?
+  discontinuedReason    String?
+  discontinuedByStaffId String?
+  cancelledAt           DateTime?
+  cancelledReason       String?
+  cancelledByStaffId    String?
+
+  administrations   MedicationAdministration[]
+  safetyWarnings    MedicationSafetyWarning[]
+  verifications     MedicationVerification[]
+  dispensingRecords DispensingRecord[]
 
   @@index([encounterId])
   @@index([patientId])
+  @@index([status])
 }
 
 model MedicationAdministration {
-  id                    String                @id @default(cuid())
-  medicationOrder       MedicationOrder       @relation(fields: [medicationOrderId], references: [id])
+  id                    String                         @id @default(cuid())
+  medicationOrder       MedicationOrder                @relation(fields: [medicationOrderId], references: [id])
   medicationOrderId     String
-  administeredBy        HospitalStaffProfile? @relation("MedicationAdministrator", fields: [administeredByStaffId], references: [id])
+  administeredBy        HospitalStaffProfile?          @relation("MedicationAdministrator", fields: [administeredByStaffId], references: [id])
   administeredByStaffId String?
   scheduledAt           DateTime
   administeredAt        DateTime?
-  status                String                @default("DUE") // DUE | GIVEN | HELD | MISSED
+  status                MedicationAdministrationStatus @default(DUE)
   notes                 String?
+  // Phase 3 additions — REFUSED/CANCELLED are new capability (brief §20); GIVEN kept
+  // as-is rather than renamed to ADMINISTERED, matching the existing working
+  // vocabulary every current route/seed/UI reads (docs/PHASE_3_ARCHITECTURE.md §5).
+  reasonCode            String? // category for HELD/REFUSED/MISSED, e.g. "patient-declined" | "npo" | "unavailable"
+  witnessStaffId        String? // controlled-medication co-sign (brief §25)
+  witness               HospitalStaffProfile?          @relation("AdministrationWitness", fields: [witnessStaffId], references: [id])
+  safetyChecksConfirmed Boolean                        @default(false)
 
   @@index([medicationOrderId])
+  @@index([status])
 }
 
 model LabOrder {
@@ -1072,6 +1147,7 @@ model LabOrder {
   orderedAt        DateTime             @default(now())
 
   result LabResult?
+  orders Order[]
 
   @@index([encounterId])
   @@index([status])
@@ -1107,6 +1183,7 @@ model ImagingOrder {
   orderedAt        DateTime             @default(now())
 
   report ImagingReport?
+  orders Order[]
 
   @@index([encounterId])
   @@index([status])
@@ -1199,9 +1276,20 @@ model Task {
   completedByStaffId String?
   completedAt        DateTime?
   createdAt          DateTime              @default(now())
+  // Phase 3 (brief §12) — deepens the existing engine without a new model.
+  // A "nursing order" a doctor places is an Order (orderType=NURSING) whose
+  // detail lives right here in Task, reusing the existing engine rather
+  // than inventing a parallel NursingOrder table.
+  order              Order?                @relation(fields: [orderId], references: [id])
+  orderId            String?
+  startedAt          DateTime?
+  skippedAt          DateTime?
+  skipReason         String?
+  recurrenceRule     String? // free-text description ("every 4h") — no recurrence-generation engine built, see docs/PHASE_3_ARCHITECTURE.md §9
 
   @@index([facilityId])
   @@index([status])
+  @@index([orderId])
   @@index([ownerStaffId])
   @@index([patientId])
 }
@@ -1289,7 +1377,11 @@ model Referral {
   status           String                @default("PLACED") // DRAFT | PLACED | ACKNOWLEDGED | IN_PROGRESS | COMPLETED | CANCELLED | REJECTED
   notes            String?
   createdAt        DateTime              @default(now())
-  respondedAt      DateTime?
+  respondedAt      DateTime? // terminal-state timestamp (COMPLETED/REJECTED/CANCELLED) — unchanged from Phase 1
+  // Phase 3 (brief §8): distinguishes "accepted, now being worked" from "closed" — respondedAt alone couldn't.
+  acceptedAt       DateTime?
+  order            Order?                @relation(fields: [orderId], references: [id])
+  orderId          String?               @unique
 
   @@index([patientId])
   @@index([encounterId])
@@ -1617,4 +1709,416 @@ model SlaPolicy {
   updatedAt        DateTime @updatedAt
 
   @@unique([facilityId, metric])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 3 — Doctor OS + Nursing OS + Medication Lifecycle + Pharmacy
+// See docs/PHASE_3_ARCHITECTURE.md §1 for the generalized-Order decision
+// this section resolves: an ADDITIVE polymorphic envelope, never a
+// destructive rewrite of the existing, working MedicationOrder/LabOrder/
+// ImagingOrder/Referral tables (their own detailed status vocabularies are
+// completely unchanged; MedicationOrder's status alone is upgraded from a
+// loose string to a real enum, see §16 in that doc for why that one case
+// is safe and the others are not).
+// ─────────────────────────────────────────────────────────────────────────
+
+enum OrderType {
+  MEDICATION
+  LAB
+  IMAGING
+  NURSING
+  REFERRAL
+  PROCEDURE // declared for extensibility (brief §1) — zero rows this phase, see docs/PHASE_3_ARCHITECTURE.md §9
+  BLOOD // declared for extensibility — zero rows this phase, no Blood Bank module built (brief §47 non-goal)
+  DIETARY // declared for extensibility — zero rows this phase
+}
+
+/**
+ * Coarse, cross-cutting order status — NOT a replacement for a type's own detailed status (e.g. MedicationOrderStatus below), which remains the source of truth for that type's workflow. This is what lets one query answer "every active order for this patient, any type."
+ */
+enum OrderStatus {
+  DRAFT
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+  DISCONTINUED
+}
+
+model Order {
+  id              String               @id @default(cuid())
+  facility        Facility             @relation(fields: [facilityId], references: [id])
+  facilityId      String
+  encounter       Encounter            @relation(fields: [encounterId], references: [id])
+  encounterId     String
+  patient         Patient              @relation(fields: [patientId], references: [id])
+  patientId       String
+  orderingStaff   HospitalStaffProfile @relation(fields: [orderingStaffId], references: [id])
+  orderingStaffId String
+  orderType       OrderType
+  status          OrderStatus          @default(ACTIVE)
+  priority        RequestPriority      @default(ROUTINE)
+  indication      String?
+  notes           String?
+  startAt         DateTime?
+  discontinueAt   DateTime?
+  cancelledAt     DateTime?
+  cancelledReason String?
+  createdAt       DateTime             @default(now())
+
+  medicationOrder MedicationOrder?
+  labOrder        LabOrder?        @relation(fields: [labOrderId], references: [id])
+  imagingOrder    ImagingOrder?    @relation(fields: [imagingOrderId], references: [id])
+  referral        Referral?
+  nursingTasks    Task[]
+  labOrderId      String?
+  imagingOrderId  String?
+
+  @@index([facilityId])
+  @@index([encounterId])
+  @@index([patientId])
+  @@index([status])
+  @@index([orderType])
+}
+
+/**
+ * Care plan (brief §6) — problem/goal/interventions, distinct from the
+ * Phase 1 `Problem` (persistent problem-list entry, no goal/intervention
+ * structure) and from `Task` (a single actionable item, no goal). Does
+ * not invent thresholds or protocols — `targetDate`/`priority` only;
+ * clinical parameters referenced in `goal`/interventions' `description`
+ * are free text a clinician writes, never computed by this system.
+ */
+enum CarePlanStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+model CarePlan {
+  id               String          @id @default(cuid())
+  patient          Patient         @relation(fields: [patientId], references: [id])
+  patientId        String
+  encounter        Encounter?      @relation(fields: [encounterId], references: [id])
+  encounterId      String?
+  facility         Facility        @relation(fields: [facilityId], references: [id])
+  facilityId       String
+  problem          String
+  goal             String
+  status           CarePlanStatus  @default(ACTIVE)
+  priority         RequestPriority @default(ROUTINE)
+  targetDate       DateTime?
+  createdByStaffId String
+  createdAt        DateTime        @default(now())
+  completedAt      DateTime?
+  notes            String?
+
+  interventions CarePlanIntervention[]
+
+  @@index([patientId])
+  @@index([facilityId])
+  @@index([status])
+}
+
+enum InterventionStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model CarePlanIntervention {
+  id              String             @id @default(cuid())
+  carePlan        CarePlan           @relation(fields: [carePlanId], references: [id])
+  carePlanId      String
+  description     String
+  responsibleRole String // free-text role label ("Nursing", "Respiratory Therapy") — same convention as Task.type, not a closed set
+  status          InterventionStatus @default(PENDING)
+  createdAt       DateTime           @default(now())
+  completedAt     DateTime?
+
+  @@index([carePlanId])
+}
+
+/**
+ * Structured clinical handoff (brief §9/§26) — one model for both doctor
+ * and nurse handoffs (distinguished by `type` and the actual role of
+ * `fromStaff`/`toStaff`), matching "avoid duplicate business logic."
+ * A handoff can never silently disappear: `status` starts PENDING and is
+ * only ever flipped to ACKNOWLEDGED by an explicit action, never deleted.
+ */
+enum HandoffType {
+  DOCTOR
+  NURSE
+}
+
+enum HandoffStatus {
+  PENDING
+  ACKNOWLEDGED
+}
+
+model ClinicalHandoff {
+  id                    String                @id @default(cuid())
+  facility              Facility              @relation(fields: [facilityId], references: [id])
+  facilityId            String
+  patient               Patient               @relation(fields: [patientId], references: [id])
+  patientId             String
+  encounter             Encounter?            @relation(fields: [encounterId], references: [id])
+  encounterId           String?
+  type                  HandoffType
+  fromStaff             HospitalStaffProfile  @relation("HandoffFrom", fields: [fromStaffId], references: [id])
+  fromStaffId           String
+  toStaff               HospitalStaffProfile? @relation("HandoffTo", fields: [toStaffId], references: [id])
+  toStaffId             String?
+  urgency               RequestPriority       @default(ROUTINE)
+  summary               String
+  activeProblems        String?
+  pendingInvestigations String?
+  pendingMedications    String?
+  pendingTasks          String?
+  safetyConcerns        String?
+  escalationRequired    Boolean               @default(false)
+  status                HandoffStatus         @default(PENDING)
+  createdAt             DateTime              @default(now())
+  acknowledgedAt        DateTime?
+  acknowledgedByStaffId String?
+
+  @@index([facilityId])
+  @@index([patientId])
+  @@index([status])
+}
+
+/**
+ * Nurse-to-patient assignment (brief §11) — history is never overwritten;
+ * ending an assignment sets `endAt` on the existing row, a reassignment
+ * is always a new row. `bedId` is denormalized at assignment time (a
+ * transfer later doesn't retroactively change who was assigned when).
+ */
+model NursingAssignment {
+  id                String               @id @default(cuid())
+  facility          Facility             @relation(fields: [facilityId], references: [id])
+  facilityId        String
+  department        Department?          @relation(fields: [departmentId], references: [id])
+  departmentId      String?
+  nurse             HospitalStaffProfile @relation("NurseAssigned", fields: [nurseStaffId], references: [id])
+  nurseStaffId      String
+  patient           Patient              @relation(fields: [patientId], references: [id])
+  patientId         String
+  encounter         Encounter?           @relation(fields: [encounterId], references: [id])
+  encounterId       String?
+  bed               Bed?                 @relation(fields: [bedId], references: [id])
+  bedId             String?
+  startAt           DateTime             @default(now())
+  endAt             DateTime?
+  reason            String?
+  assignedByStaffId String
+  createdAt         DateTime             @default(now())
+
+  @@index([facilityId])
+  @@index([nurseStaffId])
+  @@index([patientId])
+}
+
+/**
+ * Configurable abnormal-vital thresholds (brief §13's explicit "do NOT
+ * invent clinical thresholds" — same pattern as Phase 2's `SlaPolicy`:
+ * hospital-configured, not a hardcoded clinical claim). No row for a
+ * metric means no abnormal-vital alert is generated for it — never a
+ * silent default.
+ */
+model VitalThreshold {
+  id         String   @id @default(cuid())
+  facility   Facility @relation(fields: [facilityId], references: [id])
+  facilityId String
+  metric     String // "hr" | "sbp" | "dbp" | "rr" | "spo2" | "tempC"
+  minValue   Float?
+  maxValue   Float?
+  updatedAt  DateTime @updatedAt
+
+  @@unique([facilityId, metric])
+}
+
+/**
+ * Intake/output documentation (brief §14). Shift/day summaries are computed at read time (sum by ioType/category over a date range), never stored — same aggregation pattern as everywhere else in this codebase.
+ */
+enum IOType {
+  INPUT
+  OUTPUT
+}
+
+model IntakeOutputRecord {
+  id                String    @id @default(cuid())
+  encounter         Encounter @relation(fields: [encounterId], references: [id])
+  encounterId       String
+  facility          Facility  @relation(fields: [facilityId], references: [id])
+  facilityId        String
+  ioType            IOType
+  category          String // INPUT: "ORAL"|"IV"|"ENTERAL"|"OTHER"; OUTPUT: "URINE"|"DRAIN"|"EMESIS"|"STOOL"|"OTHER"
+  quantityMl        Float
+  recordedByStaffId String
+  recordedAt        DateTime  @default(now())
+  notes             String?
+
+  @@index([encounterId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Medication lifecycle deepening (brief §15-21, §25)
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * The full prescribe -> pharmacy -> dispense -> administer lifecycle
+ * (brief §16). Replaces MedicationOrder's previous loose status STRING
+ * with a real enum — safe because every existing row's value ("ORDERED")
+ * is itself a member of this enum (verified against live data before
+ * this migration), unlike LabOrder/ImagingOrder/Referral/ClinicalNote/
+ * Task/Discharge/Appointment/QueueEntry, whose existing status
+ * vocabularies stay free-text strings exactly as Phase 0-2 left them —
+ * converting those would be the "destructive rewrite" this phase is
+ * explicitly told not to do.
+ */
+enum MedicationOrderStatus {
+  DRAFT
+  ORDERED
+  PHARMACY_REVIEW
+  VERIFIED
+  DISPENSED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  DISCONTINUED
+  HELD
+  REJECTED
+}
+
+enum MedicationAdministrationStatus {
+  DUE
+  GIVEN
+  HELD
+  REFUSED
+  MISSED
+  CANCELLED
+}
+
+enum SafetySeverity {
+  INFO
+  WARNING
+  DANGER
+}
+
+/**
+ * Full audit trail of a medication order's safety evaluation — distinct from MedicationOrder.safetyFlags (Phase 0's quick JSON snapshot at order time, left untouched for backward compatibility). Each row is individually acknowledgeable/overridable with an actor and timestamp, which a JSON blob can't support.
+ */
+model MedicationSafetyWarning {
+  id                    String          @id @default(cuid())
+  medicationOrder       MedicationOrder @relation(fields: [medicationOrderId], references: [id])
+  medicationOrderId     String
+  rule                  String // "allergy-conflict" | "duplicate-active-medication" | "route-mismatch" | "frequency-mismatch"
+  severity              SafetySeverity
+  message               String
+  sourceId              String?
+  acknowledgedByStaffId String?
+  acknowledgedAt        DateTime?
+  overrideReason        String?
+  createdAt             DateTime        @default(now())
+
+  @@index([medicationOrderId])
+}
+
+enum VerificationDecision {
+  VERIFIED
+  REJECTED
+  HOLD
+  CLARIFICATION_REQUESTED
+}
+
+/**
+ * The pharmacist verification audit trail (brief §17) — MedicationOrder.status holds the CURRENT state; this table holds every decision ever made, with a required reason for anything but VERIFIED.
+ */
+model MedicationVerification {
+  id                String               @id @default(cuid())
+  medicationOrder   MedicationOrder      @relation(fields: [medicationOrderId], references: [id])
+  medicationOrderId String
+  pharmacist        HospitalStaffProfile @relation(fields: [pharmacistStaffId], references: [id])
+  pharmacistStaffId String
+  decision          VerificationDecision
+  reason            String?
+  createdAt         DateTime             @default(now())
+
+  @@index([medicationOrderId])
+}
+
+enum DispenseStatus {
+  FULL
+  PARTIAL
+  SUBSTITUTED
+  RETURNED
+  CANCELLED
+}
+
+/**
+ * Dispensing record (brief §23-25). `batchNumber`/`expiryDate` are
+ * nullable — captured when available, never fabricated. `witnessStaffId`
+ * is the minimum controlled-medication co-sign hook (brief §25); no
+ * jurisdiction-specific rule engine is built — whether a witness is
+ * required is a simple `MedicationOrder.isControlled` flag, documented
+ * as facility-configurable in principle, enforced as a single boolean
+ * this phase (see docs/PHASE_3_ARCHITECTURE.md §8).
+ */
+model DispensingRecord {
+  id                  String                @id @default(cuid())
+  medicationOrder     MedicationOrder       @relation(fields: [medicationOrderId], references: [id])
+  medicationOrderId   String
+  pharmacist          HospitalStaffProfile  @relation("DispensingPharmacist", fields: [pharmacistStaffId], references: [id])
+  pharmacistStaffId   String
+  status              DispenseStatus        @default(FULL)
+  quantity            Float
+  quantityUnit        String
+  batchNumber         String?
+  expiryDate          DateTime?
+  substitutedDrugName String?
+  destination         String?
+  witnessStaffId      String?
+  witness             HospitalStaffProfile? @relation("DispensingWitness", fields: [witnessStaffId], references: [id])
+  notes               String?
+  createdAt           DateTime              @default(now())
+
+  @@index([medicationOrderId])
+}
+
+enum ReconciliationSource {
+  ADMISSION
+  TRANSFER
+  DISCHARGE
+}
+
+enum ReconciliationDecision {
+  CONTINUED
+  MODIFIED
+  STOPPED
+  NEW
+}
+
+/**
+ * Medication reconciliation (brief §19) — purely additive rows; never deletes prior medication history.
+ */
+model MedicationReconciliation {
+  id                String                 @id @default(cuid())
+  encounter         Encounter              @relation(fields: [encounterId], references: [id])
+  encounterId       String
+  patient           Patient                @relation(fields: [patientId], references: [id])
+  patientId         String
+  facility          Facility               @relation(fields: [facilityId], references: [id])
+  facilityId        String
+  source            ReconciliationSource
+  medicationName    String
+  priorDose         String?
+  decision          ReconciliationDecision
+  medicationOrderId String?
+  reason            String?
+  reviewedByStaffId String
+  createdAt         DateTime               @default(now())
+
+  @@index([encounterId])
+  @@index([patientId])
 }

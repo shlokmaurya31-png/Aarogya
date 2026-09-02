@@ -2,22 +2,29 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
-import { checkMedicationSafety } from "@/lib/hospital/clinicalSafety";
-import { generateAdministrationSchedule } from "@/lib/hospital/medicationSchedule";
-import { recordAuditEvent } from "@/lib/auth/audit";
+import { createMedicationOrder } from "@/lib/hospital/medicationLifecycle";
 
 export async function GET(req: NextRequest) {
   return withApiErrors(async () => {
     const { searchParams } = new URL(req.url);
     const { facilityId } = await requireFacilityStaff("patient:read", searchParams.get("facilityId") ?? undefined);
     const encounterId = searchParams.get("encounterId");
+    const status = searchParams.get("status");
 
     const orders = await prisma.medicationOrder.findMany({
       where: {
         encounter: { facilityId },
         ...(encounterId ? { encounterId } : {}),
+        ...(status ? { status: status as never } : {}),
       },
-      include: { patient: true, orderedBy: { include: { user: true } }, administrations: true },
+      include: {
+        patient: true,
+        orderedBy: { include: { user: true } },
+        administrations: true,
+        safetyWarnings: true,
+        verifications: { orderBy: { createdAt: "desc" }, take: 1 },
+        dispensingRecords: true,
+      },
       orderBy: { orderedAt: "desc" },
       take: 100,
     });
@@ -26,11 +33,13 @@ export async function GET(req: NextRequest) {
 }
 
 /**
- * CDS runs here, transparently: safety flags are computed and stored on the
- * order (never silently blocking), and a DANGER-severity flag requires the
- * caller to pass overrideReason to proceed at all (brief §20/§101 — "never
- * allow AI alone to determine" applies equally to this deterministic
- * check: it informs, a human still decides).
+ * CDS runs here, transparently: safety flags are computed and stored on
+ * the order (never silently blocking), and a DANGER-severity flag
+ * requires the caller to pass overrideReason to proceed at all (brief
+ * §20/§101 — "never allow AI alone to determine" applies equally to this
+ * deterministic check: it informs, a human still decides). The order is
+ * then auto-submitted to pharmacy review — see
+ * src/lib/hospital/medicationLifecycle.ts.
  */
 export async function POST(req: NextRequest) {
   return withApiErrors(async () => {
@@ -46,30 +55,31 @@ export async function POST(req: NextRequest) {
     const encounter = await prisma.encounter.findUnique({ where: { id: encounterId } });
     if (!encounter || encounter.facilityId !== facilityId) throw new NotFoundError("Encounter not found.");
 
-    const flags = await checkMedicationSafety(patientId, drugName, genericName);
-    const hasDanger = flags.some((f) => f.severity === "danger");
-    if (hasDanger && !overrideReason) {
-      return { blocked: true, flags };
-    }
-
-    const order = await prisma.medicationOrder.create({
-      data: {
-        encounterId,
-        patientId,
-        drugName,
-        genericName,
-        dose,
-        route,
-        frequency,
-        durationDays,
-        orderedByStaffId: staff.id,
-        safetyFlags: flags.length ? (flags as unknown as object) : undefined,
-        overrideReason: hasDanger ? overrideReason : undefined,
-      },
+    const result = await createMedicationOrder({
+      facilityId,
+      encounterId,
+      patientId,
+      orderingStaffId: staff.id,
+      drugName,
+      genericName,
+      dose,
+      route,
+      frequency,
+      durationDays,
+      formulation: body?.formulation,
+      doseValue: body?.doseValue,
+      doseUnit: body?.doseUnit,
+      timing: body?.timing,
+      prn: body?.prn,
+      prnReason: body?.prnReason,
+      specialInstructions: body?.specialInstructions,
+      indication: body?.indication,
+      isControlled: body?.isControlled,
+      overrideReason,
+      byUserId: session.userId,
     });
 
-    await generateAdministrationSchedule(order.id, frequency);
-    await recordAuditEvent("hospital.medication.ordered", session.userId, { orderId: order.id, flags: flags.length, overridden: hasDanger });
-    return { order, flags };
+    if (result.blocked) return { blocked: true, flags: result.flags };
+    return { order: result.order, flags: result.flags };
   });
 }

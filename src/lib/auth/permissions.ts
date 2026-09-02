@@ -89,6 +89,23 @@ export const PERMISSIONS = [
   "transfer:execute",
   "discharge:approve",
   "bed:reserve",
+
+  // Phase 3 — Doctor OS / Nursing OS / Medication Lifecycle / Pharmacy
+  // (brief §33). Only genuinely new capabilities — verifying/dispensing a
+  // medication, running a care plan, a structured handoff, a nursing
+  // assignment, and I/O documentation have no existing permission that
+  // already covers them. Ordering/administering/signing/vitals/tasks
+  // reuse the existing clinical:order:medication / medication:administer /
+  // clinical:note:* / vital:record / task:* permissions unchanged.
+  // "medication:verify" already existed (Phase 0) granted to PHARMACIST but
+  // had zero enforcement point until this phase's pharmacy workflow — see
+  // below, not re-declared here.
+  "carePlan:manage",
+  "handoff:manage",
+  "nursing:assignment:manage",
+  "medication:dispense",
+  "medication:discontinue",
+  "io:record",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -148,6 +165,9 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "encounter:assign",
     "admission:request",
     "transfer:request",
+    "carePlan:manage",
+    "handoff:manage",
+    "medication:discontinue",
   ],
   NURSE: [
     "hospital:command-center:view",
@@ -166,6 +186,10 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "triage:record",
     "transfer:request",
     "encounter:assign",
+    "carePlan:manage",
+    "handoff:manage",
+    "nursing:assignment:manage",
+    "io:record",
   ],
   LAB_TECHNICIAN: [
     "hospital:command-center:view",
@@ -185,6 +209,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "patient:read",
     "encounter:read",
     "medication:verify",
+    "medication:dispense",
   ],
   BILLING_STAFF: [
     "hospital:command-center:view",
@@ -220,6 +245,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "transfer:execute",
     "discharge:approve",
     "bed:reserve",
+    "nursing:assignment:manage",
   ],
   FRONT_DESK: [
     "hospital:command-center:view",

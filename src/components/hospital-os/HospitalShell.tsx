@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutGrid, BedDouble, ClipboardList, LogOut, Building2, Stethoscope,
   ClipboardCheck, FlaskConical, ScanLine, Receipt, DoorOpen,
-  UserPlus, Siren, ArrowRightLeft,
+  UserPlus, Siren, ArrowRightLeft, Pill,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusPill } from "@/components/ui/StatusPill";
@@ -22,6 +22,7 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     { href: "/hospital-os/admissions", label: "Admissions", icon: ClipboardList },
     { href: "/hospital-os/transfers", label: "Transfers", icon: ArrowRightLeft },
     { href: "/hospital-os/discharge", label: "Discharge", icon: DoorOpen },
+    { href: "/hospital-os/pharmacy", label: "Pharmacy", icon: Pill },
     { href: "/hospital-os/billing", label: "Billing", icon: Receipt },
   ],
   AAROGYA_ADMIN: [
@@ -49,7 +50,7 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
   ],
   LAB_TECHNICIAN: [{ href: "/hospital-os/lab", label: "Lab Queue", icon: FlaskConical }],
   RADIOLOGY_TECH: [{ href: "/hospital-os/radiology", label: "Imaging Queue", icon: ScanLine }],
-  PHARMACIST: [{ href: "/hospital-os", label: "Command Center", icon: LayoutGrid }],
+  PHARMACIST: [{ href: "/hospital-os/pharmacy", label: "Pharmacy", icon: Pill }],
   BILLING_STAFF: [{ href: "/hospital-os/billing", label: "Billing", icon: Receipt }],
   FRONT_DESK: [{ href: "/hospital-os/front-desk", label: "Front Desk", icon: UserPlus }],
 };

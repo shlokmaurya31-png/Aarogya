@@ -104,6 +104,26 @@ Demo login: [http://localhost:3000/hospital-os/login](http://localhost:3000/hosp
 | `doctor1@noida-demo.aarogya` | Doctor (Orthopedics) | Noida |
 | `frontdesk@amc-demo.aarogya` | Front Desk Coordinator (Phase 2) | Pune |
 
+Phase 3 reuses these same accounts — `doctor1@amc-demo.aarogya` … `doctor8@amc-demo.aarogya` for Doctor OS, `nurse1@amc-demo.aarogya` … `nurse10@amc-demo.aarogya` for Nursing OS, and `pharmacist@amc-demo.aarogya` for the new Pharmacy workspace at [`/hospital-os/pharmacy`](http://localhost:3000/hospital-os/pharmacy).
+
+## Aarogya Doctor OS / Nursing OS / Medication Lifecycle / Pharmacy (Phase 3)
+
+A real prescribe → pharmacist-verify → dispense → administer →
+reconcile medication lifecycle, server-validated end to end (illegal
+transitions like administering a discontinued order, or double-recording
+the same dose in a race, are rejected — not just discouraged). The
+Doctor Workspace gained a live dashboard (pending/critical results,
+unsigned notes, medications needing attention, consults, discharge
+candidates); Nursing gained patient assignments, a bedside MAR workflow
+with a safety checklist and witness co-sign for controlled medications,
+and intake/output documentation; a new Pharmacy workspace handles
+verification and dispensing with full clinical context (allergies,
+current medications, safety warnings) per order. Structured clinical
+handoffs and care plans connect doctor and nurse workflows without
+duplicating either. Full reasoning, including the generalized-Order
+architecture decision and everywhere this deliberately stayed narrow to
+avoid rewriting working Phase 0-2 code: [`docs/PHASE_3_ARCHITECTURE.md`](docs/PHASE_3_ARCHITECTURE.md).
+
 ## Aarogya Patient Flow / ADT (Phase 2)
 
 Turns the clinical core into a usable Access + OPD + Emergency + ADT

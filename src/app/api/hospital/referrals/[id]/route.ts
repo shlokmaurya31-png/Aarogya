@@ -6,7 +6,13 @@ import { recordAuditEvent } from "@/lib/auth/audit";
 
 const VALID_STATUSES = ["ACKNOWLEDGED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "REJECTED"];
 
-/** Care coordination (brief §161): consult requested -> accepted -> performed, tracked as one referral row's status. */
+/**
+ * Specialist consult workflow (brief §8/§161): requested -> accepted ->
+ * reviewed/documented -> closed, tracked as one referral row's status.
+ * ACKNOWLEDGED is this system's "accepted" (Phase 1 vocabulary, unchanged) —
+ * Phase 3 additionally stamps `acceptedAt` the first time that happens, and
+ * `respondedAt` continues to mean "last terminal-or-response timestamp".
+ */
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return withApiErrors(async () => {
     const { id } = await params;
@@ -26,10 +32,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         notes: notes ?? referral.notes,
         toStaffId: referral.toStaffId ?? staff?.id,
         respondedAt: new Date(),
+        acceptedAt: status === "ACKNOWLEDGED" && !referral.acceptedAt ? new Date() : referral.acceptedAt,
       },
     });
 
     await recordAuditEvent("hospital.referral.updated", session.userId, { referralId: id, status });
+    if (status === "ACKNOWLEDGED") await recordAuditEvent("hospital.consult.accepted", session.userId, { referralId: id });
+    if (status === "COMPLETED") await recordAuditEvent("hospital.consult.completed", session.userId, { referralId: id });
     return { referral: updated };
   });
 }

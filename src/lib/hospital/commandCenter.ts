@@ -128,7 +128,49 @@ export async function getCommandCenterSnapshot(facilityId: string) {
       transferBacklog: pendingTransfers,
       dischargeReadyNotLeft: readyDischarges,
     },
+    // Phase 3 (brief §32) — Doctor/Nursing/Pharmacy operational metrics, all live aggregates, facility-scoped.
+    clinicalOps: await getClinicalOpsSnapshot(facilityId),
     operationalStatus,
     alerts,
+  };
+}
+
+async function getClinicalOpsSnapshot(facilityId: string) {
+  const [
+    doctorWaiting,
+    activeConsultations,
+    pendingLabResults,
+    pendingImagingResults,
+    unsignedNotes,
+    pendingConsults,
+    overdueNursingTasks,
+    medsDue,
+    missedAdministrations,
+    unassignedAdmittedPatients,
+    escalationHandoffs,
+    pendingVerification,
+    urgentMedsPending,
+    heldOrders,
+  ] = await Promise.all([
+    prisma.queueEntry.count({ where: { facilityId, queueType: { in: ["OPD_DOCTOR", "ED"] }, status: "WAITING" } }),
+    prisma.queueEntry.count({ where: { facilityId, queueType: { in: ["OPD_DOCTOR", "ED"] }, status: "IN_SERVICE" } }),
+    prisma.labOrder.count({ where: { encounter: { facilityId }, status: { notIn: ["RESULTED", "CANCELLED"] } } }),
+    prisma.imagingOrder.count({ where: { encounter: { facilityId }, status: { notIn: ["REPORTED", "CANCELLED"] } } }),
+    prisma.clinicalNote.count({ where: { status: "DRAFT", encounter: { facilityId } } }),
+    prisma.referral.count({ where: { encounter: { facilityId }, status: { in: ["PLACED", "ACKNOWLEDGED"] } } }),
+    prisma.task.count({ where: { facilityId, status: { in: ["OPEN", "ASSIGNED", "IN_PROGRESS"] }, dueAt: { lte: new Date() } } }),
+    prisma.medicationAdministration.count({ where: { status: "DUE", medicationOrder: { encounter: { facilityId } } } }),
+    prisma.medicationAdministration.count({ where: { status: "MISSED", medicationOrder: { encounter: { facilityId } } } }),
+    prisma.encounter.count({ where: { facilityId, status: "ADMITTED", nursingAssignments: { none: { endAt: null } } } }),
+    prisma.clinicalHandoff.count({ where: { facilityId, status: "PENDING", escalationRequired: true } }),
+    prisma.medicationOrder.count({ where: { encounter: { facilityId }, status: "PHARMACY_REVIEW" } }),
+    prisma.medicationOrder.count({ where: { encounter: { facilityId }, status: "PHARMACY_REVIEW", order: { priority: { in: ["URGENT", "EMERGENCY"] } } } }),
+    prisma.medicationOrder.count({ where: { encounter: { facilityId }, status: "HELD" } }),
+  ]);
+
+  return {
+    doctor: { waitingPatients: doctorWaiting, activeConsultations, pendingLabResults, pendingImagingResults, unsignedNotes, pendingConsults },
+    nursing: { overdueTasks: overdueNursingTasks, medicationsDue: medsDue, missedAdministrations, unassignedAdmittedPatients, escalationAlerts: escalationHandoffs },
+    pharmacy: { pendingVerification, urgentPending: urgentMedsPending, heldOrClarification: heldOrders },
   };
 }

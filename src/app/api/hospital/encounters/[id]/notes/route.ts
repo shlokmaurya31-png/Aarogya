@@ -27,13 +27,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const sign = Boolean(body?.sign);
 
     if (body?.supersedesId) {
-      await prisma.clinicalNote.update({ where: { id: body.supersedesId }, data: { status: "SUPERSEDED" } });
+      const amendmentReason = body?.amendmentReason as string | undefined;
+      if (!amendmentReason) throw new BadRequestError("amendmentReason is required when amending a signed note.");
+      await prisma.clinicalNote.update({
+        where: { id: body.supersedesId },
+        data: { status: "SUPERSEDED", amendedAt: new Date(), amendmentReason },
+      });
     }
 
     const note = await prisma.clinicalNote.create({
       data: {
         encounterId: id,
         authorStaffId: staff.id,
+        authorRole: session.role,
         type,
         content,
         status: sign ? "SIGNED" : "DRAFT",
@@ -43,6 +49,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     });
 
     await recordAuditEvent("hospital.note.created", session.userId, { encounterId: id, noteId: note.id, type });
+    if (body?.supersedesId) await recordAuditEvent("hospital.note.amended", session.userId, { encounterId: id, noteId: note.id, supersedesId: body.supersedesId });
     return { note };
   });
 }
@@ -75,7 +82,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       data: { status: "SIGNED", signedAt: new Date() },
     });
 
-    await recordAuditEvent("hospital.note.created", session.userId, { encounterId: id, noteId: note.id, action: "signed" });
+    await recordAuditEvent("hospital.note.signed", session.userId, { encounterId: id, noteId: note.id });
     return { note };
   });
 }

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Stethoscope, PhoneCall } from "lucide-react";
-import { Card } from "@/components/ui/Card";
+import { Card, CardLabel } from "@/components/ui/Card";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
@@ -18,6 +18,17 @@ interface QueueEntry {
   patient: { id: string; fullName: string; uhid: string };
   encounter: { id: string } | null;
 }
+interface Dashboard {
+  admittedPatients: number;
+  pendingResults: { lab: number; imaging: number };
+  criticalResults: { lab: number; imaging: number };
+  unsignedNotes: number;
+  medsPendingAttention: number;
+  consultRequests: number;
+  dischargeCandidates: number;
+  followUpTasks: number;
+  pendingHandoffs: number;
+}
 
 const STATUS_TONE: Record<string, "emerald" | "amber" | "red" | "cyan" | "neutral"> = {
   REGISTERED: "neutral", TRIAGED: "amber", IN_CONSULTATION: "cyan", INVESTIGATING: "amber", ADMITTED: "cyan",
@@ -27,6 +38,7 @@ export function DoctorWorkspace({ staffId }: { staffId?: string }) {
   const push = useToastStore((s) => s.push);
   const [encounters, setEncounters] = useState<Encounter[] | null>(null);
   const [queue, setQueue] = useState<QueueEntry[]>([]);
+  const [dashboard, setDashboard] = useState<Dashboard | null>(null);
 
   function loadQueue() {
     if (!staffId) return;
@@ -36,6 +48,7 @@ export function DoctorWorkspace({ staffId }: { staffId?: string }) {
   useEffect(() => {
     fetch("/api/hospital/encounters").then((r) => r.json()).then((d) => setEncounters(d.encounters ?? []));
     if (staffId) fetch(`/api/hospital/queue?practitionerStaffId=${staffId}`).then((r) => r.json()).then((d) => setQueue(d.entries ?? []));
+    fetch(`/api/hospital/doctor/dashboard${staffId ? `?staffId=${staffId}` : ""}`).then((r) => r.json()).then(setDashboard);
   }, [staffId]);
 
   async function callNext(queueType: string) {
@@ -67,6 +80,26 @@ export function DoctorWorkspace({ staffId }: { staffId?: string }) {
         <h1 className="text-[20px] font-semibold tracking-tight">My Patients</h1>
       </div>
       <p className="mt-1 text-[13px] text-text-secondary">{encounters.length} active encounters across the facility.</p>
+
+      {dashboard && (
+        <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-8">
+          {[
+            ["Admitted", dashboard.admittedPatients],
+            ["Pending labs", dashboard.pendingResults.lab],
+            ["Pending imaging", dashboard.pendingResults.imaging],
+            ["Critical results", dashboard.criticalResults.lab + dashboard.criticalResults.imaging],
+            ["Unsigned notes", dashboard.unsignedNotes],
+            ["Meds needing attention", dashboard.medsPendingAttention],
+            ["Consults", dashboard.consultRequests],
+            ["Discharge candidates", dashboard.dischargeCandidates],
+          ].map(([label, value]) => (
+            <Card key={label as string} className="rounded-lg p-2.5">
+              <p className="text-[17px] font-semibold tabular-nums">{value}</p>
+              <CardLabel className="mt-0.5 normal-case tracking-normal">{label}</CardLabel>
+            </Card>
+          ))}
+        </div>
+      )}
 
       {staffId && (
         <Card className="mt-4 rounded-[20px]">
