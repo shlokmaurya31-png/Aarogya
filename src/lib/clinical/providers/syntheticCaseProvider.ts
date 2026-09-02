@@ -82,7 +82,11 @@ export class SyntheticCaseProvider implements ClinicalCaseProvider {
   }
 
   async getCaseFull(caseId: string): Promise<ClinicalCaseFull | null> {
-    const row = await prisma.clinicalCase.findUnique({ where: { id: caseId } });
+    // isPublished filter matches listCases() — closes a gap where a caller who obtained an
+    // unpublished/draft case's id (e.g. an educator's in-progress draft) could open it via
+    // /api/student/cases/[id] even though it never appears in any feed. Nothing today relies
+    // on fetching an unpublished case through this method, so this is a pure tightening.
+    const row = await prisma.clinicalCase.findUnique({ where: { id: caseId, isPublished: true } });
     if (!row) return null;
     return {
       ...toSummary(row),
