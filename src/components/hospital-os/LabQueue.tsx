@@ -3,11 +3,10 @@
 import { useEffect, useState } from "react";
 import { FlaskConical } from "lucide-react";
 import { Card } from "@/components/ui/Card";
-import { StatusPill } from "@/components/ui/StatusPill";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
+import { SectionCard, Row, ActionButton, type PatientRef } from "@/components/hospital-os/diagnostics/shared";
 
-interface PatientRef { fullName: string; uhid: string }
 interface LabOrderRef { id: string; testName: string; catalogTestId: string | null }
 interface SpecimenRow { id: string; accessionNumber: string; specimenType: string; status: string; ageMinutes: number | null; labOrder: LabOrderRef & { patient: PatientRef } }
 interface ResultRow { id: string; value: string; unit: string | null; isCritical: boolean; abnormalFlag: string | null; ageMinutes: number | null; labOrder: LabOrderRef & { patient: PatientRef } }
@@ -23,40 +22,6 @@ interface Worklist {
 }
 
 const REJECTION_REASONS = ["INSUFFICIENT_SPECIMEN", "WRONG_CONTAINER", "HEMOLYZED", "MISLABELED", "LEAKED", "EXPIRED_TRANSPORT", "INCORRECT_SPECIMEN_TYPE", "OTHER"];
-
-function SectionCard({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
-  if (count === 0) return null;
-  return (
-    <Card className="rounded-[20px]">
-      <div className="flex items-center justify-between">
-        <p className="text-[13px] font-semibold">{title}</p>
-        <StatusPill label={String(count)} tone="neutral" className="rounded-md" />
-      </div>
-      <div className="mt-2.5 space-y-2">{children}</div>
-    </Card>
-  );
-}
-
-function Row({ patient, testName, meta, ageMinutes, children }: { patient: PatientRef; testName: string; meta: string; ageMinutes: number | null; children?: React.ReactNode }) {
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-hairline px-3 py-2">
-      <div>
-        <p className="text-[12.5px] font-medium">{testName}</p>
-        <p className="text-[11px] text-text-tertiary">{patient.fullName} · {patient.uhid} · {meta}{ageMinutes != null ? ` · ${ageMinutes}m` : ""}</p>
-      </div>
-      <div className="flex items-center gap-1.5">{children}</div>
-    </div>
-  );
-}
-
-function ActionButton({ label, onClick, tone = "neutral" }: { label: string; onClick: () => void; tone?: "neutral" | "red" | "emerald" }) {
-  const toneClass = tone === "red" ? "bg-red/10 text-red hover:bg-red/20" : tone === "emerald" ? "bg-emerald text-white hover:brightness-110" : "border border-hairline text-text-secondary hover:border-cyan/40 hover:text-cyan";
-  return (
-    <button onClick={onClick} className={`rounded-md px-2.5 py-1.5 text-[11px] font-medium ${toneClass}`}>
-      {label}
-    </button>
-  );
-}
 
 export function LabQueue() {
   const push = useToastStore((s) => s.push);
@@ -135,7 +100,7 @@ export function LabQueue() {
 
       <SectionCard title="Critical results — unacknowledged" count={worklist.criticalResults.length}>
         {worklist.criticalResults.map((r) => (
-          <Row key={r.id} patient={r.labOrder.patient} testName={r.labOrder.testName} meta={`${r.value} ${r.unit ?? ""}${r.abnormalFlag ? ` · ${r.abnormalFlag.replace("_", " ")}` : ""}`} ageMinutes={r.ageMinutes}>
+          <Row key={r.id} patient={r.labOrder.patient} title={r.labOrder.testName} meta={`${r.value} ${r.unit ?? ""}${r.abnormalFlag ? ` · ${r.abnormalFlag.replace("_", " ")}` : ""}`} ageMinutes={r.ageMinutes}>
             <ActionButton label="Acknowledge" tone="red" onClick={() => acknowledge(r.labOrder.id)} />
           </Row>
         ))}
@@ -143,7 +108,7 @@ export function LabQueue() {
 
       <SectionCard title="Rejected — awaiting recollection" count={worklist.rejectedAwaitingRecollection.length}>
         {worklist.rejectedAwaitingRecollection.map((s) => (
-          <Row key={s.id} patient={s.labOrder.patient} testName={s.labOrder.testName} meta={`${s.accessionNumber} · ${s.specimenType}`} ageMinutes={s.ageMinutes}>
+          <Row key={s.id} patient={s.labOrder.patient} title={s.labOrder.testName} meta={`${s.accessionNumber} · ${s.specimenType}`} ageMinutes={s.ageMinutes}>
             <ActionButton label="Recollect" onClick={() => recollect(s.labOrder.id)} />
           </Row>
         ))}
@@ -151,7 +116,7 @@ export function LabQueue() {
 
       <SectionCard title="Pending collection" count={worklist.pendingCollection.length}>
         {worklist.pendingCollection.map((s) => (
-          <Row key={s.id} patient={s.labOrder.patient} testName={s.labOrder.testName} meta={`${s.accessionNumber} · ${s.specimenType}`} ageMinutes={s.ageMinutes}>
+          <Row key={s.id} patient={s.labOrder.patient} title={s.labOrder.testName} meta={`${s.accessionNumber} · ${s.specimenType}`} ageMinutes={s.ageMinutes}>
             <ActionButton label="Collect" tone="emerald" onClick={() => collect(s.labOrder.id)} />
           </Row>
         ))}
@@ -160,7 +125,7 @@ export function LabQueue() {
       <SectionCard title="Pending receipt" count={worklist.pendingReceipt.length}>
         {worklist.pendingReceipt.map((s) => (
           <div key={s.id}>
-            <Row patient={s.labOrder.patient} testName={s.labOrder.testName} meta={`${s.accessionNumber} · ${s.specimenType}`} ageMinutes={s.ageMinutes}>
+            <Row patient={s.labOrder.patient} title={s.labOrder.testName} meta={`${s.accessionNumber} · ${s.specimenType}`} ageMinutes={s.ageMinutes}>
               <ActionButton label="Receive" tone="emerald" onClick={() => receive(s.labOrder.id)} />
               <ActionButton label="Reject" tone="red" onClick={() => setRejectForm(rejectForm === s.id ? null : s.id)} />
             </Row>
@@ -180,7 +145,7 @@ export function LabQueue() {
       <SectionCard title="Pending acceptance" count={worklist.pendingAcceptance.length}>
         {worklist.pendingAcceptance.map((s) => (
           <div key={s.id}>
-            <Row patient={s.labOrder.patient} testName={s.labOrder.testName} meta={`${s.accessionNumber} · ${s.specimenType}`} ageMinutes={s.ageMinutes}>
+            <Row patient={s.labOrder.patient} title={s.labOrder.testName} meta={`${s.accessionNumber} · ${s.specimenType}`} ageMinutes={s.ageMinutes}>
               <ActionButton label="Accept" tone="emerald" onClick={() => accept(s.labOrder.id)} />
               <ActionButton label="Reject" tone="red" onClick={() => setRejectForm(rejectForm === s.id ? null : s.id)} />
             </Row>
@@ -200,7 +165,7 @@ export function LabQueue() {
       <SectionCard title="Pending result entry" count={worklist.pendingResult.length}>
         {worklist.pendingResult.map((s) => (
           <div key={s.id}>
-            <Row patient={s.labOrder.patient} testName={s.labOrder.testName} meta={`${s.accessionNumber} · ${s.specimenType}`} ageMinutes={s.ageMinutes}>
+            <Row patient={s.labOrder.patient} title={s.labOrder.testName} meta={`${s.accessionNumber} · ${s.specimenType}`} ageMinutes={s.ageMinutes}>
               <ActionButton label="Enter result" onClick={() => setResultForm(resultForm?.labOrderId === s.labOrder.id ? null : { labOrderId: s.labOrder.id, catalogTestId: s.labOrder.catalogTestId })} />
             </Row>
             {resultForm?.labOrderId === s.labOrder.id && (
@@ -218,7 +183,7 @@ export function LabQueue() {
       <SectionCard title="Pending verification" count={worklist.pendingVerification.length}>
         {worklist.pendingVerification.map((r) => (
           <div key={r.id}>
-            <Row patient={r.labOrder.patient} testName={r.labOrder.testName} meta={`${r.value} ${r.unit ?? ""}`} ageMinutes={r.ageMinutes}>
+            <Row patient={r.labOrder.patient} title={r.labOrder.testName} meta={`${r.value} ${r.unit ?? ""}`} ageMinutes={r.ageMinutes}>
               <ActionButton label="Verify" tone="emerald" onClick={() => verify(r.labOrder.id, r.id)} />
             </Row>
           </div>

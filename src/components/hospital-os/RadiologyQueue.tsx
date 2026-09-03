@@ -3,11 +3,10 @@
 import { useEffect, useState } from "react";
 import { ScanLine } from "lucide-react";
 import { Card } from "@/components/ui/Card";
-import { StatusPill } from "@/components/ui/StatusPill";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
+import { SectionCard, Row, ActionButton, type PatientRef } from "@/components/hospital-os/diagnostics/shared";
 
-interface PatientRef { fullName: string; uhid: string }
 interface ImagingOrderRef { id: string; modality: string; studyDescription: string }
 interface OrderRow extends ImagingOrderRef { ageMinutes: number | null; patient: PatientRef }
 interface StudyRow { id: string; modality: string; accessionNumber: string; status: string; ageMinutes: number | null; imagingOrder: ImagingOrderRef & { patient: PatientRef } }
@@ -22,40 +21,6 @@ interface Worklist {
   pendingReport: OrderRow[];
   pendingVerification: ReportRow[];
   criticalFindings: ReportRow[];
-}
-
-function SectionCard({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
-  if (count === 0) return null;
-  return (
-    <Card className="rounded-[20px]">
-      <div className="flex items-center justify-between">
-        <p className="text-[13px] font-semibold">{title}</p>
-        <StatusPill label={String(count)} tone="neutral" className="rounded-md" />
-      </div>
-      <div className="mt-2.5 space-y-2">{children}</div>
-    </Card>
-  );
-}
-
-function Row({ patient, title, meta, ageMinutes, children }: { patient: PatientRef; title: string; meta: string; ageMinutes: number | null; children?: React.ReactNode }) {
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-hairline px-3 py-2">
-      <div>
-        <p className="text-[12.5px] font-medium">{title}</p>
-        <p className="text-[11px] text-text-tertiary">{patient.fullName} · {patient.uhid} · {meta}{ageMinutes != null ? ` · ${ageMinutes}m` : ""}</p>
-      </div>
-      <div className="flex items-center gap-1.5">{children}</div>
-    </div>
-  );
-}
-
-function ActionButton({ label, onClick, tone = "neutral" }: { label: string; onClick: () => void; tone?: "neutral" | "red" | "emerald" }) {
-  const toneClass = tone === "red" ? "bg-red/10 text-red hover:bg-red/20" : tone === "emerald" ? "bg-emerald text-white hover:brightness-110" : "border border-hairline text-text-secondary hover:border-cyan/40 hover:text-cyan";
-  return (
-    <button onClick={onClick} className={`rounded-md px-2.5 py-1.5 text-[11px] font-medium ${toneClass}`}>
-      {label}
-    </button>
-  );
 }
 
 export function RadiologyQueue() {

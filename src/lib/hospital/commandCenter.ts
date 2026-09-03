@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { computeAlerts } from "./alertEngine";
+import { getDiagnosticsOperationalCounts } from "./diagnosticsSnapshot";
 
 function startOfToday(): Date {
   const d = new Date();
@@ -26,8 +27,6 @@ export async function getCommandCenterSnapshot(facilityId: string) {
     opdArrivalsToday,
     admissionsLast7Days,
     activeEncounters,
-    criticalLabCount,
-    criticalImagingCount,
     pendingDischarges,
     totalBeds,
     availableBeds,
@@ -40,6 +39,8 @@ export async function getCommandCenterSnapshot(facilityId: string) {
     reservedNotAdmitted,
     pendingTransfers,
     readyDischarges,
+    alerts,
+    diagnostics,
   ] = await Promise.all([
     prisma.bed.groupBy({ by: ["status"], where: { facilityId }, _count: true }),
     prisma.bed.findMany({ where: { facilityId }, include: { ward: true } }),
@@ -52,8 +53,6 @@ export async function getCommandCenterSnapshot(facilityId: string) {
       where: { facilityId, status: { notIn: ["DISCHARGED", "CLOSED"] } },
       select: { status: true, type: true },
     }),
-    prisma.labResult.count({ where: { isCritical: true, acknowledgedAt: null, isCurrent: true, labOrder: { encounter: { facilityId } } } }),
-    prisma.imagingReport.count({ where: { isCritical: true, acknowledgedAt: null, isCurrent: true, imagingOrder: { encounter: { facilityId } } } }),
     prisma.discharge.count({ where: { dischargedAt: null, admission: { encounter: { facilityId } } } }),
     prisma.bed.count({ where: { facilityId } }),
     prisma.bed.count({ where: { facilityId, status: "AVAILABLE" } }),
@@ -66,7 +65,16 @@ export async function getCommandCenterSnapshot(facilityId: string) {
     prisma.admissionRequest.count({ where: { facilityId, status: "BED_RESERVED" } }),
     prisma.transferRequest.count({ where: { facilityId, status: { notIn: ["COMPLETED", "CANCELLED", "REJECTED"] } } }),
     prisma.discharge.count({ where: { dischargedAt: null, clinicallyReady: true, admission: { encounter: { facilityId } } } }),
+    computeAlerts(facilityId),
+    // Phase 4 Milestone D (brief §3, §11) — single shared fetch, reused for
+    // operationalStatus/safety.* below AND clinicalOps.lab/radiology AND
+    // the new top-level diagnostics block — was 3 separate query sets
+    // (here, in the old getClinicalOpsSnapshot, and in doctor/dashboard)
+    // before this milestone.
+    getDiagnosticsOperationalCounts(facilityId),
   ]);
+  const criticalLabCount = diagnostics.safety.criticalLab;
+  const criticalImagingCount = diagnostics.safety.criticalImaging;
 
   const avgDailyAdmissionsLast7 = admissionsLast7Days / 7;
   const admissionsDeltaPct = avgDailyAdmissionsLast7 > 0 ? Math.round(((admissionsToday - avgDailyAdmissionsLast7) / avgDailyAdmissionsLast7) * 100) : 0;
@@ -88,8 +96,6 @@ export async function getCommandCenterSnapshot(facilityId: string) {
   const occupancyPct = totalBeds > 0 ? Math.round(((totalBeds - availableBeds) / totalBeds) * 100) : 0;
   const operationalStatus: "green" | "watch" | "critical" =
     occupancyPct >= 95 || criticalLabCount + criticalImagingCount >= 3 ? "critical" : occupancyPct >= 85 || criticalLabCount + criticalImagingCount >= 1 ? "watch" : "green";
-
-  const alerts = await computeAlerts(facilityId);
 
   return {
     today: {
@@ -129,18 +135,18 @@ export async function getCommandCenterSnapshot(facilityId: string) {
       dischargeReadyNotLeft: readyDischarges,
     },
     // Phase 3 (brief §32) — Doctor/Nursing/Pharmacy operational metrics, all live aggregates, facility-scoped.
-    clinicalOps: await getClinicalOpsSnapshot(facilityId),
+    clinicalOps: await getClinicalOpsSnapshot(facilityId, diagnostics),
+    // Phase 4 Milestone D (brief §11) — unified cross-diagnostic view.
+    diagnostics,
     operationalStatus,
     alerts,
   };
 }
 
-async function getClinicalOpsSnapshot(facilityId: string) {
+async function getClinicalOpsSnapshot(facilityId: string, diagnostics: Awaited<ReturnType<typeof getDiagnosticsOperationalCounts>>) {
   const [
     doctorWaiting,
     activeConsultations,
-    pendingLabResults,
-    pendingImagingResults,
     unsignedNotes,
     pendingConsults,
     overdueNursingTasks,
@@ -151,18 +157,9 @@ async function getClinicalOpsSnapshot(facilityId: string) {
     pendingVerification,
     urgentMedsPending,
     heldOrders,
-    specimensPendingCollection,
-    resultsPendingVerification,
-    specimensRejectedAwaitingRecollection,
-    studiesPendingScheduling,
-    studiesScheduledAwaitingArrival,
-    reportsPendingVerification,
-    criticalFindingsAwaitingAcknowledgement,
   ] = await Promise.all([
     prisma.queueEntry.count({ where: { facilityId, queueType: { in: ["OPD_DOCTOR", "ED"] }, status: "WAITING" } }),
     prisma.queueEntry.count({ where: { facilityId, queueType: { in: ["OPD_DOCTOR", "ED"] }, status: "IN_SERVICE" } }),
-    prisma.labOrder.count({ where: { encounter: { facilityId }, status: { notIn: ["RESULTED", "CANCELLED"] } } }),
-    prisma.imagingOrder.count({ where: { encounter: { facilityId }, status: { notIn: ["REPORTED", "CANCELLED"] } } }),
     prisma.clinicalNote.count({ where: { status: "DRAFT", encounter: { facilityId } } }),
     prisma.referral.count({ where: { encounter: { facilityId }, status: { in: ["PLACED", "ACKNOWLEDGED"] } } }),
     prisma.task.count({ where: { facilityId, status: { in: ["OPEN", "ASSIGNED", "IN_PROGRESS"] }, dueAt: { lte: new Date() } } }),
@@ -173,22 +170,28 @@ async function getClinicalOpsSnapshot(facilityId: string) {
     prisma.medicationOrder.count({ where: { encounter: { facilityId }, status: "PHARMACY_REVIEW" } }),
     prisma.medicationOrder.count({ where: { encounter: { facilityId }, status: "PHARMACY_REVIEW", order: { priority: { in: ["URGENT", "EMERGENCY"] } } } }),
     prisma.medicationOrder.count({ where: { encounter: { facilityId }, status: "HELD" } }),
-    prisma.specimen.count({ where: { facilityId, status: "COLLECTION_PENDING" } }),
-    prisma.labResult.count({ where: { status: "ENTERED", isCurrent: true, labOrder: { encounter: { facilityId } } } }),
-    prisma.specimen.count({ where: { facilityId, status: "REJECTED", recollections: { none: {} } } }),
-    prisma.imagingOrder.count({ where: { encounter: { facilityId }, status: "ORDERED" } }),
-    prisma.imagingStudy.count({ where: { facilityId, status: "SCHEDULED" } }),
-    prisma.imagingReport.count({ where: { status: "ENTERED", isCurrent: true, imagingOrder: { encounter: { facilityId } } } }),
-    prisma.imagingReport.count({ where: { isCritical: true, acknowledgedAt: null, isCurrent: true, imagingOrder: { encounter: { facilityId } } } }),
   ]);
 
   return {
-    doctor: { waitingPatients: doctorWaiting, activeConsultations, pendingLabResults, pendingImagingResults, unsignedNotes, pendingConsults },
+    doctor: { waitingPatients: doctorWaiting, activeConsultations, pendingLabResults: diagnostics.pending.lab, pendingImagingResults: diagnostics.pending.imaging, unsignedNotes, pendingConsults },
     nursing: { overdueTasks: overdueNursingTasks, medicationsDue: medsDue, missedAdministrations, unassignedAdmittedPatients, escalationAlerts: escalationHandoffs },
     pharmacy: { pendingVerification, urgentPending: urgentMedsPending, heldOrClarification: heldOrders },
     // Phase 4 Milestone B (brief §39) — specimen/result operational counts, live aggregates.
-    lab: { specimensPendingCollection, resultsPendingVerification, specimensRejectedAwaitingRecollection },
+    // Milestone D adds criticalLabsAwaitingAcknowledgement, fixing the
+    // asymmetry with radiology's criticalFindingsAwaitingAcknowledgement
+    // found in the Milestone D audit.
+    lab: {
+      specimensPendingCollection: diagnostics.pending.specimensPendingCollection,
+      resultsPendingVerification: diagnostics.pending.resultsPendingVerification,
+      specimensRejectedAwaitingRecollection: diagnostics.pending.specimensRejectedAwaitingRecollection,
+      criticalLabsAwaitingAcknowledgement: diagnostics.safety.criticalLab,
+    },
     // Phase 4 Milestone C (brief §17) — scheduling/reporting operational counts, live aggregates.
-    radiology: { studiesPendingScheduling, studiesScheduledAwaitingArrival, reportsPendingVerification, criticalFindingsAwaitingAcknowledgement },
+    radiology: {
+      studiesPendingScheduling: diagnostics.pending.studiesPendingScheduling,
+      studiesScheduledAwaitingArrival: diagnostics.pending.studiesScheduledAwaitingArrival,
+      reportsPendingVerification: diagnostics.pending.reportsPendingVerification,
+      criticalFindingsAwaitingAcknowledgement: diagnostics.safety.criticalImaging,
+    },
   };
 }

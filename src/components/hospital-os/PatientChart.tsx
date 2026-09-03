@@ -7,6 +7,7 @@ import { Card, CardLabel } from "@/components/ui/Card";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
+import { AmendmentBadge } from "@/components/hospital-os/diagnostics/shared";
 
 interface TimelineEntry { id: string; timestamp: string; type: string; summary: string; department?: string | null }
 
@@ -442,6 +443,14 @@ export function PatientChart({ patientId }: { patientId: string }) {
             </div>
           </Card>
 
+          {/* Phase 4 Milestone D (brief §7-8) — Lab and Imaging stay two
+              distinct cards (never flattened into one schema), just
+              grouped under one Diagnostics heading for discoverability,
+              with consistent amendment/critical presentation via the
+              shared components both /hospital-os/lab and
+              /hospital-os/radiology now also use. */}
+          <p className="px-1 text-[11px] font-medium uppercase tracking-wide text-text-tertiary">Diagnostics</p>
+
           <Card className="rounded-[20px]">
             <CardLabel>Lab results</CardLabel>
             <div className="mt-2 space-y-2">
@@ -458,7 +467,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
                           {result.abnormalFlag && result.abnormalFlag !== "NORMAL" && (
                             <StatusPill label={result.abnormalFlag.replace("_", " ")} tone={result.abnormalFlag.includes("CRITICAL") ? "red" : "amber"} className="rounded-md" />
                           )}
-                          {result.version > 1 && <StatusPill label={`amended v${result.version}`} tone="cyan" className="rounded-md" />}
+                          <AmendmentBadge version={result.version} />
                         </span>
                       ) : (
                         <StatusPill label={specimen ? specimen.status.replace("_", " ") : l.status} tone="neutral" className="rounded-md" />
@@ -486,7 +495,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
                     <div className="flex items-center justify-between">
                       <span>{im.modality} — {im.studyDescription}</span>
                       {!report && <StatusPill label={study ? study.status.replace("_", " ") : im.status} tone="neutral" className="rounded-md" />}
-                      {report?.version && report.version > 1 && <StatusPill label={`amended v${report.version}`} tone="cyan" className="rounded-md" />}
+                      {report && <AmendmentBadge version={report.version} />}
                     </div>
                     {report && <p className="text-text-tertiary">{report.impression}</p>}
                     {report?.isCritical && !report.acknowledgedAt && (

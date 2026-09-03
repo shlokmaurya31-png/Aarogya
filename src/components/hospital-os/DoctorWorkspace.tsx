@@ -84,21 +84,33 @@ export function DoctorWorkspace({ staffId }: { staffId?: string }) {
       {dashboard && (
         <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-9">
           {[
-            ["Admitted", dashboard.admittedPatients],
-            ["Pending labs", dashboard.pendingResults.lab],
-            ["Pending imaging", dashboard.pendingResults.imaging],
-            ["Critical labs", dashboard.criticalResults.lab],
-            ["Critical imaging", dashboard.criticalResults.imaging],
-            ["Unsigned notes", dashboard.unsignedNotes],
-            ["Meds needing attention", dashboard.medsPendingAttention],
-            ["Consults", dashboard.consultRequests],
-            ["Discharge candidates", dashboard.dischargeCandidates],
-          ].map(([label, value]) => (
-            <Card key={label as string} className="rounded-lg p-2.5">
-              <p className="text-[17px] font-semibold tabular-nums">{value}</p>
-              <CardLabel className="mt-0.5 normal-case tracking-normal">{label}</CardLabel>
-            </Card>
-          ))}
+            { label: "Admitted", value: dashboard.admittedPatients },
+            // Phase 4 Milestone D (brief §9) — diagnostic tiles link into
+            // the unified Diagnostics workspace, filtered, rather than
+            // just displaying a number with no way to act on it.
+            { label: "Pending labs", value: dashboard.pendingResults.lab, href: "/hospital-os/diagnostics?type=LAB" },
+            { label: "Pending imaging", value: dashboard.pendingResults.imaging, href: "/hospital-os/diagnostics?type=RADIOLOGY" },
+            { label: "Critical labs", value: dashboard.criticalResults.lab, href: "/hospital-os/diagnostics?type=LAB&status=CRITICAL" },
+            { label: "Critical imaging", value: dashboard.criticalResults.imaging, href: "/hospital-os/diagnostics?type=RADIOLOGY&status=CRITICAL" },
+            { label: "Unsigned notes", value: dashboard.unsignedNotes },
+            { label: "Meds needing attention", value: dashboard.medsPendingAttention },
+            { label: "Consults", value: dashboard.consultRequests },
+            { label: "Discharge candidates", value: dashboard.dischargeCandidates },
+          ].map(({ label, value, href }) => {
+            const content = (
+              <>
+                <p className="text-[17px] font-semibold tabular-nums">{value}</p>
+                <CardLabel className="mt-0.5 normal-case tracking-normal">{label}</CardLabel>
+              </>
+            );
+            return href ? (
+              <Link key={label} href={href}>
+                <Card className="rounded-lg p-2.5 transition hover:border-cyan/40">{content}</Card>
+              </Link>
+            ) : (
+              <Card key={label} className="rounded-lg p-2.5">{content}</Card>
+            );
+          })}
         </div>
       )}
 
