@@ -11,6 +11,97 @@
  */
 import { PrismaClient, Role, WardType, BedStatus, EncounterType, EncounterStatus } from "@prisma/client";
 import { hashPassword } from "../../src/lib/auth/password";
+import { createOrderEnvelope } from "../../src/lib/hospital/orderEnvelope";
+import { mapDiagnosticPriorityToOrderPriority } from "../../src/lib/hospital/diagnosticsLifecycle";
+import { accessionSpecimen, collectSpecimen, receiveSpecimen, acceptSpecimen, rejectSpecimen, recollectSpecimen } from "../../src/lib/hospital/specimenLifecycle";
+import { enterResult, verifyResult } from "../../src/lib/hospital/labResultLifecycle";
+import { scheduleStudy, checkInStudy, startStudy, completeStudy } from "../../src/lib/hospital/imagingStudyLifecycle";
+import { enterReport, verifyReport, amendReport } from "../../src/lib/hospital/imagingReportLifecycle";
+
+/**
+ * Small, explicitly-demo lab catalog (brief §8-10, §54). Global
+ * (facilityId: null) so both seeded facilities can use it. Reference
+ * ranges are seeded with isDemoData: true (the schema default) —
+ * clinically-plausible round numbers for a working demo, never presented
+ * as validated clinical guidance (brief's explicit clinical-safety rule).
+ */
+async function seedLabCatalog(prisma: PrismaClient) {
+  const specs: { code: string; name: string; category: string; specimenType: string; resultType: "NUMERIC" | "TEXT" | "CATEGORICAL" | "POSITIVE_NEGATIVE"; unit?: string; range?: { low?: number; high?: number; criticalLow?: number; criticalHigh?: number } }[] = [
+    { code: "CBC-HB", name: "Hemoglobin", category: "Hematology", specimenType: "Blood", resultType: "NUMERIC", unit: "g/dL", range: { low: 13, high: 17 } },
+    { code: "CHEM-NA", name: "Sodium", category: "Biochemistry", specimenType: "Blood", resultType: "NUMERIC", unit: "mmol/L", range: { low: 135, high: 145, criticalLow: 120, criticalHigh: 160 } },
+    { code: "CHEM-TROP", name: "Troponin I", category: "Biochemistry", specimenType: "Blood", resultType: "NUMERIC", unit: "ng/mL", range: { high: 0.04, criticalHigh: 0.5 } },
+    { code: "CHEM-GLU", name: "Blood Glucose (Fasting)", category: "Biochemistry", specimenType: "Blood", resultType: "NUMERIC", unit: "mg/dL", range: { low: 70, high: 100, criticalLow: 40, criticalHigh: 400 } },
+    { code: "MICRO-URC", name: "Urine Culture", category: "Microbiology", specimenType: "Urine", resultType: "POSITIVE_NEGATIVE" },
+  ];
+
+  const catalog = new Map<string, string>(); // code -> id
+  for (const spec of specs) {
+    const test = await prisma.labTestCatalog.upsert({
+      where: { code: spec.code },
+      update: {},
+      create: { code: spec.code, name: spec.name, category: spec.category, specimenType: spec.specimenType, resultType: spec.resultType, unit: spec.unit },
+    });
+    catalog.set(spec.code, test.id);
+    if (spec.range) {
+      const existing = await prisma.labReferenceRange.findFirst({ where: { catalogTestId: test.id } });
+      if (!existing) {
+        await prisma.labReferenceRange.create({ data: { catalogTestId: test.id, unit: spec.unit, ...spec.range } });
+      }
+    }
+  }
+
+  const bmp = await prisma.labPanel.upsert({ where: { code: "BMP" }, update: {}, create: { code: "BMP", name: "Basic Metabolic Panel" } });
+  for (const code of ["CHEM-NA", "CHEM-GLU"]) {
+    await prisma.labPanelTest.upsert({
+      where: { panelId_catalogTestId: { panelId: bmp.id, catalogTestId: catalog.get(code)! } },
+      update: {},
+      create: { panelId: bmp.id, catalogTestId: catalog.get(code)! },
+    });
+  }
+
+  return catalog;
+}
+
+/** Small, explicitly-demo imaging catalog (brief §4, §26). Global (facilityId: null), mirrors seedLabCatalog structurally. */
+async function seedImagingCatalog(prisma: PrismaClient) {
+  const specs = [
+    { code: "XR-CHEST", name: "Chest X-Ray", modality: "XRAY", bodyRegion: "Chest", defaultDurationMinutes: 15 },
+    { code: "CT-ABD", name: "CT Abdomen", modality: "CT", bodyRegion: "Abdomen", defaultDurationMinutes: 30, contrastRequired: true },
+    { code: "MRI-BRAIN", name: "MRI Brain", modality: "MRI", bodyRegion: "Brain", defaultDurationMinutes: 45 },
+    { code: "USG-ABD", name: "Abdominal Ultrasound", modality: "USG", bodyRegion: "Abdomen", defaultDurationMinutes: 20 },
+  ] as const;
+
+  const catalog = new Map<string, string>(); // code -> id
+  for (const spec of specs) {
+    const study = await prisma.imagingCatalog.upsert({
+      where: { code: spec.code },
+      update: {},
+      create: {
+        code: spec.code, name: spec.name, modality: spec.modality, bodyRegion: spec.bodyRegion,
+        defaultDurationMinutes: spec.defaultDurationMinutes, contrastRequired: "contrastRequired" in spec ? spec.contrastRequired : false,
+      },
+    });
+    catalog.set(spec.code, study.id);
+  }
+  return catalog;
+}
+
+/** Bookable modality/room resources (brief §8), one per common modality, facility-scoped. */
+async function seedImagingResources(prisma: PrismaClient, facilityId: string, prefix: string) {
+  const specs = [
+    { name: `${prefix} X-Ray Room 1`, modality: "XRAY" },
+    { name: `${prefix} CT Suite 1`, modality: "CT" },
+    { name: `${prefix} MRI Suite 1`, modality: "MRI" },
+    { name: `${prefix} Ultrasound Room 1`, modality: "USG" },
+  ];
+  const resources = new Map<string, string>(); // modality -> id
+  for (const spec of specs) {
+    const existing = await prisma.imagingResource.findFirst({ where: { facilityId, name: spec.name } });
+    const resource = existing ?? (await prisma.imagingResource.create({ data: { facilityId, name: spec.name, modality: spec.modality } }));
+    resources.set(spec.modality, resource.id);
+  }
+  return resources;
+}
 
 const DOCTOR_NAMES = [
   { name: "Dr. Nikhil Bhatt", specialty: "Cardiology" },
@@ -59,6 +150,9 @@ function pick<T>(arr: T[], i: number): T {
 }
 
 export async function seedHospital(prisma: PrismaClient) {
+  const labCatalog = await seedLabCatalog(prisma);
+  const imagingCatalog = await seedImagingCatalog(prisma);
+
   const org = await prisma.organization.upsert({
     where: { id: "org-aarogya-health-network" },
     update: {},
@@ -70,6 +164,7 @@ export async function seedHospital(prisma: PrismaClient) {
     update: {},
     create: { id: "fac-amc-pune", name: "Aarogya Medical Centre", city: "Pune", organizationId: org.id },
   });
+  const imagingResources = await seedImagingResources(prisma, facility.id, "AMC");
 
   const deptDefs = [
     { name: "Emergency", code: "ED" },
@@ -323,15 +418,25 @@ export async function seedHospital(prisma: PrismaClient) {
 
     // Lab orders for investigating/admitted patients.
     if (status === EncounterStatus.INVESTIGATING || status === EncounterStatus.ADMITTED) {
+      const labPriority = i % 4 === 0 ? "STAT" : "ROUTINE";
+      const labEnvelope = await createOrderEnvelope(prisma, {
+        facilityId: facility.id,
+        encounterId: encounter.id,
+        patientId: patient.id,
+        orderingStaffId: doctor.id,
+        orderType: "LAB",
+        priority: mapDiagnosticPriorityToOrderPriority(labPriority),
+      });
       const labOrder = await prisma.labOrder.create({
         data: {
           encounterId: encounter.id,
           patientId: patient.id,
           testName: pick(["CBC", "Troponin I", "Blood Glucose", "Electrolytes", "Liver Function Test"], i),
           category: "biochemistry",
-          priority: i % 4 === 0 ? "STAT" : "ROUTINE",
+          priority: labPriority,
           orderedByStaffId: doctor.id,
           status: "RESULTED",
+          orderId: labEnvelope.id,
         },
       });
       const isCritical = i % 8 === 0;
@@ -350,6 +455,14 @@ export async function seedHospital(prisma: PrismaClient) {
 
       // Imaging for a subset.
       if (i % 3 === 0) {
+        const imagingEnvelope = await createOrderEnvelope(prisma, {
+          facilityId: facility.id,
+          encounterId: encounter.id,
+          patientId: patient.id,
+          orderingStaffId: doctor.id,
+          orderType: "IMAGING",
+          priority: mapDiagnosticPriorityToOrderPriority("ROUTINE"),
+        });
         const imagingOrder = await prisma.imagingOrder.create({
           data: {
             encounterId: encounter.id,
@@ -358,6 +471,7 @@ export async function seedHospital(prisma: PrismaClient) {
             studyDescription: pick(["Chest X-ray", "CT Abdomen", "Abdominal ultrasound"], i),
             orderedByStaffId: doctor.id,
             status: "REPORTED",
+            orderId: imagingEnvelope.id,
           },
         });
         const imagingCritical = i % 13 === 0;
@@ -428,14 +542,30 @@ export async function seedHospital(prisma: PrismaClient) {
       attendingStaffId: doctorProfiles[0].id,
     },
   });
+  const criticalLabEnvelope = await createOrderEnvelope(prisma, {
+    facilityId: facility.id,
+    encounterId: alertEncounter.id,
+    patientId: alertPatient.id,
+    orderingStaffId: doctorProfiles[0].id,
+    orderType: "LAB",
+    priority: mapDiagnosticPriorityToOrderPriority("STAT"),
+  });
   const criticalLabOrder = await prisma.labOrder.create({
-    data: { encounterId: alertEncounter.id, patientId: alertPatient.id, testName: "Troponin I", category: "biochemistry", priority: "STAT", orderedByStaffId: doctorProfiles[0].id, status: "RESULTED" },
+    data: { encounterId: alertEncounter.id, patientId: alertPatient.id, testName: "Troponin I", category: "biochemistry", priority: "STAT", orderedByStaffId: doctorProfiles[0].id, status: "RESULTED", orderId: criticalLabEnvelope.id },
   });
   await prisma.labResult.create({
     data: { labOrderId: criticalLabOrder.id, value: "2.8", unit: "ng/mL", referenceRange: "<0.04", isCritical: true, releasedByStaffId: labTechProfile.id },
   });
+  const criticalImagingEnvelope = await createOrderEnvelope(prisma, {
+    facilityId: facility.id,
+    encounterId: alertEncounter.id,
+    patientId: alertPatient.id,
+    orderingStaffId: doctorProfiles[0].id,
+    orderType: "IMAGING",
+    priority: mapDiagnosticPriorityToOrderPriority("ROUTINE"),
+  });
   const criticalImagingOrder = await prisma.imagingOrder.create({
-    data: { encounterId: alertEncounter.id, patientId: alertPatient.id, modality: "CT", studyDescription: "CT Abdomen", orderedByStaffId: doctorProfiles[0].id, status: "REPORTED" },
+    data: { encounterId: alertEncounter.id, patientId: alertPatient.id, modality: "CT", studyDescription: "CT Abdomen", orderedByStaffId: doctorProfiles[0].id, status: "REPORTED", orderId: criticalImagingEnvelope.id },
   });
   await prisma.imagingReport.create({
     data: {
@@ -445,6 +575,126 @@ export async function seedHospital(prisma: PrismaClient) {
       isCritical: true, reportedByStaffId: radTechProfile.id,
     },
   });
+
+  // Phase 4 Milestone B (brief §54) — three explicit demo scenarios driving
+  // the REAL service-layer functions (not hand-crafted rows), so seeded
+  // data exercises the exact same code path the live app uses.
+  const medDeptId = departments.get("General Medicine")!.id;
+
+  // Scenario A — routine lab, full happy path through to a verified result.
+  const scenarioAPatient = patients[3];
+  const scenarioAEncounter = await prisma.encounter.create({
+    data: { patientId: scenarioAPatient.id, facilityId: facility.id, departmentId: medDeptId, type: EncounterType.OPD, status: EncounterStatus.INVESTIGATING, chiefComplaint: "Routine electrolyte check", attendingStaffId: doctorProfiles[0].id },
+  });
+  {
+    const envelope = await createOrderEnvelope(prisma, { facilityId: facility.id, encounterId: scenarioAEncounter.id, patientId: scenarioAPatient.id, orderingStaffId: doctorProfiles[0].id, orderType: "LAB", priority: mapDiagnosticPriorityToOrderPriority("ROUTINE") });
+    const order = await prisma.labOrder.create({ data: { encounterId: scenarioAEncounter.id, patientId: scenarioAPatient.id, testName: "Sodium", category: "Biochemistry", orderedByStaffId: doctorProfiles[0].id, orderId: envelope.id, catalogTestId: labCatalog.get("CHEM-NA") } });
+    const specimen = await accessionSpecimen(prisma, { labOrderId: order.id, facilityId: facility.id, patientId: scenarioAPatient.id, encounterId: scenarioAEncounter.id, specimenType: "Blood" });
+    const collected = await collectSpecimen(prisma, specimen.id, labTechProfile.id);
+    const received = await receiveSpecimen(prisma, collected.id, labTechProfile.id);
+    await acceptSpecimen(prisma, received.id, labTechProfile.id);
+    const result = await enterResult(prisma, { labOrderId: order.id, specimenId: specimen.id, catalogTestId: labCatalog.get("CHEM-NA"), resultType: "NUMERIC", value: "138", unit: "mmol/L", numericValue: 138, isCritical: false, releasedByStaffId: labTechProfile.id, patientSex: scenarioAPatient.sex, patientAgeYears: scenarioAPatient.ageYears });
+    await verifyResult(prisma, result.id, labTechProfile.id);
+  }
+
+  // Scenario B — specimen rejected on receipt, recollected, then resulted — original specimen row untouched throughout.
+  const scenarioBPatient = patients[4];
+  const scenarioBEncounter = await prisma.encounter.create({
+    data: { patientId: scenarioBPatient.id, facilityId: facility.id, departmentId: medDeptId, type: EncounterType.OPD, status: EncounterStatus.INVESTIGATING, chiefComplaint: "Anemia workup", attendingStaffId: doctorProfiles[0].id },
+  });
+  {
+    const envelope = await createOrderEnvelope(prisma, { facilityId: facility.id, encounterId: scenarioBEncounter.id, patientId: scenarioBPatient.id, orderingStaffId: doctorProfiles[0].id, orderType: "LAB", priority: mapDiagnosticPriorityToOrderPriority("ROUTINE") });
+    const order = await prisma.labOrder.create({ data: { encounterId: scenarioBEncounter.id, patientId: scenarioBPatient.id, testName: "Hemoglobin", category: "Hematology", orderedByStaffId: doctorProfiles[0].id, orderId: envelope.id, catalogTestId: labCatalog.get("CBC-HB") } });
+    const original = await accessionSpecimen(prisma, { labOrderId: order.id, facilityId: facility.id, patientId: scenarioBPatient.id, encounterId: scenarioBEncounter.id, specimenType: "Blood" });
+    const collected = await collectSpecimen(prisma, original.id, labTechProfile.id);
+    const received = await receiveSpecimen(prisma, collected.id, labTechProfile.id);
+    await rejectSpecimen(prisma, received.id, "HEMOLYZED", labTechProfile.id, "Sample hemolyzed in transit.");
+    const recollected = await recollectSpecimen(prisma, received.id);
+    const recollectedCollected = await collectSpecimen(prisma, recollected.id, labTechProfile.id);
+    const recollectedReceived = await receiveSpecimen(prisma, recollectedCollected.id, labTechProfile.id);
+    await acceptSpecimen(prisma, recollectedReceived.id, labTechProfile.id);
+    await enterResult(prisma, { labOrderId: order.id, specimenId: recollected.id, catalogTestId: labCatalog.get("CBC-HB"), resultType: "NUMERIC", value: "12.5", unit: "g/dL", numericValue: 12.5, isCritical: false, releasedByStaffId: labTechProfile.id, patientSex: scenarioBPatient.sex, patientAgeYears: scenarioBPatient.ageYears });
+  }
+
+  // Scenario C — critical result reaching the alert engine through the new specimen-driven pipeline (distinct from the legacy direct-insert critical fixture above), verified but deliberately left unacknowledged.
+  const scenarioCPatient = patients[5];
+  const scenarioCEncounter = await prisma.encounter.create({
+    data: { patientId: scenarioCPatient.id, facilityId: facility.id, departmentId: departments.get("Emergency")!.id, type: EncounterType.ED, status: EncounterStatus.INVESTIGATING, chiefComplaint: "Chest pain, rule out MI", triageLevel: 2, attendingStaffId: doctorProfiles[0].id },
+  });
+  {
+    const envelope = await createOrderEnvelope(prisma, { facilityId: facility.id, encounterId: scenarioCEncounter.id, patientId: scenarioCPatient.id, orderingStaffId: doctorProfiles[0].id, orderType: "LAB", priority: mapDiagnosticPriorityToOrderPriority("STAT") });
+    const order = await prisma.labOrder.create({ data: { encounterId: scenarioCEncounter.id, patientId: scenarioCPatient.id, testName: "Troponin I", category: "Biochemistry", priority: "STAT", orderedByStaffId: doctorProfiles[0].id, orderId: envelope.id, catalogTestId: labCatalog.get("CHEM-TROP") } });
+    const specimen = await accessionSpecimen(prisma, { labOrderId: order.id, facilityId: facility.id, patientId: scenarioCPatient.id, encounterId: scenarioCEncounter.id, specimenType: "Blood" });
+    const collected = await collectSpecimen(prisma, specimen.id, labTechProfile.id);
+    const received = await receiveSpecimen(prisma, collected.id, labTechProfile.id);
+    await acceptSpecimen(prisma, received.id, labTechProfile.id);
+    const result = await enterResult(prisma, { labOrderId: order.id, specimenId: specimen.id, catalogTestId: labCatalog.get("CHEM-TROP"), resultType: "NUMERIC", value: "0.8", unit: "ng/mL", numericValue: 0.8, isCritical: true, releasedByStaffId: labTechProfile.id, patientSex: scenarioCPatient.sex, patientAgeYears: scenarioCPatient.ageYears });
+    await verifyResult(prisma, result.id, labTechProfile.id); // verified, still isCritical + unacknowledged — alert engine/Command Center must surface it
+  }
+
+  // Phase 4 Milestone C (brief §26) — four explicit radiology demo
+  // scenarios driving the REAL service-layer functions, mirroring the lab
+  // scenario style above.
+
+  // Scenario D — routine study, full happy path through to a verified report.
+  const scenarioDPatient = patients[6];
+  const scenarioDEncounter = await prisma.encounter.create({
+    data: { patientId: scenarioDPatient.id, facilityId: facility.id, departmentId: medDeptId, type: EncounterType.OPD, status: EncounterStatus.INVESTIGATING, chiefComplaint: "Abdominal pain, rule out gallstones", attendingStaffId: doctorProfiles[0].id },
+  });
+  {
+    const envelope = await createOrderEnvelope(prisma, { facilityId: facility.id, encounterId: scenarioDEncounter.id, patientId: scenarioDPatient.id, orderingStaffId: doctorProfiles[0].id, orderType: "IMAGING", priority: mapDiagnosticPriorityToOrderPriority("ROUTINE") });
+    const order = await prisma.imagingOrder.create({ data: { encounterId: scenarioDEncounter.id, patientId: scenarioDPatient.id, modality: "USG", studyDescription: "Abdominal Ultrasound", orderedByStaffId: doctorProfiles[0].id, orderId: envelope.id, catalogStudyId: imagingCatalog.get("USG-ABD") } });
+    const study = await scheduleStudy(prisma, { imagingOrderId: order.id, facilityId: facility.id, patientId: scenarioDPatient.id, encounterId: scenarioDEncounter.id, modality: "USG", resourceId: imagingResources.get("USG"), scheduledAt: new Date(Date.now() + 2 * 3_600_000) });
+    const arrived = await checkInStudy(prisma, study.id);
+    const started = await startStudy(prisma, arrived.id, radTechProfile.id, { preparationCompleted: true });
+    await completeStudy(prisma, started.id);
+    const report = await enterReport(prisma, { imagingOrderId: order.id, studyId: study.id, indication: "Abdominal pain", technique: "Real-time ultrasound of the abdomen.", findings: "Gallbladder unremarkable, no stones. Liver, spleen, kidneys normal.", impression: "Unremarkable abdominal ultrasound.", isCritical: false, reportedByStaffId: radTechProfile.id });
+    await verifyReport(prisma, report.id, doctorProfiles[0].id);
+  }
+
+  // Scenario E — urgent/STAT study with a critical finding, verified but deliberately left unacknowledged (alert engine target).
+  const scenarioEPatient = patients[7];
+  const scenarioEEncounter = await prisma.encounter.create({
+    data: { patientId: scenarioEPatient.id, facilityId: facility.id, departmentId: departments.get("Emergency")!.id, type: EncounterType.ED, status: EncounterStatus.INVESTIGATING, chiefComplaint: "Severe abdominal pain, rigid abdomen", triageLevel: 1, attendingStaffId: doctorProfiles[0].id },
+  });
+  {
+    const envelope = await createOrderEnvelope(prisma, { facilityId: facility.id, encounterId: scenarioEEncounter.id, patientId: scenarioEPatient.id, orderingStaffId: doctorProfiles[0].id, orderType: "IMAGING", priority: mapDiagnosticPriorityToOrderPriority("STAT") });
+    const order = await prisma.imagingOrder.create({ data: { encounterId: scenarioEEncounter.id, patientId: scenarioEPatient.id, modality: "CT", studyDescription: "CT Abdomen with contrast", priority: "STAT", orderedByStaffId: doctorProfiles[0].id, orderId: envelope.id, catalogStudyId: imagingCatalog.get("CT-ABD") } });
+    const study = await scheduleStudy(prisma, { imagingOrderId: order.id, facilityId: facility.id, patientId: scenarioEPatient.id, encounterId: scenarioEEncounter.id, modality: "CT", resourceId: imagingResources.get("CT"), scheduledAt: new Date(Date.now() + 15 * 60_000), contrastRequired: true });
+    const arrived = await checkInStudy(prisma, study.id);
+    const started = await startStudy(prisma, arrived.id, radTechProfile.id, { allergyScreened: true, preparationCompleted: true });
+    await completeStudy(prisma, started.id, { contrastGiven: true });
+    const report = await enterReport(prisma, { imagingOrderId: order.id, studyId: study.id, indication: "Rigid abdomen, suspected perforation", technique: "Contrast-enhanced CT of the abdomen.", findings: "Free air under the diaphragm. Free fluid in the pelvis.", impression: "Findings concerning for hollow viscus perforation — urgent surgical review advised.", isCritical: true, reportedByStaffId: radTechProfile.id });
+    await verifyReport(prisma, report.id, doctorProfiles[0].id); // verified, still isCritical + unacknowledged
+  }
+
+  // Scenario F — scheduled but not yet performed, demonstrating the "scheduled, awaiting arrival" worklist bucket.
+  const scenarioFPatient = patients[8];
+  const scenarioFEncounter = await prisma.encounter.create({
+    data: { patientId: scenarioFPatient.id, facilityId: facility.id, departmentId: medDeptId, type: EncounterType.OPD, status: EncounterStatus.INVESTIGATING, chiefComplaint: "Recurrent headaches", attendingStaffId: doctorProfiles[0].id },
+  });
+  {
+    const envelope = await createOrderEnvelope(prisma, { facilityId: facility.id, encounterId: scenarioFEncounter.id, patientId: scenarioFPatient.id, orderingStaffId: doctorProfiles[0].id, orderType: "IMAGING", priority: mapDiagnosticPriorityToOrderPriority("ROUTINE") });
+    const order = await prisma.imagingOrder.create({ data: { encounterId: scenarioFEncounter.id, patientId: scenarioFPatient.id, modality: "MRI", studyDescription: "MRI Brain", orderedByStaffId: doctorProfiles[0].id, orderId: envelope.id, catalogStudyId: imagingCatalog.get("MRI-BRAIN") } });
+    await scheduleStudy(prisma, { imagingOrderId: order.id, facilityId: facility.id, patientId: scenarioFPatient.id, encounterId: scenarioFEncounter.id, modality: "MRI", resourceId: imagingResources.get("MRI"), scheduledAt: new Date(Date.now() + 2 * 86_400_000) });
+  }
+
+  // Scenario G — amended report, previous verified version preserved.
+  const scenarioGPatient = patients[9];
+  const scenarioGEncounter = await prisma.encounter.create({
+    data: { patientId: scenarioGPatient.id, facilityId: facility.id, departmentId: medDeptId, type: EncounterType.OPD, status: EncounterStatus.INVESTIGATING, chiefComplaint: "Persistent cough", attendingStaffId: doctorProfiles[0].id },
+  });
+  {
+    const envelope = await createOrderEnvelope(prisma, { facilityId: facility.id, encounterId: scenarioGEncounter.id, patientId: scenarioGPatient.id, orderingStaffId: doctorProfiles[0].id, orderType: "IMAGING", priority: mapDiagnosticPriorityToOrderPriority("ROUTINE") });
+    const order = await prisma.imagingOrder.create({ data: { encounterId: scenarioGEncounter.id, patientId: scenarioGPatient.id, modality: "XRAY", studyDescription: "Chest X-Ray", orderedByStaffId: doctorProfiles[0].id, orderId: envelope.id, catalogStudyId: imagingCatalog.get("XR-CHEST") } });
+    const study = await scheduleStudy(prisma, { imagingOrderId: order.id, facilityId: facility.id, patientId: scenarioGPatient.id, encounterId: scenarioGEncounter.id, modality: "XRAY", resourceId: imagingResources.get("XRAY"), scheduledAt: new Date(Date.now() + 3_600_000) });
+    const arrived = await checkInStudy(prisma, study.id);
+    const started = await startStudy(prisma, arrived.id, radTechProfile.id, { preparationCompleted: true });
+    await completeStudy(prisma, started.id);
+    const report = await enterReport(prisma, { imagingOrderId: order.id, studyId: study.id, indication: "Persistent cough", technique: "Single PA chest radiograph.", findings: "No focal consolidation.", impression: "Unremarkable chest X-ray.", isCritical: false, reportedByStaffId: radTechProfile.id });
+    const verified = await verifyReport(prisma, report.id, doctorProfiles[0].id);
+    await amendReport(prisma, verified.id, { findings: "Small nodular opacity noted in the right upper lobe on repeat review, not appreciated on initial read.", impression: "Right upper lobe nodule — recommend follow-up CT chest for further characterization.", reason: "Repeat review by senior radiologist identified a subtle nodule missed on initial read.", amendedByStaffId: doctorProfiles[0].id });
+  }
 
   // A couple of beds explicitly blocked/in-maintenance/cleaning so the alert engine and bed board have real, varied states to show (brief §195).
   const restBeds = beds.filter((b) => !availableWardBeds.slice(0, bedCursor).some((u) => u.id === b.id));

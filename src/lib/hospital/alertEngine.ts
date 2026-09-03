@@ -43,9 +43,11 @@ export async function computeAlerts(facilityId: string): Promise<HospitalAlert[]
     }
   }
 
-  // Unacknowledged critical lab results.
+  // Unacknowledged critical lab results. isCurrent:true so an amended
+  // (superseded) row's stale isCritical/acknowledgedAt state can't keep
+  // alerting forever after the current version supersedes it.
   const criticalLabs = await prisma.labResult.findMany({
-    where: { isCritical: true, acknowledgedAt: null },
+    where: { isCritical: true, acknowledgedAt: null, isCurrent: true },
     include: { labOrder: { include: { encounter: { include: { patient: true, department: true } } } } },
   });
   for (const result of criticalLabs) {
@@ -61,9 +63,12 @@ export async function computeAlerts(facilityId: string): Promise<HospitalAlert[]
     });
   }
 
-  // Unverified critical imaging reports.
+  // Unacknowledged critical imaging findings. Deliberately keyed on
+  // acknowledgedAt (Milestone C) rather than verifiedAt — verification is
+  // report sign-off, acknowledgement is critical-finding clearance; the
+  // original schema conflated these into one verifiedAt field.
   const criticalImaging = await prisma.imagingReport.findMany({
-    where: { isCritical: true, verifiedAt: null },
+    where: { isCritical: true, acknowledgedAt: null, isCurrent: true },
     include: { imagingOrder: { include: { encounter: { include: { patient: true, department: true } } } } },
   });
   for (const report of criticalImaging) {
@@ -72,7 +77,7 @@ export async function computeAlerts(facilityId: string): Promise<HospitalAlert[]
       id: `imaging-critical-${report.id}`,
       severity: "critical",
       department: report.imagingOrder.encounter.department?.name ?? report.imagingOrder.modality,
-      message: `Critical imaging finding unverified for ${report.imagingOrder.encounter.patient.fullName} (${report.imagingOrder.modality}: ${report.impression}).`,
+      message: `Critical imaging finding unacknowledged for ${report.imagingOrder.encounter.patient.fullName} (${report.imagingOrder.modality}: ${report.impression}).`,
       ownerRole: "DOCTOR",
       createdAt: report.reportedAt.toISOString(),
     });

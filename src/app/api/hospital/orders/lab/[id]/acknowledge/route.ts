@@ -10,11 +10,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const body = await req.json().catch(() => null);
     const { session, facilityId } = await requireFacilityStaff("lab:result:acknowledge", body?.facilityId);
 
-    const order = await prisma.labOrder.findUnique({ where: { id }, include: { encounter: true, result: true } });
-    if (!order || order.encounter.facilityId !== facilityId || !order.result) throw new NotFoundError("Lab result not found.");
+    const order = await prisma.labOrder.findUnique({ where: { id }, include: { encounter: true, results: { where: { isCurrent: true } } } });
+    const currentResult = order?.results[0];
+    if (!order || order.encounter.facilityId !== facilityId || !currentResult) throw new NotFoundError("Lab result not found.");
 
     const updated = await prisma.labResult.update({
-      where: { id: order.result.id },
+      where: { id: currentResult.id },
       data: { acknowledgedByStaffId: session.userId, acknowledgedAt: new Date() },
     });
 

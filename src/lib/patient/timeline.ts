@@ -26,7 +26,7 @@ export interface TimelineEntry {
 export async function buildPatientTimeline(patientId: string): Promise<TimelineEntry[]> {
   const patientIds = await resolvePatientIdsForRead(patientId);
 
-  const [encounters, diagnoses, problems, allergies, vitals, notes, medOrders, labOrders, imagingOrders, tasks, referrals, admissions] =
+  const [encounters, diagnoses, problems, allergies, vitals, notes, medOrders, labOrders, imagingOrders, tasks, referrals, admissions, specimens, labResults, imagingStudies, imagingReports] =
     await Promise.all([
       prisma.encounter.findMany({ where: { patientId: { in: patientIds } }, include: { department: true } }),
       prisma.diagnosis.findMany({ where: { patientId: { in: patientIds } }, include: { diagnosedBy: { include: { user: true } } } }),
@@ -35,11 +35,15 @@ export async function buildPatientTimeline(patientId: string): Promise<TimelineE
       prisma.vital.findMany({ where: { encounter: { patientId: { in: patientIds } } } }),
       prisma.clinicalNote.findMany({ where: { encounter: { patientId: { in: patientIds } } }, include: { author: { include: { user: true } } } }),
       prisma.medicationOrder.findMany({ where: { patientId: { in: patientIds } } }),
-      prisma.labOrder.findMany({ where: { patientId: { in: patientIds } }, include: { result: true } }),
-      prisma.imagingOrder.findMany({ where: { patientId: { in: patientIds } }, include: { report: true } }),
+      prisma.labOrder.findMany({ where: { patientId: { in: patientIds } }, include: { results: { where: { isCurrent: true } } } }),
+      prisma.imagingOrder.findMany({ where: { patientId: { in: patientIds } }, include: { reports: { where: { isCurrent: true } } } }),
       prisma.task.findMany({ where: { patientId: { in: patientIds } } }),
       prisma.referral.findMany({ where: { patientId: { in: patientIds } } }),
       prisma.admission.findMany({ where: { encounter: { patientId: { in: patientIds } } }, include: { discharge: true, bed: true } }),
+      prisma.specimen.findMany({ where: { patientId: { in: patientIds } } }),
+      prisma.labResult.findMany({ where: { labOrder: { patientId: { in: patientIds } } } }),
+      prisma.imagingStudy.findMany({ where: { patientId: { in: patientIds } } }),
+      prisma.imagingReport.findMany({ where: { imagingOrder: { patientId: { in: patientIds } } } }),
     ]);
 
   const entries: TimelineEntry[] = [];
@@ -130,24 +134,75 @@ export async function buildPatientTimeline(patientId: string): Promise<TimelineE
     });
   }
   for (const l of labOrders) {
+    const current = l.results[0];
     entries.push({
       id: `lab-${l.id}`,
       timestamp: l.orderedAt.toISOString(),
       type: "Order",
-      summary: `Lab ordered: ${l.testName}${l.result ? ` — result: ${l.result.value} ${l.result.unit ?? ""}` : ""}`,
+      summary: `Lab ordered: ${l.testName}${current ? ` — result: ${current.value} ${current.unit ?? ""}` : ""}`,
       sourceType: "LabOrder",
       sourceId: l.id,
     });
   }
+  for (const s of specimens) {
+    if (s.collectedAt) {
+      entries.push({ id: `specimen-collected-${s.id}`, timestamp: s.collectedAt.toISOString(), type: "Specimen", summary: `Specimen collected — ${s.specimenType} (${s.accessionNumber})`, sourceType: "Specimen", sourceId: s.id });
+    }
+    if (s.acceptedAt) {
+      entries.push({ id: `specimen-accepted-${s.id}`, timestamp: s.acceptedAt.toISOString(), type: "Specimen", summary: `Specimen accepted — ${s.accessionNumber}`, sourceType: "Specimen", sourceId: s.id });
+    }
+    if (s.rejectedAt) {
+      entries.push({ id: `specimen-rejected-${s.id}`, timestamp: s.rejectedAt.toISOString(), type: "Specimen", summary: `Specimen rejected — ${s.accessionNumber} (${s.rejectedReason ?? "unspecified"})`, sourceType: "Specimen", sourceId: s.id });
+    }
+    if (s.recollectionOfSpecimenId) {
+      entries.push({ id: `specimen-recollected-${s.id}`, timestamp: s.createdAt.toISOString(), type: "Specimen", summary: `Specimen recollected — ${s.accessionNumber}`, sourceType: "Specimen", sourceId: s.id });
+    }
+  }
+  for (const r of labResults) {
+    entries.push({ id: `result-entered-${r.id}`, timestamp: r.resultedAt.toISOString(), type: "Result", summary: `Lab result entered${r.isCritical ? " — CRITICAL" : ""}: ${r.value} ${r.unit ?? ""}`, sourceType: "LabResult", sourceId: r.id });
+    if (r.verifiedAt) {
+      entries.push({ id: `result-verified-${r.id}`, timestamp: r.verifiedAt.toISOString(), type: "Result", summary: "Lab result verified", sourceType: "LabResult", sourceId: r.id });
+    }
+    if (r.amendedAt) {
+      entries.push({ id: `result-amended-${r.id}`, timestamp: r.amendedAt.toISOString(), type: "Result", summary: `Lab result amended: ${r.amendedReason ?? ""}`, sourceType: "LabResult", sourceId: r.id });
+    }
+  }
   for (const im of imagingOrders) {
+    const currentReport = im.reports[0];
     entries.push({
       id: `imaging-${im.id}`,
       timestamp: im.orderedAt.toISOString(),
       type: "Order",
-      summary: `${im.modality} ordered: ${im.studyDescription}${im.report ? ` — ${im.report.impression}` : ""}`,
+      summary: `${im.modality} ordered: ${im.studyDescription}${currentReport ? ` — ${currentReport.impression}` : ""}`,
       sourceType: "ImagingOrder",
       sourceId: im.id,
     });
+  }
+  for (const s of imagingStudies) {
+    if (s.scheduledAt) {
+      entries.push({ id: `study-scheduled-${s.id}`, timestamp: s.scheduledAt.toISOString(), type: "Study", summary: `${s.modality} study scheduled — ${s.accessionNumber}`, sourceType: "ImagingStudy", sourceId: s.id });
+    }
+    if (s.arrivedAt) {
+      entries.push({ id: `study-arrived-${s.id}`, timestamp: s.arrivedAt.toISOString(), type: "Study", summary: `Patient arrived for ${s.modality} study`, sourceType: "ImagingStudy", sourceId: s.id });
+    }
+    if (s.startedAt) {
+      entries.push({ id: `study-started-${s.id}`, timestamp: s.startedAt.toISOString(), type: "Study", summary: `${s.modality} study started`, sourceType: "ImagingStudy", sourceId: s.id });
+    }
+    if (s.performedAt) {
+      entries.push({ id: `study-completed-${s.id}`, timestamp: s.performedAt.toISOString(), type: "Study", summary: `${s.modality} study completed`, sourceType: "ImagingStudy", sourceId: s.id });
+    }
+  }
+  for (const r of imagingReports) {
+    entries.push({ id: `imaging-report-entered-${r.id}`, timestamp: r.reportedAt.toISOString(), type: "Result", summary: `Imaging report entered${r.isCritical ? " — CRITICAL" : ""}: ${r.impression}`, sourceType: "ImagingReport", sourceId: r.id });
+    if (r.verifiedAt) {
+      entries.push({ id: `imaging-report-verified-${r.id}`, timestamp: r.verifiedAt.toISOString(), type: "Result", summary: "Imaging report verified", sourceType: "ImagingReport", sourceId: r.id });
+    }
+    if (r.acknowledgedAt) {
+      entries.push({ id: `imaging-report-acknowledged-${r.id}`, timestamp: r.acknowledgedAt.toISOString(), type: "Result", summary: "Critical imaging finding acknowledged", sourceType: "ImagingReport", sourceId: r.id });
+    }
+    if (r.amendedAt) {
+      entries.push({ id: `imaging-report-amended-${r.id}`, timestamp: r.amendedAt.toISOString(), type: "Result", summary: `Imaging report amended: ${r.amendedReason ?? ""}`, sourceType: "ImagingReport", sourceId: r.id });
+    }
   }
   for (const t of tasks) {
     entries.push({

@@ -498,6 +498,16 @@ model Facility {
   vitalThresholds           VitalThreshold[]
   intakeOutputRecords       IntakeOutputRecord[]
   medicationReconciliations MedicationReconciliation[]
+
+  // Phase 4 Milestone B — Laboratory core workflow (brief §6-24).
+  specimens       Specimen[]
+  labTestCatalogs LabTestCatalog[]
+  labPanels       LabPanel[]
+
+  // Phase 4 Milestone C — Radiology core workflow.
+  imagingStudies    ImagingStudy[]
+  imagingCatalogs   ImagingCatalog[]
+  imagingResources  ImagingResource[]
 }
 
 model Department {
@@ -755,6 +765,8 @@ model Patient {
   handoffs                  ClinicalHandoff[]
   nursingAssignments        NursingAssignment[]
   medicationReconciliations MedicationReconciliation[]
+  specimens                 Specimen[]
+  imagingStudies            ImagingStudy[]
 
   @@index([facilityId])
   @@index([mergedIntoId])
@@ -927,6 +939,8 @@ model Encounter {
   nursingAssignments        NursingAssignment[]
   intakeOutputRecords       IntakeOutputRecord[]
   medicationReconciliations MedicationReconciliation[]
+  specimens                 Specimen[]
+  imagingStudies            ImagingStudy[]
 
   @@index([facilityId])
   @@index([episodeOfCareId])
@@ -1143,11 +1157,28 @@ model LabOrder {
   priority         String               @default("ROUTINE") // ROUTINE | URGENT | STAT
   orderedBy        HospitalStaffProfile @relation("LabOrderer", fields: [orderedByStaffId], references: [id])
   orderedByStaffId String
-  status           String               @default("ORDERED") // ORDERED | COLLECTED | IN_PROGRESS | RESULTED | CANCELLED
+  status           LabOrderStatus       @default(ORDERED)
   orderedAt        DateTime             @default(now())
 
-  result LabResult?
-  orders Order[]
+  // Phase 4 — generalized Order envelope link (brief §3), mirrors
+  // MedicationOrder.orderId exactly.
+  order   Order?  @relation(fields: [orderId], references: [id])
+  orderId String? @unique
+
+  // Phase 4 Milestone B (brief §7-11) — optional structured-catalog link.
+  // Nullable so every existing/simple free-text order (testName/category)
+  // keeps working completely unchanged; only orders placed through the new
+  // catalog/panel picker set these.
+  catalogTest   LabTestCatalog? @relation(fields: [catalogTestId], references: [id])
+  catalogTestId String?
+  panel         LabPanel?       @relation(fields: [panelId], references: [id])
+  panelId       String?
+
+  // One specimen per order this milestone (brief §11-15); the FK is not
+  // unique so the schema itself doesn't block a future multi-specimen
+  // panel workflow.
+  specimens Specimen[]
+  results   LabResult[]
 
   @@index([encounterId])
   @@index([status])
@@ -1156,7 +1187,7 @@ model LabOrder {
 model LabResult {
   id                    String                @id @default(cuid())
   labOrder              LabOrder              @relation(fields: [labOrderId], references: [id])
-  labOrderId            String                @unique
+  labOrderId            String
   value                 String
   unit                  String?
   referenceRange        String?
@@ -1166,6 +1197,223 @@ model LabResult {
   resultedAt            DateTime              @default(now())
   acknowledgedByStaffId String?
   acknowledgedAt        DateTime?
+
+  // Phase 4 Milestone B (brief §17-19, §21) — structured result entry +
+  // versioning/amendment. Every field here is nullable/defaulted so all
+  // pre-Milestone-B rows (value as free string, resultType=null,
+  // status=ENTERED, version=1, isCurrent=true) keep working unchanged.
+  specimen      Specimen?       @relation(fields: [specimenId], references: [id])
+  specimenId    String?
+  catalogTest   LabTestCatalog? @relation(fields: [catalogTestId], references: [id])
+  catalogTestId String? // which panel member this row is for; null = simple single-test order
+  resultType    LabResultType?
+  numericValue  Float?
+  abnormalFlag  AbnormalFlag? // computed server-side only when a LabReferenceRange exists — never invented
+
+  status     LabResultStatus @default(ENTERED)
+  verifiedByStaffId String?
+  verifiedAt DateTime?
+
+  // Amendment chain (brief §18) — a verified result is never edited in
+  // place. Amending creates a NEW row (version N+1, isCurrent=true) and
+  // flips this row to isCurrent=false; the original stays byte-for-byte
+  // intact and readable forever.
+  version            Int        @default(1)
+  isCurrent          Boolean    @default(true)
+  previousVersion    LabResult? @relation("LabResultVersion", fields: [previousVersionId], references: [id])
+  previousVersionId  String?    @unique
+  supersededBy       LabResult? @relation("LabResultVersion")
+  amendedReason      String?
+  amendedByStaffId   String?
+  amendedAt          DateTime?
+
+  @@index([labOrderId])
+  @@index([specimenId])
+  @@index([isCurrent])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 4 Milestone B — Laboratory core workflow: catalog, panels,
+// reference ranges, specimen lifecycle. See docs/PHASE_4_DIAGNOSTICS_ARCHITECTURE.md.
+// ─────────────────────────────────────────────────────────────────────────
+
+model LabTestCatalog {
+  id           String        @id @default(cuid())
+  facility     Facility?     @relation(fields: [facilityId], references: [id])
+  facilityId   String? // null = available to every facility
+  code         String        @unique
+  name         String
+  category     String
+  specimenType String
+  resultType   LabResultType
+  unit         String?
+  // Clearly a demo/placeholder figure, not a real hospital price list —
+  // exists only so the auto-charge-on-order hook (brief §44) has an amount.
+  demoPriceInr Float         @default(300)
+  active       Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+
+  panelMemberships LabPanelTest[]
+  referenceRanges  LabReferenceRange[]
+  labOrders        LabOrder[]
+  labResults       LabResult[]
+
+  @@index([facilityId])
+  @@index([category])
+}
+
+model LabPanel {
+  id         String   @id @default(cuid())
+  facility   Facility? @relation(fields: [facilityId], references: [id])
+  facilityId String?
+  code       String   @unique
+  name       String
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  tests     LabPanelTest[]
+  labOrders LabOrder[]
+
+  @@index([facilityId])
+}
+
+model LabPanelTest {
+  id            String         @id @default(cuid())
+  panel         LabPanel       @relation(fields: [panelId], references: [id])
+  panelId       String
+  catalogTest   LabTestCatalog @relation(fields: [catalogTestId], references: [id])
+  catalogTestId String
+
+  @@unique([panelId, catalogTestId])
+}
+
+/**
+ * Configurable reference range for a catalog test (brief §9). Deliberately
+ * NOT hardcoded into any UI component — every consumer must read this
+ * table. `isDemoData`/`sourceNote` exist so seeded ranges are never
+ * mistaken for a clinically-validated reference standard (brief's explicit
+ * clinical-safety instruction).
+ */
+model LabReferenceRange {
+  id            String         @id @default(cuid())
+  catalogTest   LabTestCatalog @relation(fields: [catalogTestId], references: [id])
+  catalogTestId String
+  low           Float?
+  high          Float?
+  criticalLow   Float?
+  criticalHigh  Float?
+  unit          String?
+  sex           String? // "male" | "female" | null = applies to any sex
+  minAgeYears   Int?
+  maxAgeYears   Int?
+  effectiveFrom DateTime  @default(now())
+  effectiveTo   DateTime?
+  isDemoData    Boolean   @default(true)
+  sourceNote    String    @default("Demo/reference configuration — not clinically validated")
+
+  @@index([catalogTestId])
+}
+
+/**
+ * Specimen lifecycle (brief §12-15): ORDERED -> COLLECTION_PENDING ->
+ * COLLECTED -> RECEIVED -> ACCEPTED -> IN_PROCESS -> RESULTED -> ARCHIVED,
+ * with REJECTED/LOST/CANCELLED/RECOLLECTION_REQUIRED exception states.
+ * A rejected specimen is never edited or deleted — recollection creates a
+ * NEW row linked back via recollectionOfSpecimenId, preserving full history.
+ */
+model Specimen {
+  id          String    @id @default(cuid())
+  labOrder    LabOrder  @relation(fields: [labOrderId], references: [id])
+  labOrderId  String
+  facility    Facility  @relation(fields: [facilityId], references: [id])
+  facilityId  String
+  patient     Patient   @relation(fields: [patientId], references: [id])
+  patientId   String
+  encounter   Encounter @relation(fields: [encounterId], references: [id])
+  encounterId String
+
+  accessionNumber String
+  specimenType    String
+  status          SpecimenStatus @default(ORDERED)
+
+  collectedByStaffId String?
+  collectedAt        DateTime?
+  collectionNotes    String?
+
+  receivedByStaffId String?
+  receivedAt        DateTime?
+
+  acceptedByStaffId String?
+  acceptedAt        DateTime?
+
+  rejectedReason    SpecimenRejectionReason?
+  rejectedNotes     String?
+  rejectedByStaffId String?
+  rejectedAt        DateTime?
+
+  // Recollection (brief §15) — points back at the original rejected
+  // specimen; the original row is never modified or removed.
+  recollectionOf           Specimen?  @relation("SpecimenRecollection", fields: [recollectionOfSpecimenId], references: [id])
+  recollectionOfSpecimenId String?
+  recollections             Specimen[] @relation("SpecimenRecollection")
+
+  createdAt DateTime @default(now())
+
+  results LabResult[]
+
+  @@unique([facilityId, accessionNumber])
+  @@index([labOrderId])
+  @@index([status])
+  @@index([patientId])
+}
+
+enum LabResultType {
+  NUMERIC
+  TEXT
+  CATEGORICAL
+  POSITIVE_NEGATIVE
+}
+
+enum AbnormalFlag {
+  NORMAL
+  LOW
+  HIGH
+  CRITICAL_LOW
+  CRITICAL_HIGH
+  ABNORMAL
+}
+
+enum LabResultStatus {
+  ENTERED
+  VERIFIED
+  AMENDED
+  SUPERSEDED
+}
+
+enum SpecimenStatus {
+  ORDERED
+  COLLECTION_PENDING
+  COLLECTED
+  RECEIVED
+  ACCEPTED
+  IN_PROCESS
+  RESULTED
+  ARCHIVED
+  REJECTED
+  LOST
+  CANCELLED
+  RECOLLECTION_REQUIRED
+}
+
+enum SpecimenRejectionReason {
+  INSUFFICIENT_SPECIMEN
+  WRONG_CONTAINER
+  HEMOLYZED
+  MISLABELED
+  LEAKED
+  EXPIRED_TRANSPORT
+  INCORRECT_SPECIMEN_TYPE
+  OTHER
 }
 
 model ImagingOrder {
@@ -1179,28 +1427,203 @@ model ImagingOrder {
   priority         String               @default("ROUTINE")
   orderedBy        HospitalStaffProfile @relation("ImagingOrderer", fields: [orderedByStaffId], references: [id])
   orderedByStaffId String
-  status           String               @default("ORDERED") // ORDERED | SCHEDULED | ACQUIRED | REPORTED | CANCELLED
+  status           ImagingOrderStatus   @default(ORDERED)
   orderedAt        DateTime             @default(now())
 
-  report ImagingReport?
-  orders Order[]
+  // Phase 4 — generalized Order envelope link (brief §3), mirrors
+  // MedicationOrder.orderId exactly.
+  order   Order?  @relation(fields: [orderId], references: [id])
+  orderId String? @unique
+
+  // Phase 4 Milestone C (brief §4) — optional structured-catalog link.
+  // Nullable so every existing/simple free-text order (modality/
+  // studyDescription) keeps working completely unchanged; only orders
+  // placed through the new catalog picker set this.
+  catalogStudy   ImagingCatalog? @relation(fields: [catalogStudyId], references: [id])
+  catalogStudyId String?
+
+  // One study per order this milestone (brief §7); the FK is not unique so
+  // the schema itself doesn't block a future multi-study workflow.
+  studies ImagingStudy[]
+  reports ImagingReport[]
 
   @@index([encounterId])
   @@index([status])
 }
 
+/**
+ * The performed study occurrence (brief §7) — distinct from ImagingOrder,
+ * which only represents the request. Carries the fine-grained
+ * scheduling/execution lifecycle so ImagingOrder.status can stay coarse,
+ * mirroring the Order/MedicationOrder and LabOrder/Specimen precedent.
+ * Internal accessionNumber only this milestone — StudyInstanceUID/PACS
+ * fields are a clean future addition, not implemented now (brief §7/§31).
+ */
+model ImagingStudy {
+  id             String       @id @default(cuid())
+  imagingOrder   ImagingOrder @relation(fields: [imagingOrderId], references: [id])
+  imagingOrderId String
+  facility       Facility     @relation(fields: [facilityId], references: [id])
+  facilityId     String
+  patient        Patient      @relation(fields: [patientId], references: [id])
+  patientId      String
+  encounter      Encounter    @relation(fields: [encounterId], references: [id])
+  encounterId    String
+
+  accessionNumber String
+  modality        String
+  bodyRegion      String?
+  status          ImagingStudyStatus @default(SCHEDULED)
+
+  resource   ImagingResource? @relation(fields: [resourceId], references: [id])
+  resourceId String?
+
+  scheduledAt DateTime
+  arrivedAt   DateTime?
+  startedAt   DateTime?
+  performedAt DateTime?
+
+  performedByStaffId String?
+
+  contrastRequired Boolean @default(false)
+  contrastGiven    Boolean @default(false)
+
+  // Structured safety/prep capture only (brief §10) — never an autonomous
+  // clinical decision, just workflow checkboxes a technologist ticks.
+  pregnancyScreened     Boolean @default(false)
+  allergyScreened       Boolean @default(false)
+  mriSafetyScreened     Boolean @default(false)
+  implantScreened       Boolean @default(false)
+  preparationCompleted  Boolean @default(false)
+
+  cancelledReason String?
+  notes           String?
+
+  createdAt DateTime @default(now())
+
+  reports ImagingReport[]
+
+  @@unique([facilityId, accessionNumber])
+  @@index([imagingOrderId])
+  @@index([status])
+  @@index([resourceId, scheduledAt])
+}
+
+/**
+ * Report lifecycle (brief §11-12): ENTERED -> VERIFIED, with amendment
+ * spawning a new versioned row (never editing a verified report in
+ * place) — mirrors LabResult's Milestone B amendment pattern conceptually,
+ * not by sharing a table. "Verify" (sign-off) is deliberately separate
+ * from "acknowledge" (critical-finding clearance, brief §13) — the
+ * original schema conflated these via a single verifiedAt, which also
+ * left the imaging:report:verify permission dead (no route enforced it).
+ */
 model ImagingReport {
-  id                String               @id @default(cuid())
-  imagingOrder      ImagingOrder         @relation(fields: [imagingOrderId], references: [id])
-  imagingOrderId    String               @unique
-  findings          String
-  impression        String
-  isCritical        Boolean              @default(false)
+  id      String        @id @default(cuid())
+  // Nullable: the 5 pre-Milestone-C ImagingReport rows predate ImagingStudy
+  // entirely (verified against live data before migration — see
+  // docs/PHASE_4_DIAGNOSTICS_ARCHITECTURE.md) and simply have no study to
+  // point at, same reasoning as LabResult.specimenId. Every report created
+  // through the new report-entry route always sets this (enforced at the
+  // application level, requiring the study to be COMPLETED first).
+  study   ImagingStudy? @relation(fields: [studyId], references: [id])
+  studyId String?
+  // Denormalized for query convenience, matching Specimen's pattern —
+  // source of truth for "which study" is studyId above.
+  imagingOrder   ImagingOrder @relation(fields: [imagingOrderId], references: [id])
+  imagingOrderId String
+
+  indication      String?
+  technique       String?
+  findings        String
+  impression      String
+  recommendations String?
+
+  isCritical Boolean @default(false)
+
   reportedBy        HospitalStaffProfile @relation("ImagingReporter", fields: [reportedByStaffId], references: [id])
   reportedByStaffId String
   reportedAt        DateTime             @default(now())
+
+  status     ImagingReportStatus @default(ENTERED)
   verifiedByStaffId String?
   verifiedAt        DateTime?
+
+  acknowledgedByStaffId String?
+  acknowledgedAt        DateTime?
+
+  version           Int             @default(1)
+  isCurrent         Boolean         @default(true)
+  previousVersion   ImagingReport?  @relation("ImagingReportVersion", fields: [previousVersionId], references: [id])
+  previousVersionId String?         @unique
+  supersededBy      ImagingReport?  @relation("ImagingReportVersion")
+  amendedReason     String?
+  amendedByStaffId  String?
+  amendedAt         DateTime?
+
+  @@index([studyId])
+  @@index([imagingOrderId])
+  @@index([isCurrent])
+}
+
+/**
+ * Structured imaging catalog (brief §4) — deliberately minimal, not a
+ * DICOM attribute registry. demoPriceInr exists only so the auto-charge
+ * hook has an amount, same caveat as LabTestCatalog.demoPriceInr.
+ */
+model ImagingCatalog {
+  id                     String   @id @default(cuid())
+  facility               Facility? @relation(fields: [facilityId], references: [id])
+  facilityId             String? // null = available to every facility
+  code                   String   @unique
+  name                   String
+  modality               String
+  bodyRegion             String?
+  description            String?
+  contrastRequired       Boolean  @default(false)
+  prepInstructions       String?
+  defaultDurationMinutes Int      @default(30)
+  demoPriceInr           Float    @default(1500)
+  active                 Boolean  @default(true)
+  createdAt              DateTime @default(now())
+
+  imagingOrders ImagingOrder[]
+
+  @@index([facilityId])
+  @@index([modality])
+}
+
+/**
+ * A bookable modality/room (brief §8) — deliberately minimal, a
+ * schedulable resource, not a DICOM AE-title/device registry.
+ */
+model ImagingResource {
+  id         String   @id @default(cuid())
+  facility   Facility @relation(fields: [facilityId], references: [id])
+  facilityId String
+  name       String
+  modality   String
+  active     Boolean  @default(true)
+
+  studies ImagingStudy[]
+
+  @@index([facilityId])
+}
+
+enum ImagingStudyStatus {
+  SCHEDULED
+  ARRIVED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum ImagingReportStatus {
+  ENTERED
+  VERIFIED
+  AMENDED
+  SUPERSEDED
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1716,10 +2139,11 @@ model SlaPolicy {
 // See docs/PHASE_3_ARCHITECTURE.md §1 for the generalized-Order decision
 // this section resolves: an ADDITIVE polymorphic envelope, never a
 // destructive rewrite of the existing, working MedicationOrder/LabOrder/
-// ImagingOrder/Referral tables (their own detailed status vocabularies are
-// completely unchanged; MedicationOrder's status alone is upgraded from a
-// loose string to a real enum, see §16 in that doc for why that one case
-// is safe and the others are not).
+// ImagingOrder/Referral tables. MedicationOrder's status was upgraded from
+// a loose string to a real enum this phase; LabOrder/ImagingOrder followed
+// in Phase 4 Milestone A (see the enum block near MedicationOrderStatus)
+// once their Order-envelope link was actually wired up — until then their
+// status stayed free-text by deliberate choice.
 // ─────────────────────────────────────────────────────────────────────────
 
 enum OrderType {
@@ -1767,12 +2191,10 @@ model Order {
   createdAt       DateTime             @default(now())
 
   medicationOrder MedicationOrder?
-  labOrder        LabOrder?        @relation(fields: [labOrderId], references: [id])
-  imagingOrder    ImagingOrder?    @relation(fields: [imagingOrderId], references: [id])
+  labOrder        LabOrder?
+  imagingOrder    ImagingOrder?
   referral        Referral?
   nursingTasks    Task[]
-  labOrderId      String?
-  imagingOrderId  String?
 
   @@index([facilityId])
   @@index([encounterId])
@@ -1997,6 +2419,36 @@ enum MedicationAdministrationStatus {
   HELD
   REFUSED
   MISSED
+  CANCELLED
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 4 — Diagnostics OS, Milestone A (Order integration for Lab/Imaging)
+// LabOrder/ImagingOrder status graduates from a free-text String to a real
+// enum here, using only the states already documented against those fields
+// since Phase 0-2 (ORDERED | COLLECTED | IN_PROGRESS | RESULTED | CANCELLED
+// for lab; ORDERED | SCHEDULED | ACQUIRED | REPORTED | CANCELLED for
+// imaging) — safe because every existing row's value is itself a member of
+// the corresponding enum (verified against live data before migration),
+// same justification as MedicationOrderStatus above. LabOrder/ImagingOrder
+// also gain a nullable+unique orderId back-relation to Order, mirroring
+// MedicationOrder.orderId exactly, replacing the previously-unused (0 rows)
+// Order.labOrderId/imagingOrderId forward pointers.
+// ─────────────────────────────────────────────────────────────────────────
+
+enum LabOrderStatus {
+  ORDERED
+  COLLECTED
+  IN_PROGRESS
+  RESULTED
+  CANCELLED
+}
+
+enum ImagingOrderStatus {
+  ORDERED
+  SCHEDULED
+  ACQUIRED
+  REPORTED
   CANCELLED
 }
 

@@ -82,12 +82,13 @@ export function DoctorWorkspace({ staffId }: { staffId?: string }) {
       <p className="mt-1 text-[13px] text-text-secondary">{encounters.length} active encounters across the facility.</p>
 
       {dashboard && (
-        <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-8">
+        <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-9">
           {[
             ["Admitted", dashboard.admittedPatients],
             ["Pending labs", dashboard.pendingResults.lab],
             ["Pending imaging", dashboard.pendingResults.imaging],
-            ["Critical results", dashboard.criticalResults.lab + dashboard.criticalResults.imaging],
+            ["Critical labs", dashboard.criticalResults.lab],
+            ["Critical imaging", dashboard.criticalResults.imaging],
             ["Unsigned notes", dashboard.unsignedNotes],
             ["Meds needing attention", dashboard.medsPendingAttention],
             ["Consults", dashboard.consultRequests],

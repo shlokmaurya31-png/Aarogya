@@ -41,8 +41,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         include: { orderedBy: { include: { user: true } }, administrations: true, safetyWarnings: true, verifications: { orderBy: { createdAt: "desc" }, take: 1 }, dispensingRecords: true },
         orderBy: { orderedAt: "desc" },
       }),
-      prisma.labOrder.findMany({ where: { encounterId: { in: encounterIds } }, include: { result: true }, orderBy: { orderedAt: "desc" } }),
-      prisma.imagingOrder.findMany({ where: { encounterId: { in: encounterIds } }, include: { report: true }, orderBy: { orderedAt: "desc" } }),
+      prisma.labOrder.findMany({
+        where: { encounterId: { in: encounterIds } },
+        include: { results: { where: { isCurrent: true } }, specimens: { orderBy: { createdAt: "desc" }, take: 1 } },
+        orderBy: { orderedAt: "desc" },
+      }),
+      prisma.imagingOrder.findMany({
+        where: { encounterId: { in: encounterIds } },
+        include: { reports: { where: { isCurrent: true } }, studies: { orderBy: { createdAt: "desc" }, take: 1 } },
+        orderBy: { orderedAt: "desc" },
+      }),
       prisma.diagnosis.findMany({ where: { encounterId: { in: encounterIds } }, orderBy: { createdAt: "desc" } }),
       prisma.carePlan.findMany({ where: { patientId: id }, include: { interventions: true }, orderBy: { createdAt: "desc" } }),
       prisma.clinicalHandoff.findMany({ where: { patientId: id }, include: { fromStaff: { include: { user: true } }, toStaff: { include: { user: true } } }, orderBy: { createdAt: "desc" }, take: 10 }),

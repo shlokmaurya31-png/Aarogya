@@ -106,6 +106,30 @@ export const PERMISSIONS = [
   "medication:dispense",
   "medication:discontinue",
   "io:record",
+
+  // Phase 4 Milestone B — Laboratory core workflow (specimen lifecycle +
+  // result verification/amendment). "lab:result:enter"/"acknowledge" and
+  // "clinical:order:lab" already existed and are reused unchanged.
+  "lab:specimen:collect",
+  "lab:specimen:receive",
+  "lab:specimen:accept",
+  "lab:specimen:reject",
+  "lab:result:verify",
+  "lab:result:amend",
+  "lab:catalog:manage",
+
+  // Phase 4 Milestone C — Radiology core workflow (study scheduling/
+  // execution + report verification/acknowledgement/amendment).
+  // "imaging:report:enter" and "clinical:order:imaging" already existed
+  // and are reused unchanged. "imaging:report:verify" already existed too
+  // but had zero enforcement point until this milestone's verify route —
+  // see below, not re-declared here.
+  "radiology:schedule",
+  "radiology:study:execute",
+  "imaging:report:acknowledge",
+  "imaging:report:amend",
+  "radiology:catalog:manage",
+  "radiology:resource:manage",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -145,6 +169,8 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "admission:discharge:finalize",
     "lab:result:acknowledge",
     "imaging:report:verify",
+    "imaging:report:acknowledge",
+    "imaging:report:amend",
     "billing:view",
     "diagnosis:manage",
     "problem:manage",
@@ -190,6 +216,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "handoff:manage",
     "nursing:assignment:manage",
     "io:record",
+    "lab:specimen:collect",
   ],
   LAB_TECHNICIAN: [
     "hospital:command-center:view",
@@ -197,12 +224,20 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "encounter:read",
     "lab:result:enter",
     "lab:result:release",
+    "lab:specimen:collect",
+    "lab:specimen:receive",
+    "lab:specimen:accept",
+    "lab:specimen:reject",
+    "lab:result:verify",
+    "lab:result:amend",
   ],
   RADIOLOGY_TECH: [
     "hospital:command-center:view",
     "patient:read",
     "encounter:read",
     "imaging:report:enter",
+    "radiology:schedule",
+    "radiology:study:execute",
   ],
   PHARMACIST: [
     "hospital:command-center:view",
@@ -246,6 +281,9 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "discharge:approve",
     "bed:reserve",
     "nursing:assignment:manage",
+    "lab:catalog:manage",
+    "radiology:catalog:manage",
+    "radiology:resource:manage",
   ],
   FRONT_DESK: [
     "hospital:command-center:view",

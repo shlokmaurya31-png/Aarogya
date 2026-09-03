@@ -52,8 +52,8 @@ export async function getCommandCenterSnapshot(facilityId: string) {
       where: { facilityId, status: { notIn: ["DISCHARGED", "CLOSED"] } },
       select: { status: true, type: true },
     }),
-    prisma.labResult.count({ where: { isCritical: true, acknowledgedAt: null, labOrder: { encounter: { facilityId } } } }),
-    prisma.imagingReport.count({ where: { isCritical: true, verifiedAt: null, imagingOrder: { encounter: { facilityId } } } }),
+    prisma.labResult.count({ where: { isCritical: true, acknowledgedAt: null, isCurrent: true, labOrder: { encounter: { facilityId } } } }),
+    prisma.imagingReport.count({ where: { isCritical: true, acknowledgedAt: null, isCurrent: true, imagingOrder: { encounter: { facilityId } } } }),
     prisma.discharge.count({ where: { dischargedAt: null, admission: { encounter: { facilityId } } } }),
     prisma.bed.count({ where: { facilityId } }),
     prisma.bed.count({ where: { facilityId, status: "AVAILABLE" } }),
@@ -151,6 +151,13 @@ async function getClinicalOpsSnapshot(facilityId: string) {
     pendingVerification,
     urgentMedsPending,
     heldOrders,
+    specimensPendingCollection,
+    resultsPendingVerification,
+    specimensRejectedAwaitingRecollection,
+    studiesPendingScheduling,
+    studiesScheduledAwaitingArrival,
+    reportsPendingVerification,
+    criticalFindingsAwaitingAcknowledgement,
   ] = await Promise.all([
     prisma.queueEntry.count({ where: { facilityId, queueType: { in: ["OPD_DOCTOR", "ED"] }, status: "WAITING" } }),
     prisma.queueEntry.count({ where: { facilityId, queueType: { in: ["OPD_DOCTOR", "ED"] }, status: "IN_SERVICE" } }),
@@ -166,11 +173,22 @@ async function getClinicalOpsSnapshot(facilityId: string) {
     prisma.medicationOrder.count({ where: { encounter: { facilityId }, status: "PHARMACY_REVIEW" } }),
     prisma.medicationOrder.count({ where: { encounter: { facilityId }, status: "PHARMACY_REVIEW", order: { priority: { in: ["URGENT", "EMERGENCY"] } } } }),
     prisma.medicationOrder.count({ where: { encounter: { facilityId }, status: "HELD" } }),
+    prisma.specimen.count({ where: { facilityId, status: "COLLECTION_PENDING" } }),
+    prisma.labResult.count({ where: { status: "ENTERED", isCurrent: true, labOrder: { encounter: { facilityId } } } }),
+    prisma.specimen.count({ where: { facilityId, status: "REJECTED", recollections: { none: {} } } }),
+    prisma.imagingOrder.count({ where: { encounter: { facilityId }, status: "ORDERED" } }),
+    prisma.imagingStudy.count({ where: { facilityId, status: "SCHEDULED" } }),
+    prisma.imagingReport.count({ where: { status: "ENTERED", isCurrent: true, imagingOrder: { encounter: { facilityId } } } }),
+    prisma.imagingReport.count({ where: { isCritical: true, acknowledgedAt: null, isCurrent: true, imagingOrder: { encounter: { facilityId } } } }),
   ]);
 
   return {
     doctor: { waitingPatients: doctorWaiting, activeConsultations, pendingLabResults, pendingImagingResults, unsignedNotes, pendingConsults },
     nursing: { overdueTasks: overdueNursingTasks, medicationsDue: medsDue, missedAdministrations, unassignedAdmittedPatients, escalationAlerts: escalationHandoffs },
     pharmacy: { pendingVerification, urgentPending: urgentMedsPending, heldOrClarification: heldOrders },
+    // Phase 4 Milestone B (brief §39) — specimen/result operational counts, live aggregates.
+    lab: { specimensPendingCollection, resultsPendingVerification, specimensRejectedAwaitingRecollection },
+    // Phase 4 Milestone C (brief §17) — scheduling/reporting operational counts, live aggregates.
+    radiology: { studiesPendingScheduling, studiesScheduledAwaitingArrival, reportsPendingVerification, criticalFindingsAwaitingAcknowledgement },
   };
 }

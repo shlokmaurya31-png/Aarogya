@@ -22,8 +22,16 @@ interface ChartData {
     id: string; drugName: string; dose: string; route: string; frequency: string; status: string; orderedAt: string; isControlled: boolean;
     safetyWarnings: { id: string; severity: string; message: string; acknowledgedAt: string | null }[];
   }[];
-  labOrders: { id: string; testName: string; status: string; orderedAt: string; result: { value: string; unit: string | null; isCritical: boolean; acknowledgedAt: string | null } | null }[];
-  imagingOrders: { id: string; modality: string; studyDescription: string; status: string; report: { impression: string; isCritical: boolean; verifiedAt: string | null } | null }[];
+  labOrders: {
+    id: string; testName: string; status: string; orderedAt: string;
+    results: { id: string; value: string; unit: string | null; isCritical: boolean; acknowledgedAt: string | null; version: number; abnormalFlag: string | null; status: string }[];
+    specimens: { id: string; accessionNumber: string; status: string }[];
+  }[];
+  imagingOrders: {
+    id: string; modality: string; studyDescription: string; status: string;
+    reports: { id: string; impression: string; isCritical: boolean; verifiedAt: string | null; acknowledgedAt: string | null; version: number }[];
+    studies: { id: string; accessionNumber: string; status: string }[];
+  }[];
   carePlans: { id: string; problem: string; goal: string; status: string; interventions: { id: string; description: string; responsibleRole: string; status: string }[] }[];
 }
 
@@ -126,10 +134,10 @@ export function PatientChart({ patientId }: { patientId: string }) {
     push("Critical result acknowledged.", "emerald"); load();
   }
 
-  async function verifyImaging(imagingOrderId: string) {
-    const res = await fetch(`/api/hospital/orders/imaging/${imagingOrderId}/verify`, { method: "POST" });
+  async function acknowledgeImaging(imagingOrderId: string, reportId: string) {
+    const res = await fetch(`/api/hospital/orders/imaging/${imagingOrderId}/report/${reportId}/acknowledge`, { method: "POST" });
     if (!res.ok) { push((await res.json()).error ?? "Failed.", "red"); return; }
-    push("Critical finding verified.", "emerald"); load();
+    push("Critical finding acknowledged.", "emerald"); load();
   }
 
   async function addDiagnosis() {
@@ -437,17 +445,32 @@ export function PatientChart({ patientId }: { patientId: string }) {
           <Card className="rounded-[20px]">
             <CardLabel>Lab results</CardLabel>
             <div className="mt-2 space-y-2">
-              {data.labOrders.map((l) => (
-                <div key={l.id} className="text-[11.5px]">
-                  <div className="flex items-center justify-between">
-                    <span>{l.testName}</span>
-                    {l.result ? <span className="tabular-nums">{l.result.value} {l.result.unit}</span> : <StatusPill label={l.status} tone="neutral" className="rounded-md" />}
+              {data.labOrders.map((l) => {
+                const result = l.results[0];
+                const specimen = l.specimens[0];
+                return (
+                  <div key={l.id} className="text-[11.5px]">
+                    <div className="flex items-center justify-between">
+                      <span>{l.testName}</span>
+                      {result ? (
+                        <span className="tabular-nums flex items-center gap-1">
+                          {result.value} {result.unit}
+                          {result.abnormalFlag && result.abnormalFlag !== "NORMAL" && (
+                            <StatusPill label={result.abnormalFlag.replace("_", " ")} tone={result.abnormalFlag.includes("CRITICAL") ? "red" : "amber"} className="rounded-md" />
+                          )}
+                          {result.version > 1 && <StatusPill label={`amended v${result.version}`} tone="cyan" className="rounded-md" />}
+                        </span>
+                      ) : (
+                        <StatusPill label={specimen ? specimen.status.replace("_", " ") : l.status} tone="neutral" className="rounded-md" />
+                      )}
+                    </div>
+                    {specimen && !result && <p className="text-[10px] text-text-tertiary">Specimen {specimen.accessionNumber}</p>}
+                    {result?.isCritical && !result.acknowledgedAt && (
+                      <button onClick={() => acknowledgeLab(l.id)} className="mt-1 rounded-md bg-red/10 px-2 py-1 text-[10.5px] font-medium text-red hover:bg-red/20">Acknowledge critical result</button>
+                    )}
                   </div>
-                  {l.result?.isCritical && !l.result.acknowledgedAt && (
-                    <button onClick={() => acknowledgeLab(l.id)} className="mt-1 rounded-md bg-red/10 px-2 py-1 text-[10.5px] font-medium text-red hover:bg-red/20">Acknowledge critical result</button>
-                  )}
-                </div>
-              ))}
+                );
+              })}
               {data.labOrders.length === 0 && <p className="text-[11.5px] text-text-tertiary">No lab orders.</p>}
             </div>
           </Card>
@@ -455,15 +478,23 @@ export function PatientChart({ patientId }: { patientId: string }) {
           <Card className="rounded-[20px]">
             <CardLabel>Imaging</CardLabel>
             <div className="mt-2 space-y-2">
-              {data.imagingOrders.map((im) => (
-                <div key={im.id} className="text-[11.5px]">
-                  <p>{im.modality} — {im.studyDescription}</p>
-                  {im.report && <p className="text-text-tertiary">{im.report.impression}</p>}
-                  {im.report?.isCritical && !im.report.verifiedAt && (
-                    <button onClick={() => verifyImaging(im.id)} className="mt-1 rounded-md bg-red/10 px-2 py-1 text-[10.5px] font-medium text-red hover:bg-red/20">Verify critical finding</button>
-                  )}
-                </div>
-              ))}
+              {data.imagingOrders.map((im) => {
+                const report = im.reports[0];
+                const study = im.studies[0];
+                return (
+                  <div key={im.id} className="text-[11.5px]">
+                    <div className="flex items-center justify-between">
+                      <span>{im.modality} — {im.studyDescription}</span>
+                      {!report && <StatusPill label={study ? study.status.replace("_", " ") : im.status} tone="neutral" className="rounded-md" />}
+                      {report?.version && report.version > 1 && <StatusPill label={`amended v${report.version}`} tone="cyan" className="rounded-md" />}
+                    </div>
+                    {report && <p className="text-text-tertiary">{report.impression}</p>}
+                    {report?.isCritical && !report.acknowledgedAt && (
+                      <button onClick={() => acknowledgeImaging(im.id, report.id)} className="mt-1 rounded-md bg-red/10 px-2 py-1 text-[10.5px] font-medium text-red hover:bg-red/20">Acknowledge critical finding</button>
+                    )}
+                  </div>
+                );
+              })}
               {data.imagingOrders.length === 0 && <p className="text-[11.5px] text-text-tertiary">No imaging orders.</p>}
             </div>
           </Card>

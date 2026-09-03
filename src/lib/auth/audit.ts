@@ -108,7 +108,31 @@ export type AuditEventType =
   | "hospital.carePlan.closed"
   | "hospital.consult.accepted"
   | "hospital.consult.completed"
-  | "hospital.vital.abnormalDetected";
+  | "hospital.vital.abnormalDetected"
+  // Phase 4 Milestone B — Laboratory core workflow (specimen lifecycle +
+  // structured result entry/verification/amendment). Recorded through the
+  // same synchronous AuditEvent mechanism as every prior phase.
+  | "hospital.lab.specimenCollected"
+  | "hospital.lab.specimenReceived"
+  | "hospital.lab.specimenAccepted"
+  | "hospital.lab.specimenRejected"
+  | "hospital.lab.specimenRecollected"
+  | "hospital.lab.resultEntered"
+  | "hospital.lab.resultVerified"
+  | "hospital.lab.resultAmended"
+  // Phase 4 Milestone C — Radiology core workflow (study scheduling/
+  // execution + structured report entry/verification/acknowledgement/
+  // amendment). Recorded through the same synchronous AuditEvent
+  // mechanism as every prior phase.
+  | "hospital.imaging.scheduled"
+  | "hospital.imaging.rescheduled"
+  | "hospital.imaging.studyCancelled"
+  | "hospital.imaging.studyCheckedIn"
+  | "hospital.imaging.studyStarted"
+  | "hospital.imaging.studyCompleted"
+  | "hospital.imaging.reportVerified"
+  | "hospital.imaging.criticalFindingAcknowledged"
+  | "hospital.imaging.reportAmended";
 
 export async function recordAuditEvent(
   type: AuditEventType,

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { createCharge } from "@/lib/hospital/billing";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ encounterId: string }> }) {
   return withApiErrors(async () => {
@@ -31,19 +32,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ enc
     const { description, category, amount } = body ?? {};
     if (!description || !category || typeof amount !== "number") throw new BadRequestError("description, category and numeric amount are required.");
 
-    const result = await prisma.$transaction(async (tx) => {
-      const charge = await tx.charge.create({
-        data: { encounterId, patientId: encounter.patientId, facilityId, description, category, amount, sourceType: body?.sourceType, sourceId: body?.sourceId },
-      });
-
-      const bill = await tx.bill.upsert({
-        where: { encounterId },
-        update: { totalAmount: { increment: amount } },
-        create: { encounterId, patientId: encounter.patientId, facilityId, totalAmount: amount },
-      });
-
-      return { charge, bill };
-    });
+    const result = await prisma.$transaction(async (tx) =>
+      createCharge(tx, { encounterId, patientId: encounter.patientId, facilityId, description, category, amount, sourceType: body?.sourceType, sourceId: body?.sourceId })
+    );
 
     await recordAuditEvent("hospital.billing.chargeCreated", session.userId, { encounterId, amount });
     return result;
