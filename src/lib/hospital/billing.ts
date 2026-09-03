@@ -45,10 +45,13 @@ export async function createCharge(
 /**
  * Idempotent variant for automatic (non-user-initiated) charge triggers —
  * e.g. placing a lab order. Guards against double-charging the same source
- * event (no DB-level unique constraint exists on sourceType+sourceId, so
- * this check is the only protection; the manual billing route deliberately
+ * event; the findFirst below is a fast-path clean rejection, now backed by
+ * a real DB-level `@@unique([sourceType, sourceId])` constraint (Milestone
+ * E hardening, see prisma/migrations) so a genuine race between two
+ * concurrent calls for the same sourceId can't both succeed even on
+ * Postgres's default isolation level. The manual billing route deliberately
  * does NOT use this variant, since a human re-entering an identical charge
- * on purpose is a valid, expected action there).
+ * on purpose is a valid, expected action there.
  */
 export async function createChargeIfNotExists(
   tx: Tx,
@@ -56,6 +59,18 @@ export async function createChargeIfNotExists(
 ) {
   const existing = await tx.charge.findFirst({ where: { sourceType: input.sourceType, sourceId: input.sourceId } });
   if (existing) return { charge: existing, bill: null, alreadyExisted: true as const };
-  const result = await createCharge(tx, input);
-  return { ...result, alreadyExisted: false as const };
+  try {
+    const result = await createCharge(tx, input);
+    return { ...result, alreadyExisted: false as const };
+  } catch (err) {
+    // A genuine race lost to the DB-level unique constraint (see the doc
+    // comment above) — fall back to the row the winner just created rather
+    // than surfacing a raw 500 for what is, from the caller's perspective,
+    // a successful idempotent charge.
+    if (err && typeof err === "object" && "code" in err && (err as { code?: string }).code === "P2002") {
+      const winner = await tx.charge.findFirstOrThrow({ where: { sourceType: input.sourceType, sourceId: input.sourceId } });
+      return { charge: winner, bill: null, alreadyExisted: true as const };
+    }
+    throw err;
+  }
 }

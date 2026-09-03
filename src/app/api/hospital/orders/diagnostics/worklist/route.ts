@@ -55,7 +55,8 @@ interface CriticalItem {
 export async function GET(req: NextRequest) {
   return withApiErrors(async () => {
     const { searchParams } = new URL(req.url);
-    const { facilityId } = await requireFacilityStaff("patient:read", searchParams.get("facilityId") ?? undefined);
+    // Milestone E hardening — see the identical rationale in orders/lab/route.ts.
+    const { facilityId } = await requireFacilityStaff("clinical:chart:read", searchParams.get("facilityId") ?? undefined);
     const typeFilter = (searchParams.get("type") ?? "ALL").toUpperCase();
     const priorityFilter = searchParams.get("priority");
     const statusFilter = searchParams.get("status");

@@ -9,10 +9,12 @@ import { mapDiagnosticPriorityToOrderPriority } from "@/lib/hospital/diagnostics
 import { accessionSpecimen } from "@/lib/hospital/specimenLifecycle";
 import { createChargeIfNotExists } from "@/lib/hospital/billing";
 
+const VALID_ORDER_PRIORITIES = ["ROUTINE", "URGENT", "STAT"];
+
 export async function GET(req: NextRequest) {
   return withApiErrors(async () => {
     const { searchParams } = new URL(req.url);
-    const { facilityId } = await requireFacilityStaff("patient:read", searchParams.get("facilityId") ?? undefined);
+    const { facilityId } = await requireFacilityStaff("clinical:chart:read", searchParams.get("facilityId") ?? undefined);
     const status = searchParams.get("status") as LabOrderStatus | null;
 
     const orders = await prisma.labOrder.findMany({
@@ -41,9 +43,21 @@ export async function POST(req: NextRequest) {
 
     const { encounterId, patientId, testName, category, priority, catalogTestId, panelId } = body ?? {};
     if (!encounterId || !patientId || !testName || !category) throw new BadRequestError("encounterId, patientId, testName and category are required.");
+    if (typeof testName !== "string" || testName.length > 500) throw new BadRequestError("testName must be a string of at most 500 characters.");
+    if (typeof category !== "string" || category.length > 200) throw new BadRequestError("category must be a string of at most 200 characters.");
+    if (priority !== undefined && priority !== null && !VALID_ORDER_PRIORITIES.includes(priority)) {
+      throw new BadRequestError(`priority must be one of ${VALID_ORDER_PRIORITIES.join(", ")}.`);
+    }
 
     const encounter = await prisma.encounter.findUnique({ where: { id: encounterId } });
     if (!encounter || encounter.facilityId !== facilityId) throw new NotFoundError("Encounter not found.");
+    // Milestone E hardening — patientId was previously trusted verbatim from
+    // the client with no cross-check against the encounter it's supposedly
+    // for; a mismatched pair created a LabOrder/Specimen filed under one
+    // patient's encounter but attributed to a different patientId, which
+    // src/lib/patient/timeline.ts and summary.ts (which read by patientId,
+    // not by encounter ownership) would then surface as wrong-patient PHI.
+    if (encounter.patientId !== patientId) throw new BadRequestError("patientId does not match the encounter's patient.");
 
     let catalogTest = null;
     if (catalogTestId) {
@@ -51,7 +65,29 @@ export async function POST(req: NextRequest) {
       if (!catalogTest || (catalogTest.facilityId && catalogTest.facilityId !== facilityId)) throw new NotFoundError("Catalog test not found.");
     }
 
-    const { order, specimen } = await prisma.$transaction(async (tx) => {
+    const { order, specimen, duplicate, charge, task } = await prisma.$transaction(async (tx) => {
+      // Milestone E hardening — createChargeIfNotExists's idempotency check
+      // compares against sourceId: createdOrder.id, an ID generated fresh
+      // by THIS request, so it could never catch an actual duplicate
+      // submission (double-click, client retry after a timeout). This
+      // dedupe window catches the realistic case (an honest resubmit of the
+      // exact same order within seconds) and returns the existing order
+      // instead of erroring, so a network retry is harmless.
+      const recentDuplicate = await tx.labOrder.findFirst({
+        where: {
+          encounterId,
+          testName,
+          orderedByStaffId: staff.id,
+          orderedAt: { gte: new Date(Date.now() - 15_000) },
+        },
+        include: { encounter: true, patient: true },
+        orderBy: { orderedAt: "desc" },
+      });
+      if (recentDuplicate) {
+        const existingSpecimen = await tx.specimen.findFirst({ where: { labOrderId: recentDuplicate.id }, orderBy: { createdAt: "desc" } });
+        return { order: recentDuplicate, specimen: existingSpecimen, duplicate: true as const, charge: null, task: null };
+      }
+
       const envelope = await createOrderEnvelope(tx, {
         facilityId,
         encounterId,
@@ -82,8 +118,9 @@ export async function POST(req: NextRequest) {
       });
 
       // First automatic charge hook in the codebase (brief §44) — idempotent by
-      // (sourceType, sourceId) since no DB-level uniqueness enforces that.
-      await createChargeIfNotExists(tx, {
+      // (sourceType, sourceId), now also backed by a DB-level unique
+      // constraint (Milestone E hardening, see prisma/migrations).
+      const chargeResult = await createChargeIfNotExists(tx, {
         encounterId,
         patientId,
         facilityId,
@@ -96,7 +133,7 @@ export async function POST(req: NextRequest) {
 
       // Nursing/collection task (brief §41) — reuses the existing generic
       // Task engine via Order.orderId, no new task table.
-      await tx.task.create({
+      const task = await tx.task.create({
         data: {
           facilityId,
           title: `Collect specimen: ${testName}`,
@@ -110,14 +147,26 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      return { order: createdOrder, specimen: createdSpecimen };
+      return { order: createdOrder, specimen: createdSpecimen, duplicate: false as const, charge: chargeResult.charge, task };
     });
 
-    if (encounter.status === "IN_CONSULTATION" || encounter.status === "TRIAGED") {
+    if (!duplicate && (encounter.status === "IN_CONSULTATION" || encounter.status === "TRIAGED")) {
       await prisma.encounter.update({ where: { id: encounterId }, data: { status: "INVESTIGATING" } });
     }
 
-    await recordAuditEvent("hospital.lab.ordered", session.userId, { orderId: order.id, specimenId: specimen.id, accessionNumber: specimen.accessionNumber });
+    if (duplicate) {
+      // A genuine retry/double-click of the same order — the client gets
+      // the original order back, no new audit noise, no duplicate charge/task.
+      return { order, specimen };
+    }
+
+    await recordAuditEvent("hospital.lab.ordered", session.userId, { orderId: order.id, specimenId: specimen?.id, accessionNumber: specimen?.accessionNumber });
+    // Milestone E hardening — closes an audit-coverage gap: automatic task
+    // and charge creation previously left no dedicated audit trace (only
+    // discoverable indirectly via hospital.lab.ordered's detail, which
+    // didn't even include the task/charge IDs).
+    if (task) await recordAuditEvent("hospital.task.created", session.userId, { taskId: task.id, type: "SPECIMEN_COLLECTION", orderId: order.id });
+    if (charge) await recordAuditEvent("hospital.billing.chargeCreated", session.userId, { chargeId: charge.id, amount: charge.amount, sourceType: "LabOrder", sourceId: order.id });
     return { order, specimen };
   });
 }

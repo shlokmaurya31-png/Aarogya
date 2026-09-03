@@ -15,6 +15,17 @@ export class ReportNotAmendableError extends BadRequestError {
   }
 }
 
+/**
+ * Milestone E hardening — a DB-level partial unique index
+ * (`ImagingReport_current_per_order`, see prisma/migrations) now backstops
+ * the "at most one isCurrent report per order" invariant. Two concurrent
+ * enterReport calls can no longer both create a current row; the loser
+ * hits this P2002 and gets a clean rejection instead of a raw 500.
+ */
+function isDuplicateCurrentReportError(err: unknown): boolean {
+  return Boolean(err && typeof err === "object" && "code" in err && (err as { code?: string }).code === "P2002");
+}
+
 export interface EnterReportInput {
   imagingOrderId: string;
   studyId?: string | null;
@@ -35,20 +46,26 @@ export interface EnterReportInput {
  * force radiology into LabResult semantics").
  */
 export async function enterReport(tx: Tx, input: EnterReportInput) {
-  const report = await tx.imagingReport.create({
-    data: {
-      imagingOrderId: input.imagingOrderId,
-      studyId: input.studyId ?? undefined,
-      indication: input.indication ?? undefined,
-      technique: input.technique ?? undefined,
-      findings: input.findings,
-      impression: input.impression,
-      recommendations: input.recommendations ?? undefined,
-      isCritical: input.isCritical,
-      reportedByStaffId: input.reportedByStaffId,
-      status: "ENTERED",
-    },
-  });
+  let report;
+  try {
+    report = await tx.imagingReport.create({
+      data: {
+        imagingOrderId: input.imagingOrderId,
+        studyId: input.studyId ?? undefined,
+        indication: input.indication ?? undefined,
+        technique: input.technique ?? undefined,
+        findings: input.findings,
+        impression: input.impression,
+        recommendations: input.recommendations ?? undefined,
+        isCritical: input.isCritical,
+        reportedByStaffId: input.reportedByStaffId,
+        status: "ENTERED",
+      },
+    });
+  } catch (err) {
+    if (isDuplicateCurrentReportError(err)) throw new ReportConcurrencyError("entered");
+    throw err;
+  }
 
   await tx.imagingOrder.updateMany({ where: { id: input.imagingOrderId, status: "ACQUIRED" }, data: { status: "REPORTED" } });
   return report;
@@ -98,26 +115,32 @@ export async function amendReport(
   });
   if (supersede.count !== 1) throw new ReportConcurrencyError("amended");
 
-  const amended = await tx.imagingReport.create({
-    data: {
-      studyId: original.studyId,
-      imagingOrderId: original.imagingOrderId,
-      indication: original.indication,
-      technique: original.technique,
-      findings: input.findings,
-      impression: input.impression,
-      recommendations: input.recommendations ?? original.recommendations,
-      isCritical: input.isCritical ?? original.isCritical,
-      reportedByStaffId: original.reportedByStaffId,
-      status: "AMENDED",
-      version: original.version + 1,
-      isCurrent: true,
-      previousVersionId: original.id,
-      amendedReason: input.reason,
-      amendedByStaffId: input.amendedByStaffId,
-      amendedAt: new Date(),
-    },
-  });
+  let amended;
+  try {
+    amended = await tx.imagingReport.create({
+      data: {
+        studyId: original.studyId,
+        imagingOrderId: original.imagingOrderId,
+        indication: original.indication,
+        technique: original.technique,
+        findings: input.findings,
+        impression: input.impression,
+        recommendations: input.recommendations ?? original.recommendations,
+        isCritical: input.isCritical ?? original.isCritical,
+        reportedByStaffId: original.reportedByStaffId,
+        status: "AMENDED",
+        version: original.version + 1,
+        isCurrent: true,
+        previousVersionId: original.id,
+        amendedReason: input.reason,
+        amendedByStaffId: input.amendedByStaffId,
+        amendedAt: new Date(),
+      },
+    });
+  } catch (err) {
+    if (isDuplicateCurrentReportError(err)) throw new ReportConcurrencyError("amended");
+    throw err;
+  }
 
   return { original, amended };
 }

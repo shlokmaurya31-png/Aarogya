@@ -6,6 +6,8 @@ import { recordAuditEvent } from "@/lib/auth/audit";
 import { isImagingOrderTransitionAllowed, InvalidImagingOrderTransitionError } from "@/lib/hospital/diagnosticsLifecycle";
 import { enterReport } from "@/lib/hospital/imagingReportLifecycle";
 
+const MAX_TEXT_LENGTH = 10_000;
+
 /**
  * Structured report entry (brief §11-12, extended from the Milestone A
  * single-value flow). Requires the order's study to be COMPLETED —
@@ -27,6 +29,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const { indication, technique, findings, impression, recommendations, isCritical } = body ?? {};
     if (!findings || !impression) throw new BadRequestError("findings and impression are required.");
+    if (typeof findings !== "string" || findings.length > MAX_TEXT_LENGTH) throw new BadRequestError(`findings must be a string of at most ${MAX_TEXT_LENGTH} characters.`);
+    if (typeof impression !== "string" || impression.length > MAX_TEXT_LENGTH) throw new BadRequestError(`impression must be a string of at most ${MAX_TEXT_LENGTH} characters.`);
+    // Milestone E hardening — see the identical rationale in
+    // orders/lab/[id]/result/route.ts (Boolean("false") === true footgun).
+    if (isCritical !== undefined && isCritical !== null && typeof isCritical !== "boolean") {
+      throw new BadRequestError("isCritical must be a boolean.");
+    }
 
     const study = await prisma.imagingStudy.findFirst({ where: { imagingOrderId: id, status: "COMPLETED" }, orderBy: { createdAt: "desc" } });
 
@@ -39,12 +48,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         findings,
         impression,
         recommendations,
-        isCritical: Boolean(isCritical),
+        isCritical: isCritical === true,
         reportedByStaffId: staff.id,
       })
     );
 
-    await recordAuditEvent("hospital.imaging.reportEntered", session.userId, { imagingOrderId: id, reportId: report.id, isCritical: Boolean(isCritical) });
+    await recordAuditEvent("hospital.imaging.reportEntered", session.userId, { imagingOrderId: id, reportId: report.id, isCritical: isCritical === true });
     return { report };
   });
 }

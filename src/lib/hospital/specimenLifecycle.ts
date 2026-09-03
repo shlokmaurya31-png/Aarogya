@@ -16,7 +16,11 @@ type Tx = Prisma.TransactionClient;
 const SPECIMEN_ALLOWED: Record<SpecimenStatus, SpecimenStatus[]> = {
   ORDERED: ["COLLECTION_PENDING"],
   COLLECTION_PENDING: ["COLLECTED", "CANCELLED"],
-  COLLECTED: ["RECEIVED"],
+  // Milestone E hardening: the reject route already let staff select a
+  // COLLECTED specimen (a mislabeled/wrong-tube specimen is routinely
+  // caught before it's even received), but this map forbade it, so reject
+  // always failed for that real, routine case.
+  COLLECTED: ["RECEIVED", "REJECTED"],
   RECEIVED: ["ACCEPTED", "REJECTED"],
   // Result entry (src/lib/hospital/labResultLifecycle.ts) moves an accepted
   // specimen straight to RESULTED — IN_PROCESS is declared on the enum
@@ -137,18 +141,29 @@ export async function recollectSpecimen(tx: Tx, rejectedSpecimenId: string, spec
   if (original.recollections.length > 0) {
     throw new BadRequestError("This specimen has already been recollected.");
   }
-  return tx.specimen.create({
-    data: {
-      labOrderId: original.labOrderId,
-      facilityId: original.facilityId,
-      patientId: original.patientId,
-      encounterId: original.encounterId,
-      specimenType: specimenType ?? original.specimenType,
-      accessionNumber: generateAccessionNumber(),
-      status: "COLLECTION_PENDING",
-      recollectionOfSpecimenId: original.id,
-    },
-  });
+  try {
+    return await tx.specimen.create({
+      data: {
+        labOrderId: original.labOrderId,
+        facilityId: original.facilityId,
+        patientId: original.patientId,
+        encounterId: original.encounterId,
+        specimenType: specimenType ?? original.specimenType,
+        accessionNumber: generateAccessionNumber(),
+        status: "COLLECTION_PENDING",
+        recollectionOfSpecimenId: original.id,
+      },
+    });
+  } catch (err) {
+    // Milestone E hardening — Specimen.recollectionOfSpecimenId is now a DB-
+    // level unique constraint (see prisma/migrations), backstopping the
+    // app-level `recollections.length > 0` check above against two
+    // concurrent recollect requests both passing it before either commits.
+    if (err && typeof err === "object" && "code" in err && (err as { code?: string }).code === "P2002") {
+      throw new BadRequestError("This specimen has already been recollected.");
+    }
+    throw err;
+  }
 }
 
 /** Facility-scoped fetch, used by every specimen-action route before transitioning. */

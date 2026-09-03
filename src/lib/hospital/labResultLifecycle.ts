@@ -10,6 +10,17 @@ export class ResultConcurrencyError extends BadRequestError {
   }
 }
 
+/**
+ * Milestone E hardening — a DB-level partial unique index
+ * (`LabResult_current_per_order_test`, see prisma/migrations) now backstops
+ * the "at most one isCurrent result per order+test" invariant. Two
+ * concurrent enterResult calls can no longer both create a current row; the
+ * loser hits this P2002 and gets a clean rejection instead of a raw 500.
+ */
+function isDuplicateCurrentResultError(err: unknown): boolean {
+  return Boolean(err && typeof err === "object" && "code" in err && (err as { code?: string }).code === "P2002");
+}
+
 export class ResultNotAmendableError extends BadRequestError {
   constructor() {
     super("Only a currently-verified result can be amended.");
@@ -45,22 +56,28 @@ export async function enterResult(tx: Tx, input: EnterResultInput) {
     abnormalFlag = computeAbnormalFlag(input.numericValue, range);
   }
 
-  const result = await tx.labResult.create({
-    data: {
-      labOrderId: input.labOrderId,
-      specimenId: input.specimenId ?? undefined,
-      catalogTestId: input.catalogTestId ?? undefined,
-      resultType: input.resultType ?? undefined,
-      value: input.value,
-      unit: input.unit ?? undefined,
-      numericValue: input.numericValue ?? undefined,
-      referenceRange: input.referenceRange ?? undefined,
-      abnormalFlag: abnormalFlag ?? undefined,
-      isCritical: input.isCritical,
-      releasedByStaffId: input.releasedByStaffId ?? undefined,
-      status: "ENTERED",
-    },
-  });
+  let result;
+  try {
+    result = await tx.labResult.create({
+      data: {
+        labOrderId: input.labOrderId,
+        specimenId: input.specimenId ?? undefined,
+        catalogTestId: input.catalogTestId ?? undefined,
+        resultType: input.resultType ?? undefined,
+        value: input.value,
+        unit: input.unit ?? undefined,
+        numericValue: input.numericValue ?? undefined,
+        referenceRange: input.referenceRange ?? undefined,
+        abnormalFlag: abnormalFlag ?? undefined,
+        isCritical: input.isCritical,
+        releasedByStaffId: input.releasedByStaffId ?? undefined,
+        status: "ENTERED",
+      },
+    });
+  } catch (err) {
+    if (isDuplicateCurrentResultError(err)) throw new ResultConcurrencyError("entered");
+    throw err;
+  }
 
   if (input.specimenId) {
     await tx.specimen.updateMany({ where: { id: input.specimenId, status: "ACCEPTED" }, data: { status: "RESULTED" } });
@@ -80,6 +97,25 @@ export async function enterResult(tx: Tx, input: EnterResultInput) {
   }
 
   return result;
+}
+
+/**
+ * Critical-result acknowledgement — Milestone E hardening. Previously the
+ * route did an unscoped `results[0]` pick (arbitrary for panel orders with
+ * multiple legitimately-current results) and an unguarded update with no
+ * `isCritical` check, so it could silently "critically acknowledge" a
+ * non-critical result, or let two simultaneous acks both succeed under two
+ * different staff IDs with no conflict signal. Mirrors
+ * imagingReportLifecycle.ts's acknowledgeReport, which already used this
+ * guarded idiom.
+ */
+export async function acknowledgeResult(tx: Tx, resultId: string, acknowledgedByStaffId: string) {
+  const result = await tx.labResult.updateMany({
+    where: { id: resultId, isCritical: true, acknowledgedAt: null },
+    data: { acknowledgedByStaffId, acknowledgedAt: new Date() },
+  });
+  if (result.count !== 1) throw new ResultConcurrencyError("acknowledged");
+  return tx.labResult.findUniqueOrThrow({ where: { id: resultId } });
 }
 
 /** Guarded — a result can only move ENTERED -> VERIFIED once; concurrent double-verify is rejected, not silently accepted twice. */
@@ -118,28 +154,34 @@ export async function amendResult(
     abnormalFlag = computeAbnormalFlag(input.numericValue, range);
   }
 
-  const amended = await tx.labResult.create({
-    data: {
-      labOrderId: original.labOrderId,
-      specimenId: original.specimenId,
-      catalogTestId: original.catalogTestId,
-      resultType: original.resultType,
-      value: input.value,
-      unit: input.unit ?? original.unit,
-      numericValue: input.numericValue ?? original.numericValue,
-      referenceRange: original.referenceRange,
-      abnormalFlag: abnormalFlag ?? undefined,
-      isCritical: input.isCritical ?? original.isCritical,
-      releasedByStaffId: original.releasedByStaffId,
-      status: "AMENDED",
-      version: original.version + 1,
-      isCurrent: true,
-      previousVersionId: original.id,
-      amendedReason: input.reason,
-      amendedByStaffId: input.amendedByStaffId,
-      amendedAt: new Date(),
-    },
-  });
+  let amended;
+  try {
+    amended = await tx.labResult.create({
+      data: {
+        labOrderId: original.labOrderId,
+        specimenId: original.specimenId,
+        catalogTestId: original.catalogTestId,
+        resultType: original.resultType,
+        value: input.value,
+        unit: input.unit ?? original.unit,
+        numericValue: input.numericValue ?? original.numericValue,
+        referenceRange: original.referenceRange,
+        abnormalFlag: abnormalFlag ?? undefined,
+        isCritical: input.isCritical ?? original.isCritical,
+        releasedByStaffId: original.releasedByStaffId,
+        status: "AMENDED",
+        version: original.version + 1,
+        isCurrent: true,
+        previousVersionId: original.id,
+        amendedReason: input.reason,
+        amendedByStaffId: input.amendedByStaffId,
+        amendedAt: new Date(),
+      },
+    });
+  } catch (err) {
+    if (isDuplicateCurrentResultError(err)) throw new ResultConcurrencyError("amended");
+    throw err;
+  }
 
   return { original, amended };
 }

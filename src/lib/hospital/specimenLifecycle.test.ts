@@ -18,6 +18,14 @@ describe("isSpecimenTransitionAllowed — specimen state machine", () => {
     expect(isSpecimenTransitionAllowed("RECEIVED", "REJECTED")).toBe(true);
   });
 
+  // Milestone E hardening — the reject route already let staff select a
+  // COLLECTED specimen (mislabeled/wrong-tube caught before receipt), but
+  // this transition was previously missing, so reject always failed for
+  // that real, routine case.
+  it("allows COLLECTED -> REJECTED (mislabeled/wrong-tube caught before receipt)", () => {
+    expect(isSpecimenTransitionAllowed("COLLECTED", "REJECTED")).toBe(true);
+  });
+
   it("allows ACCEPTED -> RESULTED", () => {
     expect(isSpecimenTransitionAllowed("ACCEPTED", "RESULTED")).toBe(true);
   });

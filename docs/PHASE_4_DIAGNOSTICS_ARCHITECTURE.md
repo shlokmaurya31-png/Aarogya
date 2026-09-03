@@ -2,11 +2,15 @@
 
 Extends Phase 3's Order envelope into two real diagnostic subsystems —
 Laboratory (Milestone B) and Radiology (Milestone C) — then unifies them
-into one coherent Diagnostics OS (Milestone D), built in four staged,
-checkpointed milestones (A: Order integration, B: Lab, C: Radiology, D:
-Unification). Nothing in Phase 0-3's clinical core, RBAC, audit system, or
+into one coherent Diagnostics OS (Milestone D), then hardens the whole
+surface for production (Milestone E), built in five staged, checkpointed
+milestones (A: Order integration, B: Lab, C: Radiology, D: Unification, E:
+Hardening). Nothing in Phase 0-3's clinical core, RBAC, audit system, or
 tenant scoping was rewritten; every new capability is layered on top,
 matching the pattern established in every prior phase.
+
+See also `docs/PHASE_4_PRODUCTION_READINESS.md` for the Milestone E
+checklist-format companion to this document's §12 hardening section.
 
 ## 1. Order integration (Milestone A)
 
@@ -410,7 +414,360 @@ Milestone D):
 
 New from Milestone D, explicitly deferred (FUTURE EXTENSION, not built this milestone):
 
-- Unified worklist `q` search filtering happens in-memory, not in the Prisma `where` clause (§10.3) — fine at demo/seed scale, should move server-side before production data volumes.
+- Unified worklist `q` search filtering happens in-memory, not in the Prisma `where` clause (§10.3) — fine at demo/seed scale, should move server-side before production data volumes. Re-confirmed still correct to defer during Milestone E's audit (§12.19) — it narrows an already-bounded (`take: 100`/bucket) fetch, not a correctness or security issue.
 - SLA/TAT metric keys exist and are threshold-aware, but no automated escalation or notification delivery consumes them yet (§10.8) — explicitly out of scope per the brief.
-- Acknowledge endpoints remain plain updates rather than guarded compare-and-swap (§10.10) — documented as safe-by-idempotency, not upgraded, since Milestone D did not touch these routes.
+- ~~Acknowledge endpoints remain plain updates rather than guarded compare-and-swap~~ — **fixed in Milestone E** (§12.3): the Lab acknowledge route now uses a guarded CAS scoped to the specific current critical result, matching the pattern Imaging's `acknowledgeReport` already used.
 - No PACS/DICOM/HL7/FHIR/ABDM/AI integration — unchanged from Milestone C's §9 interoperability boundary.
+
+## 12. Production Hardening & Readiness (Milestone E)
+
+Hardening-only milestone: no new functionality, no architecture rewrites.
+A fresh audit (7 parallel agents covering Lab lifecycle, Radiology
+lifecycle, RBAC/IDOR, billing/task/audit, input validation/error
+semantics, secrets/performance, and DB integrity) found and fixed real
+defects; everything not fixed is documented honestly below, not hidden.
+Each item is classified **VERIFIED** (already correct, confirmed by
+re-audit), **HARDENED** (a real gap was found and fixed this milestone),
+**KNOWN LIMITATION** (a real, understood gap not fixed — deliberately, with
+a reason), or **FUTURE PRODUCTION REQUIREMENT** (needs infrastructure or a
+larger change out of this milestone's scope).
+
+### 12.1 State-machine guarantees — HARDENED + VERIFIED
+
+Every guarded transition (Lab: collect/receive/accept/reject/verify/amend;
+Radiology: schedule/checkin/start/complete/cancel/verify/amend) was
+re-verified to use the `updateMany({where:{id,status:EXPECTED}})` + count
+check idiom, correctly rejecting an out-of-state or concurrently-raced
+transition with a clean 400 — **VERIFIED**, not just assumed.
+
+Two real state-machine gaps were found and fixed (**HARDENED**): the
+`specimen/reject` route let staff select a `COLLECTED` specimen, but the
+transition map only allowed `RECEIVED→REJECTED`, so rejecting a
+mislabeled/wrong-tube specimen caught before receipt always failed with a
+confusing error; `SPECIMEN_ALLOWED` now permits `COLLECTED→REJECTED`. The
+`study/cancel` route let staff select an `ARRIVED` study, but the map only
+allowed cancelling from `SCHEDULED`, so there was no way to abort imaging
+after a patient arrived (contrast allergy discovered, patient
+decompensates) — `STUDY_ALLOWED` now permits `ARRIVED→CANCELLED`. Both
+gaps met the brief's own bar for touching a state machine during a
+hardening-only milestone: a demonstrated real correctness defect, not a
+stylistic preference.
+
+### 12.2 Clinical immutability — VERIFIED, with one HARDENED gap
+
+`amendResult`/`amendReport` were re-verified to reject amending a
+non-VERIFIED or non-current row (both via an app-level check and a CAS on
+the supersede step) — a superseded/amended row cannot be silently
+overwritten through the intended API, an unintended API, a malformed
+request, or a repeated request. **VERIFIED.**
+
+The one real gap (**HARDENED**, see §12.4): before this milestone, two
+concurrent `enterResult`/`enterReport`/`scheduleStudy` calls could both
+create a "current" row for the same order — not an overwrite of history,
+but a duplication of the current-version slot the rest of the system
+assumes is singular. Fixed with a DB-level constraint, not just an
+app-level check.
+
+### 12.3 Concurrency guarantees — HARDENED
+
+Every race the brief asked for was fired live against the running dev
+server (paired parallel `curl` requests, not simulated) and DB-verified
+after:
+
+| Race | Before | After |
+|---|---|---|
+| Duplicate order submission (double-click/retry) | Both requests created a full order+specimen+charge+task | Both return the **same** order; DB-verified exactly 1 order/specimen/charge/task |
+| Concurrent LabResult entry on one order | Both could create a "current" row | One succeeds, one gets a clean 400; DB-verified exactly 1 current row |
+| Concurrent ImagingReport entry on one order | Both could create a "current" row | Same as above |
+| Concurrent ImagingStudy scheduling on one order | Both could create a study row | Same as above |
+| Concurrent specimen recollection | Both could create a recollection row | One succeeds, one gets "already recollected"; DB-verified exactly 1 |
+| Lab critical-result acknowledge (arbitrary `results[0]`, unguarded) | Could ack a non-critical result; two concurrent acks both silently "won" under different staff IDs | Scoped to the specific critical/unacknowledged current result via a guarded CAS (`acknowledgeResult`, mirroring Imaging's `acknowledgeReport`); non-critical/already-acknowledged now cleanly 404s |
+
+The acknowledge endpoints (`hospital.lab.criticalResultAcknowledged`,
+`hospital.imaging.criticalFindingAcknowledged`) are now both guarded CASes
+with an `isCritical`/`acknowledgedAt: null` scope — **HARDENED** for Lab,
+**VERIFIED** already-correct for Imaging.
+
+### 12.4 PostgreSQL readiness — HARDENED + documented KNOWN LIMITATION
+
+The duplicate-current-row race (§12.3) was closed with **real DB-level
+partial unique indexes**, not just app-level checks — the fix works
+identically under SQLite and Postgres, because a `WHERE`-clause unique
+index is evaluated by the database at write time regardless of isolation
+level (the same property that already made the guarded-`updateMany`
+pattern Postgres-safe since Milestone B):
+
+- `LabResult`: unique on `(labOrderId, COALESCE(catalogTestId,''))` WHERE `isCurrent = true`
+- `ImagingReport`: unique on `imagingOrderId` WHERE `isCurrent = true`
+- `ImagingStudy`: unique on `imagingOrderId` WHERE `status NOT IN ('CANCELLED','NO_SHOW')`
+- `Specimen`: unique on `recollectionOfSpecimenId` (plain unique — NULL exemption is exactly the desired behavior for never-recollected specimens)
+- `Charge`: unique on `(sourceType, sourceId)` (plain unique — NULL exemption is exactly right for manual charges, which never set these fields)
+
+These live only in hand-authored migration SQL (`prisma/migrations/20260903020000_phase4_milestone_e_hardening_indexes/migration.sql`) because Prisma's schema DSL has no partial/filtered-index syntax. **The WHERE-clause syntax used is already Postgres-compatible unchanged** — verified by reading the Postgres `CREATE UNIQUE INDEX ... WHERE` grammar, which is identical to SQLite's for this case; no rewrite will be needed at cutover, only re-running/porting the migration file through whatever tooling generates the Postgres migration set.
+
+**KNOWN LIMITATION, unchanged from Milestone C, re-confirmed not silently hidden**: the resource-scheduling *double-booking* check (`scheduleStudy`/`rescheduleStudy`'s `resourceId`+`scheduledAt` conflict count) remains an app-level count-then-create relying on transaction serialization — safe on SQLite, not safe under Postgres's default `READ COMMITTED` isolation. This is a different invariant from the duplicate-*study*-row race Milestone E fixed (§12.5 below has the detail) and was deliberately not given a DB constraint this milestone, because a `(resourceId, scheduledAt)` uniqueness constraint would forbid legitimate different-facility or different-resource bookings at the same instant and is a larger semantic change than a hardening pass should make without stronger evidence. **FUTURE PRODUCTION REQUIREMENT**: `SELECT ... FOR UPDATE` on the resource row inside the scheduling transaction, or a proper partial unique index on `(resourceId, scheduledAt) WHERE status NOT IN ('CANCELLED','NO_SHOW')`, before relying on this under concurrent Postgres load.
+
+### 12.5 Scheduling concurrency — HARDENED (duplicate-study race) + documented KNOWN LIMITATION (double-booking race)
+
+Two distinct races exist in imaging scheduling, and Milestone E fixed one of them:
+
+1. **Duplicate active study per order** (two concurrent `scheduleStudy` calls for the *same order*) — **HARDENED** via the `ImagingStudy_active_per_order` partial unique index (§12.4); verified live, exactly 1 study survives.
+2. **Resource double-booking** (two concurrent `scheduleStudy` calls for *different orders* at the same `resourceId`+`scheduledAt`) — **KNOWN LIMITATION**, unchanged, see §12.4's Postgres note. SQLite-safe today, needs the documented Postgres hardening before relying on it at production concurrency.
+
+### 12.6 Idempotency — HARDENED (order creation) + VERIFIED (everything else)
+
+Classified per the brief's ask ("if the client sends this request twice, what happens?"):
+
+| Endpoint | Classification | Why |
+|---|---|---|
+| Lab/Imaging order creation | **HARDENED** | Was unsafe (see §12.7) — a 15-second same-encounter+testName/studyDescription+staff dedupe window now returns the existing order instead of creating a duplicate. Documented honestly as a **pragmatic mitigation for the realistic double-click/retry threat model, not a bulletproof distributed idempotency-key system** — a determined adversary racing precisely within the window could still get two orders through, since the dedupe check and the create aren't a single atomic DB operation. The smallest-correct-mechanism call per the brief: this is an internal hospital staff UI, not a public retry-prone API, so a time-window dedupe was judged sufficient over a full idempotency-key scheme. |
+| Charge creation (`createChargeIfNotExists`) | **HARDENED** | Was app-level-only (findFirst-then-create); now backed by a DB-level unique constraint + a `P2002` catch that falls back to returning the winner's row, so a genuine race is both prevented and handled gracefully (caller gets a valid charge back, not a 500). |
+| Specimen collect/receive/accept/reject | **VERIFIED naturally rejected** | Guarded CAS — a retry after the first attempt already changed status gets a clean 400, no side effect. |
+| Result/report verification | **VERIFIED naturally rejected** | Same CAS pattern. |
+| Result/report amendment | **VERIFIED naturally rejected** | Same CAS pattern (plus the app-level VERIFIED/isCurrent pre-check). |
+| Specimen recollection | **HARDENED** | Was a racy read-then-write; now backed by a DB unique constraint (§12.4), naturally rejected on retry. |
+| Critical-result/finding acknowledgement | **VERIFIED safely idempotent** | Setting the same `acknowledgedByStaffId`/`acknowledgedAt` twice is harmless by nature — no data corruption, no double billing/task. Deliberately left as a plain guarded update, not a stronger idempotency key, since the field being set is inherently idempotent. |
+| Study scheduling | **HARDENED** | Same as specimen recollection — now backed by the `ImagingStudy_active_per_order` constraint. |
+
+### 12.7 Billing safety — HARDENED (CRITICAL finding fixed)
+
+The most severe finding of this milestone: `createChargeIfNotExists`'s
+idempotency check compared against `sourceId: createdOrder.id`, an ID
+generated fresh by the *same* request — so it could never actually catch a
+duplicate order submission (the two requests never shared a `sourceId`, so
+the check trivially passed both times). A double-click or client retry on
+"place order" deterministically produced two full orders, two specimens/
+tasks, and **two charges** for one clinical intent. Fixed via the §12.6
+order-creation dedupe (root cause) plus a DB-level `Charge` uniqueness
+constraint (defense in depth for any *other* call site that might reuse a
+`sourceId`, present or future). **Verified live**: a genuine parallel race
+against real order-creation now produces exactly 1 order, 1 specimen, 1
+charge, 1 task, DB-checked directly (not just via the API response).
+
+Every charge-creation call site in the diagnostics-adjacent codebase was
+enumerated (`createCharge`/`createChargeIfNotExists`, called only from
+`orders/lab/route.ts` and `orders/imaging/route.ts` for auto-charges, and
+the manual billing route for user-initiated charges) — no other
+duplication source found. **VERIFIED** correct encounter/facility/order/
+amount attribution on every call site re-read during this audit.
+
+### 12.8 Task safety — VERIFIED + audit gap HARDENED
+
+Automatic task creation (`SPECIMEN_COLLECTION`/`IMAGING_PREP`) is
+transactional with its order and was, per §12.7, only ever duplicated as a
+side effect of the order-duplication bug — fixed by the same root-cause
+fix. **VERIFIED** correct patient/encounter/facility/order/priority/type
+attribution. The one real gap, a missing dedicated audit event for task
+creation (§12.9), is now fixed.
+
+### 12.9 RBAC — HARDENED (two real findings fixed)
+
+1. **`patient:read` over-granted full clinical chart access** to
+   FRONT_DESK/BILLING_STAFF (roles with no other clinical permission, but
+   which could read complete notes, diagnoses, medication orders, and
+   critical lab/imaging values through the same permission string used for
+   "can look this patient up"). **HARDENED**: new narrower
+   `clinical:chart:read` permission, granted only to DOCTOR/NURSE/
+   LAB_TECHNICIAN/RADIOLOGY_TECH/PHARMACIST/HOSPITAL_ADMIN/AAROGYA_ADMIN,
+   now gates `patients/[id]/chart`, both worklist routes, both order-list
+   GETs, and the unified diagnostics worklist. `patient:read` itself is
+   untouched everywhere else — verified live that FRONT_DESK/BILLING_STAFF
+   now get a clean 403 on chart/worklist routes while every clinical role
+   still gets 200, and FRONT_DESK/BILLING_STAFF's own legitimate routes
+   (patient list/search for check-in/billing) are unaffected.
+2. **Imaging `reschedule` trusted a client-supplied `resourceId` with no
+   facility check** — a real cross-tenant IDOR (`schedule`'s sibling route
+   already had this check; `reschedule` didn't). **HARDENED**: identical
+   check added. Verified live with a temporary cross-facility resource:
+   rejected with a clean 404 before the fix would have accepted it;
+   confirmed the fix doesn't break a legitimate same-facility reschedule.
+
+A full role × diagnostic-action permission matrix was rebuilt and
+cross-checked against every route's actual `requireFacilityStaff` call
+(not just the permission table) — no other missing/inconsistent checks
+found. The apparent Lab (tech self-verifies) vs. Radiology (doctor
+verifies) authority asymmetry, flagged by the audit, was traced back to
+this document's own §7 — **already an intentional Phase-0 design decision**
+("no RADIOLOGIST role exists; DOCTOR-as-verifier for imaging... preserved,
+not changed"), not a defect. No fix needed.
+
+### 12.10 Facility isolation — HARDENED (one landmine fixed) + VERIFIED
+
+`alertEngine.ts`'s critical-lab, critical-imaging, and stalled-discharge
+queries had no `facilityId` in their `where` clause, relying entirely on a
+post-fetch `continue` to drop other tenants' rows — not currently
+exploitable (the `continue` was present and correct), but a landmine: any
+future refactor that dropped it, or added a `take` cap before the filter,
+would leak another facility's PHI into the wrong facility's alert feed, and
+it was also an unbounded full-table scan across every tenant on every
+Command Center load. **HARDENED**: facility filter moved into `where`,
+matching every other query in the file.
+
+Every other diagnostics route re-audited (worklists, chart route,
+Command Center, Doctor Dashboard, the unified diagnostics worklist) was
+**VERIFIED** already correctly facility-scoped, including under genuine
+concurrent load (simultaneous cross-facility requests during this
+milestone's live testing returned disjoint item sets with zero overlap,
+same as Milestone D's verification).
+
+### 12.11 Audit coverage — HARDENED (two gaps fixed) + VERIFIED
+
+Automatic `SPECIMEN_COLLECTION`/`IMAGING_PREP` task creation and the
+diagnostic auto-charge hook previously had no dedicated audit event (only
+discoverable indirectly via `hospital.lab.ordered`/`hospital.imaging.
+ordered`'s detail, which didn't even include the task/charge IDs).
+**HARDENED**: both order-creation routes now fire `hospital.task.created`
+and `hospital.billing.chargeCreated` (reusing the existing event types the
+manual routes already use — no new audit system). Every other clinically
+meaningful mutation (order, collection, receipt, acceptance, rejection,
+recollection, result/report entry, verification, amendment, critical
+acknowledgement, study execution) was **VERIFIED** to already fire a
+correctly-timed (strictly after `$transaction` commit, never before or
+inside) audit event with the actor's real ID.
+
+**KNOWN LIMITATION, not fixed this milestone**: `AuditEvent` has no
+`facilityId`/`patientId` columns — a codebase-wide gap (every phase, not
+Phase-4-specific), so this milestone's diagnostics-scoped hardening pass
+did not touch the core shared `AuditEvent` model. Investigating "every
+diagnostic audit event for patient X" or "...within facility Y" today
+requires joining `detail`'s embedded IDs back through the domain tables,
+not a direct query filter. **FUTURE PRODUCTION REQUIREMENT** for a
+platform-wide (not Phase-4-scoped) hardening pass.
+
+### 12.12 Error semantics — HARDENED (one coercion bug) + VERIFIED
+
+`Boolean(isCritical)` on result/report entry meant a string-serialized
+`isCritical: "false"` persisted as `true` (any non-empty string is
+truthy in JS) — a silent clinical-alerting correctness bug (manufacturing
+phantom critical alerts), not a crash. **HARDENED**: both routes (and the
+amend routes, which previously had no type check on `isCritical` at all)
+now reject a non-boolean `isCritical` with a clean 400.
+
+`withApiErrors` (the load-bearing safety net for the whole diagnostics
+surface) was **VERIFIED**: authentication failures → 401, authorization →
+403, not-found/cross-facility → 404, validation → 400, and any *unexpected*
+exception (a raw Prisma error, a bug) → a hardcoded, sanitized `{error:
+"Internal error."}` 500 that never leaks `.message`/stack traces — checked
+live against a nonexistent-ID request on a real route (clean JSON 404, not
+a framework error page or a Prisma leak).
+
+### 12.13 Input validation — HARDENED
+
+Added server-side validation, previously missing, across order-creation and
+result/report-entry/amendment routes: a `priority` whitelist
+(`ROUTINE`/`URGENT`/`STAT`, matching the vocabulary these fields actually
+use — not the generalized `Order.priority` enum's `EMERGENCY`), a
+`resultType` whitelist against `LabResultType`, a `scheduledAt`
+parse-and-bounds check (`isNaN` guard + a 1-year-out sanity cap) on both
+schedule and reschedule, a `numericValue` finite+magnitude bound, and
+~10,000-character length caps on `value`/`findings`/`impression`/`reason`/
+`notes`/`testName`/`category`/`studyDescription`/`modality`. Every check
+was verified live to return a clean 400 with a descriptive message, not an
+uncaught Prisma validation error surfacing as a 500 — and every corresponding
+happy-path request was re-verified to still succeed unchanged.
+
+### 12.14 Performance — HARDENED (the one finding rated worth fixing now)
+
+`src/lib/patient/timeline.ts`'s 16 `findMany` calls and `patients/[id]/
+chart/route.ts`'s several nested includes (`notes`, `medicationOrders`
+incl. `administrations`/`dispensingRecords`, `labOrders`, `imagingOrders`,
+`diagnoses`, `carePlans` incl. `interventions`) had no `take`, unlike the
+same files' own already-bounded `vitals`/`handoffs` precedent — at
+synthetic seed scale invisible, at real hospital scale (a chronic patient
+with years of q4h-charted vitals) a genuine multi-second/memory-heavy
+request. **HARDENED**: `take` caps added matching the existing bounded
+precedent in the same files (200/sub-query for the timeline, 20-50 for the
+chart route, ordered by each query's own recency field so truncation drops
+the *oldest* rows, not an arbitrary DB-order subset).
+
+The two dedicated Lab/Radiology worklist routes' 14 bucket queries
+(unbounded, unlike the unified diagnostics worklist's own `take: 100`
+precedent) and `commandCenter.ts`'s two unbounded-but-naturally-bounded
+queries (beds, active encounters — scale with facility size, not with
+historical data) were **audited and judged not worth fixing this
+milestone** — real but lower-severity than the timeline/chart finding, and
+adding `take` to 14 near-identical queries is exactly the kind of low-value
+churn a hardening pass should avoid absent evidence it's an active problem.
+Composite indexes (§12.4's neighbors, listed in
+`docs/PHASE_4_PRODUCTION_READINESS.md`) were added instead, which help
+these same routes' query plans directly.
+
+### 12.15 Seed behavior — documented, not changed
+
+`prisma/seed.ts` documents itself as "safe to re-run: uses upsert-by-
+unique-key throughout" — true for users/institutions/achievements/catalog
+rows. **KNOWN LIMITATION**: the Phase 4 diagnostic demo scenarios
+(`seedData/hospital.ts`'s lab/imaging order creation) use plain `.create()`,
+so re-running seed *without* a prior `migrate reset` would duplicate the
+demo diagnostic data. Not a production concern (seed data is never run
+against a production database in this workflow — every reseed in this
+project's history has gone through `migrate reset --force` first, with
+explicit user consent each time per this session's established discipline)
+and out of scope to rewrite demo-fixture generation into full upsert
+semantics during a hardening pass focused on production code paths.
+
+### 12.16 Secrets — VERIFIED clean
+
+No real/leaked secrets in the tracked repository. `.env`/`.env.local` are
+`.gitignore`'d and confirmed via `git ls-files`/`git log --all` to have
+never been committed at any point in history. `.env.example` contains only
+empty placeholders. Seed demo passwords (`Scholar@123`, `Hospital@123`) are
+clearly synthetic-labeled, always hashed via `scrypt` before storage, and
+never logged in plaintext except the seed script's own console summary
+listing which demo account uses which well-known password — a
+**FUTURE PRODUCTION REQUIREMENT**, not a current leak: gate demo-account
+seeding behind an explicit non-production check before this seed script
+could ever be pointed at a real deployment.
+
+### 12.17 Security configuration — VERIFIED (application layer)
+
+`requireFacilityStaff` re-derives `facilityId` from the DB-backed
+`HospitalStaffProfile` row for every role except `AAROGYA_ADMIN`, never
+trusting a client-supplied value — re-verified across every route touched
+this milestone. Role is always re-derived from the DB, never trusted from
+the session cookie payload. Passwords use `scrypt` + `timingSafeEqual`.
+**FUTURE PRODUCTION REQUIREMENT** (infrastructure-level, not verifiable
+locally): TLS termination, security headers (CSP/HSTS/etc.), production
+session-cookie flags (`Secure`/`SameSite` behavior under a real HTTPS
+origin), rate limiting, and a WAF/reverse-proxy layer — none of these are
+application-code concerns this milestone could fix, and none were
+fabricated as "done."
+
+### 12.18 Clinical safety invariants — VERIFIED, adversarially
+
+Every dangerous-state scenario the brief listed was tested against the
+live application, not assumed: a result cannot be verified/amended out of
+its correct prior state (§12.2); a critical result/finding cannot vanish
+after amendment (the amended version inherits `isCritical` and re-enters
+`criticalItems` unacknowledged — confirmed in Milestone D's E2E and
+re-confirmed this milestone); critical acknowledgement is now correctly
+attributed to the acknowledging staff member, not an arbitrary result
+(§12.3); a mismatched `patientId`/`encounterId` pair is now rejected before
+any record is created (§12.19); wrong-facility mutation attempts
+consistently fail closed with a clean 404 (§12.10), never a silent
+misattribution.
+
+### 12.19 Wrong-patient / cross-record-linkage risk — HARDENED (CRITICAL finding fixed)
+
+`patientId` in the lab/imaging order-creation body was previously never
+cross-checked against `encounter.patientId` — a client could submit an
+`encounterId` for one patient and a `patientId` for a *different* patient,
+and the resulting `LabOrder`/`Specimen`/`ImagingOrder`/`ImagingStudy` rows
+would carry that mismatched `patientId` verbatim. Because
+`src/lib/patient/timeline.ts` and `summary.ts` query lab/imaging
+rows **directly by `patientId`, not by encounter ownership**, this was a
+genuine wrong-patient PHI disclosure reachable on a single ordinary
+request (no race required) — ranked CRITICAL. **HARDENED**: both order
+routes now reject a `patientId`/`encounter.patientId` mismatch with a
+clean 400 before any row is created. Verified live.
+
+### 12.20 Production blockers summary
+
+See `docs/PHASE_4_PRODUCTION_READINESS.md` for the full checklist. In
+short: the application-layer findings that would have blocked a real
+hospital deployment are fixed. What remains is infrastructure (Postgres
+migration + the two documented Postgres-specific concurrency items,
+TLS/headers/rate-limiting, secret rotation tooling, backups/DR, real
+observability) — none of it fabricated as done, all of it explicitly
+itemized as **FUTURE PRODUCTION REQUIREMENT** rather than silently
+omitted.

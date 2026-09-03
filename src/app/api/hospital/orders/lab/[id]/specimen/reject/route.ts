@@ -19,6 +19,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const { reason, notes } = body ?? {};
     if (!reason || !VALID_REASONS.includes(reason)) throw new BadRequestError(`reason must be one of: ${VALID_REASONS.join(", ")}`);
+    if (notes !== undefined && notes !== null && (typeof notes !== "string" || notes.length > 10_000)) {
+      throw new BadRequestError("notes must be a string of at most 10,000 characters.");
+    }
 
     const specimen = await prisma.specimen.findFirst({ where: { labOrderId: id, status: { in: ["COLLECTED", "RECEIVED"] } }, orderBy: { createdAt: "desc" } });
     if (!specimen) throw new NotFoundError("No collected/received specimen eligible for rejection on this order.");

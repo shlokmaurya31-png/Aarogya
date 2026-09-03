@@ -1230,6 +1230,7 @@ model LabResult {
   @@index([labOrderId])
   @@index([specimenId])
   @@index([isCurrent])
+  @@index([isCritical, acknowledgedAt, isCurrent])
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1353,8 +1354,13 @@ model Specimen {
 
   // Recollection (brief §15) — points back at the original rejected
   // specimen; the original row is never modified or removed.
+  // @unique closes a Milestone E hardening finding: without it, two
+  // concurrent recollect requests against the same rejected specimen can
+  // both pass the app-level "no recollection yet" check and both create a
+  // recollection row (NULL values are exempt from uniqueness, so
+  // never-recollected specimens are unaffected).
   recollectionOf           Specimen?  @relation("SpecimenRecollection", fields: [recollectionOfSpecimenId], references: [id])
-  recollectionOfSpecimenId String?
+  recollectionOfSpecimenId String?    @unique
   recollections             Specimen[] @relation("SpecimenRecollection")
 
   createdAt DateTime @default(now())
@@ -1365,6 +1371,7 @@ model Specimen {
   @@index([labOrderId])
   @@index([status])
   @@index([patientId])
+  @@index([facilityId, status])
 }
 
 enum LabResultType {
@@ -1507,6 +1514,7 @@ model ImagingStudy {
   @@index([imagingOrderId])
   @@index([status])
   @@index([resourceId, scheduledAt])
+  @@index([facilityId, status])
 }
 
 /**
@@ -1564,6 +1572,7 @@ model ImagingReport {
   @@index([studyId])
   @@index([imagingOrderId])
   @@index([isCurrent])
+  @@index([isCritical, acknowledgedAt, isCurrent])
 }
 
 /**
@@ -1645,6 +1654,12 @@ model Charge {
   sourceId    String?
   createdAt   DateTime  @default(now())
 
+  // Milestone E hardening: closes the duplicate-billing gap
+  // createChargeIfNotExists's app-level findFirst-then-create check could
+  // not fully close on its own (NULL sourceType/sourceId — manual charges
+  // — are exempt from uniqueness, so this only constrains the
+  // auto-charge-on-order path, which is exactly where it's needed).
+  @@unique([sourceType, sourceId])
   @@index([encounterId])
 }
 
@@ -1715,6 +1730,7 @@ model Task {
   @@index([orderId])
   @@index([ownerStaffId])
   @@index([patientId])
+  @@index([facilityId, status])
 }
 
 /**

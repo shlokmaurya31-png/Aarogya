@@ -37,4 +37,16 @@ describe("isStudyTransitionAllowed — imaging study state machine", () => {
   it("rejects IN_PROGRESS -> IN_PROGRESS (no self-transition/double-claim)", () => {
     expect(isStudyTransitionAllowed("IN_PROGRESS", "IN_PROGRESS")).toBe(false);
   });
+
+  // Milestone E hardening — the cancel route already let staff select an
+  // ARRIVED study (contrast allergy discovered, patient decompensates after
+  // arriving), but this transition was previously missing, so cancel always
+  // failed for that real, routine case.
+  it("allows ARRIVED -> CANCELLED (imaging aborted after patient arrival)", () => {
+    expect(isStudyTransitionAllowed("ARRIVED", "CANCELLED")).toBe(true);
+  });
+
+  it("still rejects ARRIVED -> COMPLETED (skipping in-progress, even with cancel now allowed)", () => {
+    expect(isStudyTransitionAllowed("ARRIVED", "COMPLETED")).toBe(false);
+  });
 });

@@ -33,6 +33,15 @@ export const PERMISSIONS = [
   "hospital:command-center:view",
   "hospital:admin:manage",
   "patient:read",
+  // Phase 4 Milestone E hardening — patient:read was being reused as the
+  // read gate for the ENTIRE clinical chart (notes, diagnoses, medication
+  // orders, lab/imaging results including critical values), which also
+  // over-granted it to BILLING_STAFF/FRONT_DESK (who legitimately need
+  // patient:read for demographics/check-in, but never held any other
+  // clinical permission). clinical:chart:read is the narrower gate for
+  // routes that expose actual clinical content; patient:read itself is
+  // untouched everywhere else.
+  "clinical:chart:read",
   "patient:write",
   "encounter:create",
   "encounter:read",
@@ -153,6 +162,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
   DOCTOR: [
     "hospital:command-center:view",
     "patient:read",
+    "clinical:chart:read",
     "patient:write",
     "encounter:create",
     "encounter:read",
@@ -198,6 +208,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
   NURSE: [
     "hospital:command-center:view",
     "patient:read",
+    "clinical:chart:read",
     "encounter:read",
     "vital:record",
     "clinical:note:create",
@@ -221,6 +232,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
   LAB_TECHNICIAN: [
     "hospital:command-center:view",
     "patient:read",
+    "clinical:chart:read",
     "encounter:read",
     "lab:result:enter",
     "lab:result:release",
@@ -234,6 +246,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
   RADIOLOGY_TECH: [
     "hospital:command-center:view",
     "patient:read",
+    "clinical:chart:read",
     "encounter:read",
     "imaging:report:enter",
     "radiology:schedule",
@@ -242,6 +255,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
   PHARMACIST: [
     "hospital:command-center:view",
     "patient:read",
+    "clinical:chart:read",
     "encounter:read",
     "medication:verify",
     "medication:dispense",
@@ -257,6 +271,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "hospital:command-center:view",
     "hospital:admin:manage",
     "patient:read",
+    "clinical:chart:read",
     "encounter:read",
     "bed:manage",
     "admission:create",
@@ -328,6 +343,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "hospital:command-center:view",
     "hospital:admin:manage",
     "patient:read",
+    "clinical:chart:read",
     "encounter:read",
     "billing:view",
   ],

@@ -12,7 +12,11 @@ type Tx = Prisma.TransactionClient;
  */
 const STUDY_ALLOWED: Record<ImagingStudyStatus, ImagingStudyStatus[]> = {
   SCHEDULED: ["ARRIVED", "CANCELLED"],
-  ARRIVED: ["IN_PROGRESS"],
+  // Milestone E hardening: the cancel route already let staff select an
+  // ARRIVED study (a patient can arrive and then need imaging aborted —
+  // contrast allergy discovered, patient decompensates), but this map
+  // forbade it, so cancel always failed for that real, routine case.
+  ARRIVED: ["IN_PROGRESS", "CANCELLED"],
   IN_PROGRESS: ["COMPLETED"],
   COMPLETED: [],
   CANCELLED: [],
@@ -53,6 +57,17 @@ export function isStudyTransitionAllowed(from: ImagingStudyStatus, to: ImagingSt
   return STUDY_ALLOWED[from]?.includes(to) ?? false;
 }
 
+/**
+ * Milestone E hardening — a DB-level partial unique index
+ * (`ImagingStudy_active_per_order`, see prisma/migrations) now backstops
+ * the "one active study per order" design assumption. Two concurrent
+ * scheduleStudy calls can no longer both create a study for the same
+ * order; the loser hits this P2002 and gets a clean rejection.
+ */
+function isDuplicateActiveStudyError(err: unknown): boolean {
+  return Boolean(err && typeof err === "object" && "code" in err && (err as { code?: string }).code === "P2002");
+}
+
 export async function scheduleStudy(
   tx: Tx,
   input: {
@@ -74,21 +89,27 @@ export async function scheduleStudy(
     if (overlapping > 0) throw new ScheduleConflictError();
   }
 
-  const study = await tx.imagingStudy.create({
-    data: {
-      imagingOrderId: input.imagingOrderId,
-      facilityId: input.facilityId,
-      patientId: input.patientId,
-      encounterId: input.encounterId,
-      modality: input.modality,
-      bodyRegion: input.bodyRegion,
-      resourceId: input.resourceId ?? undefined,
-      scheduledAt: input.scheduledAt,
-      status: "SCHEDULED",
-      accessionNumber: generateAccessionNumber("RAD"),
-      contrastRequired: input.contrastRequired ?? false,
-    },
-  });
+  let study;
+  try {
+    study = await tx.imagingStudy.create({
+      data: {
+        imagingOrderId: input.imagingOrderId,
+        facilityId: input.facilityId,
+        patientId: input.patientId,
+        encounterId: input.encounterId,
+        modality: input.modality,
+        bodyRegion: input.bodyRegion,
+        resourceId: input.resourceId ?? undefined,
+        scheduledAt: input.scheduledAt,
+        status: "SCHEDULED",
+        accessionNumber: generateAccessionNumber("RAD"),
+        contrastRequired: input.contrastRequired ?? false,
+      },
+    });
+  } catch (err) {
+    if (isDuplicateActiveStudyError(err)) throw new StudyConcurrencyError("scheduled");
+    throw err;
+  }
 
   await tx.imagingOrder.updateMany({ where: { id: input.imagingOrderId, status: "ORDERED" }, data: { status: "SCHEDULED" } });
   return study;

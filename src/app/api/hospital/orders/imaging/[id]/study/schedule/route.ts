@@ -19,6 +19,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const { resourceId, scheduledAt, bodyRegion, contrastRequired } = body ?? {};
     if (!scheduledAt) throw new BadRequestError("scheduledAt is required.");
+    const parsedScheduledAt = new Date(scheduledAt);
+    if (Number.isNaN(parsedScheduledAt.getTime())) throw new BadRequestError("scheduledAt must be a valid date.");
+    const oneYearFromNow = Date.now() + 365 * 24 * 60 * 60 * 1000;
+    if (parsedScheduledAt.getTime() > oneYearFromNow) throw new BadRequestError("scheduledAt is too far in the future.");
 
     if (resourceId) {
       const resource = await prisma.imagingResource.findUnique({ where: { id: resourceId } });
@@ -34,7 +38,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         modality: order.modality,
         bodyRegion,
         resourceId: resourceId ?? null,
-        scheduledAt: new Date(scheduledAt),
+        scheduledAt: parsedScheduledAt,
         contrastRequired: Boolean(contrastRequired),
       })
     );

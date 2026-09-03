@@ -46,12 +46,19 @@ export async function computeAlerts(facilityId: string): Promise<HospitalAlert[]
   // Unacknowledged critical lab results. isCurrent:true so an amended
   // (superseded) row's stale isCritical/acknowledgedAt state can't keep
   // alerting forever after the current version supersedes it.
+  // Milestone E hardening — this query previously had no facility filter in
+  // the `where` clause and relied entirely on the loop's `continue` below to
+  // drop other tenants' rows after fetching them into memory (a landmine:
+  // any future refactor that dropped the `continue` — e.g. a `.map()`
+  // rewrite, or a `take` cap added "for performance" before the filter —
+  // would leak another facility's critical lab values/patient names into
+  // this facility's alert feed). Every other query in this file already
+  // filters by facilityId in `where`; this now matches that convention.
   const criticalLabs = await prisma.labResult.findMany({
-    where: { isCritical: true, acknowledgedAt: null, isCurrent: true },
+    where: { isCritical: true, acknowledgedAt: null, isCurrent: true, labOrder: { encounter: { facilityId } } },
     include: { labOrder: { include: { encounter: { include: { patient: true, department: true } } } } },
   });
   for (const result of criticalLabs) {
-    if (result.labOrder.encounter.facilityId !== facilityId) continue;
     const hours = (now - result.resultedAt.getTime()) / 3_600_000;
     alerts.push({
       id: `lab-critical-${result.id}`,
@@ -67,12 +74,12 @@ export async function computeAlerts(facilityId: string): Promise<HospitalAlert[]
   // acknowledgedAt (Milestone C) rather than verifiedAt — verification is
   // report sign-off, acknowledgement is critical-finding clearance; the
   // original schema conflated these into one verifiedAt field.
+  // Milestone E hardening — same fix as criticalLabs above.
   const criticalImaging = await prisma.imagingReport.findMany({
-    where: { isCritical: true, acknowledgedAt: null, isCurrent: true },
+    where: { isCritical: true, acknowledgedAt: null, isCurrent: true, imagingOrder: { encounter: { facilityId } } },
     include: { imagingOrder: { include: { encounter: { include: { patient: true, department: true } } } } },
   });
   for (const report of criticalImaging) {
-    if (report.imagingOrder.encounter.facilityId !== facilityId) continue;
     alerts.push({
       id: `imaging-critical-${report.id}`,
       severity: "critical",
@@ -84,12 +91,12 @@ export async function computeAlerts(facilityId: string): Promise<HospitalAlert[]
   }
 
   // Discharges initiated but stalled on a readiness flag.
+  // Milestone E hardening — same fix as criticalLabs above.
   const discharges = await prisma.discharge.findMany({
-    where: { dischargedAt: null },
+    where: { dischargedAt: null, admission: { encounter: { facilityId } } },
     include: { admission: { include: { encounter: { include: { patient: true } }, bed: true } } },
   });
   for (const d of discharges) {
-    if (d.admission.encounter.facilityId !== facilityId) continue;
     const hours = (now - d.initiatedAt.getTime()) / 3_600_000;
     if (hours < DISCHARGE_STALL_WATCH_HOURS) continue;
     const pending = (["clinicallyReady", "documentationReady", "billingReady", "insuranceReady", "pharmacyReady", "transportReady"] as const).filter(

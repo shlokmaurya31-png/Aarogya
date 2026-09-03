@@ -23,27 +23,39 @@ export interface TimelineEntry {
   sourceId: string;
 }
 
+// Milestone E hardening — every sub-query below was previously fully
+// unbounded (no `take`, no date-range filter). A patient with a long
+// relationship to the hospital (vitals alone can be recorded every few
+// minutes during an admission) would have every row fetched, JSON-
+// serialized, and merge-sorted on every single timeline load — invisible
+// at synthetic seed scale, a real multi-second/memory-heavy request at
+// production scale. TIMELINE_ROW_LIMIT caps each sub-query to its most
+// recent rows (ordered by the query's own recency field before truncating,
+// not an arbitrary DB-order subset) — a "last N events" view, not a
+// paginated full history browser (no UI for that exists yet).
+const TIMELINE_ROW_LIMIT = 200;
+
 export async function buildPatientTimeline(patientId: string): Promise<TimelineEntry[]> {
   const patientIds = await resolvePatientIdsForRead(patientId);
 
   const [encounters, diagnoses, problems, allergies, vitals, notes, medOrders, labOrders, imagingOrders, tasks, referrals, admissions, specimens, labResults, imagingStudies, imagingReports] =
     await Promise.all([
-      prisma.encounter.findMany({ where: { patientId: { in: patientIds } }, include: { department: true } }),
-      prisma.diagnosis.findMany({ where: { patientId: { in: patientIds } }, include: { diagnosedBy: { include: { user: true } } } }),
-      prisma.problem.findMany({ where: { patientId: { in: patientIds } } }),
-      prisma.allergy.findMany({ where: { patientId: { in: patientIds } } }),
-      prisma.vital.findMany({ where: { encounter: { patientId: { in: patientIds } } } }),
-      prisma.clinicalNote.findMany({ where: { encounter: { patientId: { in: patientIds } } }, include: { author: { include: { user: true } } } }),
-      prisma.medicationOrder.findMany({ where: { patientId: { in: patientIds } } }),
-      prisma.labOrder.findMany({ where: { patientId: { in: patientIds } }, include: { results: { where: { isCurrent: true } } } }),
-      prisma.imagingOrder.findMany({ where: { patientId: { in: patientIds } }, include: { reports: { where: { isCurrent: true } } } }),
-      prisma.task.findMany({ where: { patientId: { in: patientIds } } }),
-      prisma.referral.findMany({ where: { patientId: { in: patientIds } } }),
-      prisma.admission.findMany({ where: { encounter: { patientId: { in: patientIds } } }, include: { discharge: true, bed: true } }),
-      prisma.specimen.findMany({ where: { patientId: { in: patientIds } } }),
-      prisma.labResult.findMany({ where: { labOrder: { patientId: { in: patientIds } } } }),
-      prisma.imagingStudy.findMany({ where: { patientId: { in: patientIds } } }),
-      prisma.imagingReport.findMany({ where: { imagingOrder: { patientId: { in: patientIds } } } }),
+      prisma.encounter.findMany({ where: { patientId: { in: patientIds } }, include: { department: true }, orderBy: { registeredAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
+      prisma.diagnosis.findMany({ where: { patientId: { in: patientIds } }, include: { diagnosedBy: { include: { user: true } } }, orderBy: { createdAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
+      prisma.problem.findMany({ where: { patientId: { in: patientIds } }, orderBy: { createdAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
+      prisma.allergy.findMany({ where: { patientId: { in: patientIds } }, orderBy: { recordedAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
+      prisma.vital.findMany({ where: { encounter: { patientId: { in: patientIds } } }, orderBy: { recordedAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
+      prisma.clinicalNote.findMany({ where: { encounter: { patientId: { in: patientIds } } }, include: { author: { include: { user: true } } }, orderBy: { createdAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
+      prisma.medicationOrder.findMany({ where: { patientId: { in: patientIds } }, orderBy: { orderedAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
+      prisma.labOrder.findMany({ where: { patientId: { in: patientIds } }, include: { results: { where: { isCurrent: true } } }, orderBy: { orderedAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
+      prisma.imagingOrder.findMany({ where: { patientId: { in: patientIds } }, include: { reports: { where: { isCurrent: true } } }, orderBy: { orderedAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
+      prisma.task.findMany({ where: { patientId: { in: patientIds } }, orderBy: { createdAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
+      prisma.referral.findMany({ where: { patientId: { in: patientIds } }, orderBy: { createdAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
+      prisma.admission.findMany({ where: { encounter: { patientId: { in: patientIds } } }, include: { discharge: true, bed: true }, orderBy: { admittedAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
+      prisma.specimen.findMany({ where: { patientId: { in: patientIds } }, orderBy: { createdAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
+      prisma.labResult.findMany({ where: { labOrder: { patientId: { in: patientIds } } }, orderBy: { resultedAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
+      prisma.imagingStudy.findMany({ where: { patientId: { in: patientIds } }, orderBy: { createdAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
+      prisma.imagingReport.findMany({ where: { imagingOrder: { patientId: { in: patientIds } } }, orderBy: { reportedAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
     ]);
 
   const entries: TimelineEntry[] = [];

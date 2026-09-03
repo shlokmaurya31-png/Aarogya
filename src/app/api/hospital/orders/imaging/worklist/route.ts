@@ -12,7 +12,8 @@ import { withApiErrors } from "@/lib/auth/rbac";
 export async function GET(req: NextRequest) {
   return withApiErrors(async () => {
     const { searchParams } = new URL(req.url);
-    const { facilityId } = await requireFacilityStaff("patient:read", searchParams.get("facilityId") ?? undefined);
+    // Milestone E hardening — see the identical rationale in orders/lab/route.ts.
+    const { facilityId } = await requireFacilityStaff("clinical:chart:read", searchParams.get("facilityId") ?? undefined);
 
     const orderInclude = { patient: true, encounter: true } as const;
 
