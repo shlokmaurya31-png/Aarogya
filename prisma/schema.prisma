@@ -494,7 +494,6 @@ model Facility {
   encounters                Encounter[]
   episodesOfCare            EpisodeOfCare[]
   charges                   Charge[]
-  bills                     Bill[]
   tasks                     Task[]
   documents                 ClinicalDocument[]
   appointments              Appointment[]
@@ -525,6 +524,15 @@ model Facility {
 
   // Phase 4.5 — structured audit context (see AuditEvent).
   auditEvents AuditEvent[]
+
+  // Phase 5 — Billing + Insurance + Revenue Cycle.
+  billingAccounts BillingAccount[]
+  tariffs         Tariff[]
+  packages        PackageDefinition[]
+  invoices        Invoice[]
+  invoiceSequences InvoiceSequence[]
+  payments        Payment[]
+  claims          Claim[]
 }
 
 model Department {
@@ -766,7 +774,6 @@ model Patient {
   labOrders                 LabOrder[]
   imagingOrders             ImagingOrder[]
   charges                   Charge[]
-  bills                     Bill[]
   tasks                     Task[]
   documents                 ClinicalDocument[]
   consents                  Consent[]
@@ -787,6 +794,12 @@ model Patient {
 
   // Phase 4.5 — structured audit context (see AuditEvent).
   auditEvents AuditEvent[]
+
+  // Phase 5 — Billing + Insurance + Revenue Cycle.
+  billingAccounts BillingAccount[]
+  coverages       PatientCoverage[]
+  payments        Payment[]
+  invoices        Invoice[]
 
   @@index([facilityId])
   @@index([mergedIntoId])
@@ -947,7 +960,9 @@ model Encounter {
   documents                 ClinicalDocument[]
   admission                 Admission?
   charges                   Charge[]
-  bill                      Bill?
+  billingAccount            BillingAccount?
+  preAuthorizations         PreAuthorization[]
+  invoices                  Invoice[]
   appointments              Appointment[]
   triageAssessments         TriageAssessment[]
   queueEntries              QueueEntry[]
@@ -1661,9 +1676,33 @@ enum ImagingReportStatus {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Billing (charge engine — not a full accounting ERP, see architecture doc)
+// Phase 5 — Billing + Insurance + Revenue Cycle.
+// See docs/PHASE_5_BILLING_ARCHITECTURE.md for the full design. Money
+// convention throughout this section: every amount is an integer minor
+// unit (`xxxMinor`, INR paise) — never a Float. `Bill`'s old mutable
+// running-total counters (totalAmount/paidAmount, incremented on every
+// charge with no reconciliation against actual payments) are retired in
+// favor of BillingAccount, which stores no totals at all — every summary
+// is computed live from Charge/Invoice/Payment/Refund/FinancialAdjustment,
+// the same "don't store what can go stale" philosophy already used by
+// dischargeBarrierEngine.ts.
 // ─────────────────────────────────────────────────────────────────────────
 
+enum ChargeStatus {
+  POSTED
+  VOIDED
+}
+
+/**
+ * A billable financial event derived from clinical activity. Never mutates
+ * the clinical record it derives from — provenance is carried via
+ * sourceType/sourceId (e.g. "LabOrder"/<id>, "DispensingRecord"/<id>,
+ * "AdmissionBedDay"/<admissionId>, "PackageApplication"/"<pkgId>:<encId>").
+ * Once POSTED, unitPriceMinor/discountMinor/netAmountMinor/chargeCode/
+ * sourceType/sourceId are immutable — the only legal transition is
+ * POSTED -> VOIDED (see chargeCapture.ts#voidCharge), and only while not
+ * yet folded into an issued InvoiceLine.
+ */
 model Charge {
   id          String    @id @default(cuid())
   encounter   Encounter @relation(fields: [encounterId], references: [id])
@@ -1673,33 +1712,530 @@ model Charge {
   facility    Facility  @relation(fields: [facilityId], references: [id])
   facilityId  String
   description String
-  category    String // CONSULTATION | BED | PROCEDURE | LAB | IMAGING | PHARMACY | NURSING | OTHER
-  amount      Float
-  sourceType  String? // e.g. "LabOrder", "MedicationOrder"
-  sourceId    String?
-  createdAt   DateTime  @default(now())
+  category    String // CONSULTATION | BED | PROCEDURE | LAB | IMAGING | PHARMACY | NURSING | PACKAGE | OTHER
 
-  // Milestone E hardening: closes the duplicate-billing gap
+  // Links to Tariff.chargeCode (e.g. LabTestCatalog.code, ImagingCatalog.code,
+  // "BED_DAY:<WardType>", "PHARMACY:<DRUGNAME>") — null only for a legacy/
+  // freeform manual charge predating this phase or an explicitly-authorized
+  // freeform override (see billing:adjustment:approve gate in the manual
+  // billing route).
+  chargeCode     String?
+  quantity       Float        @default(1)
+  unitPriceMinor Int          @default(0)
+  discountMinor  Int          @default(0)
+  netAmountMinor Int          @default(0) // (quantity * unitPriceMinor) - discountMinor
+  currency       String       @default("INR")
+  status         ChargeStatus @default(POSTED)
+
+  sourceType String? // e.g. "LabOrder", "MedicationOrder"
+  sourceId   String?
+
+  postedByUserId String? // null = system/automatic (order-creation/dispense/discharge hooks)
+  voidedAt       DateTime?
+  voidedByUserId String?
+  voidReason     String?
+
+  createdAt DateTime @default(now())
+
+  invoiceLine InvoiceLine?
+
+  // Milestone E hardening (Phase 4): closes the duplicate-billing gap —
   // createChargeIfNotExists's app-level findFirst-then-create check could
   // not fully close on its own (NULL sourceType/sourceId — manual charges
   // — are exempt from uniqueness, so this only constrains the
   // auto-charge-on-order path, which is exactly where it's needed).
   @@unique([sourceType, sourceId])
   @@index([encounterId])
+  @@index([facilityId, status])
 }
 
-model Bill {
-  id          String    @id @default(cuid())
-  encounter   Encounter @relation(fields: [encounterId], references: [id])
-  encounterId String    @unique
-  patient     Patient   @relation(fields: [patientId], references: [id])
+enum BillingAccountStatus {
+  OPEN
+  CLOSED
+}
+
+/**
+ * Pure grouping/anchor row for one encounter's financial activity — NOT a
+ * ledger, NOT a totals cache. See billingAccount.ts#computeAccountSummary
+ * for how balances are derived live. Created lazily on first charge via
+ * getOrCreateBillingAccount, same call-site shape as the old Bill upsert.
+ */
+model BillingAccount {
+  id          String               @id @default(cuid())
+  encounter   Encounter            @relation(fields: [encounterId], references: [id])
+  encounterId String               @unique
+  patient     Patient              @relation(fields: [patientId], references: [id])
   patientId   String
-  facility    Facility  @relation(fields: [facilityId], references: [id])
+  facility    Facility             @relation(fields: [facilityId], references: [id])
   facilityId  String
-  totalAmount Float     @default(0)
-  paidAmount  Float     @default(0)
-  status      String    @default("OPEN") // OPEN | PARTIALLY_PAID | PAID | WAIVED
-  generatedAt DateTime  @default(now())
+  status      BillingAccountStatus @default(OPEN)
+  openedAt    DateTime             @default(now())
+  closedAt    DateTime?
+
+  invoices Invoice[]
+  payments Payment[]
+
+  @@index([facilityId, status])
+}
+
+enum PayerType {
+  CASH
+  INSURANCE
+  GOVERNMENT_SCHEME
+  CORPORATE_TPA
+}
+
+/**
+ * Generic payer abstraction — not just "insurer". A single seeded sentinel
+ * row (name: "Cash / Self-Pay", type: CASH) backs every self-pay Tariff/
+ * Invoice, deliberately avoiding a nullable payerId on Tariff (see below —
+ * a Postgres exclusion constraint over a nullable column is awkward, so
+ * self-pay is a real Payer row instead of null).
+ */
+model Payer {
+  id        String    @id @default(cuid())
+  name      String
+  type      PayerType
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now())
+
+  plans     PayerPlan[]
+  tariffs   Tariff[]
+  coverages PatientCoverage[]
+  invoices  Invoice[]
+}
+
+model PayerPlan {
+  id           String  @id @default(cuid())
+  payer        Payer   @relation(fields: [payerId], references: [id])
+  payerId      String
+  name         String
+  planCode     String?
+  copayPercent Float?
+  active       Boolean @default(true)
+
+  coverages PatientCoverage[]
+
+  @@unique([payerId, name])
+}
+
+enum CoverageStatus {
+  ACTIVE
+  INACTIVE
+  EXPIRED
+}
+
+model PatientCoverage {
+  id            String         @id @default(cuid())
+  patient       Patient        @relation(fields: [patientId], references: [id])
+  patientId     String
+  payer         Payer          @relation(fields: [payerId], references: [id])
+  payerId       String
+  plan          PayerPlan?     @relation(fields: [planId], references: [id])
+  planId        String?
+  memberId      String
+  validFrom     DateTime
+  validTo       DateTime?
+  priorityOrder Int            @default(1) // 1 = primary; 2+ = secondary payers, tried in order
+  status        CoverageStatus @default(ACTIVE)
+  addedByUserId String
+  createdAt     DateTime       @default(now())
+
+  preAuths PreAuthorization[]
+  claims   Claim[]
+
+  @@unique([patientId, payerId, memberId])
+  @@index([patientId, status])
+}
+
+enum PreAuthStatus {
+  REQUESTED
+  APPROVED
+  DENIED
+  EXPIRED
+}
+
+/**
+ * Foundation only — no live payer API. Status is set manually by staff
+ * reading the payer's decision off-system; EXPIRED is a status a human
+ * sets, never an auto-transition (this codebase has no cron/background
+ * job anywhere) — staleness is instead surfaced as a live-computed warning
+ * in financialClearance.ts, matching dischargeBarrierEngine.ts's pattern.
+ */
+model PreAuthorization {
+  id                   String        @id @default(cuid())
+  coverage             PatientCoverage @relation(fields: [coverageId], references: [id])
+  coverageId           String
+  encounter            Encounter     @relation(fields: [encounterId], references: [id])
+  encounterId          String
+  requestedAmountMinor Int
+  approvedAmountMinor  Int?
+  status               PreAuthStatus @default(REQUESTED)
+  payerReferenceNo     String? // payer's own reference — manual entry, no live API
+  requestedAt          DateTime      @default(now())
+  decidedAt            DateTime?
+  notes                String?
+  requestedByUserId    String
+
+  claim Claim?
+
+  @@index([encounterId])
+}
+
+/**
+ * Facility-scoped price list entry. facilityId and payerId are both
+ * deliberately NOT nullable — self-pay uses the seeded CASH Payer sentinel
+ * above rather than payerId: null, because a Postgres exclusion constraint
+ * (see prisma/migrations-postgres-baseline) over nullable columns is
+ * awkward (NULLs don't participate in the "=" comparison the constraint
+ * needs). Effective-dated: never overwrite historical pricing — a new
+ * tariff for the same (facilityId, chargeCode, payerId) gets a new row
+ * with its own effectiveFrom, never an edit to an old one's dates.
+ */
+model Tariff {
+  id              String    @id @default(cuid())
+  facility        Facility  @relation(fields: [facilityId], references: [id])
+  facilityId      String
+  payer           Payer     @relation(fields: [payerId], references: [id])
+  payerId         String
+  chargeCode      String // LabTestCatalog.code / ImagingCatalog.code / "BED_DAY:<WardType>" / "PHARMACY:<DRUGNAME>" / "CONSULT_OPD" / package codes
+  description     String
+  category        String
+  unitPriceMinor  Int
+  currency        String    @default("INR")
+  effectiveFrom   DateTime
+  effectiveTo     DateTime?
+  active          Boolean   @default(true)
+  createdByUserId String
+  createdAt       DateTime  @default(now())
+
+  @@index([facilityId, chargeCode, payerId])
+}
+
+/**
+ * Package foundation only (brief's explicit "do not build a massive
+ * package-management system") — applying a package creates exactly ONE
+ * lump Charge (category "PACKAGE", sourceType "PackageApplication"); items
+ * are display-only ("what's included" / "list-price reference for savings
+ * display"), never separately billed, never matched against actual orders
+ * placed.
+ */
+model PackageDefinition {
+  id                String   @id @default(cuid())
+  facility          Facility @relation(fields: [facilityId], references: [id])
+  facilityId        String
+  code              String
+  name              String
+  description       String?
+  packagePriceMinor Int
+  currency          String   @default("INR")
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+
+  items PackageItem[]
+
+  @@unique([facilityId, code])
+}
+
+model PackageItem {
+  id                String            @id @default(cuid())
+  package           PackageDefinition @relation(fields: [packageId], references: [id])
+  packageId         String
+  chargeCode        String // informational reference only — NOT separately billed
+  description       String
+  quantity          Float             @default(1)
+  refUnitPriceMinor Int // list-price reference, for "you saved ₹X" display only
+
+  @@index([packageId])
+}
+
+/**
+ * Per-facility, per-fiscal-year atomic counter backing Invoice/Claim
+ * numbering (see sequence.ts#nextSequence). CAS-based (optimistic
+ * concurrency retry loop), not a Postgres-only SERIAL/advisory lock — the
+ * exact same mechanism works unmodified on SQLite dev.
+ */
+model InvoiceSequence {
+  id         String   @id @default(cuid())
+  facility   Facility @relation(fields: [facilityId], references: [id])
+  facilityId String
+  fiscalYear Int // calendar year — documented choice, not Apr-Mar
+  nextValue  Int      @default(1)
+
+  @@unique([facilityId, fiscalYear])
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PARTIALLY_PAID
+  PAID
+  VOID
+}
+
+/**
+ * Immutable-once-ISSUED financial document. DRAFT is mutable (lines can be
+ * added by pulling in un-invoiced POSTED charges for the account); ISSUED
+ * freezes invoiceNumber + all four amount fields + every InvoiceLine.
+ * Legal transitions: DRAFT -> ISSUED (guarded, assigns invoiceNumber via
+ * InvoiceSequence CAS) -> {PARTIALLY_PAID, PAID} (driven by
+ * PaymentAllocation sums) -> VOID (only from ISSUED/PARTIALLY_PAID with
+ * ZERO allocated payments — otherwise correction is a FinancialAdjustment,
+ * never a void of a paid invoice).
+ */
+model Invoice {
+  id                String         @id @default(cuid())
+  invoiceNumber     String?        @unique // null while DRAFT; assigned atomically at ISSUED
+  billingAccount    BillingAccount @relation(fields: [billingAccountId], references: [id])
+  billingAccountId  String
+  encounter         Encounter      @relation(fields: [encounterId], references: [id])
+  encounterId       String
+  patient           Patient        @relation(fields: [patientId], references: [id])
+  patientId         String
+  facility          Facility       @relation(fields: [facilityId], references: [id])
+  facilityId        String
+  payer             Payer?         @relation(fields: [payerId], references: [id]) // null = self-pay
+  payerId           String?
+  status            InvoiceStatus  @default(DRAFT)
+  subtotalMinor     Int            @default(0)
+  discountMinor     Int            @default(0)
+  taxMinor          Int            @default(0)
+  totalMinor        Int            @default(0) // frozen at ISSUED
+  currency          String         @default("INR")
+  issuedAt          DateTime?
+  dueAt             DateTime?
+  voidedAt          DateTime?
+  voidedByUserId    String?
+  voidReason        String?
+  generatedByUserId String
+  createdAt         DateTime       @default(now())
+
+  lines       InvoiceLine[]
+  allocations PaymentAllocation[]
+  adjustments FinancialAdjustment[]
+  claim       Claim?
+
+  @@index([billingAccountId])
+  @@index([facilityId, status])
+}
+
+model InvoiceLine {
+  id             String  @id @default(cuid())
+  invoice        Invoice @relation(fields: [invoiceId], references: [id])
+  invoiceId      String
+  charge         Charge? @relation(fields: [chargeId], references: [id])
+  chargeId       String? @unique // null only for an explicitly-authorized free-text line
+  description    String
+  quantity       Float   @default(1)
+  unitPriceMinor Int
+  netAmountMinor Int
+
+  claimLine ClaimLine?
+
+  @@index([invoiceId])
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  UPI
+  NETBANKING
+  CHEQUE
+  INSURANCE_SETTLEMENT
+}
+
+enum PaymentStatus {
+  RECEIVED
+  VOIDED
+}
+
+/**
+ * A received payment. Deposits/advances are simply Payment rows with zero
+ * PaymentAllocation children — "money received with no invoice to apply it
+ * to yet" IS what an unallocated payment already means, so there is no
+ * separate Deposit model (would just duplicate this ledger). Idempotent on
+ * idempotencyKey (the payment-race anchor — same client/gateway-generated
+ * value on retry must never produce two postings). allocatedMinor/
+ * refundedMinor are guarded running caches, CAS-updated in the SAME
+ * transaction as the PaymentAllocation/Refund row they summarize (the
+ * established "guarded updateMany" idiom used by every other stateful
+ * entity in this codebase) — not a blind increment like the old
+ * Bill.totalAmount. Invariant: allocatedMinor + refundedMinor <= amountMinor.
+ */
+model Payment {
+  id               String        @id @default(cuid())
+  billingAccount   BillingAccount @relation(fields: [billingAccountId], references: [id])
+  billingAccountId String
+  patient          Patient       @relation(fields: [patientId], references: [id])
+  patientId        String
+  facility         Facility      @relation(fields: [facilityId], references: [id])
+  facilityId       String
+  amountMinor      Int // immutable — total received
+  allocatedMinor   Int           @default(0)
+  refundedMinor    Int           @default(0)
+  currency         String        @default("INR")
+  method           PaymentMethod
+  status           PaymentStatus @default(RECEIVED)
+  idempotencyKey   String        @unique
+  referenceNo      String?
+  receivedAt       DateTime      @default(now())
+  receivedByUserId String
+  voidedAt         DateTime?
+  voidedByUserId   String?
+  voidReason       String?
+
+  allocations PaymentAllocation[]
+  refunds     Refund[]
+
+  @@index([billingAccountId])
+  @@index([facilityId, receivedAt])
+}
+
+/** Append-only — never edited or deleted. Correcting a mis-allocation means voiding the payment or issuing a FinancialAdjustment, never mutating an allocation row. */
+model PaymentAllocation {
+  id                String   @id @default(cuid())
+  payment           Payment  @relation(fields: [paymentId], references: [id])
+  paymentId         String
+  invoice           Invoice  @relation(fields: [invoiceId], references: [id])
+  invoiceId         String
+  amountMinor       Int
+  allocatedAt       DateTime @default(now())
+  allocatedByUserId String
+
+  @@unique([paymentId, invoiceId])
+  @@index([invoiceId])
+}
+
+enum RefundStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  COMPLETED
+}
+
+/**
+ * References the original Payment — never mutates it. Maker-checker
+ * enforced in service code (refunds.ts): approvedByUserId must differ from
+ * requestedByUserId. Legal transitions: REQUESTED -> APPROVED -> COMPLETED,
+ * or REQUESTED -> REJECTED. Immutable once COMPLETED.
+ */
+model Refund {
+  id                String       @id @default(cuid())
+  payment           Payment      @relation(fields: [paymentId], references: [id])
+  paymentId         String
+  amountMinor       Int
+  reason            String
+  status            RefundStatus @default(REQUESTED)
+  requestedByUserId String
+  approvedByUserId  String?
+  completedAt       DateTime?
+  idempotencyKey    String       @unique
+  createdAt         DateTime     @default(now())
+
+  @@index([paymentId])
+}
+
+enum AdjustmentType {
+  CREDIT_NOTE
+  DEBIT_NOTE
+  WRITE_OFF
+  DISCOUNT
+}
+
+enum AdjustmentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/**
+ * Correcting an issued invoice without mutating it. Once APPROVED,
+ * immutable — a further correction is a NEW, opposite-direction
+ * adjustment, never an edit (standard accounting discipline; avoids
+ * "edit the ledger" recurring across this whole redesign).
+ */
+model FinancialAdjustment {
+  id                String           @id @default(cuid())
+  invoice           Invoice          @relation(fields: [invoiceId], references: [id])
+  invoiceId         String
+  type              AdjustmentType
+  amountMinor       Int
+  reason            String
+  status            AdjustmentStatus @default(PENDING)
+  requestedByUserId String
+  approvedByUserId  String?
+  createdAt         DateTime         @default(now())
+
+  @@index([invoiceId])
+}
+
+enum ClaimStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  PARTIALLY_APPROVED
+  REJECTED
+  SETTLED
+  CLOSED
+}
+
+enum ClaimLineStatus {
+  PENDING
+  APPROVED
+  DENIED
+}
+
+/**
+ * One claim per invoice this phase (split-across-multiple-payers
+ * explicitly deferred). No external payer/EDI integration — status is set
+ * manually as staff record the payer's decision. Provenance to clinical
+ * source needs no new table: ClaimLine.invoiceLineId -> InvoiceLine.chargeId
+ * -> Charge.sourceType/sourceId -> the originating clinical order is
+ * already a complete chain. Once SUBMITTED, immutable except via the
+ * guarded status transitions below — a correction is a new claim, never a
+ * silent rewrite.
+ */
+model Claim {
+  id                   String            @id @default(cuid())
+  invoice              Invoice           @relation(fields: [invoiceId], references: [id])
+  invoiceId            String            @unique
+  coverage             PatientCoverage   @relation(fields: [coverageId], references: [id])
+  coverageId           String
+  preAuthorization     PreAuthorization? @relation(fields: [preAuthorizationId], references: [id])
+  preAuthorizationId   String?           @unique
+  facility             Facility          @relation(fields: [facilityId], references: [id])
+  facilityId           String
+  claimNumber          String?           @unique // assigned at SUBMITTED, same InvoiceSequence mechanism
+  status               ClaimStatus       @default(DRAFT)
+  submittedAmountMinor Int
+  approvedAmountMinor  Int?
+  settledAmountMinor   Int?
+  submittedAt          DateTime?
+  decidedAt            DateTime?
+  settledAt            DateTime?
+  denialReason         String?
+  externalReferenceNo  String? // payer's own claim ID — manual entry, no live API
+  createdByUserId      String
+  createdAt            DateTime          @default(now())
+
+  lines ClaimLine[]
+
+  @@index([facilityId, status])
+}
+
+model ClaimLine {
+  id                  String          @id @default(cuid())
+  claim               Claim           @relation(fields: [claimId], references: [id])
+  claimId             String
+  invoiceLine         InvoiceLine     @relation(fields: [invoiceLineId], references: [id])
+  invoiceLineId       String          @unique
+  claimedAmountMinor  Int
+  approvedAmountMinor Int?
+  status              ClaimLineStatus @default(PENDING)
+  denialReason        String?
+
+  @@index([claimId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────

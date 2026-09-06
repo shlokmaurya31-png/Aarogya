@@ -8,6 +8,7 @@ import { StatusPill } from "@/components/ui/StatusPill";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { AmendmentBadge } from "@/components/hospital-os/diagnostics/shared";
+import { PatientFinancialPanel } from "@/components/hospital-os/PatientFinancialPanel";
 
 interface TimelineEntry { id: string; timestamp: string; type: string; summary: string; department?: string | null }
 
@@ -46,7 +47,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
   const encounterId = searchParams.get("encounterId");
   const push = useToastStore((s) => s.push);
   const [data, setData] = useState<ChartData | null>(null);
-  const [tab, setTab] = useState<"orders" | "notes" | "clinical" | "timeline" | "careplan">("orders");
+  const [tab, setTab] = useState<"orders" | "notes" | "clinical" | "timeline" | "careplan" | "financial">("orders");
   const [timeline, setTimeline] = useState<TimelineEntry[] | null>(null);
 
   // Care plan composer (brief §6)
@@ -245,7 +246,10 @@ export function PatientChart({ patientId }: { patientId: string }) {
             <TabButton active={tab === "notes"} onClick={() => setTab("notes")}>Notes</TabButton>
             <TabButton active={tab === "timeline"} onClick={() => { setTab("timeline"); loadTimeline(); }}>Timeline</TabButton>
             <TabButton active={tab === "careplan"} onClick={() => setTab("careplan")}>Care Plan</TabButton>
+            <TabButton active={tab === "financial"} onClick={() => setTab("financial")}>Financial</TabButton>
           </div>
+
+          {tab === "financial" && <PatientFinancialPanel patientId={patientId} encounterId={encounterId} />}
 
           {tab === "orders" && (
             <>

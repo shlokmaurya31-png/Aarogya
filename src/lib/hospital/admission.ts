@@ -2,6 +2,9 @@ import { prisma } from "@/lib/db";
 import { BedStatus, EncounterStatus } from "@prisma/client";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { isEncounterTransitionAllowed, InvalidEncounterTransitionError } from "./encounterStateMachine";
+import { createPricedChargeIfNotExists } from "./billing/chargeCapture";
+import { PriceNotFoundError } from "./billing/pricing";
+import { ceilStayDays } from "./billing/money";
 
 export class BedNotAvailableError extends Error {
   constructor() {
@@ -158,16 +161,44 @@ export async function finalizeDischarge(dischargeId: string, byUserId: string, d
       throw new InvalidEncounterTransitionError(discharge.admission.encounter.status, EncounterStatus.DISCHARGED);
     }
 
-    const bed = await tx.bed.findUniqueOrThrow({ where: { id: discharge.admission.bedId } });
+    const bed = await tx.bed.findUniqueOrThrow({ where: { id: discharge.admission.bedId }, include: { ward: true } });
     await tx.bed.update({ where: { id: bed.id }, data: { status: BedStatus.CLEANING } });
     await tx.bedStateEvent.create({
       data: { bedId: bed.id, fromStatus: bed.status, toStatus: BedStatus.CLEANING, reason: "Discharge", byUserId },
     });
 
+    const dischargedAt = new Date();
     const updated = await tx.discharge.update({
       where: { id: dischargeId },
-      data: { dischargedAt: new Date(), signedByStaffId: byUserId, dischargeSummary: dischargeSummary as object },
+      data: { dischargedAt, signedByStaffId: byUserId, dischargeSummary: dischargeSummary as object },
     });
+
+    // Phase 5 — bed/accommodation billing. One bounded policy: any partial
+    // day counts as a full day, priced against the bed's CURRENT ward type
+    // only (mid-stay ward transfers are not separately priced this phase —
+    // deliberately deferred, see docs/PHASE_5_SCOPE_AND_DEFERRALS.md).
+    // Idempotent per admission via sourceType/sourceId — re-running
+    // finalizeDischarge (it can't succeed twice, but defensively) never
+    // double-charges.
+    const daysStayed = ceilStayDays(discharge.admission.admittedAt, dischargedAt);
+    const bedChargeCode = `BED_DAY:${bed.ward.wardType}`;
+    try {
+      await createPricedChargeIfNotExists(tx, {
+        encounterId: discharge.admission.encounterId,
+        patientId: discharge.admission.encounter.patientId,
+        facilityId: discharge.admission.encounter.facilityId,
+        description: `Bed charges: ${daysStayed} day(s), ${bed.ward.wardType}`,
+        category: "BED",
+        chargeCode: bedChargeCode,
+        quantity: daysStayed,
+        sourceType: "AdmissionBedDay",
+        sourceId: discharge.admission.id,
+        postedByUserId: byUserId,
+      });
+    } catch (err) {
+      if (!(err instanceof PriceNotFoundError)) throw err;
+      // No tariff configured for this ward type — documented gap, not a silent failure: discharge still proceeds, but no accommodation charge is posted.
+    }
 
     await tx.encounter.update({
       where: { id: discharge.admission.encounterId },

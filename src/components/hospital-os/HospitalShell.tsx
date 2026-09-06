@@ -6,6 +6,7 @@ import {
   LayoutGrid, BedDouble, ClipboardList, LogOut, Building2, Stethoscope,
   ClipboardCheck, FlaskConical, ScanLine, Receipt, DoorOpen,
   UserPlus, Siren, ArrowRightLeft, Pill, Microscope,
+  ShieldCheck, BarChart3, Settings2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusPill } from "@/components/ui/StatusPill";
@@ -27,6 +28,30 @@ const DIAGNOSTICS_GROUP: NavItem = {
   ],
 };
 
+// Phase 5 — Billing + Insurance + Revenue Cycle. Settings (tariffs/payers)
+// is admin-only by convention here (a UX courtesy, not the auth boundary —
+// see the comment on NavItem above); staff get Billing/Claims/Reconciliation.
+const BILLING_GROUP_ADMIN: NavItem = {
+  href: "/hospital-os/billing",
+  label: "Billing",
+  icon: Receipt,
+  children: [
+    { href: "/hospital-os/billing", label: "Encounters", icon: Receipt },
+    { href: "/hospital-os/claims", label: "Claims", icon: ShieldCheck },
+    { href: "/hospital-os/billing/reconciliation", label: "Reconciliation", icon: BarChart3 },
+    { href: "/hospital-os/billing/settings", label: "Settings", icon: Settings2 },
+  ],
+};
+const BILLING_GROUP_STAFF: NavItem = {
+  href: "/hospital-os/billing",
+  label: "Billing",
+  icon: Receipt,
+  children: [
+    { href: "/hospital-os/billing", label: "Encounters", icon: Receipt },
+    { href: "/hospital-os/claims", label: "Claims", icon: ShieldCheck },
+  ],
+};
+
 const NAV_BY_ROLE: Record<string, NavItem[]> = {
   HOSPITAL_ADMIN: [
     { href: "/hospital-os", label: "Command Center", icon: LayoutGrid },
@@ -38,7 +63,7 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     { href: "/hospital-os/discharge", label: "Discharge", icon: DoorOpen },
     DIAGNOSTICS_GROUP,
     { href: "/hospital-os/pharmacy", label: "Pharmacy", icon: Pill },
-    { href: "/hospital-os/billing", label: "Billing", icon: Receipt },
+    BILLING_GROUP_ADMIN,
   ],
   AAROGYA_ADMIN: [
     { href: "/hospital-os", label: "Command Center", icon: LayoutGrid },
@@ -46,7 +71,7 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     { href: "/hospital-os/admissions", label: "Admissions", icon: ClipboardList },
     { href: "/hospital-os/transfers", label: "Transfers", icon: ArrowRightLeft },
     { href: "/hospital-os/discharge", label: "Discharge", icon: DoorOpen },
-    { href: "/hospital-os/billing", label: "Billing", icon: Receipt },
+    BILLING_GROUP_ADMIN,
   ],
   DOCTOR: [
     { href: "/hospital-os/doctor", label: "My Patients", icon: Stethoscope },
@@ -79,7 +104,7 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     { href: "/hospital-os/diagnostics", label: "Diagnostics", icon: Microscope },
   ],
   PHARMACIST: [{ href: "/hospital-os/pharmacy", label: "Pharmacy", icon: Pill }],
-  BILLING_STAFF: [{ href: "/hospital-os/billing", label: "Billing", icon: Receipt }],
+  BILLING_STAFF: [BILLING_GROUP_STAFF],
   FRONT_DESK: [{ href: "/hospital-os/front-desk", label: "Front Desk", icon: UserPlus }],
 };
 

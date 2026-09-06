@@ -7,7 +7,8 @@ import { recordAuditEvent } from "@/lib/auth/audit";
 import { createOrderEnvelope } from "@/lib/hospital/orderEnvelope";
 import { mapDiagnosticPriorityToOrderPriority } from "@/lib/hospital/diagnosticsLifecycle";
 import { accessionSpecimen } from "@/lib/hospital/specimenLifecycle";
-import { createChargeIfNotExists } from "@/lib/hospital/billing";
+import { createPricedChargeIfNotExists } from "@/lib/hospital/billing/chargeCapture";
+import { PriceNotFoundError } from "@/lib/hospital/billing/pricing";
 
 const VALID_ORDER_PRIORITIES = ["ROUTINE", "URGENT", "STAT"];
 
@@ -119,17 +120,38 @@ export async function POST(req: NextRequest) {
 
       // First automatic charge hook in the codebase (brief §44) — idempotent by
       // (sourceType, sourceId), now also backed by a DB-level unique
-      // constraint (Milestone E hardening, see prisma/migrations).
-      const chargeResult = await createChargeIfNotExists(tx, {
-        encounterId,
-        patientId,
-        facilityId,
-        description: `Lab: ${testName}`,
-        category: "LAB",
-        amount: catalogTest?.demoPriceInr ?? 300,
-        sourceType: "LabOrder",
-        sourceId: createdOrder.id,
-      });
+      // constraint (Milestone E hardening, see prisma/migrations). Phase 5:
+      // server-side priced via chargeCode (closes the old client-trusted
+      // `amount` gap) — catalog code when the order links to
+      // LabTestCatalog, else a per-test-name tariff, falling back to a
+      // generic LAB tariff when neither exists (no real lab price list this phase).
+      let chargeResult;
+      try {
+        chargeResult = await createPricedChargeIfNotExists(tx, {
+          encounterId,
+          patientId,
+          facilityId,
+          description: `Lab: ${testName}`,
+          category: "LAB",
+          chargeCode: catalogTest?.code ?? `LAB:${testName.trim().toUpperCase()}`,
+          sourceType: "LabOrder",
+          sourceId: createdOrder.id,
+          postedByUserId: staff.id,
+        });
+      } catch (err) {
+        if (!(err instanceof PriceNotFoundError)) throw err;
+        chargeResult = await createPricedChargeIfNotExists(tx, {
+          encounterId,
+          patientId,
+          facilityId,
+          description: `Lab: ${testName} (generic tariff)`,
+          category: "LAB",
+          chargeCode: "LAB:GENERIC",
+          sourceType: "LabOrder",
+          sourceId: createdOrder.id,
+          postedByUserId: staff.id,
+        });
+      }
 
       // Nursing/collection task (brief §41) — reuses the existing generic
       // Task engine via Order.orderId, no new task table.
@@ -181,7 +203,7 @@ export async function POST(req: NextRequest) {
       await recordAuditEvent(
         "hospital.billing.chargeCreated",
         session.userId,
-        { chargeId: charge.id, amount: charge.amount, sourceType: "LabOrder", sourceId: order.id },
+        { chargeId: charge.id, netAmountMinor: charge.netAmountMinor, sourceType: "LabOrder", sourceId: order.id },
         { facilityId, patientId, encounterId }
       );
     return { order, specimen };

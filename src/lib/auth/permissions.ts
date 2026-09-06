@@ -139,6 +139,29 @@ export const PERMISSIONS = [
   "imaging:report:amend",
   "radiology:catalog:manage",
   "radiology:resource:manage",
+
+  // Phase 5 — Billing + Insurance + Revenue Cycle. "billing:view" and
+  // "billing:charge:create" already existed (Phase 0/4) and are reused
+  // unchanged. Maker/checker split across the two existing roles rather
+  // than a new "Finance" Role enum value — see docs/PHASE_5_BILLING_ARCHITECTURE.md.
+  "billing:charge:void",
+  "billing:tariff:manage",
+  "billing:package:manage",
+  "billing:invoice:create",
+  "billing:invoice:issue",
+  "billing:invoice:void",
+  "billing:payment:record",
+  "billing:payment:void",
+  "billing:refund:request",
+  "billing:refund:approve",
+  "billing:adjustment:create",
+  "billing:adjustment:approve",
+  "billing:reconciliation:view",
+  "insurance:coverage:manage",
+  "insurance:preauth:manage",
+  "insurance:claim:create",
+  "insurance:claim:submit",
+  "insurance:claim:review",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -266,6 +289,17 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "encounter:read",
     "billing:view",
     "billing:charge:create",
+    // Phase 5 — maker tier: create/request, never approve/void/manage pricing.
+    "billing:charge:void",
+    "billing:invoice:create",
+    "billing:invoice:issue",
+    "billing:payment:record",
+    "billing:refund:request",
+    "billing:adjustment:create",
+    "insurance:coverage:manage",
+    "insurance:preauth:manage",
+    "insurance:claim:create",
+    "insurance:claim:submit",
   ],
   HOSPITAL_ADMIN: [
     "hospital:command-center:view",
@@ -279,6 +313,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "admission:discharge:initiate",
     "admission:discharge:finalize",
     "billing:view",
+    "billing:charge:create", // pre-existing Phase 0 permission — the checker tier needs this too for the amount-override path (billing:adjustment:approve alone isn't the route's base gate).
     "task:view",
     "task:manage",
     "document:manage",
@@ -299,6 +334,28 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "lab:catalog:manage",
     "radiology:catalog:manage",
     "radiology:resource:manage",
+    // Phase 5 — checker/approval tier: void/approve/manage pricing, plus reconciliation visibility.
+    "billing:tariff:manage",
+    "billing:package:manage",
+    "billing:invoice:void",
+    "billing:payment:void",
+    "billing:refund:approve",
+    "billing:adjustment:approve",
+    "billing:reconciliation:view",
+    "insurance:claim:review",
+    // Checker tier also holds the maker-tier permissions (an admin can do
+    // everything billing staff can, plus approve) — least-privilege still
+    // holds since DOCTOR/NURSE/etc. get none of this.
+    "billing:charge:void",
+    "billing:invoice:create",
+    "billing:invoice:issue",
+    "billing:payment:record",
+    "billing:refund:request",
+    "billing:adjustment:create",
+    "insurance:coverage:manage",
+    "insurance:preauth:manage",
+    "insurance:claim:create",
+    "insurance:claim:submit",
   ],
   FRONT_DESK: [
     "hospital:command-center:view",
@@ -346,6 +403,10 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "clinical:chart:read",
     "encounter:read",
     "billing:view",
+    // Phase 5 — cross-facility oversight only, no day-to-day billing operations.
+    "billing:tariff:manage",
+    "billing:reconciliation:view",
+    "insurance:claim:review",
   ],
 };
 

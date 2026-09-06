@@ -17,6 +17,7 @@ import { accessionSpecimen, collectSpecimen, receiveSpecimen, acceptSpecimen, re
 import { enterResult, verifyResult } from "../../src/lib/hospital/labResultLifecycle";
 import { scheduleStudy, checkInStudy, startStudy, completeStudy } from "../../src/lib/hospital/imagingStudyLifecycle";
 import { enterReport, verifyReport, amendReport } from "../../src/lib/hospital/imagingReportLifecycle";
+import { createCharge } from "../../src/lib/hospital/billing/chargeCapture";
 
 /**
  * Small, explicitly-demo lab catalog (brief §8-10, §54). Global
@@ -516,15 +517,16 @@ export async function seedHospital(prisma: PrismaClient) {
       });
     }
 
-    // Charges + bill for anyone with a chief complaint (OPD consultation fee at minimum).
-    const consultFee = 500 + (i % 5) * 200;
-    await prisma.charge.create({
-      data: { encounterId: encounter.id, patientId: patient.id, facilityId: facility.id, description: "Consultation fee", category: "CONSULTATION", amount: consultFee },
-    });
-    await prisma.bill.upsert({
-      where: { encounterId: encounter.id },
-      update: {},
-      create: { encounterId: encounter.id, patientId: patient.id, facilityId: facility.id, totalAmount: consultFee },
+    // Charges + billing account for anyone with a chief complaint (OPD consultation fee at minimum).
+    const consultFeeMinor = (500 + (i % 5) * 200) * 100;
+    await createCharge(prisma, {
+      encounterId: encounter.id,
+      patientId: patient.id,
+      facilityId: facility.id,
+      description: "Consultation fee",
+      category: "CONSULTATION",
+      chargeCode: "CONSULT_OPD",
+      unitPriceMinor: consultFeeMinor,
     });
 
     // Problems for a subset — active diagnosis list.

@@ -3,6 +3,8 @@ import { MedicationOrderStatus, MedicationAdministrationStatus, DispenseStatus }
 import { checkMedicationSafety, writeSafetyWarnings, type SafetyFlag } from "./clinicalSafety";
 import { generateAdministrationSchedule } from "./medicationSchedule";
 import { createOrderEnvelope, closeOrderEnvelope } from "./orderEnvelope";
+import { createPricedChargeIfNotExists } from "./billing/chargeCapture";
+import { PriceNotFoundError } from "./billing/pricing";
 
 /**
  * The full prescribe -> pharmacy -> dispense -> administer -> discontinue
@@ -217,7 +219,7 @@ export async function dispenseMedication(input: {
   notes?: string;
   byUserId: string;
 }) {
-  const order = await prisma.medicationOrder.findUniqueOrThrow({ where: { id: input.medicationOrderId } });
+  const order = await prisma.medicationOrder.findUniqueOrThrow({ where: { id: input.medicationOrderId }, include: { encounter: true } });
   if (order.isControlled && !input.witnessStaffId) {
     throw new Error("Controlled medication requires a witness co-sign to dispense.");
   }
@@ -241,6 +243,47 @@ export async function dispenseMedication(input: {
     await transition(tx, input.medicationOrderId, "DISPENSED", input.byUserId);
     const activated = await transition(tx, input.medicationOrderId, "ACTIVE", input.byUserId);
     await tx.auditEvent.create({ data: { type: "hospital.medication.dispensed", userId: input.byUserId, detail: { orderId: input.medicationOrderId, dispensingRecordId: record.id, status: record.status } } });
+
+    // Phase 5 — pharmacy dispensing charge hook. Charged once, on actual
+    // dispense (not at order time) — sourceType/sourceId key it to this
+    // DispensingRecord, so a re-dispense attempt on the same record (there
+    // isn't one; each dispense creates its own record) never double-charges,
+    // and a genuinely separate partial/repeat dispense legitimately gets
+    // its own charge. Falls back to a generic pharmacy tariff when no
+    // drug-specific one exists — no real drug-cost catalog this phase.
+    const drugChargeCode = `PHARMACY:${(input.substitutedDrugName ?? order.drugName).trim().toUpperCase()}`;
+    try {
+      await createPricedChargeIfNotExists(tx, {
+        encounterId: order.encounterId,
+        patientId: order.patientId,
+        facilityId: order.encounter.facilityId,
+        description: `Pharmacy: ${input.substitutedDrugName ?? order.drugName} x${input.quantity}${input.quantityUnit}`,
+        category: "PHARMACY",
+        chargeCode: drugChargeCode,
+        quantity: input.quantity,
+        sourceType: "DispensingRecord",
+        sourceId: record.id,
+        postedByUserId: input.byUserId,
+      });
+    } catch (err) {
+      if (err instanceof PriceNotFoundError) {
+        await createPricedChargeIfNotExists(tx, {
+          encounterId: order.encounterId,
+          patientId: order.patientId,
+          facilityId: order.encounter.facilityId,
+          description: `Pharmacy: ${input.substitutedDrugName ?? order.drugName} x${input.quantity}${input.quantityUnit} (generic tariff)`,
+          category: "PHARMACY",
+          chargeCode: "PHARMACY:GENERIC",
+          quantity: input.quantity,
+          sourceType: "DispensingRecord",
+          sourceId: record.id,
+          postedByUserId: input.byUserId,
+        });
+      } else {
+        throw err;
+      }
+    }
+
     return { order: activated, dispensingRecord: record };
   });
 }

@@ -132,7 +132,39 @@ export type AuditEventType =
   | "hospital.imaging.studyCompleted"
   | "hospital.imaging.reportVerified"
   | "hospital.imaging.criticalFindingAcknowledged"
-  | "hospital.imaging.reportAmended";
+  | "hospital.imaging.reportAmended"
+  // Phase 5 — Billing + Insurance + Revenue Cycle. Recorded through the
+  // same synchronous AuditEvent mechanism as every prior phase.
+  | "hospital.billing.chargeVoided"
+  | "hospital.billing.tariffCreated"
+  | "hospital.billing.tariffDeactivated"
+  | "hospital.billing.packageCreated"
+  | "hospital.billing.packageApplied"
+  | "hospital.invoice.drafted"
+  | "hospital.invoice.lineAdded"
+  | "hospital.invoice.issued"
+  | "hospital.invoice.voided"
+  | "hospital.payment.recorded"
+  | "hospital.payment.allocated"
+  | "hospital.payment.voided"
+  | "hospital.refund.requested"
+  | "hospital.refund.approved"
+  | "hospital.refund.rejected"
+  | "hospital.refund.completed"
+  | "hospital.adjustment.created"
+  | "hospital.adjustment.approved"
+  | "hospital.adjustment.rejected"
+  | "hospital.insurance.payerCreated"
+  | "hospital.insurance.payerPlanCreated"
+  | "hospital.insurance.coverageAdded"
+  | "hospital.insurance.coverageDeactivated"
+  | "hospital.insurance.preauthRequested"
+  | "hospital.insurance.preauthDecided"
+  | "hospital.claim.created"
+  | "hospital.claim.submitted"
+  | "hospital.claim.decided"
+  | "hospital.claim.settled"
+  | "hospital.claim.closed";
 
 export interface AuditEventContext {
   facilityId?: string;

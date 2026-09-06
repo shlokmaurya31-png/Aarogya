@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, NotFoundError } from "@/lib/auth/rbac";
 import { computeDischargeBarriers, bucketDischarge } from "@/lib/hospital/dischargeBarrierEngine";
+import { computeFinancialClearance } from "@/lib/hospital/billing/financialClearance";
 
 /** Discharge barrier engine (brief §38) — tells staff WHY, not just THAT discharge is pending. */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -16,6 +17,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
     const barriers = await computeDischargeBarriers(admission.discharge.id);
     const { bucket, label } = bucketDischarge(barriers);
-    return { barriers, bucket, bucketLabel: label };
+    // Informational only — does not gate discharge. billingReady/insuranceReady
+    // (part of `barriers` above) remain the only flags that actually block
+    // finalizeDischarge; this is read-only additional context.
+    const financialClearance = await computeFinancialClearance(admission.encounterId);
+    return { barriers, bucket, bucketLabel: label, financialClearance };
   });
 }

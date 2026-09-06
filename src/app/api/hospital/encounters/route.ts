@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
         ...(status ? { status: status as never } : includeAll ? {} : { status: { notIn: ["DISCHARGED", "CLOSED"] } }),
         ...(type ? { type: type as never } : {}),
       },
-      include: { patient: true, department: true, admission: { include: { bed: true } }, bill: true },
+      include: { patient: true, department: true, admission: { include: { bed: true } } },
       orderBy: { registeredAt: "desc" },
       take: 100,
     });

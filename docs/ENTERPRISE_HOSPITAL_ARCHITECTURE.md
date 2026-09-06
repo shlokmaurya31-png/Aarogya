@@ -219,7 +219,10 @@ component (brief §131/§201).
 /hospital-os/nurse                    Nursing Command Center (tasks, MAR)
 /hospital-os/lab                      Lab order queue → result entry → release
 /hospital-os/radiology                Imaging order queue → report entry → release
-/hospital-os/billing                  Charge engine + bill view
+/hospital-os/billing                  Billing workspace (charges, invoices, payments)
+/hospital-os/billing/settings         Tariffs / packages / payers (admin)
+/hospital-os/billing/reconciliation   Revenue-cycle reconciliation dashboard
+/hospital-os/claims                   Insurance claims worklist
 
 /api/hospital/command-center
 /api/hospital/beds
@@ -242,15 +245,25 @@ component (brief §131/§201).
 /api/hospital/nurse/tasks
 ```
 
+**Phase 5** replaced the thin Phase 0/4 charge engine (`Charge` + `Bill`)
+with a full billing/insurance/revenue-cycle subsystem — Tariff pricing,
+Invoice/Payment/Refund/Claim lifecycles, insurance coverage/pre-auth, and
+reconciliation. See `docs/PHASE_5_BILLING_ARCHITECTURE.md` (models/
+services/routes), `docs/PHASE_5_REVENUE_CYCLE.md` (provenance chain),
+`docs/PHASE_5_FINANCIAL_INVARIANTS.md` (concurrency — including a real
+latent idempotency bug this phase found and fixed), and
+`docs/PHASE_5_SCOPE_AND_DEFERRALS.md` (what's foundation-only).
+
 ## 11. Explicitly deferred (architected in prose only)
 
-- **ICU/OT/Blood Bank/Pharmacy-inventory/Insurance-claims/Quality-CAPA/
-  Infection-Control/HR-rostering/Facilities-equipment** modules: data model
-  sketched in §68 of the brief is *not* added to `schema.prisma` this pass
-  — adding 60+ more speculative tables with no working workflow behind them
-  would violate brief §210 ("do not use mock data where a real domain model
-  is required" cuts both ways: an unused table is not better than an
-  honestly-absent one).
+- **ICU/OT/Blood Bank/Pharmacy-inventory/Quality-CAPA/Infection-Control/
+  HR-rostering/Facilities-equipment** modules: data model sketched in §68
+  of the brief is *not* added to `schema.prisma` this pass — adding 60+
+  more speculative tables with no working workflow behind them would
+  violate brief §210 ("do not use mock data where a real domain model is
+  required" cuts both ways: an unused table is not better than an
+  honestly-absent one). (Insurance/claims was in this list through Phase
+  4 — Phase 5 built it; see `docs/PHASE_5_BILLING_ARCHITECTURE.md`.)
 - **ABDM/FHIR/DICOM**: no adapters added this pass. The Scholar precedent
   (`ClinicalCaseProvider` interface + only a synthetic implementation
   wired up) is the intended shape for these — build when a real
