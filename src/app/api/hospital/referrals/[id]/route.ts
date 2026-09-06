@@ -36,9 +36,26 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       },
     });
 
-    await recordAuditEvent("hospital.referral.updated", session.userId, { referralId: id, status });
-    if (status === "ACKNOWLEDGED") await recordAuditEvent("hospital.consult.accepted", session.userId, { referralId: id });
-    if (status === "COMPLETED") await recordAuditEvent("hospital.consult.completed", session.userId, { referralId: id });
+    await recordAuditEvent(
+      "hospital.referral.updated",
+      session.userId,
+      { referralId: id, status },
+      { facilityId, patientId: referral.patientId, encounterId: referral.encounterId }
+    );
+    if (status === "ACKNOWLEDGED")
+      await recordAuditEvent(
+        "hospital.consult.accepted",
+        session.userId,
+        { referralId: id },
+        { facilityId, patientId: referral.patientId, encounterId: referral.encounterId }
+      );
+    if (status === "COMPLETED")
+      await recordAuditEvent(
+        "hospital.consult.completed",
+        session.userId,
+        { referralId: id },
+        { facilityId, patientId: referral.patientId, encounterId: referral.encounterId }
+      );
     return { referral: updated };
   });
 }

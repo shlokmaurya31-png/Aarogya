@@ -17,7 +17,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const timeline = await buildPatientTimeline(id);
 
     // Record-access logging (brief §29) — metadata only, never the payload itself.
-    await recordAuditEvent("hospital.patient.viewed", session.userId, { patientId: id, view: "timeline" });
+    await recordAuditEvent(
+      "hospital.patient.viewed",
+      session.userId,
+      { patientId: id, view: "timeline" },
+      { facilityId, patientId: id }
+    );
 
     return { timeline };
   });

@@ -15,12 +15,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const order = await prisma.imagingOrder.findUnique({ where: { id }, include: { encounter: true } });
     if (!order || order.encounter.facilityId !== facilityId) throw new NotFoundError("Imaging order not found.");
 
-    const { scheduledAt, resourceId } = body ?? {};
+    const { scheduledAt, resourceId, durationMinutes } = body ?? {};
     if (!scheduledAt) throw new BadRequestError("scheduledAt is required.");
     const parsedScheduledAt = new Date(scheduledAt);
     if (Number.isNaN(parsedScheduledAt.getTime())) throw new BadRequestError("scheduledAt must be a valid date.");
     const oneYearFromNow = Date.now() + 365 * 24 * 60 * 60 * 1000;
     if (parsedScheduledAt.getTime() > oneYearFromNow) throw new BadRequestError("scheduledAt is too far in the future.");
+    if (durationMinutes !== undefined && (typeof durationMinutes !== "number" || durationMinutes <= 0)) {
+      throw new BadRequestError("durationMinutes must be a positive number.");
+    }
 
     // Milestone E hardening — schedule/route.ts already validates a
     // client-supplied resourceId belongs to the caller's facility before
@@ -35,9 +38,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const study = await prisma.imagingStudy.findFirst({ where: { imagingOrderId: id, status: "SCHEDULED" }, orderBy: { createdAt: "desc" } });
     if (!study) throw new NotFoundError("No scheduled study to reschedule for this order.");
 
-    const updated = await prisma.$transaction((tx) => rescheduleStudy(tx, study.id, resourceId ?? study.resourceId, parsedScheduledAt));
+    const updated = await prisma.$transaction((tx) => rescheduleStudy(tx, study.id, resourceId ?? study.resourceId, parsedScheduledAt, durationMinutes));
 
-    await recordAuditEvent("hospital.imaging.rescheduled", session.userId, { imagingOrderId: id, studyId: study.id, scheduledAt });
+    await recordAuditEvent(
+      "hospital.imaging.rescheduled",
+      session.userId,
+      { imagingOrderId: id, studyId: study.id, scheduledAt },
+      { facilityId, patientId: order.patientId, encounterId: order.encounterId }
+    );
     return { study: updated };
   });
 }

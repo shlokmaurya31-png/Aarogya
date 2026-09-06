@@ -59,7 +59,12 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    await recordAuditEvent("hospital.task.created", session.userId, { taskId: task.id, type });
+    await recordAuditEvent(
+      "hospital.task.created",
+      session.userId,
+      { taskId: task.id, type },
+      { facilityId, patientId, encounterId }
+    );
     return { task };
   });
 }

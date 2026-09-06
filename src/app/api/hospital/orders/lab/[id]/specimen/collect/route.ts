@@ -20,7 +20,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const updated = await prisma.$transaction((tx) => collectSpecimen(tx, specimen.id, staff.id, body?.notes));
 
-    await recordAuditEvent("hospital.lab.specimenCollected", session.userId, { labOrderId: id, specimenId: specimen.id, accessionNumber: specimen.accessionNumber });
+    await recordAuditEvent(
+      "hospital.lab.specimenCollected",
+      session.userId,
+      { labOrderId: id, specimenId: specimen.id, accessionNumber: specimen.accessionNumber },
+      { facilityId, patientId: order.patientId, encounterId: order.encounterId }
+    );
     return { specimen: updated };
   });
 }

@@ -137,10 +137,27 @@ export async function POST(req: NextRequest) {
       return { order };
     }
 
-    await recordAuditEvent("hospital.imaging.ordered", session.userId, { orderId: order.id });
+    await recordAuditEvent(
+      "hospital.imaging.ordered",
+      session.userId,
+      { orderId: order.id },
+      { facilityId, patientId, encounterId }
+    );
     // Milestone E hardening — audit-coverage gap (see orders/lab/route.ts).
-    if (task) await recordAuditEvent("hospital.task.created", session.userId, { taskId: task.id, type: "IMAGING_PREP", orderId: order.id });
-    if (charge) await recordAuditEvent("hospital.billing.chargeCreated", session.userId, { chargeId: charge.id, amount: charge.amount, sourceType: "ImagingOrder", sourceId: order.id });
+    if (task)
+      await recordAuditEvent(
+        "hospital.task.created",
+        session.userId,
+        { taskId: task.id, type: "IMAGING_PREP", orderId: order.id },
+        { facilityId, patientId, encounterId }
+      );
+    if (charge)
+      await recordAuditEvent(
+        "hospital.billing.chargeCreated",
+        session.userId,
+        { chargeId: charge.id, amount: charge.amount, sourceType: "ImagingOrder", sourceId: order.id },
+        { facilityId, patientId, encounterId }
+      );
     return { order };
   });
 }

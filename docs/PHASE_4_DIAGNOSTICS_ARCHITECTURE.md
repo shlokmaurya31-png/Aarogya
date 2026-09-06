@@ -505,14 +505,16 @@ pattern Postgres-safe since Milestone B):
 
 These live only in hand-authored migration SQL (`prisma/migrations/20260903020000_phase4_milestone_e_hardening_indexes/migration.sql`) because Prisma's schema DSL has no partial/filtered-index syntax. **The WHERE-clause syntax used is already Postgres-compatible unchanged** — verified by reading the Postgres `CREATE UNIQUE INDEX ... WHERE` grammar, which is identical to SQLite's for this case; no rewrite will be needed at cutover, only re-running/porting the migration file through whatever tooling generates the Postgres migration set.
 
-**KNOWN LIMITATION, unchanged from Milestone C, re-confirmed not silently hidden**: the resource-scheduling *double-booking* check (`scheduleStudy`/`rescheduleStudy`'s `resourceId`+`scheduledAt` conflict count) remains an app-level count-then-create relying on transaction serialization — safe on SQLite, not safe under Postgres's default `READ COMMITTED` isolation. This is a different invariant from the duplicate-*study*-row race Milestone E fixed (§12.5 below has the detail) and was deliberately not given a DB constraint this milestone, because a `(resourceId, scheduledAt)` uniqueness constraint would forbid legitimate different-facility or different-resource bookings at the same instant and is a larger semantic change than a hardening pass should make without stronger evidence. **FUTURE PRODUCTION REQUIREMENT**: `SELECT ... FOR UPDATE` on the resource row inside the scheduling transaction, or a proper partial unique index on `(resourceId, scheduledAt) WHERE status NOT IN ('CANCELLED','NO_SHOW')`, before relying on this under concurrent Postgres load.
+**RESOLVED in Phase 4.5** (see `docs/PHASE_4_5_INTEGRITY_GATE.md`): the resource-scheduling *double-booking* check was both underspecified (exact-timestamp equality, not a real interval — `ImagingStudy` had no end-time field at all) and Postgres-unsafe (app-level count-then-create). Both are fixed: `ImagingStudy.scheduledEndAt` now represents a real `[scheduledAt, scheduledEndAt)` interval, `scheduleStudy`/`rescheduleStudy` check genuine overlap, and a Postgres GiST exclusion constraint (`imaging_resource_no_overlap`, `prisma/migrations-postgres-baseline/20260907000100_imaging_resource_no_overlap`) provides the actual DB-level guarantee — verified against a live Postgres instance including a genuine concurrent race (`scripts/verify-postgres-scheduling.ts`, 8/8 passing). SQLite dev retains only the strengthened app-level interval check (no exclusion-constraint equivalent on SQLite), which is an accepted, documented gap consistent with this codebase's existing SQLite/Postgres guarantee split.
 
-### 12.5 Scheduling concurrency — HARDENED (duplicate-study race) + documented KNOWN LIMITATION (double-booking race)
+Migration history itself was also confirmed non-portable this phase: 6 of the (then-)9 SQLite migrations contain `PRAGMA`/table-rebuild SQL that cannot run on Postgres. `prisma/migrations-postgres-baseline/` is a freshly generated, separately tracked baseline (not derived from the SQLite history) — see the integrity-gate doc for the swap/regeneration procedure at real cutover.
 
-Two distinct races exist in imaging scheduling, and Milestone E fixed one of them:
+### 12.5 Scheduling concurrency — HARDENED (both races closed as of Phase 4.5)
+
+Two distinct races exist in imaging scheduling; both are now closed:
 
 1. **Duplicate active study per order** (two concurrent `scheduleStudy` calls for the *same order*) — **HARDENED** via the `ImagingStudy_active_per_order` partial unique index (§12.4); verified live, exactly 1 study survives.
-2. **Resource double-booking** (two concurrent `scheduleStudy` calls for *different orders* at the same `resourceId`+`scheduledAt`) — **KNOWN LIMITATION**, unchanged, see §12.4's Postgres note. SQLite-safe today, needs the documented Postgres hardening before relying on it at production concurrency.
+2. **Resource double-booking** (two concurrent `scheduleStudy` calls for *different orders* at an overlapping `resourceId`+interval) — **HARDENED in Phase 4.5** via the `imaging_resource_no_overlap` GiST exclusion constraint (Postgres) plus a corrected app-level interval-overlap check (both providers). See §12.4 and `docs/PHASE_4_5_INTEGRITY_GATE.md` for the full test matrix.
 
 ### 12.6 Idempotency — HARDENED (order creation) + VERIFIED (everything else)
 
@@ -625,14 +627,17 @@ acknowledgement, study execution) was **VERIFIED** to already fire a
 correctly-timed (strictly after `$transaction` commit, never before or
 inside) audit event with the actor's real ID.
 
-**KNOWN LIMITATION, not fixed this milestone**: `AuditEvent` has no
-`facilityId`/`patientId` columns — a codebase-wide gap (every phase, not
-Phase-4-specific), so this milestone's diagnostics-scoped hardening pass
-did not touch the core shared `AuditEvent` model. Investigating "every
-diagnostic audit event for patient X" or "...within facility Y" today
-requires joining `detail`'s embedded IDs back through the domain tables,
-not a direct query filter. **FUTURE PRODUCTION REQUIREMENT** for a
-platform-wide (not Phase-4-scoped) hardening pass.
+**RESOLVED in Phase 4.5** (platform-wide, not Phase-4-scoped, as this note
+originally called for — see `docs/PHASE_4_5_INTEGRITY_GATE.md`):
+`AuditEvent` now carries nullable, indexed `facilityId`/`patientId`/
+`encounterId` columns, and `recordAuditEvent`'s call sites across the
+codebase (57 call sites swept) populate them wherever the context is
+available. Historical rows predate these columns and were intentionally
+left `null` rather than backfilled from `detail` JSON — that JSON isn't
+structured consistently enough across every event type for a genuinely
+deterministic backfill. Direct `facilityId`/`patientId` query filters now
+work without a `detail`-JSON join for every event recorded from this
+phase forward.
 
 ### 12.12 Error semantics — HARDENED (one coercion bug) + VERIFIED
 
@@ -692,19 +697,24 @@ Composite indexes (§12.4's neighbors, listed in
 `docs/PHASE_4_PRODUCTION_READINESS.md`) were added instead, which help
 these same routes' query plans directly.
 
-### 12.15 Seed behavior — documented, not changed
+### 12.15 Seed behavior — production guard added (Phase 4.5); re-run duplication still documented, not changed
 
 `prisma/seed.ts` documents itself as "safe to re-run: uses upsert-by-
 unique-key throughout" — true for users/institutions/achievements/catalog
-rows. **KNOWN LIMITATION**: the Phase 4 diagnostic demo scenarios
-(`seedData/hospital.ts`'s lab/imaging order creation) use plain `.create()`,
-so re-running seed *without* a prior `migrate reset` would duplicate the
-demo diagnostic data. Not a production concern (seed data is never run
-against a production database in this workflow — every reseed in this
-project's history has gone through `migrate reset --force` first, with
-explicit user consent each time per this session's established discipline)
-and out of scope to rewrite demo-fixture generation into full upsert
-semantics during a hardening pass focused on production code paths.
+rows. **KNOWN LIMITATION, still open**: the Phase 4 diagnostic demo
+scenarios (`seedData/hospital.ts`'s lab/imaging order creation) use plain
+`.create()`, so re-running seed *without* a prior `migrate reset` would
+duplicate the demo diagnostic data. Not a production concern (seed data is
+never run against a production database — see below) and out of scope to
+rewrite demo-fixture generation into full upsert semantics during a
+hardening pass focused on production code paths.
+
+**RESOLVED in Phase 4.5 (a different, previously-open concern — see
+`docs/PHASE_4_5_INTEGRITY_GATE.md`)**: `prisma/seed.ts` now refuses to run
+when `NODE_ENV=production` unless `ALLOW_DATABASE_SEED=true` is explicitly
+set, closing the "nothing stops `prisma db seed` from running against a
+production `DATABASE_URL`" gap. Explicit opt-in was chosen over a
+database-name/host string heuristic, since those are easy to get wrong.
 
 ### 12.16 Secrets — VERIFIED clean
 
@@ -765,9 +775,15 @@ clean 400 before any row is created. Verified live.
 
 See `docs/PHASE_4_PRODUCTION_READINESS.md` for the full checklist. In
 short: the application-layer findings that would have blocked a real
-hospital deployment are fixed. What remains is infrastructure (Postgres
-migration + the two documented Postgres-specific concurrency items,
-TLS/headers/rate-limiting, secret rotation tooling, backups/DR, real
+hospital deployment are fixed. What remains is infrastructure (TLS/
+headers/rate-limiting, secret rotation tooling, backups/DR, real
 observability) — none of it fabricated as done, all of it explicitly
 itemized as **FUTURE PRODUCTION REQUIREMENT** rather than silently
 omitted.
+
+**Update, Phase 4.5**: the Postgres migration and the two documented
+Postgres-specific concurrency items (duplicate-study race, resource
+double-booking) that were listed here as blockers are now **RESOLVED** —
+see `docs/PHASE_4_5_INTEGRITY_GATE.md`. `AuditEvent`'s facility/patient
+gap and the seed production-safety gap are also resolved. Remaining
+blockers are purely infrastructure-layer, listed above.

@@ -446,8 +446,22 @@ model AuditEvent {
   detail    Json?
   createdAt DateTime @default(now())
 
+  // Phase 4.5 hardening: structured context for tenant/patient-scoped audit
+  // queries, replacing "join through detail JSON" as the only way to filter.
+  // Nullable — historical rows predate these columns and are never
+  // backfilled (detail JSON isn't structured consistently enough to
+  // deterministically derive them; see docs/PHASE_4_5_INTEGRITY_GATE.md).
+  facilityId  String?
+  facility    Facility? @relation(fields: [facilityId], references: [id])
+  patientId   String?
+  patient     Patient?  @relation(fields: [patientId], references: [id])
+  encounterId String?
+
   @@index([type])
   @@index([userId])
+  @@index([facilityId])
+  @@index([patientId])
+  @@index([encounterId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -508,6 +522,9 @@ model Facility {
   imagingStudies    ImagingStudy[]
   imagingCatalogs   ImagingCatalog[]
   imagingResources  ImagingResource[]
+
+  // Phase 4.5 — structured audit context (see AuditEvent).
+  auditEvents AuditEvent[]
 }
 
 model Department {
@@ -767,6 +784,9 @@ model Patient {
   medicationReconciliations MedicationReconciliation[]
   specimens                 Specimen[]
   imagingStudies            ImagingStudy[]
+
+  // Phase 4.5 — structured audit context (see AuditEvent).
+  auditEvents AuditEvent[]
 
   @@index([facilityId])
   @@index([mergedIntoId])
@@ -1486,6 +1506,11 @@ model ImagingStudy {
   resourceId String?
 
   scheduledAt DateTime
+  // Phase 4.5 hardening: half-open interval end [scheduledAt, scheduledEndAt)
+  // used for real overlap detection (see imagingStudyLifecycle.ts) instead of
+  // the old exact-timestamp-equality check. Backfilled to scheduledAt+30min
+  // for pre-existing rows (see migration).
+  scheduledEndAt DateTime
   arrivedAt   DateTime?
   startedAt   DateTime?
   performedAt DateTime?

@@ -31,12 +31,22 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       },
     });
 
-    await recordAuditEvent("hospital.vital.recorded", session.userId, { encounterId: id, vitalId: vital.id });
+    await recordAuditEvent(
+      "hospital.vital.recorded",
+      session.userId,
+      { encounterId: id, vitalId: vital.id },
+      { facilityId, patientId: encounter.patientId, encounterId: id }
+    );
 
     // Abnormal-vital detection ONLY against facility-configured thresholds (brief §13) — never a hardcoded clinical claim.
     const abnormal = await findAbnormalVitals(facilityId, { hr: vital.hr, sbp: vital.sbp, dbp: vital.dbp, rr: vital.rr, spo2: vital.spo2, tempC: vital.tempC });
     if (abnormal.length > 0) {
-      await recordAuditEvent("hospital.vital.abnormalDetected", session.userId, { encounterId: id, vitalId: vital.id, abnormal });
+      await recordAuditEvent(
+        "hospital.vital.abnormalDetected",
+        session.userId,
+        { encounterId: id, vitalId: vital.id, abnormal },
+        { facilityId, patientId: encounter.patientId, encounterId: id }
+      );
     }
 
     return { vital, abnormal };

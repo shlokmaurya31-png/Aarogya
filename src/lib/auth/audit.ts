@@ -134,12 +134,26 @@ export type AuditEventType =
   | "hospital.imaging.criticalFindingAcknowledged"
   | "hospital.imaging.reportAmended";
 
+export interface AuditEventContext {
+  facilityId?: string;
+  patientId?: string;
+  encounterId?: string;
+}
+
 export async function recordAuditEvent(
   type: AuditEventType,
   userId: string | null,
-  detail?: Record<string, unknown>
+  detail?: Record<string, unknown>,
+  context?: AuditEventContext
 ) {
   await prisma.auditEvent.create({
-    data: { type, userId: userId ?? undefined, detail: detail ? JSON.parse(JSON.stringify(detail)) : undefined },
+    data: {
+      type,
+      userId: userId ?? undefined,
+      detail: detail ? JSON.parse(JSON.stringify(detail)) : undefined,
+      facilityId: context?.facilityId,
+      patientId: context?.patientId,
+      encounterId: context?.encounterId,
+    },
   });
 }

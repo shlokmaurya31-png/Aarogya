@@ -18,7 +18,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const updated = await prisma.$transaction((tx) => acknowledgeReport(tx, reportId, staff.id));
 
-    await recordAuditEvent("hospital.imaging.criticalFindingAcknowledged", session.userId, { imagingOrderId: id, reportId });
+    await recordAuditEvent(
+      "hospital.imaging.criticalFindingAcknowledged",
+      session.userId,
+      { imagingOrderId: id, reportId },
+      { facilityId, patientId: report.imagingOrder.patientId, encounterId: report.imagingOrder.encounterId }
+    );
     return { report: updated };
   });
 }

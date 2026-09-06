@@ -19,7 +19,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     try {
       const updated = await transitionBed(id, toStatus, { reason: body?.reason, byUserId: session.userId });
-      await recordAuditEvent("hospital.bed.stateChanged", session.userId, { bedId: id, toStatus });
+      await recordAuditEvent(
+        "hospital.bed.stateChanged",
+        session.userId,
+        { bedId: id, toStatus },
+        { facilityId }
+      );
       return { bed: updated };
     } catch (err) {
       if (err instanceof InvalidBedTransitionError) throw new BadRequestError(err.message);

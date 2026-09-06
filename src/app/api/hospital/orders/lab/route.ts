@@ -160,13 +160,30 @@ export async function POST(req: NextRequest) {
       return { order, specimen };
     }
 
-    await recordAuditEvent("hospital.lab.ordered", session.userId, { orderId: order.id, specimenId: specimen?.id, accessionNumber: specimen?.accessionNumber });
+    await recordAuditEvent(
+      "hospital.lab.ordered",
+      session.userId,
+      { orderId: order.id, specimenId: specimen?.id, accessionNumber: specimen?.accessionNumber },
+      { facilityId, patientId, encounterId }
+    );
     // Milestone E hardening — closes an audit-coverage gap: automatic task
     // and charge creation previously left no dedicated audit trace (only
     // discoverable indirectly via hospital.lab.ordered's detail, which
     // didn't even include the task/charge IDs).
-    if (task) await recordAuditEvent("hospital.task.created", session.userId, { taskId: task.id, type: "SPECIMEN_COLLECTION", orderId: order.id });
-    if (charge) await recordAuditEvent("hospital.billing.chargeCreated", session.userId, { chargeId: charge.id, amount: charge.amount, sourceType: "LabOrder", sourceId: order.id });
+    if (task)
+      await recordAuditEvent(
+        "hospital.task.created",
+        session.userId,
+        { taskId: task.id, type: "SPECIMEN_COLLECTION", orderId: order.id },
+        { facilityId, patientId, encounterId }
+      );
+    if (charge)
+      await recordAuditEvent(
+        "hospital.billing.chargeCreated",
+        session.userId,
+        { chargeId: charge.id, amount: charge.amount, sourceType: "LabOrder", sourceId: order.id },
+        { facilityId, patientId, encounterId }
+      );
     return { order, specimen };
   });
 }

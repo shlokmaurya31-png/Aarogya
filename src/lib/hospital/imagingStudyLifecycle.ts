@@ -37,20 +37,38 @@ export class StudyConcurrencyError extends BadRequestError {
 }
 
 /**
- * Resource double-booking guard (brief §8, §23) — mirrors
- * src/lib/hospital/appointment.ts's exact idiom: count existing
- * non-cancelled bookings at the same resource+exact-timestamp inside the
- * caller's transaction, throw if any exist. This is an app-level check
- * relying on SQLite's transaction serialization, NOT a DB-level guarantee
- * — same documented limitation as appointment.ts (see that file's
- * comment). On Postgres this should be strengthened with
- * `SELECT ... FOR UPDATE` on the resource row or a partial unique index
- * on (resourceId, scheduledAt) WHERE status NOT IN ('CANCELLED','NO_SHOW').
+ * Resource double-booking guard (brief §8, §23; hardened Phase 4.5).
+ * Checks real half-open-interval overlap ([scheduledAt, scheduledEndAt))
+ * against existing non-cancelled bookings on the same resource, inside the
+ * caller's transaction. This app-level check relies on the DB's
+ * transaction isolation and is the only guard on SQLite dev. On Postgres,
+ * it is backstopped by a GiST exclusion constraint
+ * (`imaging_resource_no_overlap`, see prisma/migrations-postgres-baseline)
+ * which is the actual DB-level guarantee — the app-level check here can't
+ * by itself prevent two concurrent transactions from both passing a
+ * count-then-create race; the constraint closes that gap. See
+ * docs/PHASE_4_5_INTEGRITY_GATE.md.
  */
 export class ScheduleConflictError extends BadRequestError {
   constructor() {
     super("This resource already has a study scheduled at that time (slot is full).");
   }
+}
+
+const DEFAULT_STUDY_DURATION_MINUTES = 30;
+
+/**
+ * Postgres GiST exclusion-constraint violation (SQLSTATE 23P01) — the
+ * DB-level backstop for ScheduleConflictError. Prisma has no first-class
+ * error-code mapping for EXCLUDE constraints (unlike P2002 for UNIQUE), so
+ * this matches defensively on the raw Postgres error text/meta rather than
+ * a specific Prisma `.code` — verified empirically against a live Postgres
+ * instance during Phase 4.5 validation (see docs/PHASE_4_5_INTEGRITY_GATE.md
+ * for the exact error shape observed).
+ */
+function isExclusionViolation(err: unknown): boolean {
+  const text = err instanceof Error ? `${err.message} ${JSON.stringify((err as { meta?: unknown }).meta ?? "")}` : String(err);
+  return /23P01|exclusion_violation|imaging_resource_no_overlap/i.test(text);
 }
 
 export function isStudyTransitionAllowed(from: ImagingStudyStatus, to: ImagingStudyStatus): boolean {
@@ -79,12 +97,21 @@ export async function scheduleStudy(
     bodyRegion?: string;
     resourceId?: string | null;
     scheduledAt: Date;
+    durationMinutes?: number;
     contrastRequired?: boolean;
   }
 ) {
+  const durationMinutes = input.durationMinutes ?? DEFAULT_STUDY_DURATION_MINUTES;
+  const scheduledEndAt = new Date(input.scheduledAt.getTime() + durationMinutes * 60_000);
+
   if (input.resourceId) {
     const overlapping = await tx.imagingStudy.count({
-      where: { resourceId: input.resourceId, scheduledAt: input.scheduledAt, status: { notIn: ["CANCELLED", "NO_SHOW"] } },
+      where: {
+        resourceId: input.resourceId,
+        status: { notIn: ["CANCELLED", "NO_SHOW"] },
+        scheduledAt: { lt: scheduledEndAt },
+        scheduledEndAt: { gt: input.scheduledAt },
+      },
     });
     if (overlapping > 0) throw new ScheduleConflictError();
   }
@@ -101,6 +128,7 @@ export async function scheduleStudy(
         bodyRegion: input.bodyRegion,
         resourceId: input.resourceId ?? undefined,
         scheduledAt: input.scheduledAt,
+        scheduledEndAt,
         status: "SCHEDULED",
         accessionNumber: generateAccessionNumber("RAD"),
         contrastRequired: input.contrastRequired ?? false,
@@ -108,6 +136,7 @@ export async function scheduleStudy(
     });
   } catch (err) {
     if (isDuplicateActiveStudyError(err)) throw new StudyConcurrencyError("scheduled");
+    if (isExclusionViolation(err)) throw new ScheduleConflictError();
     throw err;
   }
 
@@ -115,19 +144,34 @@ export async function scheduleStudy(
   return study;
 }
 
-/** Reschedule (brief §8) — only while still SCHEDULED; re-runs the conflict check against the new slot. */
-export async function rescheduleStudy(tx: Tx, studyId: string, resourceId: string | null, scheduledAt: Date) {
+/** Reschedule (brief §8) — only while still SCHEDULED; re-runs the interval-overlap conflict check against the new slot. */
+export async function rescheduleStudy(tx: Tx, studyId: string, resourceId: string | null, scheduledAt: Date, durationMinutes?: number) {
   const study = await tx.imagingStudy.findUniqueOrThrow({ where: { id: studyId } });
   if (study.status !== "SCHEDULED") throw new InvalidStudyTransitionError(study.status, "SCHEDULED");
 
+  const effectiveDurationMinutes = durationMinutes ?? (study.scheduledEndAt.getTime() - study.scheduledAt.getTime()) / 60_000;
+  const scheduledEndAt = new Date(scheduledAt.getTime() + effectiveDurationMinutes * 60_000);
+
   if (resourceId) {
     const overlapping = await tx.imagingStudy.count({
-      where: { id: { not: studyId }, resourceId, scheduledAt, status: { notIn: ["CANCELLED", "NO_SHOW"] } },
+      where: {
+        id: { not: studyId },
+        resourceId,
+        status: { notIn: ["CANCELLED", "NO_SHOW"] },
+        scheduledAt: { lt: scheduledEndAt },
+        scheduledEndAt: { gt: scheduledAt },
+      },
     });
     if (overlapping > 0) throw new ScheduleConflictError();
   }
 
-  const result = await tx.imagingStudy.updateMany({ where: { id: studyId, status: "SCHEDULED" }, data: { resourceId: resourceId ?? undefined, scheduledAt } });
+  let result;
+  try {
+    result = await tx.imagingStudy.updateMany({ where: { id: studyId, status: "SCHEDULED" }, data: { resourceId: resourceId ?? undefined, scheduledAt, scheduledEndAt } });
+  } catch (err) {
+    if (isExclusionViolation(err)) throw new ScheduleConflictError();
+    throw err;
+  }
   if (result.count !== 1) throw new StudyConcurrencyError("rescheduled");
   return tx.imagingStudy.findUniqueOrThrow({ where: { id: studyId } });
 }

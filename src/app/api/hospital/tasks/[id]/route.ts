@@ -31,10 +31,20 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     });
 
     if (status === "COMPLETED") {
-      await recordAuditEvent("hospital.task.completed", session.userId, { taskId: id });
+      await recordAuditEvent(
+        "hospital.task.completed",
+        session.userId,
+        { taskId: id },
+        { facilityId, patientId: task.patientId ?? undefined, encounterId: task.encounterId ?? undefined }
+      );
     }
     if (action === "skip") {
-      await recordAuditEvent("hospital.task.skipped", session.userId, { taskId: id, skipReason });
+      await recordAuditEvent(
+        "hospital.task.skipped",
+        session.userId,
+        { taskId: id, skipReason },
+        { facilityId, patientId: task.patientId ?? undefined, encounterId: task.encounterId ?? undefined }
+      );
     }
     return { task: updated };
   });

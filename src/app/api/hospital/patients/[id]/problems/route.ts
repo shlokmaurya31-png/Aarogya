@@ -35,7 +35,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       data: { patientId: id, diagnosis, status: "active", severity, onsetDate: onsetDate ? new Date(onsetDate) : undefined },
     });
 
-    await recordAuditEvent("hospital.problem.added", session.userId, { patientId: id, problemId: problem.id });
+    await recordAuditEvent(
+      "hospital.problem.added",
+      session.userId,
+      { patientId: id, problemId: problem.id },
+      { facilityId, patientId: id }
+    );
     return { problem };
   });
 }

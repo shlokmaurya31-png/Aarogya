@@ -50,7 +50,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         throw err;
       }
     } else {
-      await recordAuditEvent("hospital.encounter.updated", session.userId, { encounterId: id, triageLevel });
+      await recordAuditEvent(
+        "hospital.encounter.updated",
+        session.userId,
+        { encounterId: id, triageLevel },
+        { facilityId, patientId: encounter.patientId, encounterId: id }
+      );
     }
 
     return { encounter: updated };

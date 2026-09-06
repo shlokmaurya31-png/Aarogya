@@ -57,7 +57,12 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    await recordAuditEvent("hospital.encounter.registered", session.userId, { encounterId: encounter.id, type: encounter.type });
+    await recordAuditEvent(
+      "hospital.encounter.registered",
+      session.userId,
+      { encounterId: encounter.id, type: encounter.type },
+      { facilityId, patientId: parsed.data.patientId, encounterId: encounter.id }
+    );
     return { encounter };
   });
 }

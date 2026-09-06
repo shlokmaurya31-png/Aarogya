@@ -41,7 +41,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       amendResult(tx, resultId, { value, unit, numericValue: typeof numericValue === "number" ? numericValue : null, isCritical, reason, amendedByStaffId: staff.id })
     );
 
-    await recordAuditEvent("hospital.lab.resultAmended", session.userId, { labOrderId: id, previousResultId: original.id, amendedResultId: amended.id, reason });
+    await recordAuditEvent(
+      "hospital.lab.resultAmended",
+      session.userId,
+      { labOrderId: id, previousResultId: original.id, amendedResultId: amended.id, reason },
+      { facilityId, patientId: result.labOrder.patientId, encounterId: result.labOrder.encounterId }
+    );
     return { original, amended };
   });
 }

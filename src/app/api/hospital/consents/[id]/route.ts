@@ -19,7 +19,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       data: { status: "REVOKED", revokedAt: new Date() },
     });
 
-    await recordAuditEvent("hospital.consent.revoked", session.userId, { consentId: id });
+    await recordAuditEvent(
+      "hospital.consent.revoked",
+      session.userId,
+      { consentId: id },
+      { facilityId, patientId: consent.patient.id }
+    );
     return { consent: updated };
   });
 }

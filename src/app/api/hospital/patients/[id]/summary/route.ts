@@ -15,7 +15,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     if (!patient || patient.facilityId !== facilityId) throw new NotFoundError("Patient not found.");
 
     const summary = await buildPatientSummary(id);
-    await recordAuditEvent("hospital.patient.viewed", session.userId, { patientId: id, view: "summary" });
+    await recordAuditEvent(
+      "hospital.patient.viewed",
+      session.userId,
+      { patientId: id, view: "summary" },
+      { facilityId, patientId: id }
+    );
     return summary;
   });
 }

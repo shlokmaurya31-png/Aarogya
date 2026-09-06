@@ -21,7 +21,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const created = await prisma.$transaction((tx) => recollectSpecimen(tx, rejected.id, body?.specimenType));
 
-    await recordAuditEvent("hospital.lab.specimenRecollected", session.userId, { labOrderId: id, originalSpecimenId: rejected.id, newSpecimenId: created.id, accessionNumber: created.accessionNumber });
+    await recordAuditEvent(
+      "hospital.lab.specimenRecollected",
+      session.userId,
+      { labOrderId: id, originalSpecimenId: rejected.id, newSpecimenId: created.id, accessionNumber: created.accessionNumber },
+      { facilityId, patientId: order.patientId, encounterId: order.encounterId }
+    );
     return { specimen: created };
   });
 }

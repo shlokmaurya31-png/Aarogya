@@ -48,8 +48,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       },
     });
 
-    await recordAuditEvent("hospital.note.created", session.userId, { encounterId: id, noteId: note.id, type });
-    if (body?.supersedesId) await recordAuditEvent("hospital.note.amended", session.userId, { encounterId: id, noteId: note.id, supersedesId: body.supersedesId });
+    await recordAuditEvent(
+      "hospital.note.created",
+      session.userId,
+      { encounterId: id, noteId: note.id, type },
+      { facilityId, patientId: encounter.patientId, encounterId: id }
+    );
+    if (body?.supersedesId)
+      await recordAuditEvent(
+        "hospital.note.amended",
+        session.userId,
+        { encounterId: id, noteId: note.id, supersedesId: body.supersedesId },
+        { facilityId, patientId: encounter.patientId, encounterId: id }
+      );
     return { note };
   });
 }
@@ -82,7 +93,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       data: { status: "SIGNED", signedAt: new Date() },
     });
 
-    await recordAuditEvent("hospital.note.signed", session.userId, { encounterId: id, noteId: note.id });
+    await recordAuditEvent(
+      "hospital.note.signed",
+      session.userId,
+      { encounterId: id, noteId: note.id },
+      { facilityId, patientId: encounter.patientId, encounterId: id }
+    );
     return { note };
   });
 }

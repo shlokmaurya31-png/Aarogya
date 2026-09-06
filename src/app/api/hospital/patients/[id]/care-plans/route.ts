@@ -56,7 +56,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       notes: parsed.data.notes,
       interventions: parsed.data.interventions,
     });
-    await recordAuditEvent("hospital.carePlan.created", session.userId, { carePlanId: carePlan.id, patientId: id });
+    await recordAuditEvent(
+      "hospital.carePlan.created",
+      session.userId,
+      { carePlanId: carePlan.id, patientId: id },
+      { facilityId, patientId: id, encounterId: parsed.data.encounterId }
+    );
     return { carePlan };
   });
 }

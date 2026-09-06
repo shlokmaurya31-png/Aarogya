@@ -35,7 +35,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       data: { patientId: id, substance, reaction, severity, status: "ACTIVE", verification: body?.verification ?? "UNCONFIRMED" },
     });
 
-    await recordAuditEvent("hospital.allergy.added", session.userId, { patientId: id, allergyId: allergy.id });
+    await recordAuditEvent(
+      "hospital.allergy.added",
+      session.userId,
+      { patientId: id, allergyId: allergy.id },
+      { facilityId, patientId: id }
+    );
     return { allergy };
   });
 }

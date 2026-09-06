@@ -65,12 +65,12 @@ export async function transitionEncounter(
     },
   });
 
-  await recordAuditEvent("hospital.encounter.updated", opts.byUserId, {
-    encounterId,
-    fromStatus: encounter.status,
-    toStatus,
-    reason: opts.reason,
-  });
+  await recordAuditEvent(
+    "hospital.encounter.updated",
+    opts.byUserId,
+    { encounterId, fromStatus: encounter.status, toStatus, reason: opts.reason },
+    { facilityId: encounter.facilityId, patientId: encounter.patientId, encounterId }
+  );
 
   return updated;
 }

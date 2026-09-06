@@ -17,12 +17,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!order || order.encounter.facilityId !== facilityId) throw new NotFoundError("Imaging order not found.");
     if (order.status !== "ORDERED") throw new BadRequestError(`Order is ${order.status}, not ORDERED — cannot schedule.`);
 
-    const { resourceId, scheduledAt, bodyRegion, contrastRequired } = body ?? {};
+    const { resourceId, scheduledAt, bodyRegion, contrastRequired, durationMinutes } = body ?? {};
     if (!scheduledAt) throw new BadRequestError("scheduledAt is required.");
     const parsedScheduledAt = new Date(scheduledAt);
     if (Number.isNaN(parsedScheduledAt.getTime())) throw new BadRequestError("scheduledAt must be a valid date.");
     const oneYearFromNow = Date.now() + 365 * 24 * 60 * 60 * 1000;
     if (parsedScheduledAt.getTime() > oneYearFromNow) throw new BadRequestError("scheduledAt is too far in the future.");
+    if (durationMinutes !== undefined && (typeof durationMinutes !== "number" || durationMinutes <= 0)) {
+      throw new BadRequestError("durationMinutes must be a positive number.");
+    }
 
     if (resourceId) {
       const resource = await prisma.imagingResource.findUnique({ where: { id: resourceId } });
@@ -39,11 +42,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         bodyRegion,
         resourceId: resourceId ?? null,
         scheduledAt: parsedScheduledAt,
+        durationMinutes,
         contrastRequired: Boolean(contrastRequired),
       })
     );
 
-    await recordAuditEvent("hospital.imaging.scheduled", session.userId, { imagingOrderId: id, studyId: study.id, resourceId: resourceId ?? null, scheduledAt });
+    await recordAuditEvent(
+      "hospital.imaging.scheduled",
+      session.userId,
+      { imagingOrderId: id, studyId: study.id, resourceId: resourceId ?? null, scheduledAt },
+      { facilityId, patientId: order.patientId, encounterId: order.encounterId }
+    );
     return { study };
   });
 }

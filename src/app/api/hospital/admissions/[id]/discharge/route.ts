@@ -59,15 +59,25 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         where: { id: admission.discharge.id },
         data: { expectedDischargeAt: new Date(body.expectedDischargeAt), expectedDischargeReason: body?.expectedDischargeReason ?? null },
       });
-      await recordAuditEvent("hospital.discharge.expectedDateChanged", session.userId, {
-        dischargeId: admission.discharge.id,
-        expectedDischargeAt: body.expectedDischargeAt,
-        reason: body?.expectedDischargeReason,
-      });
+      await recordAuditEvent(
+        "hospital.discharge.expectedDateChanged",
+        session.userId,
+        {
+          dischargeId: admission.discharge.id,
+          expectedDischargeAt: body.expectedDischargeAt,
+          reason: body?.expectedDischargeReason,
+        },
+        { facilityId, patientId: admission.encounter.patientId, encounterId: admission.encounterId }
+      );
     }
 
     if (Object.keys(flags).length > 0) {
-      await recordAuditEvent("hospital.discharge.blockerChanged", session.userId, { dischargeId: admission.discharge.id, flags });
+      await recordAuditEvent(
+        "hospital.discharge.blockerChanged",
+        session.userId,
+        { dischargeId: admission.discharge.id, flags },
+        { facilityId, patientId: admission.encounter.patientId, encounterId: admission.encounterId }
+      );
     }
 
     return { discharge: updated };

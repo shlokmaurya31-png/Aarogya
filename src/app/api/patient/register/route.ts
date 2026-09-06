@@ -67,7 +67,12 @@ export async function POST(req: NextRequest) {
     return { user, patient };
   });
 
-  await recordAuditEvent("patient.account.registered", result.user.id, { patientId: result.patient.id, facilityId: facility.id });
+  await recordAuditEvent(
+    "patient.account.registered",
+    result.user.id,
+    { patientId: result.patient.id, facilityId: facility.id },
+    { facilityId: facility.id, patientId: result.patient.id }
+  );
   await createSession(result.user.id, result.user.role);
 
   return NextResponse.json({ ok: true, patientId: result.patient.id });

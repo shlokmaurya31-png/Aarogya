@@ -19,7 +19,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (action === "close") {
       const status = body?.status === "CANCELLED" ? "CANCELLED" : "COMPLETED";
       const updated = await closeCarePlan(id, status);
-      await recordAuditEvent("hospital.carePlan.closed", session.userId, { carePlanId: id, status });
+      await recordAuditEvent(
+        "hospital.carePlan.closed",
+        session.userId,
+        { carePlanId: id, status },
+        { facilityId, patientId: carePlan.patientId, encounterId: carePlan.encounterId ?? undefined }
+      );
       return { carePlan: updated };
     }
     if (action === "addIntervention") {

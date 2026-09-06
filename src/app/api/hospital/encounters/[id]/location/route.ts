@@ -40,7 +40,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       });
     });
 
-    await recordAuditEvent("hospital.location.assigned", session.userId, { encounterId: id, bedId: parsed.data.bedId, areaLabel: parsed.data.areaLabel });
+    await recordAuditEvent(
+      "hospital.location.assigned",
+      session.userId,
+      { encounterId: id, bedId: parsed.data.bedId, areaLabel: parsed.data.areaLabel },
+      { facilityId, patientId: encounter.patientId, encounterId: id }
+    );
     return { location };
   });
 }

@@ -60,7 +60,12 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    await recordAuditEvent("hospital.patient.registered", session.userId, { patientId: patient.id });
+    await recordAuditEvent(
+      "hospital.patient.registered",
+      session.userId,
+      { patientId: patient.id },
+      { facilityId, patientId: patient.id }
+    );
     return { patient };
   });
 }

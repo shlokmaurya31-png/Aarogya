@@ -25,7 +25,7 @@ export async function admitPatient(input: {
   expectedLosDays?: number;
   byUserId: string;
 }) {
-  const admission = await prisma.$transaction(async (tx) => {
+  const { admission, auditContext } = await prisma.$transaction(async (tx) => {
     const bed = await tx.bed.findUniqueOrThrow({ where: { id: input.bedId } });
     // A bed reserved by THIS admission (via the Phase 2 AdmissionRequest flow,
     // src/lib/hospital/admissionRequest.ts) is also a legal starting state —
@@ -63,14 +63,15 @@ export async function admitPatient(input: {
 
     await tx.encounter.update({ where: { id: input.encounterId }, data: { status: EncounterStatus.ADMITTED } });
 
-    return created;
+    return { admission: created, auditContext: { facilityId: bed.facilityId, patientId: encounter.patientId } };
   });
 
-  await recordAuditEvent("hospital.admission.created", input.byUserId, {
-    admissionId: admission.id,
-    encounterId: input.encounterId,
-    bedId: input.bedId,
-  });
+  await recordAuditEvent(
+    "hospital.admission.created",
+    input.byUserId,
+    { admissionId: admission.id, encounterId: input.encounterId, bedId: input.bedId },
+    { ...auditContext, encounterId: input.encounterId }
+  );
 
   return admission;
 }
@@ -82,8 +83,8 @@ export async function transferPatient(input: {
   reason: string;
   byUserId: string;
 }) {
-  const transfer = await prisma.$transaction(async (tx) => {
-    const admission = await tx.admission.findUniqueOrThrow({ where: { id: input.admissionId } });
+  const { transfer, auditContext } = await prisma.$transaction(async (tx) => {
+    const admission = await tx.admission.findUniqueOrThrow({ where: { id: input.admissionId }, include: { encounter: true } });
     const toBed = await tx.bed.findUniqueOrThrow({ where: { id: input.toBedId } });
     // Same reasoning as admitPatient() above — a bed this transfer itself reserved is legal.
     if (toBed.status !== BedStatus.AVAILABLE && toBed.status !== BedStatus.RESERVED) throw new BedNotAvailableError();
@@ -112,17 +113,23 @@ export async function transferPatient(input: {
 
     await tx.admission.update({ where: { id: input.admissionId }, data: { bedId: toBed.id } });
 
-    return created;
+    return { transfer: created, auditContext: { facilityId: admission.encounter.facilityId, patientId: admission.encounter.patientId, encounterId: admission.encounterId } };
   });
 
-  await recordAuditEvent("hospital.admission.transferred", input.byUserId, { admissionId: input.admissionId, toBedId: input.toBedId });
+  await recordAuditEvent("hospital.admission.transferred", input.byUserId, { admissionId: input.admissionId, toBedId: input.toBedId }, auditContext);
   return transfer;
 }
 
 /** Initiates the discharge workflow (brief §36) — creates a Discharge row with readiness flags, all false initially. Does NOT free the bed yet; that happens at finalizeDischarge(). */
 export async function initiateDischarge(admissionId: string, byUserId: string, initiatedByStaffId?: string) {
   const discharge = await prisma.discharge.create({ data: { admissionId, initiatedByStaffId } });
-  await recordAuditEvent("hospital.discharge.initiated", byUserId, { admissionId });
+  const admission = await prisma.admission.findUnique({ where: { id: admissionId }, include: { encounter: true } });
+  await recordAuditEvent(
+    "hospital.discharge.initiated",
+    byUserId,
+    { admissionId },
+    admission ? { facilityId: admission.encounter.facilityId, patientId: admission.encounter.patientId, encounterId: admission.encounterId } : undefined
+  );
   return discharge;
 }
 
@@ -167,11 +174,23 @@ export async function finalizeDischarge(dischargeId: string, byUserId: string, d
       data: { status: EncounterStatus.DISCHARGED, closedAt: new Date() },
     });
 
-    return updated;
+    return {
+      discharge: updated,
+      auditContext: {
+        facilityId: discharge.admission.encounter.facilityId,
+        patientId: discharge.admission.encounter.patientId,
+        encounterId: discharge.admission.encounterId,
+      },
+    };
   });
 
-  await recordAuditEvent("hospital.discharge.finalized", byUserId, { dischargeId });
-  return result;
+  await recordAuditEvent(
+    "hospital.discharge.finalized",
+    byUserId,
+    { dischargeId },
+    { facilityId: result.auditContext.facilityId, patientId: result.auditContext.patientId, encounterId: result.auditContext.encounterId }
+  );
+  return result.discharge;
 }
 
 /** Housekeeping completes cleaning -> bed becomes AVAILABLE (brief §50 bed<->housekeeping integration). */
@@ -182,6 +201,6 @@ export async function completeBedCleaning(bedId: string, byUserId: string) {
   await prisma.bedStateEvent.create({
     data: { bedId, fromStatus: BedStatus.CLEANING, toStatus: BedStatus.AVAILABLE, reason: "Cleaning complete", byUserId },
   });
-  await recordAuditEvent("hospital.bed.cleaned", byUserId, { bedId });
+  await recordAuditEvent("hospital.bed.cleaned", byUserId, { bedId }, { facilityId: bed.facilityId });
   return updated;
 }

@@ -50,7 +50,12 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    await recordAuditEvent("hospital.referral.created", session.userId, { referralId: referral.id, encounterId });
+    await recordAuditEvent(
+      "hospital.referral.created",
+      session.userId,
+      { referralId: referral.id, encounterId },
+      { facilityId, patientId: encounter.patientId, encounterId }
+    );
     return { referral };
   });
 }

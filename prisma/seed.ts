@@ -170,7 +170,26 @@ async function seedCases() {
   console.log(`Seeded ${created} synthetic teaching cases.`);
 }
 
+/**
+ * Phase 4.5 hardening: this seed creates well-known-password demo accounts
+ * and is dev/demo-only. Refuse to run against anything flagged production
+ * unless explicitly opted in — explicit opt-in, not a DATABASE_URL string
+ * heuristic, since host/name patterns are easy to get wrong.
+ */
+function assertSeedAllowed() {
+  const isProduction = process.env.NODE_ENV === "production";
+  const explicitlyAllowed = process.env.ALLOW_DATABASE_SEED === "true";
+  if (isProduction && !explicitlyAllowed) {
+    console.error(
+      "Refusing to run prisma/seed.ts: NODE_ENV=production and ALLOW_DATABASE_SEED is not set to 'true'. " +
+        "This script creates well-known-password demo accounts and synthetic clinical data — development/demo use only."
+    );
+    process.exit(1);
+  }
+}
+
 async function main() {
+  assertSeedAllowed();
   await seedUsers();
   await seedAchievements();
   await seedCases();

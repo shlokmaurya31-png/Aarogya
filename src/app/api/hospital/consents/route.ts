@@ -47,7 +47,12 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    await recordAuditEvent("hospital.consent.recorded", session.userId, { consentId: consent.id, patientId, purpose, status: resolvedStatus });
+    await recordAuditEvent(
+      "hospital.consent.recorded",
+      session.userId,
+      { consentId: consent.id, patientId, purpose, status: resolvedStatus },
+      { facilityId, patientId }
+    );
     return { consent };
   });
 }

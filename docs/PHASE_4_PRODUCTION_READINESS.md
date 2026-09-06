@@ -35,8 +35,8 @@ concrete test.
 | Duplicate-recollection prevention at the DB layer | COMPLETE | `Specimen.recollectionOfSpecimenId` unique constraint added this milestone. |
 | Composite indexes for facility-scoped hot paths | COMPLETE | `Specimen(facilityId,status)`, `ImagingStudy(facilityId,status)`, `LabResult`/`ImagingReport(isCritical,acknowledgedAt,isCurrent)`, `Task(facilityId,status)` added this milestone. |
 | Version-chain cycle/immutability enforcement (`previousVersionId`) | PARTIAL | `@unique` prevents fan-in (two newer rows pointing at one older row); no DB-level cycle detection or post-creation immutability guarantee — application code never mutates it after create, but nothing at the schema level stops a future bug from doing so. |
-| Postgres migration | REQUIRES INFRASTRUCTURE | Datasource is SQLite; schema has a commented provider line for Postgres. All Milestone E DB fixes (partial indexes, unique constraints) use Postgres-compatible syntax verified by inspection, not yet tested against a real Postgres instance. |
-| Resource double-booking DB-level constraint | FUTURE | Documented limitation (architecture doc §12.4/§12.5) — app-level count-then-create today, needs `SELECT ... FOR UPDATE` or a partial unique index before production Postgres concurrency. |
+| Postgres migration | COMPLETE (Phase 4.5) | A fresh Postgres baseline migration (`prisma/migrations-postgres-baseline/`) was generated and `prisma migrate deploy`-tested end-to-end against a real Postgres 16 instance — see `docs/PHASE_4_5_INTEGRITY_GATE.md`. Datasource stays SQLite for local dev; the baseline is regenerated fresh at real cutover rather than kept incrementally in sync. |
+| Resource double-booking DB-level constraint | COMPLETE (Phase 4.5) | A GiST exclusion constraint (`imaging_resource_no_overlap`) plus a corrected app-level interval-overlap check (the old check compared exact timestamps, not real intervals — `ImagingStudy.scheduledEndAt` added). Verified against live Postgres including a genuine concurrent race, 8/8 test-matrix cases passing — see `docs/PHASE_4_5_INTEGRITY_GATE.md`. |
 
 ## Security
 
@@ -49,7 +49,7 @@ concrete test.
 | TLS termination, security headers (CSP/HSTS/etc.) | REQUIRES INFRASTRUCTURE | Not an application-code concern this milestone could address; not fabricated as done. |
 | Rate limiting / WAF | REQUIRES INFRASTRUCTURE | Same. |
 | Production session-cookie flags under real HTTPS origin | REQUIRES INFRASTRUCTURE | Needs a real deployment environment to verify, not local dev. |
-| Demo-account seeding gated against accidental production use | FUTURE | Seed passwords are synthetic and hashed, but nothing currently stops `prisma db seed` from being run against a production `DATABASE_URL`. |
+| Demo-account seeding gated against accidental production use | COMPLETE (Phase 4.5) | `prisma/seed.ts` refuses to run when `NODE_ENV=production` unless `ALLOW_DATABASE_SEED=true` is explicitly set. Explicit opt-in, not a database-name/host heuristic. Verified both branches against a live Postgres target. |
 
 ## RBAC
 
@@ -84,7 +84,7 @@ concrete test.
 |---|---|---|
 | Every clinically meaningful mutation has an audit event | COMPLETE | Two gaps (task creation, auto-charge creation) fixed this milestone; everything else re-verified already correct. |
 | Audit events timed strictly after transaction commit | COMPLETE | Re-verified this milestone across every route. |
-| `AuditEvent` queryable by `facilityId`/`patientId` directly (not via `detail` JSON) | NOT IMPLEMENTED | Codebase-wide schema gap (every phase), out of this milestone's diagnostics-scoped fix budget. |
+| `AuditEvent` queryable by `facilityId`/`patientId` directly (not via `detail` JSON) | COMPLETE (Phase 4.5) | Nullable, indexed `facilityId`/`patientId`/`encounterId` columns added; 57 `recordAuditEvent` call sites swept to populate them where context is available. Historical rows left null (not backfilled from inconsistent `detail` JSON). Tenancy isolation verified live against two demo facilities, zero cross-facility leakage. |
 
 ## Billing
 
@@ -103,7 +103,7 @@ concrete test.
 | Duplicate study scheduling race | COMPLETE | Same. |
 | Duplicate recollection race | COMPLETE | Same. |
 | Critical-acknowledgement race | COMPLETE | Now a guarded CAS; verified two concurrent acks resolve to one consistent winner. |
-| Resource double-booking race (different orders, same resource+time) | PARTIAL | SQLite-safe today (transaction serialization); documented Postgres gap, see Database section. |
+| Resource double-booking race (different orders, same resource+time) | COMPLETE (Phase 4.5) | Postgres-safe via GiST exclusion constraint; see Database section. |
 
 ## Observability
 
@@ -118,7 +118,7 @@ concrete test.
 | Item | Status | Notes |
 |---|---|---|
 | Automated database backups | NOT IMPLEMENTED | Local SQLite dev database; no backup strategy exists or was in scope this milestone. |
-| Point-in-time recovery | NOT IMPLEMENTED | Requires the Postgres migration first. |
+| Point-in-time recovery | NOT IMPLEMENTED | The Postgres migration prerequisite is now done (Phase 4.5); PITR/backup infrastructure itself is still not set up. |
 
 ## Disaster recovery
 
@@ -134,15 +134,15 @@ concrete test.
 | No secrets in tracked files or git history | COMPLETE | Verified this milestone. |
 | `.env`/`.env.local` gitignored | COMPLETE | Verified. |
 | Secret rotation tooling | NOT IMPLEMENTED | No secrets manager integration exists; `AUTH_SECRET`/`ADMIN_PASSWORD` etc. are plain environment variables. |
-| Demo-credential production guard | FUTURE | See Security section. |
+| Demo-credential production guard | COMPLETE (Phase 4.5) | See Security section. |
 
 ## PostgreSQL migration
 
 | Item | Status | Notes |
 |---|---|---|
-| Schema Postgres-compatibility | PARTIAL | Standard Prisma DSL portions are provider-agnostic by construction; the 3 hand-authored partial-unique-index migrations use syntax verified compatible with Postgres by inspection, not yet tested against a live Postgres instance. |
-| Concurrency behavior under Postgres `READ COMMITTED` | PARTIAL | The duplicate-row races (§ Database) are now DB-constraint-backed and Postgres-safe by construction. The resource-scheduling double-booking race is NOT yet Postgres-safe — documented, not fixed. |
-| Migration execution against Postgres | NOT IMPLEMENTED | Never run; `prisma migrate deploy` against a real Postgres target is untested. |
+| Schema Postgres-compatibility | COMPLETE (Phase 4.5) | Verified against a live Postgres instance, not just by inspection — full schema, all constraints/enums/indexes/relations, deployed and exercised end-to-end. |
+| Concurrency behavior under Postgres `READ COMMITTED` | COMPLETE (Phase 4.5) | The duplicate-row races (§ Database) are DB-constraint-backed and Postgres-safe by construction. The resource-scheduling double-booking race is now also Postgres-safe via the GiST exclusion constraint — verified with a genuine concurrent race, not sequential requests. |
+| Migration execution against Postgres | COMPLETE (Phase 4.5) | `prisma migrate deploy` run end-to-end against a real Postgres 16 instance from an empty database — see `docs/PHASE_4_5_INTEGRITY_GATE.md`. |
 
 ## External integrations
 
@@ -158,14 +158,18 @@ concrete test.
 
 ## Do not deploy to a real hospital until
 
-1. The Postgres migration is actually executed and tested (not just judged compatible by inspection) — see PostgreSQL migration section.
-2. The resource double-booking race is given a real DB-level guard (`SELECT ... FOR UPDATE` or a partial unique index) before relying on it under production concurrency.
-3. TLS, security headers, and rate limiting are added at the infrastructure layer — none of this is application code this milestone could provide.
-4. A demo-credential production guard is added so `prisma db seed` cannot silently create well-known-password admin accounts against a real database.
-5. Backups, DR, and basic observability (structured logging at minimum) exist — currently none do.
-6. `AuditEvent` gains facility/patient-scoped querying if compliance/investigation requirements demand it (currently requires a join through `detail`).
+Items 1, 2, 4, and 6 below were **RESOLVED in Phase 4.5** — see
+`docs/PHASE_4_5_INTEGRITY_GATE.md`. Items 3 and 5 remain open
+infrastructure-layer work.
 
-Everything else audited this milestone — application-layer security, RBAC,
+1. ~~The Postgres migration is actually executed and tested~~ — done: `prisma migrate deploy` run against a real Postgres 16 instance from empty.
+2. ~~The resource double-booking race is given a real DB-level guard~~ — done: GiST exclusion constraint (`imaging_resource_no_overlap`), verified with a genuine concurrent race.
+3. TLS, security headers, and rate limiting are added at the infrastructure layer — none of this is application code this milestone could provide.
+4. ~~A demo-credential production guard is added~~ — done: `prisma/seed.ts` refuses to run against `NODE_ENV=production` without explicit `ALLOW_DATABASE_SEED=true`.
+5. Backups, DR, and basic observability (structured logging at minimum) exist — currently none do.
+6. ~~`AuditEvent` gains facility/patient-scoped querying~~ — done: nullable, indexed `facilityId`/`patientId`/`encounterId` columns, 57 call sites swept.
+
+Everything else audited previously — application-layer security, RBAC,
 tenancy, clinical-safety invariants, concurrency on the diagnostics
 duplicate-row/billing paths, input validation, and error handling — is
 COMPLETE and verified live, not assumed.

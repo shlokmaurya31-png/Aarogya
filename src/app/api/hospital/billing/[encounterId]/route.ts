@@ -36,7 +36,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ enc
       createCharge(tx, { encounterId, patientId: encounter.patientId, facilityId, description, category, amount, sourceType: body?.sourceType, sourceId: body?.sourceId })
     );
 
-    await recordAuditEvent("hospital.billing.chargeCreated", session.userId, { encounterId, amount });
+    await recordAuditEvent(
+      "hospital.billing.chargeCreated",
+      session.userId,
+      { encounterId, amount },
+      { facilityId, patientId: encounter.patientId, encounterId }
+    );
     return result;
   });
 }

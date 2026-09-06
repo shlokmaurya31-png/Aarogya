@@ -30,7 +30,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       })
     );
 
-    await recordAuditEvent("hospital.imaging.studyStarted", session.userId, { imagingOrderId: id, studyId: study.id });
+    await recordAuditEvent(
+      "hospital.imaging.studyStarted",
+      session.userId,
+      { imagingOrderId: id, studyId: study.id },
+      { facilityId, patientId: order.patientId, encounterId: order.encounterId }
+    );
     return { study: updated };
   });
 }

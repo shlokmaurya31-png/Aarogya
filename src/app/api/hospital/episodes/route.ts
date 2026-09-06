@@ -39,7 +39,12 @@ export async function POST(req: NextRequest) {
       data: { patientId, facilityId, title, type, reason },
     });
 
-    await recordAuditEvent("hospital.episode.created", session.userId, { episodeId: episode.id, patientId });
+    await recordAuditEvent(
+      "hospital.episode.created",
+      session.userId,
+      { episodeId: episode.id, patientId },
+      { facilityId, patientId }
+    );
     return { episode };
   });
 }

@@ -73,7 +73,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       })
     );
 
-    await recordAuditEvent("hospital.lab.resultEntered", session.userId, { labOrderId: id, resultId: result.id, isCritical: isCritical === true });
+    await recordAuditEvent(
+      "hospital.lab.resultEntered",
+      session.userId,
+      { labOrderId: id, resultId: result.id, isCritical: isCritical === true },
+      { facilityId, patientId: order.patientId, encounterId: order.encounterId }
+    );
     return { result };
   });
 }
