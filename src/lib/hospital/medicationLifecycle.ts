@@ -361,12 +361,15 @@ export async function discontinueMedicationOrder(orderId: string, reason: string
 }
 
 /**
- * Records a dose administration (brief §20-21). Transactional and
- * concurrency-safe: re-checks both the order's status and this specific
- * administration row's status inside the transaction before writing, so
- * a double-click or a race between two nurses cannot record the same
- * dose twice (brief §36) or administer a dose whose order was just
- * cancelled out from under it.
+ * Records a dose administration (brief §20-21). Concurrency-safe via a
+ * guarded updateMany (status: "DUE" in the WHERE, count-checked after) —
+ * the same CAS idiom bed.ts/invoices.ts/purchaseOrders.ts use everywhere
+ * else in this codebase — not a plain read-then-write. A double-click or a
+ * race between two nurses recording the same scheduled dose (the same
+ * MedicationAdministration row) can now only ever have one winner; the
+ * loser sees AdministrationNotDueError, identical to a legitimately
+ * already-administered dose. The order's own status/witness checks stay a
+ * plain read (a different aggregate, not part of this row's CAS).
  */
 export async function administerMedication(input: {
   administrationId: string;
@@ -394,8 +397,8 @@ export async function administerMedication(input: {
       }
     }
 
-    const updated = await tx.medicationAdministration.update({
-      where: { id: input.administrationId },
+    const result = await tx.medicationAdministration.updateMany({
+      where: { id: input.administrationId, status: "DUE" },
       data: {
         status: input.status,
         administeredAt: new Date(),
@@ -406,6 +409,8 @@ export async function administerMedication(input: {
         notes: input.notes,
       },
     });
+    if (result.count !== 1) throw new AdministrationNotDueError(admin.status);
+    const updated = await tx.medicationAdministration.findUniqueOrThrow({ where: { id: input.administrationId } });
 
     const eventType =
       input.status === "GIVEN" ? "hospital.medication.administered" :

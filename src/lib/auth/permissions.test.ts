@@ -88,4 +88,10 @@ describe("roleHasPermission — Hospital OS boundary", () => {
     expect(roleHasPermission("PHARMACIST", "medication:verify")).toBe(true);
     expect(roleHasPermission("PHARMACIST", "medication:administer")).toBe(false);
   });
+
+  it("only HOSPITAL_ADMIN can manage the MedicationItemLink write path (inventory:item:manage) — PHARMACIST and NURSE cannot", () => {
+    expect(roleHasPermission("HOSPITAL_ADMIN", "inventory:item:manage")).toBe(true);
+    expect(roleHasPermission("PHARMACIST", "inventory:item:manage")).toBe(false);
+    expect(roleHasPermission("NURSE", "inventory:item:manage")).toBe(false);
+  });
 });

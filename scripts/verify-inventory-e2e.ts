@@ -23,6 +23,9 @@ import { QuarantinedLotError } from "../src/lib/hospital/inventory/fefo";
 import { recordWaste } from "../src/lib/hospital/inventory/waste";
 import { startStockTake, addStockTakeLine, completeStockTake } from "../src/lib/hospital/inventory/stocktake";
 import { createStockLocation } from "../src/lib/hospital/inventory/locations";
+import { linkMedicationToItem } from "../src/lib/hospital/inventory/itemMedicationLink";
+import { ResourceFacilityMismatchError } from "../src/lib/hospital/inventory/facilityScope";
+import { BadRequestError } from "../src/lib/auth/rbac";
 
 const prisma = new PrismaClient();
 const runId = Date.now();
@@ -40,6 +43,71 @@ async function main() {
   const doctor = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facility.id, user: { role: "DOCTOR" } } });
   const encounter = await prisma.encounter.findFirstOrThrow({ where: { facilityId: facility.id } });
   const pharmacy = await prisma.stockLocation.findFirstOrThrow({ where: { facilityId: facility.id, name: "Central Pharmacy" } });
+  const otherFacility = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Noida Hospital" } });
+
+  // Step 0: MedicationItemLink real write path (P0-A) — exercised through
+  // linkMedicationToItem itself (the function the new medication-links API
+  // route calls), not a raw prisma.medicationItemLink.create bypass.
+  {
+    const item = await prisma.item.create({ data: { facilityId: facility.id, sku: `E2E-LINKPATH-${runId}`, name: `E2ELinkPathDrug${runId}`, category: "MEDICATION", baseUnit: "TABLET" } });
+
+    const link = await prisma.$transaction((tx) => linkMedicationToItem(tx, { facilityId: facility.id, drugName: `E2ELinkPathDrug${runId}`, itemId: item.id }));
+    report("linkMedicationToItem creates a real MedicationItemLink row", Boolean(link.id) && link.itemId === item.id);
+
+    const duplicate = await prisma
+      .$transaction((tx) => linkMedicationToItem(tx, { facilityId: facility.id, drugName: `E2ELinkPathDrug${runId}`, itemId: item.id }))
+      .then(() => ({ ok: true as const }))
+      .catch((err) => ({ ok: false as const, err }));
+    report("Duplicate mapping at the same (facility, drugNameKey) scope is rejected", !duplicate.ok && duplicate.err instanceof BadRequestError);
+
+    const invalidItem = await prisma
+      .$transaction((tx) => linkMedicationToItem(tx, { facilityId: facility.id, drugName: `E2EInvalidItemDrug${runId}`, itemId: "does-not-exist" }))
+      .then(() => ({ ok: true as const }))
+      .catch((err) => ({ ok: false as const, err }));
+    report("Linking a nonexistent itemId is rejected", !invalidItem.ok && invalidItem.err instanceof ResourceFacilityMismatchError);
+
+    const nonMedItem = await prisma.item.create({ data: { facilityId: facility.id, sku: `E2E-NONMED-${runId}`, name: "E2E Consumable", category: "CONSUMABLE", baseUnit: "PIECE" } });
+    const nonMedAttempt = await prisma
+      .$transaction((tx) => linkMedicationToItem(tx, { facilityId: facility.id, drugName: `E2ENonMedDrug${runId}`, itemId: nonMedItem.id }))
+      .then(() => ({ ok: true as const }))
+      .catch((err) => ({ ok: false as const, err }));
+    report("Linking a non-MEDICATION-category item is rejected", !nonMedAttempt.ok && nonMedAttempt.err instanceof BadRequestError);
+
+    const otherFacilityItem = await prisma.item.create({ data: { facilityId: otherFacility.id, sku: `E2E-CROSSFAC-${runId}`, name: "E2E Cross Facility Drug", category: "MEDICATION", baseUnit: "TABLET" } });
+    const crossFacilityAttempt = await prisma
+      .$transaction((tx) => linkMedicationToItem(tx, { facilityId: facility.id, drugName: `E2ECrossFacilityDrug${runId}`, itemId: otherFacilityItem.id }))
+      .then(() => ({ ok: true as const }))
+      .catch((err) => ({ ok: false as const, err }));
+    report("Linking another facility's item is rejected (cross-facility mapping blocked)", !crossFacilityAttempt.ok && crossFacilityAttempt.err instanceof ResourceFacilityMismatchError);
+
+    const inactiveItem = await prisma.item.create({ data: { facilityId: facility.id, sku: `E2E-INACTIVE-${runId}`, name: "E2E Inactive Drug", category: "MEDICATION", baseUnit: "TABLET", active: false } });
+    const inactiveAttempt = await prisma
+      .$transaction((tx) => linkMedicationToItem(tx, { facilityId: facility.id, drugName: `E2EInactiveDrug${runId}`, itemId: inactiveItem.id }))
+      .then(() => ({ ok: true as const }))
+      .catch((err) => ({ ok: false as const, err }));
+    report("Linking an inactive item is rejected", !inactiveAttempt.ok && inactiveAttempt.err instanceof BadRequestError);
+
+    const globalLink = await prisma.$transaction((tx) => linkMedicationToItem(tx, { facilityId: facility.id, global: true, drugName: `E2EGlobalLinkDrug${runId}`, itemId: item.id }));
+    report("A global link (facilityId=null) can be created and resolves from any facility scope", globalLink.facilityId === null);
+
+    // Genuine concurrency gate (brief §8, gate #4): two truly concurrent
+    // linkMedicationToItem calls for the SAME (facility, drugName) —
+    // not sequential — must never both create a row. The app-level
+    // duplicate check above has a TOCTOU gap under real interleaving;
+    // MedicationItemLink's own @@unique constraint plus the P2002 catch
+    // added to linkMedicationToItem is the actual backstop being proven here.
+    const raceItem = await prisma.item.create({ data: { facilityId: facility.id, sku: `E2E-LINKRACE-${runId}`, name: `E2ELinkRaceDrug${runId}`, category: "MEDICATION", baseUnit: "TABLET" } });
+    const raceDrugName = `E2ELinkRaceDrug${runId}`;
+    const raceAttempt = () => prisma.$transaction((tx) => linkMedicationToItem(tx, { facilityId: facility.id, drugName: raceDrugName, itemId: raceItem.id }));
+    const raceResults = await Promise.allSettled([raceAttempt(), raceAttempt()]);
+    const raceSucceeded = raceResults.filter((r) => r.status === "fulfilled").length;
+    const raceRowCount = await prisma.medicationItemLink.count({ where: { facilityId: facility.id, drugNameKey: raceDrugName.toUpperCase() } });
+    report(
+      "Genuine concurrent race: two simultaneous linkMedicationToItem calls for the same drug name — exactly one row persists",
+      raceSucceeded === 1 && raceRowCount === 1,
+      `succeeded=${raceSucceeded}, rows=${raceRowCount}`
+    );
+  }
 
   // Step 1: medication dispensing -> inventory issue -> patient/encounter provenance -> billing provenance.
   // Uses a dedicated freshly-created item/drug (not a shared seeded one
@@ -50,7 +118,7 @@ async function main() {
   const dispensedDrugName = `E2EDispenseDrug${runId}`;
   {
     const item = await prisma.item.create({ data: { facilityId: facility.id, sku: `E2E-DISPENSE-${runId}`, name: dispensedDrugName, category: "MEDICATION", baseUnit: "TABLET" } });
-    await prisma.medicationItemLink.create({ data: { facilityId: facility.id, drugNameKey: dispensedDrugName.toUpperCase(), itemId: item.id } });
+    await prisma.$transaction((tx) => linkMedicationToItem(tx, { facilityId: facility.id, drugName: dispensedDrugName, itemId: item.id }));
     const lot = await prisma.itemLot.create({ data: { itemId: item.id, facilityId: facility.id, lotNumber: `E2E-DISPENSE-LOT-${runId}`, status: "ACTIVE", expiresAt: new Date("2028-01-01") } });
     // Seed 20 units via a real, ledger-backed RECEIPT-equivalent (a normal-
     // impact FOUND adjustment, below the high-impact approval threshold) —

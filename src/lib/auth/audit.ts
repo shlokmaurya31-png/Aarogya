@@ -187,6 +187,7 @@ export type AuditEventType =
   | "hospital.inventory.lotReleased"
   | "hospital.inventory.stocktakeStarted"
   | "hospital.inventory.stocktakeCompleted"
+  | "hospital.inventory.medicationLinked"
   | "hospital.procurement.supplierCreated"
   | "hospital.procurement.supplierUpdated"
   | "hospital.procurement.requisitionSubmitted"

@@ -80,12 +80,21 @@ export async function recordPayment(tx: Tx, input: RecordPaymentInput) {
 
 /**
  * Applies (part of) a payment's unallocated balance to an invoice.
- * allocatedMinor is a guarded running cache (CAS-updated here, in the same
- * transaction as the PaymentAllocation row it summarizes) — not a blind
- * increment. A losing concurrent allocation retries against the freshly
- * observed value up to a bounded number of times, then surfaces a clean
- * error rather than corrupting the cap invariant
- * (allocatedMinor + refundedMinor <= amountMinor).
+ *
+ * Two independent guards, both required, both inside this one transaction:
+ *  - Invoice side: a single atomic conditional UPDATE
+ *    (`allocatedMinor + amount <= totalMinor`), the same threshold-guarded-
+ *    UPDATE idiom used by stockBalance.ts's atomicDecrementOnHand — correct
+ *    for a running-total-vs-cap check, unlike an equality CAS. This closes
+ *    the P0-B over-allocation race: two different Payments racing the same
+ *    Invoice can no longer both read a stale total and both commit, because
+ *    the row lock this UPDATE takes serializes the second attempt behind
+ *    the first and forces it to re-evaluate the WHERE clause against the
+ *    now-current allocatedMinor.
+ *  - Payment side: the pre-existing CAS retry loop (allocatedMinor is a
+ *    guarded running cache, updated only via updateMany + count check).
+ * If either guard fails, the whole transaction throws and rolls back —
+ * no partial PaymentAllocation row, no stale invoice/payment total.
  */
 export async function allocatePayment(
   tx: Tx,
@@ -93,13 +102,16 @@ export async function allocatePayment(
 ) {
   if (input.amountMinor <= 0) throw new BadRequestError("amountMinor must be positive.");
 
-  const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: input.invoiceId }, include: { allocations: true } });
+  const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: input.invoiceId } });
   if (invoice.status !== "ISSUED" && invoice.status !== "PARTIALLY_PAID") {
     throw new BadRequestError(`Cannot allocate a payment to an invoice in status ${invoice.status}.`);
   }
-  const alreadyAllocatedToInvoice = invoice.allocations.reduce((sum, a) => sum + a.amountMinor, 0);
-  const invoiceRemaining = invoice.totalMinor - alreadyAllocatedToInvoice;
-  if (input.amountMinor > invoiceRemaining) throw new OverAllocationError();
+
+  const invoiceGuard = await tx.$executeRaw`
+    UPDATE "Invoice" SET "allocatedMinor" = "allocatedMinor" + ${input.amountMinor}
+    WHERE id = ${input.invoiceId} AND "allocatedMinor" + ${input.amountMinor} <= "totalMinor"
+  `;
+  if (Number(invoiceGuard) !== 1) throw new OverAllocationError();
 
   for (let attempt = 0; attempt < 5; attempt++) {
     const payment = await tx.payment.findUniqueOrThrow({ where: { id: input.paymentId } });

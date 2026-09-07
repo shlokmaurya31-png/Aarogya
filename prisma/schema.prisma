@@ -2022,6 +2022,7 @@ model Invoice {
   discountMinor     Int            @default(0)
   taxMinor          Int            @default(0)
   totalMinor        Int            @default(0) // frozen at ISSUED
+  allocatedMinor    Int            @default(0) // guarded running total, atomically maintained by allocatePayment — never exceeds totalMinor
   currency          String         @default("INR")
   issuedAt          DateTime?
   dueAt             DateTime?

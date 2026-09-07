@@ -23,6 +23,12 @@ const SEEDED_DRUGS: Array<{ drugName: string; sku: string }> = [
   { drugName: "Ceftriaxone", sku: "MED-CEFTRIAXONE-1G" },
   { drugName: "Amoxicillin", sku: "MED-AMOXICILLIN-500MG" },
   { drugName: "Metformin", sku: "MED-METFORMIN-500MG" },
+  // The remaining drug names hospital.ts's general per-encounter medication
+  // loop (ADMITTED encounters) cycles through — without these, most seeded
+  // MedicationOrders in the demo dataset would hit UnmappedDrugItemError.
+  { drugName: "Paracetamol", sku: "MED-PARACETAMOL-500MG" },
+  { drugName: "Atorvastatin", sku: "MED-ATORVASTATIN-10MG" },
+  { drugName: "Omeprazole", sku: "MED-OMEPRAZOLE-20MG" },
 ];
 
 export async function seedPhase6aInventory(prisma: PrismaClient) {

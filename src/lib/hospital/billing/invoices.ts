@@ -129,12 +129,17 @@ export async function voidInvoice(tx: Tx, invoiceId: string, input: { reason: st
   return tx.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
 }
 
-/** Called by payments.ts after an allocation posts, inside the same transaction — recomputes ISSUED/PARTIALLY_PAID/PAID from the actual allocation sum, never a separately-drifting flag. */
+/**
+ * Called by payments.ts after an allocation posts, inside the same
+ * transaction — recomputes ISSUED/PARTIALLY_PAID/PAID from
+ * Invoice.allocatedMinor, the guarded running total allocatePayment
+ * atomically maintains (see payments.ts), rather than re-summing
+ * PaymentAllocation rows — one source of truth, no second aggregate query.
+ */
 export async function refreshInvoicePaymentStatus(tx: Tx, invoiceId: string) {
-  const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId }, include: { allocations: true } });
+  const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
   if (invoice.status !== "ISSUED" && invoice.status !== "PARTIALLY_PAID") return invoice;
-  const allocatedMinor = sumMinor(invoice.allocations.map((a) => a.amountMinor));
-  const nextStatus = allocatedMinor >= invoice.totalMinor ? "PAID" : allocatedMinor > 0 ? "PARTIALLY_PAID" : "ISSUED";
+  const nextStatus = invoice.allocatedMinor >= invoice.totalMinor ? "PAID" : invoice.allocatedMinor > 0 ? "PARTIALLY_PAID" : "ISSUED";
   if (nextStatus === invoice.status) return invoice;
   return tx.invoice.update({ where: { id: invoiceId }, data: { status: nextStatus } });
 }
