@@ -135,18 +135,35 @@ export class QueueEntryNotWaitingError extends Error {
   }
 }
 
-/** Calls the next patient for a queue (optionally scoped to one practitioner) — lowest priorityScore, then longest-waiting, never a manual reorder. */
+/**
+ * Calls the next patient for a queue (optionally scoped to one
+ * practitioner) — lowest priorityScore, then longest-waiting, never a
+ * manual reorder.
+ *
+ * Phase 5.5 hardening: `findFirst` + unconditional `update` let two
+ * concurrent `callNext` calls both select the same WAITING entry and both
+ * mark it CALLED (a duplicate side effect — two staff/rooms believing they
+ * called the same patient). Guarded with `updateMany` on the observed
+ * status; a lost race retries against the next candidate rather than
+ * failing the whole call, bounded so a pathological queue can't spin
+ * forever.
+ */
 export async function callNext(facilityId: string, queueType: string, practitionerStaffId: string | undefined, byUserId: string) {
   return prisma.$transaction(async (tx) => {
-    const entry = await tx.queueEntry.findFirst({
-      where: { facilityId, queueType, status: "WAITING", ...(practitionerStaffId ? { practitionerStaffId } : {}) },
-      orderBy: [{ priorityScore: "asc" }, { enteredAt: "asc" }],
-      include: { patient: true },
-    });
-    if (!entry) return null;
-    const updated = await tx.queueEntry.update({ where: { id: entry.id }, data: { status: "CALLED", calledAt: new Date() } });
-    await tx.auditEvent.create({ data: { type: "hospital.queue.called", userId: byUserId, detail: { queueEntryId: updated.id, patientId: entry.patientId } } });
-    return { ...updated, patient: entry.patient };
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const entry = await tx.queueEntry.findFirst({
+        where: { facilityId, queueType, status: "WAITING", ...(practitionerStaffId ? { practitionerStaffId } : {}) },
+        orderBy: [{ priorityScore: "asc" }, { enteredAt: "asc" }],
+        include: { patient: true },
+      });
+      if (!entry) return null;
+      const calledAt = new Date();
+      const result = await tx.queueEntry.updateMany({ where: { id: entry.id, status: "WAITING" }, data: { status: "CALLED", calledAt } });
+      if (result.count !== 1) continue; // someone else called this entry first — retry against the next candidate
+      await tx.auditEvent.create({ data: { type: "hospital.queue.called", userId: byUserId, detail: { queueEntryId: entry.id, patientId: entry.patientId } } });
+      return { ...entry, status: "CALLED", calledAt, patient: entry.patient };
+    }
+    return null;
   });
 }
 

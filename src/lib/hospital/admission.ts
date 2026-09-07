@@ -5,6 +5,7 @@ import { isEncounterTransitionAllowed, InvalidEncounterTransitionError } from ".
 import { createPricedChargeIfNotExists } from "./billing/chargeCapture";
 import { PriceNotFoundError } from "./billing/pricing";
 import { ceilStayDays } from "./billing/money";
+import { BedConcurrencyError } from "./bed";
 
 export class BedNotAvailableError extends Error {
   constructor() {
@@ -41,7 +42,12 @@ export async function admitPatient(input: {
       throw new InvalidEncounterTransitionError(encounter.status, EncounterStatus.ADMITTED);
     }
 
-    await tx.bed.update({ where: { id: input.bedId }, data: { status: BedStatus.OCCUPIED } });
+    // Guarded CAS: re-checks the status we just observed at write time so a
+    // concurrent admitPatient/transferPatient racing for the same bed
+    // between the read above and this write affects zero rows instead of
+    // both silently succeeding into the same physical bed.
+    const bedCas = await tx.bed.updateMany({ where: { id: input.bedId, status: bed.status }, data: { status: BedStatus.OCCUPIED } });
+    if (bedCas.count !== 1) throw new BedConcurrencyError(input.bedId);
     await tx.bedStateEvent.create({
       data: {
         bedId: input.bedId,
@@ -94,12 +100,14 @@ export async function transferPatient(input: {
 
     const fromBed = await tx.bed.findUniqueOrThrow({ where: { id: admission.bedId } });
 
-    await tx.bed.update({ where: { id: fromBed.id }, data: { status: BedStatus.CLEANING } });
+    const fromBedCas = await tx.bed.updateMany({ where: { id: fromBed.id, status: fromBed.status }, data: { status: BedStatus.CLEANING } });
+    if (fromBedCas.count !== 1) throw new BedConcurrencyError(fromBed.id);
     await tx.bedStateEvent.create({
       data: { bedId: fromBed.id, fromStatus: fromBed.status, toStatus: BedStatus.CLEANING, reason: `Transfer out: ${input.reason}`, byUserId: input.byUserId },
     });
 
-    await tx.bed.update({ where: { id: toBed.id }, data: { status: BedStatus.OCCUPIED } });
+    const toBedCas = await tx.bed.updateMany({ where: { id: toBed.id, status: toBed.status }, data: { status: BedStatus.OCCUPIED } });
+    if (toBedCas.count !== 1) throw new BedConcurrencyError(toBed.id);
     await tx.bedStateEvent.create({
       data: { bedId: toBed.id, fromStatus: toBed.status, toStatus: BedStatus.OCCUPIED, reason: `Transfer in: ${input.reason}`, byUserId: input.byUserId },
     });
@@ -162,7 +170,8 @@ export async function finalizeDischarge(dischargeId: string, byUserId: string, d
     }
 
     const bed = await tx.bed.findUniqueOrThrow({ where: { id: discharge.admission.bedId }, include: { ward: true } });
-    await tx.bed.update({ where: { id: bed.id }, data: { status: BedStatus.CLEANING } });
+    const bedCas = await tx.bed.updateMany({ where: { id: bed.id, status: bed.status }, data: { status: BedStatus.CLEANING } });
+    if (bedCas.count !== 1) throw new BedConcurrencyError(bed.id);
     await tx.bedStateEvent.create({
       data: { bedId: bed.id, fromStatus: bed.status, toStatus: BedStatus.CLEANING, reason: "Discharge", byUserId },
     });
@@ -228,9 +237,18 @@ export async function finalizeDischarge(dischargeId: string, byUserId: string, d
 export async function completeBedCleaning(bedId: string, byUserId: string) {
   const bed = await prisma.bed.findUniqueOrThrow({ where: { id: bedId } });
   if (bed.status !== BedStatus.CLEANING) throw new Error("Bed is not in CLEANING state.");
-  const updated = await prisma.bed.update({ where: { id: bedId }, data: { status: BedStatus.AVAILABLE } });
-  await prisma.bedStateEvent.create({
-    data: { bedId, fromStatus: BedStatus.CLEANING, toStatus: BedStatus.AVAILABLE, reason: "Cleaning complete", byUserId },
+  // Guarded CAS + the status-flip and its BedStateEvent are now in one
+  // transaction: previously these were two separate un-transacted calls, so
+  // two concurrent housekeeping completions could both pass the CLEANING
+  // check and both write (duplicate "cleaned" events), and a crash between
+  // the two calls could leave a bed AVAILABLE with no event explaining why.
+  const updated = await prisma.$transaction(async (tx) => {
+    const cas = await tx.bed.updateMany({ where: { id: bedId, status: BedStatus.CLEANING }, data: { status: BedStatus.AVAILABLE } });
+    if (cas.count !== 1) throw new BedConcurrencyError(bedId);
+    await tx.bedStateEvent.create({
+      data: { bedId, fromStatus: BedStatus.CLEANING, toStatus: BedStatus.AVAILABLE, reason: "Cleaning complete", byUserId },
+    });
+    return { ...bed, status: BedStatus.AVAILABLE };
   });
   await recordAuditEvent("hospital.bed.cleaned", byUserId, { bedId }, { facilityId: bed.facilityId });
   return updated;

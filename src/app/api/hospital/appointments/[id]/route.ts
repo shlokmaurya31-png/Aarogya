@@ -3,7 +3,15 @@ import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError, ForbiddenError } from "@/lib/auth/rbac";
 import type { Permission } from "@/lib/auth/permissions";
-import { cancelAppointment, markNoShow, checkInAppointment, AppointmentAlreadyResolvedError, AppointmentNotCancellableError } from "@/lib/hospital/appointment";
+import {
+  cancelAppointment,
+  markNoShow,
+  checkInAppointment,
+  confirmAppointment,
+  AppointmentAlreadyResolvedError,
+  AppointmentNotCancellableError,
+  AppointmentNotConfirmableError,
+} from "@/lib/hospital/appointment";
 
 /** Appointment lifecycle actions (brief §6/§12/§44) — cancel | noShow | checkIn | confirm. */
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -43,13 +51,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         return { appointment, encounterId };
       }
       if (action === "confirm") {
-        if (!["REQUESTED", "RESCHEDULED"].includes(appt.status)) throw new BadRequestError(`Cannot confirm from status ${appt.status}.`);
-        const appointment = await prisma.appointment.update({ where: { id }, data: { status: "CONFIRMED" } });
+        const appointment = await confirmAppointment(id, session.userId);
         return { appointment };
       }
       throw new BadRequestError("Unknown action.");
     } catch (err) {
-      if (err instanceof AppointmentAlreadyResolvedError || err instanceof AppointmentNotCancellableError) {
+      if (
+        err instanceof AppointmentAlreadyResolvedError ||
+        err instanceof AppointmentNotCancellableError ||
+        err instanceof AppointmentNotConfirmableError
+      ) {
         throw new BadRequestError(err.message);
       }
       throw err;

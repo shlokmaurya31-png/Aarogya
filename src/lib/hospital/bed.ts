@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { BedStatus, Prisma } from "@prisma/client";
+import { BadRequestError } from "@/lib/auth/rbac";
 
 type Db = Prisma.TransactionClient | typeof prisma;
 
@@ -18,6 +19,13 @@ const ALLOWED_TRANSITIONS: Record<BedStatus, BedStatus[]> = {
 export class InvalidBedTransitionError extends Error {
   constructor(from: BedStatus, to: BedStatus) {
     super(`Illegal bed transition: ${from} -> ${to}`);
+  }
+}
+
+/** Thrown when a guarded concurrent bed-status update affects zero rows — someone else won the race. */
+export class BedConcurrencyError extends BadRequestError {
+  constructor(bedId: string) {
+    super(`Bed ${bedId} was changed by someone else, or is no longer in the expected state. Refresh and try again.`);
   }
 }
 
@@ -50,7 +58,12 @@ export async function transitionBed(
     if (!allowed.includes(toStatus)) {
       throw new InvalidBedTransitionError(bed.status, toStatus);
     }
-    const updated = await tx.bed.update({ where: { id: bedId }, data: { status: toStatus } });
+    // Guarded CAS, not a blind update: the WHERE clause re-checks the status
+    // we just observed at write time, so a concurrent transition (another
+    // request racing us between the read above and this write) affects zero
+    // rows here instead of silently overwriting it.
+    const result = await tx.bed.updateMany({ where: { id: bedId, status: bed.status }, data: { status: toStatus } });
+    if (result.count !== 1) throw new BedConcurrencyError(bedId);
     await tx.bedStateEvent.create({
       data: {
         bedId,
@@ -62,7 +75,7 @@ export async function transitionBed(
         encounterId: opts.encounterId,
       },
     });
-    return updated;
+    return { ...bed, status: toStatus };
   };
   // If we were handed a transaction client, run inline (composed into the caller's
   // transaction); otherwise open our own, matching the original standalone behavior.

@@ -7,19 +7,66 @@ export class SlotConflictError extends Error {
   }
 }
 
+function isSameCalendarDate(a: Date, b: Date): boolean {
+  return a.getUTCFullYear() === b.getUTCFullYear() && a.getUTCMonth() === b.getUTCMonth() && a.getUTCDate() === b.getUTCDate();
+}
+
+/**
+ * Pure half-open-interval overlap predicate — the canonical definition of
+ * "these two appointment windows conflict," exported so it's unit-testable
+ * without a database. `bookAppointment`'s actual conflict query expresses
+ * the same test as Prisma `lt`/`gt` where-clauses (a DB query can't call a
+ * JS function per row); this function documents that logic precisely and
+ * is what the overlap-matrix tests in appointment.test.ts exercise
+ * directly. [aStart, aEnd) and [bStart, bEnd) overlap iff aStart < bEnd
+ * AND aEnd > bStart — touching endpoints (one ends exactly when the other
+ * starts) are NOT an overlap.
+ */
+export function appointmentsOverlap(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): boolean {
+  return aStart < bEnd && aEnd > bStart;
+}
+
+const isPostgres = () => Boolean(process.env.DATABASE_URL?.startsWith("postgres"));
+
 /**
  * Books an appointment with a transactional conflict check (brief §61) —
- * queries for existing active appointments overlapping the requested
- * window for that doctor, inside the same `$transaction` as the create,
- * and refuses if the count already meets `maxConcurrentAppointments`
- * (default 1 = no overbooking, per any matching `DoctorScheduleBlock`).
+ * queries for existing active appointments genuinely OVERLAPPING the
+ * requested [scheduledStart, scheduledEnd) window for that doctor (the
+ * resource that can't be double-booked — `roomLabel` is informational only
+ * on this model, not a separately reservable resource), inside the same
+ * `$transaction` as the create, and refuses if the count already meets
+ * `maxConcurrentAppointments` (default 1 = no overbooking, per any
+ * matching `DoctorScheduleBlock`).
  *
- * This is an application-level transactional check, not a database
- * constraint — SQLite serializes `$transaction` calls against its single
- * connection, which is adequate at dev/demo scale. A Postgres deployment
- * with real concurrent write traffic should additionally take a
- * `SELECT ... FOR UPDATE`-style row lock or a partial unique index; see
- * docs/PATIENT_FLOW.md's concurrency section.
+ * Phase 5.5 hardening: this used to compare `scheduledStart` for exact
+ * equality, which missed every partial overlap (a 9:00-9:30 and a
+ * 9:15-9:45 booking for the same doctor didn't conflict). Fixed to a real
+ * half-open-interval overlap test, the same shape used by ImagingStudy
+ * scheduling (src/lib/hospital/imagingStudyLifecycle.ts).
+ *
+ * Concurrency mechanism differs deliberately from ImagingStudy/Tariff's
+ * GiST exclusion constraints: those invariants are always "at most ONE
+ * active row," which an exclusion constraint expresses directly.
+ * Appointment's invariant is "at most `maxConcurrentAppointments` (an
+ * admin-configurable value up to 20, read from a joined
+ * `DoctorScheduleBlock` row) overlapping active rows" — a bound that a
+ * static per-table exclusion constraint cannot express, since it can't see
+ * a value from another table. A hard 1-row exclusion constraint here would
+ * incorrectly reject legitimate bookings for any clinic session configured
+ * with `maxConcurrentAppointments > 1`.
+ *
+ * Instead, on Postgres, this transaction takes a `pg_advisory_xact_lock`
+ * keyed on `doctorStaffId` before counting overlaps — this is the
+ * brief-sanctioned "transactional serialization" mechanism: it forces any
+ * two concurrent `bookAppointment` calls for the *same* doctor to run
+ * their count-then-insert critical section one at a time (the second
+ * blocks until the first commits or rolls back), which closes the
+ * phantom-read race for any value of `maxConcurrentAppointments`, not just
+ * 1. The lock is scoped to the transaction (`_xact_`) so it releases
+ * automatically on commit or rollback — no separate unlock call needed.
+ * SQLite doesn't need this: `$transaction` calls already serialize against
+ * SQLite's single connection, so no cross-doctor lock is necessary there;
+ * the advisory-lock call is skipped entirely (it doesn't exist on SQLite).
  */
 export async function bookAppointment(input: {
   facilityId: string;
@@ -37,19 +84,44 @@ export async function bookAppointment(input: {
   byUserId: string;
 }) {
   return prisma.$transaction(async (tx) => {
-    const block = await tx.doctorScheduleBlock.findFirst({
+    if (isPostgres()) {
+      // Serializes concurrent bookAppointment calls for this doctor so the
+      // overlap count below and the eventual create are effectively one
+      // atomic step — closes the phantom-read race for any
+      // maxConcurrentAppointments value. hashtext() is a stable, built-in
+      // Postgres hash; _xact_ scope means it auto-releases on commit/rollback.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${input.doctorStaffId}))`;
+    }
+
+    const dayStart = new Date(input.scheduledStart);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(dayStart.getTime() + 24 * 3_600_000);
+
+    // Candidate schedule blocks for the day; a specificDate override is a
+    // full calendar date, not a timestamp, so it must be range-matched
+    // (dayStart/dayEnd) and calendar-compared, never compared for exact
+    // Date equality against a timestamp that carries a time-of-day.
+    const candidateBlock = await tx.doctorScheduleBlock.findFirst({
       where: {
         staffId: input.doctorStaffId,
         type: "CLINIC_SESSION",
-        OR: [{ dayOfWeek: input.scheduledStart.getDay() }, { specificDate: input.scheduledStart }],
+        OR: [{ dayOfWeek: input.scheduledStart.getDay() }, { specificDate: { gte: dayStart, lt: dayEnd } }],
       },
     });
+    const block =
+      candidateBlock && (!candidateBlock.specificDate || isSameCalendarDate(candidateBlock.specificDate, input.scheduledStart))
+        ? candidateBlock
+        : null;
     const maxConcurrent = block?.maxConcurrentAppointments ?? 1;
 
+    // Real half-open-interval overlap: [scheduledStart, scheduledEnd) vs
+    // [existing.scheduledStart, existing.scheduledEnd) for the same doctor.
+    // Exact-timestamp equality would miss every partial overlap.
     const overlapping = await tx.appointment.count({
       where: {
         doctorStaffId: input.doctorStaffId,
-        scheduledStart: input.scheduledStart,
+        scheduledStart: { lt: input.scheduledEnd },
+        scheduledEnd: { gt: input.scheduledStart },
         status: { notIn: ["CANCELLED", "NO_SHOW"] },
       },
     });
@@ -75,6 +147,29 @@ export async function bookAppointment(input: {
       data: { type: "hospital.appointment.created", userId: input.byUserId, detail: { appointmentId: appointment.id, doctorStaffId: input.doctorStaffId } },
     });
     return appointment;
+  });
+}
+
+export class AppointmentNotConfirmableError extends Error {
+  constructor(status: string) {
+    super(`Cannot confirm from status ${status}.`);
+  }
+}
+
+/**
+ * Confirms a REQUESTED/RESCHEDULED appointment — transactional, guarded,
+ * and audited, matching every other lifecycle action in this file. Phase
+ * 5.5: previously the API route bypassed this service layer entirely with
+ * a bare, non-transactional, non-audited `prisma.appointment.update()`.
+ */
+export async function confirmAppointment(appointmentId: string, byUserId: string) {
+  return prisma.$transaction(async (tx) => {
+    const appt = await tx.appointment.findUniqueOrThrow({ where: { id: appointmentId } });
+    if (!["REQUESTED", "RESCHEDULED"].includes(appt.status)) throw new AppointmentNotConfirmableError(appt.status);
+    const result = await tx.appointment.updateMany({ where: { id: appointmentId, status: appt.status }, data: { status: "CONFIRMED" } });
+    if (result.count !== 1) throw new AppointmentNotConfirmableError(appt.status);
+    await tx.auditEvent.create({ data: { type: "hospital.appointment.confirmed", userId: byUserId, detail: { appointmentId } } });
+    return { ...appt, status: "CONFIRMED" };
   });
 }
 
