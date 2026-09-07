@@ -162,6 +162,31 @@ export const PERMISSIONS = [
   "insurance:claim:create",
   "insurance:claim:submit",
   "insurance:claim:review",
+
+  // Phase 6A — Inventory + Procurement Foundation.
+  "inventory:item:view",
+  "inventory:item:manage",
+  "inventory:location:manage",
+  "inventory:stock:view",
+  "inventory:stock:receive",
+  "inventory:stock:issue",
+  "inventory:stock:reserve",
+  "inventory:stock:transfer",
+  "inventory:stock:adjust",
+  "inventory:stock:waste",
+  "inventory:lot:quarantine",
+  "inventory:stocktake:manage",
+  "inventory:report:view",
+  "procurement:supplier:view",
+  "procurement:supplier:manage",
+  "procurement:requisition:create",
+  "procurement:requisition:approve",
+  "procurement:po:view",
+  "procurement:po:create",
+  "procurement:po:approve",
+  "procurement:po:cancel",
+  "procurement:goodsReceipt:create",
+  "procurement:goodsReceipt:approve",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -227,6 +252,8 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "carePlan:manage",
     "handoff:manage",
     "medication:discontinue",
+    // Phase 6A — narrow view-only, per the brief's explicit instruction.
+    "inventory:item:view",
   ],
   NURSE: [
     "hospital:command-center:view",
@@ -251,6 +278,13 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "nursing:assignment:manage",
     "io:record",
     "lab:specimen:collect",
+    // Phase 6A — ward-level consumption + witnessing breakage/loss.
+    "inventory:item:view",
+    "inventory:stock:view",
+    "inventory:stock:issue",
+    "inventory:stock:reserve",
+    "inventory:stock:waste",
+    "procurement:requisition:create",
   ],
   LAB_TECHNICIAN: [
     "hospital:command-center:view",
@@ -265,6 +299,12 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "lab:specimen:reject",
     "lab:result:verify",
     "lab:result:amend",
+    // Phase 6A — reagent/consumable consumption boundary (no dedicated UI yet).
+    "inventory:item:view",
+    "inventory:stock:view",
+    "inventory:stock:issue",
+    "inventory:stock:waste",
+    "procurement:requisition:create",
   ],
   RADIOLOGY_TECH: [
     "hospital:command-center:view",
@@ -274,6 +314,12 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "imaging:report:enter",
     "radiology:schedule",
     "radiology:study:execute",
+    // Phase 6A — contrast/disposable consumption boundary (no dedicated UI yet).
+    "inventory:item:view",
+    "inventory:stock:view",
+    "inventory:stock:issue",
+    "inventory:stock:waste",
+    "procurement:requisition:create",
   ],
   PHARMACIST: [
     "hospital:command-center:view",
@@ -282,6 +328,16 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "encounter:read",
     "medication:verify",
     "medication:dispense",
+    // Phase 6A — pharmacy is the one fully wired-up inventory consumer this phase.
+    "inventory:item:view",
+    "inventory:stock:view",
+    "inventory:stock:issue",
+    "inventory:stock:reserve",
+    "inventory:stock:transfer",
+    "inventory:lot:quarantine",
+    "procurement:goodsReceipt:create",
+    "procurement:supplier:view",
+    "inventory:report:view",
   ],
   BILLING_STAFF: [
     "hospital:command-center:view",
@@ -300,6 +356,10 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "insurance:preauth:manage",
     "insurance:claim:create",
     "insurance:claim:submit",
+    // Phase 6A — finance visibility only, no operational inventory permission.
+    "procurement:supplier:view",
+    "procurement:po:view",
+    "inventory:report:view",
   ],
   HOSPITAL_ADMIN: [
     "hospital:command-center:view",
@@ -356,6 +416,30 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "insurance:preauth:manage",
     "insurance:claim:create",
     "insurance:claim:submit",
+    // Phase 6A — the full checker/store-manager/procurement tier. See
+    // docs/PHASE_6A_PROCUREMENT.md for the documented limitation that this
+    // maps every approval permission onto HOSPITAL_ADMIN alone (no
+    // dedicated "Procurement Officer" role exists) — separation of duties
+    // is enforced at the service layer via a same-actor guard instead.
+    "inventory:item:manage",
+    "inventory:location:manage",
+    "inventory:stock:view",
+    "inventory:stock:receive",
+    "inventory:stock:transfer",
+    "inventory:stock:adjust",
+    "inventory:stock:waste",
+    "inventory:lot:quarantine",
+    "inventory:stocktake:manage",
+    "inventory:report:view",
+    "procurement:supplier:view",
+    "procurement:supplier:manage",
+    "procurement:requisition:approve",
+    "procurement:po:view",
+    "procurement:po:create",
+    "procurement:po:approve",
+    "procurement:po:cancel",
+    "procurement:goodsReceipt:create",
+    "procurement:goodsReceipt:approve",
   ],
   FRONT_DESK: [
     "hospital:command-center:view",
@@ -407,6 +491,10 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "billing:tariff:manage",
     "billing:reconciliation:view",
     "insurance:claim:review",
+    // Phase 6A — view-only oversight, matching its existing narrow billing footprint.
+    "inventory:item:view",
+    "inventory:report:view",
+    "procurement:po:view",
   ],
 };
 

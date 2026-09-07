@@ -5,6 +5,14 @@ import { generateAdministrationSchedule } from "./medicationSchedule";
 import { createOrderEnvelope, closeOrderEnvelope } from "./orderEnvelope";
 import { createPricedChargeIfNotExists } from "./billing/chargeCapture";
 import { PriceNotFoundError } from "./billing/pricing";
+import { resolveItemForDrugName } from "./inventory/itemMedicationLink";
+import { issueStock } from "./inventory/issue";
+
+export class UnmappedDrugItemError extends Error {
+  constructor(drugName: string) {
+    super(`"${drugName}" has no inventory item mapping (MedicationItemLink) — dispensing is blocked until an admin links this drug to an inventory item, so stock is never silently bypassed.`);
+  }
+}
 
 /**
  * The full prescribe -> pharmacy -> dispense -> administer -> discontinue
@@ -204,13 +212,26 @@ export async function resubmitMedicationOrder(orderId: string, byUserId: string,
   });
 }
 
-/** Full/partial dispense (brief §23) — creates the DispensingRecord, then activates the order (VERIFIED -> DISPENSED -> ACTIVE) in one transaction. */
+/**
+ * Full/partial dispense (brief §23) — creates the DispensingRecord, issues
+ * matching inventory stock, then activates the order (VERIFIED ->
+ * DISPENSED -> ACTIVE) in one transaction. Phase 6A: the inventory issue
+ * runs inside this SAME transaction, after the DispensingRecord (which
+ * supplies the issue's idempotency-bearing sourceId) and before the
+ * status transitions/charge hook — if stock is unavailable (or the lot is
+ * expired/quarantined), issueStock throws and the whole transaction rolls
+ * back: no DispensingRecord persists, no status change, no charge. The
+ * order stays VERIFIED, accurately reflecting the stock failure rather
+ * than fabricating a dispense that never physically happened.
+ */
 export async function dispenseMedication(input: {
   medicationOrderId: string;
   pharmacistStaffId: string;
   status?: DispenseStatus;
   quantity: number;
   quantityUnit: string;
+  dispensingLocationId: string;
+  overrideLotId?: string;
   batchNumber?: string;
   expiryDate?: Date;
   substitutedDrugName?: string;
@@ -223,6 +244,10 @@ export async function dispenseMedication(input: {
   if (order.isControlled && !input.witnessStaffId) {
     throw new Error("Controlled medication requires a witness co-sign to dispense.");
   }
+
+  const drugName = input.substitutedDrugName ?? order.drugName;
+  const item = await resolveItemForDrugName(prisma, order.encounter.facilityId, drugName);
+  if (!item) throw new UnmappedDrugItemError(drugName);
 
   return prisma.$transaction(async (tx) => {
     const record = await tx.dispensingRecord.create({
@@ -240,6 +265,27 @@ export async function dispenseMedication(input: {
         notes: input.notes,
       },
     });
+
+    // Phase 6A — inventory issue. The inventory engine is now the sole
+    // source of stock truth; dispensing never decrements a second,
+    // independent quantity counter. FEFO-automatic unless overrideLotId is
+    // explicitly supplied (always still validated ACTIVE/not-expired/not-
+    // quarantined even when explicit).
+    await issueStock(tx, {
+      facilityId: order.encounter.facilityId,
+      itemId: item.id,
+      locationId: input.dispensingLocationId,
+      quantity: input.quantity,
+      lotId: input.overrideLotId,
+      requestedByStaffId: input.pharmacistStaffId,
+      actorUserId: input.byUserId,
+      reason: "Pharmacy dispense",
+      patientId: order.patientId,
+      encounterId: order.encounterId,
+      sourceType: "DispensingRecord",
+      sourceId: record.id,
+    });
+
     await transition(tx, input.medicationOrderId, "DISPENSED", input.byUserId);
     const activated = await transition(tx, input.medicationOrderId, "ACTIVE", input.byUserId);
     await tx.auditEvent.create({ data: { type: "hospital.medication.dispensed", userId: input.byUserId, detail: { orderId: input.medicationOrderId, dispensingRecordId: record.id, status: record.status } } });

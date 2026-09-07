@@ -15,8 +15,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const order = await prisma.medicationOrder.findUnique({ where: { id }, include: { encounter: true } });
     if (!order || order.encounter.facilityId !== facilityId) throw new NotFoundError("Medication order not found.");
 
-    const { quantity, quantityUnit } = body ?? {};
+    const { quantity, quantityUnit, dispensingLocationId } = body ?? {};
     if (!quantity || !quantityUnit) throw new BadRequestError("quantity and quantityUnit are required.");
+    if (!dispensingLocationId) throw new BadRequestError("dispensingLocationId is required — which store/counter is this being issued from?");
     if (body?.status === "SUBSTITUTED" && !body?.substitutedDrugName) throw new BadRequestError("substitutedDrugName is required for a substitution.");
 
     try {
@@ -26,6 +27,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         status: body?.status,
         quantity,
         quantityUnit,
+        dispensingLocationId,
+        overrideLotId: body?.overrideLotId,
         batchNumber: body?.batchNumber,
         expiryDate: body?.expiryDate ? new Date(body.expiryDate) : undefined,
         substitutedDrugName: body?.substitutedDrugName,

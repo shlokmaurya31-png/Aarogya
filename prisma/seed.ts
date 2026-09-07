@@ -12,6 +12,7 @@ import { seedPhase1Extensions } from "./seedData/hospitalPhase1";
 import { seedPhase2PatientFlow } from "./seedData/hospitalPhase2";
 import { seedPhase3Clinical } from "./seedData/hospitalPhase3";
 import { seedPhase5Billing } from "./seedData/hospitalPhase5";
+import { seedPhase6aInventory } from "./seedData/hospitalPhase6a";
 
 const prisma = new PrismaClient();
 
@@ -199,6 +200,7 @@ async function main() {
   await seedPhase2PatientFlow(prisma);
   await seedPhase3Clinical(prisma);
   await seedPhase5Billing(prisma);
+  await seedPhase6aInventory(prisma);
 }
 
 main()

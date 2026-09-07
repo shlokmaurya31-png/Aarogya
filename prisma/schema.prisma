@@ -533,6 +533,26 @@ model Facility {
   invoiceSequences InvoiceSequence[]
   payments        Payment[]
   claims          Claim[]
+
+  // Phase 6A — Inventory + Procurement Foundation.
+  items                  Item[]
+  itemLots               ItemLot[]
+  stockLocations         StockLocation[]
+  stockLedgerEntries     StockLedgerEntry[]
+  stockBalances          StockBalance[]
+  stockReservations      StockReservation[]
+  stockTransfers         StockTransfer[]
+  stockAdjustments       StockAdjustment[]
+  wasteRecords           WasteRecord[]
+  stockTakes             StockTake[]
+  suppliers              Supplier[]
+  purchaseRequisitions   PurchaseRequisition[]
+  purchaseOrders         PurchaseOrder[]
+  goodsReceipts          GoodsReceipt[]
+  requisitionSequences   PurchaseRequisitionSequence[]
+  purchaseOrderSequences PurchaseOrderSequence[]
+  goodsReceiptSequences  GoodsReceiptSequence[]
+  medicationItemLinks    MedicationItemLink[]
 }
 
 model Department {
@@ -555,6 +575,7 @@ model Department {
   queueEntries       QueueEntry[]
   admissionRequests  AdmissionRequest[]
   nursingAssignments NursingAssignment[]
+  purchaseRequisitions PurchaseRequisition[]
 
   @@unique([facilityId, name])
 }
@@ -3150,4 +3171,736 @@ model MedicationReconciliation {
 
   @@index([encounterId])
   @@index([patientId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 6A — Inventory + Procurement Foundation.
+//
+// A reusable physical-stock engine, deliberately separate from clinical
+// concepts (MedicationOrder.drugName stays freeform; MedicationItemLink is
+// the clean, optional mapping onto this Item master). StockLedgerEntry is
+// the authoritative, append-only history; StockBalance is a derivable,
+// reconcilable cache, never an independent source of truth. See
+// docs/PHASE_6A_INVENTORY_ARCHITECTURE.md / PHASE_6A_PROCUREMENT.md /
+// PHASE_6A_INTEGRITY.md for the full design.
+// ─────────────────────────────────────────────────────────────────────────
+
+enum ItemCategory {
+  MEDICATION
+  CONSUMABLE
+  SURGICAL_SUPPLY
+  LAB_REAGENT
+  RADIOLOGY_CONSUMABLE
+  IMPLANT
+  EQUIPMENT
+  BLOOD_PRODUCT
+  OTHER
+}
+
+enum UnitOfMeasure {
+  TABLET
+  CAPSULE
+  VIAL
+  AMPOULE
+  BOTTLE
+  BOX
+  PACK
+  PIECE
+  ML
+  MG
+  GRAM
+  KG
+  LITER
+  OTHER
+}
+
+enum LocationType {
+  WAREHOUSE
+  STORE
+  PHARMACY
+  OT_STORE
+  LAB_STORE
+  RADIOLOGY_STORE
+  WARD_STORE
+  BIN
+  OTHER
+}
+
+enum LotStatus {
+  ACTIVE
+  QUARANTINED
+  EXPIRED
+  RECALLED
+  DEPLETED
+}
+
+enum StockMovementType {
+  RECEIPT
+  ISSUE
+  TRANSFER_OUT
+  TRANSFER_IN
+  RETURN
+  WASTE
+  ADJUSTMENT
+  RESERVATION
+  RELEASE
+}
+
+enum StockReservationStatus {
+  ACTIVE
+  RELEASED
+  CONSUMED
+  EXPIRED
+}
+
+enum StockTransferStatus {
+  DRAFT
+  IN_TRANSIT
+  RECEIVED
+  CANCELLED
+}
+
+enum StockAdjustmentStatus {
+  POSTED
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+}
+
+enum AdjustmentReason {
+  COUNT_CORRECTION
+  DAMAGE
+  LOSS
+  FOUND
+  DATA_CORRECTION
+  OTHER
+}
+
+enum WasteRecordStatus {
+  POSTED
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+}
+
+enum WasteReason {
+  EXPIRED
+  DAMAGED
+  CONTAMINATED
+  OPENED_UNUSED
+  ACCIDENTAL_LOSS
+}
+
+enum StockTakeStatus {
+  DRAFT
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum RequisitionStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum RequisitionPriority {
+  ROUTINE
+  URGENT
+  EMERGENCY
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  SENT
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+  CLOSED
+}
+
+enum GoodsReceiptStatus {
+  RECORDED
+  APPROVED
+  REJECTED
+}
+
+/**
+ * Reusable item master — a PHYSICAL stock concept, not a clinical one.
+ * `facilityId` nullable = a global/org-wide catalog item, mirroring
+ * LabTestCatalog's facility-nullable convention. `baseUnit` is the one
+ * unit every StockLedgerEntry/StockBalance row for this item is recorded
+ * in; ItemUnitConversion expresses any other purchasing/dispensing unit
+ * in terms of it. Medication-clinical fields (dose, route, frequency) are
+ * NOT duplicated here — see MedicationItemLink for the mapping.
+ */
+model Item {
+  id         String       @id @default(cuid())
+  facility   Facility?    @relation(fields: [facilityId], references: [id])
+  facilityId String?
+  sku        String       @unique
+  name       String
+  description String?
+  category   ItemCategory
+  baseUnit   UnitOfMeasure
+  active     Boolean      @default(true)
+  trackLots   Boolean     @default(true)
+  trackExpiry Boolean     @default(true)
+  trackSerial Boolean     @default(false) // foundation flag only — no serial-number model this phase
+
+  reorderMinLevel     Float?
+  reorderMaxLevel     Float?
+  reorderPoint        Float?
+  reorderQuantity     Float?
+  preferredSupplier   Supplier? @relation(fields: [preferredSupplierId], references: [id])
+  preferredSupplierId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  unitConversions    ItemUnitConversion[]
+  medicationLinks    MedicationItemLink[]
+  lots               ItemLot[]
+  stockBalances      StockBalance[]
+  stockLedgerEntries StockLedgerEntry[]
+  stockReservations  StockReservation[]
+  stockTransfers     StockTransfer[]
+  stockAdjustments   StockAdjustment[]
+  wasteRecords       WasteRecord[]
+  stockTakeLines     StockTakeLine[]
+  requisitionLines   PurchaseRequisitionLine[]
+  purchaseOrderLines PurchaseOrderLine[]
+  goodsReceiptLines  GoodsReceiptLine[]
+
+  @@index([facilityId])
+  @@index([category])
+}
+
+/** Item-scoped unit conversion — "N base units per 1 of this unit" (e.g. 1 BOX = 100 TABLET). Never crosses incompatible dimensions (see inventory/units.ts). */
+model ItemUnitConversion {
+  id               String        @id @default(cuid())
+  item             Item          @relation(fields: [itemId], references: [id])
+  itemId           String
+  unit             UnitOfMeasure
+  baseUnitsPerUnit Float
+
+  @@unique([itemId, unit])
+}
+
+/**
+ * Clean medication -> inventory-item mapping. MedicationOrder.drugName
+ * stays freeform on purpose (unchanged clinical semantics) — this table is
+ * the optional, explicit bridge the pharmacy dispense flow consults.
+ * drugNameKey uses the exact same `.trim().toUpperCase()` normalization
+ * medicationLifecycle.ts already applies for its Phase 5 charge code, so
+ * there is one normalization convention, not two.
+ */
+model MedicationItemLink {
+  id          String    @id @default(cuid())
+  facility    Facility? @relation(fields: [facilityId], references: [id])
+  facilityId  String?
+  drugNameKey String
+  item        Item      @relation(fields: [itemId], references: [id])
+  itemId      String
+  createdAt   DateTime  @default(now())
+
+  @@unique([facilityId, drugNameKey])
+}
+
+/** Facility -> Store/Warehouse -> Bin hierarchy. A stock balance never exists without a meaningful location. */
+model StockLocation {
+  id               String         @id @default(cuid())
+  facility         Facility       @relation(fields: [facilityId], references: [id])
+  facilityId       String
+  name             String
+  type             LocationType
+  parent           StockLocation? @relation("LocationHierarchy", fields: [parentLocationId], references: [id])
+  parentLocationId String?
+  active           Boolean        @default(true)
+  createdAt        DateTime       @default(now())
+
+  children           StockLocation[]     @relation("LocationHierarchy")
+  stockBalances      StockBalance[]
+  stockLedgerEntries StockLedgerEntry[]
+  stockReservations  StockReservation[]
+  transfersFrom      StockTransfer[]     @relation("TransferFrom")
+  transfersTo        StockTransfer[]     @relation("TransferTo")
+  stockAdjustments   StockAdjustment[]
+  wasteRecords       WasteRecord[]
+  stockTakes         StockTake[]
+  goodsReceiptLines  GoodsReceiptLine[]
+
+  @@unique([facilityId, name])
+  @@index([facilityId, active])
+}
+
+/**
+ * Lot/batch. `lotNumber` is a real supplier-issued batch number for
+ * trackLots=true items; a sentinel `"NO-LOT"` row is get-or-created for
+ * trackLots=false items (inventory/lots.ts#getOrCreateNoLotSentinel) so
+ * every stock row still has a non-null lotId — one code path, not two.
+ * Never physically deleted.
+ */
+model ItemLot {
+  id                  String    @id @default(cuid())
+  item                Item      @relation(fields: [itemId], references: [id])
+  itemId              String
+  facility            Facility  @relation(fields: [facilityId], references: [id])
+  facilityId          String
+  lotNumber           String
+  manufacturer        String?
+  manufacturedAt      DateTime?
+  expiresAt           DateTime? // null = never expires
+  status              LotStatus @default(ACTIVE)
+  quarantineReason    String?
+  quarantinedAt       DateTime?
+  quarantinedByUserId String?
+  releasedAt          DateTime?
+  releasedByUserId    String?
+  createdAt           DateTime  @default(now())
+
+  stockBalances      StockBalance[]
+  stockLedgerEntries StockLedgerEntry[]
+  stockReservations  StockReservation[]
+  stockTransfers     StockTransfer[]
+  stockAdjustments   StockAdjustment[]
+  wasteRecords       WasteRecord[]
+  stockTakeLines     StockTakeLine[]
+
+  @@unique([itemId, facilityId, lotNumber])
+  @@index([facilityId, status])
+  @@index([expiresAt])
+}
+
+/**
+ * The authoritative, append-only stock history — the single most
+ * important model in this phase. Every material stock change is exactly
+ * one row here (a transfer is exactly two: TRANSFER_OUT + TRANSFER_IN).
+ * Enforced immutable BY CONVENTION: no service code ever calls .update()
+ * or .delete() on this model (verified in review, same discipline as
+ * Charge/PaymentAllocation) — a correction is a new, opposite-direction
+ * entry, never a rewrite. Idempotency key is (sourceType, sourceId,
+ * movementType) — sufficient because this phase's scope cut is "one lot
+ * fulfills one movement line" (see docs/PHASE_6A_INTEGRITY.md), so lotId
+ * need not be part of the key.
+ */
+model StockLedgerEntry {
+  id           String            @id @default(cuid())
+  facility     Facility          @relation(fields: [facilityId], references: [id])
+  facilityId   String
+  item         Item              @relation(fields: [itemId], references: [id])
+  itemId       String
+  lot          ItemLot           @relation(fields: [lotId], references: [id])
+  lotId        String
+  location     StockLocation     @relation(fields: [locationId], references: [id])
+  locationId   String
+  movementType StockMovementType
+
+  // RECEIPT/ISSUE/WASTE/ADJUSTMENT/TRANSFER move onHandDelta; RESERVATION/
+  // RELEASE move only reservedDelta; an issue that consumes a prior
+  // reservation moves both in the same entry.
+  onHandDelta   Float @default(0)
+  reservedDelta Float @default(0)
+  unit          UnitOfMeasure // denormalized item.baseUnit at post time
+
+  wasteReason      WasteReason?
+  adjustmentReason AdjustmentReason?
+  reason           String?
+  notes            String?
+
+  sourceType      String?
+  sourceId        String?
+  movementGroupId String? // links a TRANSFER_OUT+TRANSFER_IN pair for display only — not the idempotency mechanism
+
+  patientId   String?
+  encounterId String?
+
+  actorUserId  String
+  actorStaffId String?
+  postedAt     DateTime @default(now())
+
+  @@unique([sourceType, sourceId, movementType])
+  @@index([facilityId, itemId, lotId, locationId])
+  @@index([facilityId, movementType, postedAt])
+  @@index([facilityId, postedAt])
+  @@index([patientId])
+  @@index([encounterId])
+  @@index([sourceType, sourceId])
+}
+
+/**
+ * Materialized, reconcilable current-balance cache. NEVER hand-decremented
+ * in application code — every mutation goes through one of the atomic
+ * conditional-update primitives in inventory/stockBalance.ts. The ledger
+ * (above) is authoritative; this balance must always be derivable by
+ * summing StockLedgerEntry deltas grouped by (itemId, lotId, locationId) —
+ * see the reconciliation report route.
+ */
+model StockBalance {
+  id          String        @id @default(cuid())
+  facility    Facility      @relation(fields: [facilityId], references: [id])
+  facilityId  String
+  item        Item          @relation(fields: [itemId], references: [id])
+  itemId      String
+  lot         ItemLot       @relation(fields: [lotId], references: [id])
+  lotId       String
+  location    StockLocation @relation(fields: [locationId], references: [id])
+  locationId  String
+  onHandQty   Float         @default(0)
+  reservedQty Float         @default(0)
+  updatedAt   DateTime      @updatedAt
+
+  @@unique([itemId, lotId, locationId])
+  @@index([facilityId, itemId])
+  @@index([facilityId, locationId])
+}
+
+/** Reserves stock ahead of consumption (future OT/ICU/procedure/pharmacy/blood-product use) — reduces AVAILABLE, never onHand, until consumed or released. */
+model StockReservation {
+  id              String                 @id @default(cuid())
+  facility        Facility               @relation(fields: [facilityId], references: [id])
+  facilityId      String
+  item            Item                   @relation(fields: [itemId], references: [id])
+  itemId          String
+  lot             ItemLot                @relation(fields: [lotId], references: [id]) // FEFO-selected at reservation time
+  lotId           String
+  location        StockLocation          @relation(fields: [locationId], references: [id])
+  locationId      String
+  quantity        Float
+  status          StockReservationStatus @default(ACTIVE)
+  reservedForType String?
+  reservedForId   String?
+  patientId       String?
+  encounterId     String?
+  requestedByStaffId String
+  expiresAt        DateTime? // staff-observed only, never auto-transitioned — no cron in this codebase
+  releasedAt       DateTime?
+  releasedByUserId String?
+  idempotencyKey   String   @unique
+  createdAt        DateTime  @default(now())
+
+  @@index([facilityId, itemId, lotId, locationId])
+  @@index([status])
+}
+
+/** Location-to-location stock move, same facility only this phase. */
+model StockTransfer {
+  id             String              @id @default(cuid())
+  facility       Facility            @relation(fields: [facilityId], references: [id])
+  facilityId     String
+  item           Item                @relation(fields: [itemId], references: [id])
+  itemId         String
+  lot            ItemLot             @relation(fields: [lotId], references: [id])
+  lotId          String
+  fromLocation   StockLocation       @relation("TransferFrom", fields: [fromLocationId], references: [id])
+  fromLocationId String
+  toLocation     StockLocation       @relation("TransferTo", fields: [toLocationId], references: [id])
+  toLocationId   String
+  quantity       Float
+  status         StockTransferStatus @default(DRAFT)
+  reason         String?
+  requestedByStaffId String
+  initiatedAt        DateTime?
+  receivedByStaffId  String?
+  receivedAt         DateTime?
+  cancelledAt        DateTime?
+  cancelledReason    String?
+  idempotencyKey     String         @unique
+  createdAt          DateTime        @default(now())
+
+  @@index([facilityId, status])
+}
+
+/** Controlled quantity correction. Normal-impact posts immediately (POSTED); high-impact is gated behind approval (PENDING_APPROVAL) with a same-actor guard. */
+model StockAdjustment {
+  id             String                @id @default(cuid())
+  facility       Facility              @relation(fields: [facilityId], references: [id])
+  facilityId     String
+  item           Item                  @relation(fields: [itemId], references: [id])
+  itemId         String
+  lot            ItemLot               @relation(fields: [lotId], references: [id])
+  lotId          String
+  location       StockLocation         @relation(fields: [locationId], references: [id])
+  locationId     String
+  quantityDelta  Float // signed
+  reason         AdjustmentReason
+  notes          String?
+  status         StockAdjustmentStatus @default(POSTED)
+  requestedByStaffId String
+  approvedByStaffId  String?
+  approvedAt         DateTime?
+  rejectedAt         DateTime?
+  rejectionReason    String?
+  sourceType     String? // e.g. "StockTakeLine" when auto-created by a completed stocktake
+  sourceId       String?
+  idempotencyKey String @unique
+  createdAt      DateTime @default(now())
+
+  stockTakeLine StockTakeLine?
+
+  @@index([facilityId, status])
+}
+
+/** Explicit waste record — its own ledger movement type, never an invisible quantity decrement. */
+model WasteRecord {
+  id             String            @id @default(cuid())
+  facility       Facility          @relation(fields: [facilityId], references: [id])
+  facilityId     String
+  item           Item              @relation(fields: [itemId], references: [id])
+  itemId         String
+  lot            ItemLot           @relation(fields: [lotId], references: [id])
+  lotId          String
+  location       StockLocation     @relation(fields: [locationId], references: [id])
+  locationId     String
+  quantity       Float // positive magnitude
+  reason         WasteReason
+  status         WasteRecordStatus @default(POSTED)
+  patientId      String?
+  encounterId    String?
+  requestedByStaffId String
+  approvedByStaffId  String?
+  approvedAt         DateTime?
+  notes              String?
+  idempotencyKey     String       @unique
+  createdAt          DateTime      @default(now())
+
+  @@index([facilityId, status])
+}
+
+/** Physical stock count foundation. A variance NEVER silently overwrites systemQuantity — completing the stocktake creates one StockAdjustment per non-zero-variance line. */
+model StockTake {
+  id                 String          @id @default(cuid())
+  facility           Facility        @relation(fields: [facilityId], references: [id])
+  facilityId         String
+  location           StockLocation   @relation(fields: [locationId], references: [id])
+  locationId         String
+  status             StockTakeStatus @default(DRAFT)
+  startedByStaffId   String
+  startedAt          DateTime?
+  completedByStaffId String?
+  completedAt        DateTime?
+  cancelledAt        DateTime?
+  notes              String?
+  createdAt          DateTime        @default(now())
+
+  lines StockTakeLine[]
+
+  @@index([facilityId, locationId, status])
+}
+
+model StockTakeLine {
+  id                    String   @id @default(cuid())
+  stockTake             StockTake @relation(fields: [stockTakeId], references: [id])
+  stockTakeId           String
+  item                  Item      @relation(fields: [itemId], references: [id])
+  itemId                String
+  lot                   ItemLot   @relation(fields: [lotId], references: [id])
+  lotId                 String
+  systemQuantity        Float // snapshotted when the line is added
+  countedQuantity       Float?
+  varianceQuantity      Float? // countedQuantity - systemQuantity, computed at count-entry time
+  resultingAdjustment   StockAdjustment? @relation(fields: [resultingAdjustmentId], references: [id])
+  resultingAdjustmentId String?          @unique
+
+  @@unique([stockTakeId, itemId, lotId])
+}
+
+/** Facility ownership, business contact info only — no unnecessary personal data. */
+model Supplier {
+  id               String   @id @default(cuid())
+  facility         Facility @relation(fields: [facilityId], references: [id])
+  facilityId       String
+  name             String
+  code             String
+  contactName      String?
+  contactPhone     String?
+  contactEmail     String?
+  address          String?
+  paymentTermsDays Int?
+  active           Boolean  @default(true)
+  createdAt        DateTime @default(now())
+
+  preferredForItems Item[]
+  purchaseOrders    PurchaseOrder[]
+
+  @@unique([facilityId, code])
+}
+
+/** Copies billing/sequence.ts's InvoiceSequence idiom exactly, one dedicated table per numbered-document type (established convention — not a generalized shared sequencer). */
+model PurchaseRequisitionSequence {
+  id         String @id @default(cuid())
+  facility   Facility @relation(fields: [facilityId], references: [id])
+  facilityId String
+  fiscalYear Int
+  nextValue  Int    @default(1)
+
+  @@unique([facilityId, fiscalYear])
+}
+
+model PurchaseRequisition {
+  id                String              @id @default(cuid())
+  requisitionNumber String?             // assigned atomically at SUBMIT; scoped unique per facility, not globally (see @@unique below) — the sequence counter itself resets per facility+fiscalYear, so the formatted number is only guaranteed unique within one facility
+  facility          Facility            @relation(fields: [facilityId], references: [id])
+  facilityId        String
+  department        Department          @relation(fields: [departmentId], references: [id])
+  departmentId      String
+  requestedByStaffId String
+  status            RequisitionStatus   @default(DRAFT)
+  priority          RequisitionPriority @default(ROUTINE)
+  justification     String
+  requiredByDate    DateTime?
+  supersedesRequisitionId String? // a "revision" is cancel + clone into a new DRAFT, never an in-place edit
+  submittedAt       DateTime?
+  approvedAt        DateTime?
+  approvedByStaffId String?
+  rejectedAt        DateTime?
+  rejectedByStaffId String?
+  rejectionReason   String?
+  cancelledAt       DateTime?
+  cancelledReason   String?
+  idempotencyKey    String             @unique
+  createdAt         DateTime            @default(now())
+
+  lines          PurchaseRequisitionLine[]
+  purchaseOrders PurchaseOrder[]
+
+  @@unique([facilityId, requisitionNumber])
+  @@index([facilityId, status])
+}
+
+model PurchaseRequisitionLine {
+  id               String              @id @default(cuid())
+  requisition      PurchaseRequisition @relation(fields: [requisitionId], references: [id])
+  requisitionId    String
+  item             Item                @relation(fields: [itemId], references: [id])
+  itemId           String
+  quantity         Float
+  unit             UnitOfMeasure
+  approvedQuantity Float? // immutable once the requisition is APPROVED (service-level guard)
+  notes            String?
+
+  @@index([requisitionId])
+}
+
+model PurchaseOrderSequence {
+  id         String @id @default(cuid())
+  facility   Facility @relation(fields: [facilityId], references: [id])
+  facilityId String
+  fiscalYear Int
+  nextValue  Int    @default(1)
+
+  @@unique([facilityId, fiscalYear])
+}
+
+model PurchaseOrder {
+  id                   String              @id @default(cuid())
+  orderNumber          String?             // assigned atomically on DRAFT -> PENDING_APPROVAL; scoped unique per facility, not globally (see @@unique below)
+  facility             Facility            @relation(fields: [facilityId], references: [id])
+  facilityId           String
+  supplier             Supplier            @relation(fields: [supplierId], references: [id])
+  supplierId           String
+  requisition          PurchaseRequisition? @relation(fields: [requisitionId], references: [id])
+  requisitionId        String?
+  status               PurchaseOrderStatus @default(DRAFT)
+  currency             String              @default("INR")
+  subtotalMinor        Int                 @default(0)
+  taxMinor             Int                 @default(0)
+  totalMinor           Int                 @default(0) // always server-computed — see procurement/pricing.ts
+  expectedDeliveryDate DateTime?
+  createdByStaffId     String
+  approvedByStaffId    String?
+  approvedAt           DateTime?
+  sentAt               DateTime?
+  cancelledAt          DateTime?
+  cancelledReason      String?
+  closedAt             DateTime?
+  idempotencyKey       String             @unique
+  createdAt            DateTime            @default(now())
+
+  lines         PurchaseOrderLine[]
+  goodsReceipts GoodsReceipt[]
+
+  @@unique([facilityId, orderNumber])
+  @@index([facilityId, status])
+}
+
+model PurchaseOrderLine {
+  id               String        @id @default(cuid())
+  purchaseOrder    PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+  purchaseOrderId  String
+  item             Item          @relation(fields: [itemId], references: [id])
+  itemId           String
+  orderedQuantity  Float
+  unit             UnitOfMeasure
+  unitPriceMinor   Int
+  taxPercent       Float         @default(0)
+  lineTotalMinor   Int // server-computed via billing/money.ts helpers, never trusted from the client
+  receivedQuantity Float         @default(0) // ceiling-guarded running total, incremented only via goodsReceipts.ts's raw UPDATE
+
+  goodsReceiptLines GoodsReceiptLine[]
+
+  @@index([purchaseOrderId])
+}
+
+model GoodsReceiptSequence {
+  id         String @id @default(cuid())
+  facility   Facility @relation(fields: [facilityId], references: [id])
+  facilityId String
+  fiscalYear Int
+  nextValue  Int    @default(1)
+
+  @@unique([facilityId, fiscalYear])
+}
+
+/** idempotencyKey is the natural key for "this receiving submission" — NOT purchaseOrderLineId alone, which would wrongly forbid legitimate multiple partial deliveries against the same line. */
+model GoodsReceipt {
+  id                String             @id @default(cuid())
+  receiptNumber     String?            // scoped unique per facility, not globally (see @@unique below)
+  purchaseOrder     PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id])
+  purchaseOrderId   String
+  facility          Facility           @relation(fields: [facilityId], references: [id])
+  facilityId        String
+  status            GoodsReceiptStatus @default(RECORDED)
+  recordedByStaffId String
+  recordedAt        DateTime           @default(now())
+  approvedByStaffId String?
+  approvedAt        DateTime?
+  rejectedByStaffId String?
+  rejectedAt        DateTime?
+  rejectionReason   String?
+  idempotencyKey    String            @unique
+  notes             String?
+
+  lines GoodsReceiptLine[]
+
+  @@unique([facilityId, receiptNumber])
+  @@index([purchaseOrderId])
+  @@index([facilityId, status])
+}
+
+model GoodsReceiptLine {
+  id                  String            @id @default(cuid())
+  goodsReceipt        GoodsReceipt      @relation(fields: [goodsReceiptId], references: [id])
+  goodsReceiptId      String
+  purchaseOrderLine   PurchaseOrderLine @relation(fields: [purchaseOrderLineId], references: [id])
+  purchaseOrderLineId String
+  item                Item              @relation(fields: [itemId], references: [id])
+  itemId              String
+  lotNumber           String
+  manufacturer        String?
+  manufacturedAt      DateTime?
+  expiresAt           DateTime?
+  acceptedQuantity    Float
+  rejectedQuantity    Float             @default(0) // captured, never enters usable stock
+  rejectionReason     String?
+  location            StockLocation     @relation(fields: [locationId], references: [id])
+  locationId          String
+  unit                UnitOfMeasure
+
+  @@index([purchaseOrderLineId])
+  @@index([goodsReceiptId])
 }

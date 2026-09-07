@@ -6,7 +6,7 @@ import {
   LayoutGrid, BedDouble, ClipboardList, LogOut, Building2, Stethoscope,
   ClipboardCheck, FlaskConical, ScanLine, Receipt, DoorOpen,
   UserPlus, Siren, ArrowRightLeft, Pill, Microscope,
-  ShieldCheck, BarChart3, Settings2,
+  ShieldCheck, BarChart3, Settings2, Boxes, Truck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusPill } from "@/components/ui/StatusPill";
@@ -52,6 +52,21 @@ const BILLING_GROUP_STAFF: NavItem = {
   ],
 };
 
+// Phase 6A — Inventory + Procurement Foundation. Settings-level
+// item/location/supplier/adjustment management is admin-only by
+// convention here (a UX courtesy, not the auth boundary — see the
+// comment on NavItem above); Pharmacy gets the stock overview + goods
+// receiving worklists it's actually wired up to use.
+const INVENTORY_GROUP: NavItem = {
+  href: "/hospital-os/inventory",
+  label: "Inventory",
+  icon: Boxes,
+  children: [
+    { href: "/hospital-os/inventory", label: "Stock", icon: Boxes },
+    { href: "/hospital-os/inventory/procurement", label: "Procurement", icon: Truck },
+  ],
+};
+
 const NAV_BY_ROLE: Record<string, NavItem[]> = {
   HOSPITAL_ADMIN: [
     { href: "/hospital-os", label: "Command Center", icon: LayoutGrid },
@@ -63,6 +78,7 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     { href: "/hospital-os/discharge", label: "Discharge", icon: DoorOpen },
     DIAGNOSTICS_GROUP,
     { href: "/hospital-os/pharmacy", label: "Pharmacy", icon: Pill },
+    INVENTORY_GROUP,
     BILLING_GROUP_ADMIN,
   ],
   AAROGYA_ADMIN: [
@@ -103,7 +119,7 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     { href: "/hospital-os/radiology", label: "Imaging Queue", icon: ScanLine },
     { href: "/hospital-os/diagnostics", label: "Diagnostics", icon: Microscope },
   ],
-  PHARMACIST: [{ href: "/hospital-os/pharmacy", label: "Pharmacy", icon: Pill }],
+  PHARMACIST: [{ href: "/hospital-os/pharmacy", label: "Pharmacy", icon: Pill }, INVENTORY_GROUP],
   BILLING_STAFF: [BILLING_GROUP_STAFF],
   FRONT_DESK: [{ href: "/hospital-os/front-desk", label: "Front Desk", icon: UserPlus }],
 };

@@ -1,0 +1,18 @@
+import { NextRequest } from "next/server";
+import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
+import { withApiErrors } from "@/lib/auth/rbac";
+import { prisma } from "@/lib/db";
+import { listExpiringSoonLots } from "@/lib/hospital/inventory/expiry";
+
+export async function GET(req: NextRequest) {
+  return withApiErrors(async () => {
+    const { searchParams } = new URL(req.url);
+    const { facilityId } = await requireFacilityStaff("inventory:report:view", searchParams.get("facilityId") ?? undefined);
+    const lots = await listExpiringSoonLots(prisma, facilityId, {
+      windowDays: searchParams.get("windowDays") ? Number(searchParams.get("windowDays")) : undefined,
+      cursor: searchParams.get("cursor") ?? undefined,
+      take: searchParams.get("take") ? Number(searchParams.get("take")) : undefined,
+    });
+    return { lots };
+  });
+}
