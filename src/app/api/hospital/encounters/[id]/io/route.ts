@@ -48,6 +48,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const { id } = await params;
     const body = await req.json().catch(() => null);
     const { session, facilityId, staff } = await requireFacilityStaff("io:record", body?.facilityId);
+    if (!staff) throw new BadRequestError("Intake/output must be recorded by a staff account.");
     const parsed = IOSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestError("Invalid intake/output data.");
 
@@ -61,12 +62,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         ioType: parsed.data.ioType,
         category: parsed.data.category,
         quantityMl: parsed.data.quantityMl,
-        recordedByStaffId: staff?.id ?? session.userId,
+        recordedByStaffId: staff.id,
         notes: parsed.data.notes,
       },
     });
     await recordAuditEvent(
-      "hospital.vital.recorded",
+      "hospital.io.recorded",
       session.userId,
       { encounterId: id, ioRecordId: record.id, ioType: record.ioType },
       { facilityId, patientId: encounter.patientId, encounterId: id }

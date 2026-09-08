@@ -508,6 +508,7 @@ model Facility {
   carePlans                 CarePlan[]
   handoffs                  ClinicalHandoff[]
   nursingAssignments        NursingAssignment[]
+  nursingAssessments        NursingAssessment[]
   vitalThresholds           VitalThreshold[]
   intakeOutputRecords       IntakeOutputRecord[]
   medicationReconciliations MedicationReconciliation[]
@@ -735,6 +736,7 @@ model HospitalStaffProfile {
   handoffsGiven              ClinicalHandoff[]          @relation("HandoffFrom")
   handoffsReceived           ClinicalHandoff[]          @relation("HandoffTo")
   nursingAssignments         NursingAssignment[]        @relation("NurseAssigned")
+  nursingAssessments         NursingAssessment[]        @relation("NursingAssessmentNurse")
   medicationVerifications    MedicationVerification[]
   dispensingRecords          DispensingRecord[]         @relation("DispensingPharmacist")
   dispensingWitnessed        DispensingRecord[]         @relation("DispensingWitness")
@@ -809,6 +811,7 @@ model Patient {
   carePlans                 CarePlan[]
   handoffs                  ClinicalHandoff[]
   nursingAssignments        NursingAssignment[]
+  nursingAssessments        NursingAssessment[]
   medicationReconciliations MedicationReconciliation[]
   specimens                 Specimen[]
   imagingStudies            ImagingStudy[]
@@ -993,6 +996,7 @@ model Encounter {
   carePlans                 CarePlan[]
   handoffs                  ClinicalHandoff[]
   nursingAssignments        NursingAssignment[]
+  nursingAssessments        NursingAssessment[]
   intakeOutputRecords       IntakeOutputRecord[]
   medicationReconciliations MedicationReconciliation[]
   specimens                 Specimen[]
@@ -2308,6 +2312,10 @@ model Task {
   skipReason         String?
   recurrenceRule     String? // free-text description ("every 4h") — no recurrence-generation engine built, see docs/PHASE_3_ARCHITECTURE.md §9
 
+  // Phase 6.7 — optional back-link from a CarePlanIntervention that spawned
+  // this task (brief §12). Nullable: most interventions never create a task.
+  carePlanInterventions CarePlanIntervention[] @relation("InterventionTask")
+
   @@index([facilityId])
   @@index([status])
   @@index([orderId])
@@ -2858,7 +2866,50 @@ model CarePlanIntervention {
   createdAt       DateTime           @default(now())
   completedAt     DateTime?
 
+  // Phase 6.7 (brief §12) — optional link to the Task engine so an
+  // intervention can be tracked/completed through the existing Task
+  // workflow rather than a second parallel workflow system. Nullable:
+  // most interventions are documentary only and never spawn a task.
+  task   Task?   @relation("InterventionTask", fields: [taskId], references: [id])
+  taskId String?
+
   @@index([carePlanId])
+  @@index([taskId])
+}
+
+/**
+ * Nursing assessment (Phase 6.7 §6) — versioned clinical documentation for
+ * nurses, mirroring ClinicalNote's sign/amend shape rather than inventing a
+ * parallel pattern. Lifecycle: DRAFT -> COMPLETED -> SIGNED -> SUPERSEDED.
+ * An amendment supersedes the prior SIGNED/isCurrent row and becomes the
+ * new SIGNED/isCurrent row in one step (same shape as ClinicalNote's
+ * amend). `findings` is a documentary JSON blob (system-review style
+ * sections) — no invented scoring system or clinical decision logic.
+ */
+model NursingAssessment {
+  id                String               @id @default(cuid())
+  facility          Facility             @relation(fields: [facilityId], references: [id])
+  facilityId        String
+  patient           Patient              @relation(fields: [patientId], references: [id])
+  patientId         String
+  encounter         Encounter            @relation(fields: [encounterId], references: [id])
+  encounterId       String
+  nurse             HospitalStaffProfile @relation("NursingAssessmentNurse", fields: [nurseStaffId], references: [id])
+  nurseStaffId      String
+  status            String               @default("DRAFT") // "DRAFT" | "COMPLETED" | "SIGNED" | "SUPERSEDED"
+  version           Int                  @default(1)
+  isCurrent         Boolean              @default(true)
+  previousVersionId String?
+  findings          Json
+  completedAt       DateTime?
+  signedAt          DateTime?
+  amendedAt         DateTime?
+  amendmentReason   String?
+  createdAt         DateTime             @default(now())
+
+  @@index([facilityId])
+  @@index([patientId])
+  @@index([encounterId, isCurrent])
 }
 
 /**
@@ -2915,6 +2966,14 @@ model ClinicalHandoff {
  * is always a new row. `bedId` is denormalized at assignment time (a
  * transfer later doesn't retroactively change who was assigned when).
  */
+// Phase 6.7: a partial unique index enforcing "at most one open
+// (endAt IS NULL) assignment per patient" is added by hand in
+// prisma/migrations/*_phase6_7_nursing_core and mirrored in
+// prisma/migrations-postgres-baseline — not expressible in schema.prisma
+// syntax, same convention as the exclusion constraints on Payer/Tariff.
+// assignNurse() already expressed this invariant in application code; the
+// index closes the concurrent-create race where two simultaneous
+// assignments could both end the same stale row and both succeed.
 model NursingAssignment {
   id                String               @id @default(cuid())
   facility          Facility             @relation(fields: [facilityId], references: [id])

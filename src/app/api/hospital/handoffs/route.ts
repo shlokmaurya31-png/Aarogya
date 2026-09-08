@@ -10,6 +10,7 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const { facilityId } = await requireFacilityStaff("patient:read", searchParams.get("facilityId") ?? undefined);
     const toStaffId = searchParams.get("toStaffId");
+    const patientId = searchParams.get("patientId");
     const status = searchParams.get("status");
     const type = searchParams.get("type");
 
@@ -17,6 +18,7 @@ export async function GET(req: NextRequest) {
       where: {
         facilityId,
         ...(toStaffId ? { toStaffId } : {}),
+        ...(patientId ? { patientId } : {}),
         ...(status ? { status: status as never } : {}),
         ...(type ? { type: type as never } : {}),
       },
@@ -55,6 +57,11 @@ export async function POST(req: NextRequest) {
 
     const patient = await prisma.patient.findUnique({ where: { id: parsed.data.patientId } });
     if (!patient || patient.facilityId !== facilityId) throw new NotFoundError("Patient not found.");
+
+    if (parsed.data.toStaffId) {
+      const toStaff = await prisma.hospitalStaffProfile.findUnique({ where: { id: parsed.data.toStaffId } });
+      if (!toStaff || toStaff.facilityId !== facilityId) throw new NotFoundError("Recipient staff not found.");
+    }
 
     const handoff = await createHandoff({
       facilityId,

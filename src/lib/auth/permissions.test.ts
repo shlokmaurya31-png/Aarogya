@@ -95,3 +95,32 @@ describe("roleHasPermission — Hospital OS boundary", () => {
     expect(roleHasPermission("NURSE", "inventory:item:manage")).toBe(false);
   });
 });
+
+describe("roleHasPermission — Phase 6.7 Nursing Core boundary", () => {
+  it("NURSE can create and sign nursing assessments", () => {
+    expect(roleHasPermission("NURSE", "nursing:assessment:create")).toBe(true);
+    expect(roleHasPermission("NURSE", "nursing:assessment:sign")).toBe(true);
+  });
+
+  it("NURSE can now sign clinical notes via the (previously unwired) clinical:note:sign permission", () => {
+    expect(roleHasPermission("NURSE", "clinical:note:sign")).toBe(true);
+    expect(roleHasPermission("DOCTOR", "clinical:note:sign")).toBe(true);
+  });
+
+  it("FRONT_DESK, BILLING_STAFF, and PHARMACIST hold none of the Phase 6.7 nursing mutation permissions", () => {
+    const nursingOnly: Permission[] = [
+      "nursing:assessment:create",
+      "nursing:assessment:sign",
+      "nursing:assignment:manage",
+      "handoff:manage",
+      "carePlan:manage",
+      "io:record",
+      "task:manage",
+    ];
+    for (const p of nursingOnly) {
+      expect(roleHasPermission("FRONT_DESK", p)).toBe(false);
+      expect(roleHasPermission("BILLING_STAFF", p)).toBe(false);
+      expect(roleHasPermission("PHARMACIST", p)).toBe(false);
+    }
+  });
+});

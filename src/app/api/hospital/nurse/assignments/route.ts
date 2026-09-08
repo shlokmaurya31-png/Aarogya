@@ -50,6 +50,21 @@ export async function POST(req: NextRequest) {
     const nurse = await prisma.hospitalStaffProfile.findUnique({ where: { id: parsed.data.nurseStaffId } });
     if (!nurse || nurse.facilityId !== facilityId) throw new NotFoundError("Nurse not found.");
 
+    const patient = await prisma.patient.findUnique({ where: { id: parsed.data.patientId } });
+    if (!patient || patient.facilityId !== facilityId) throw new NotFoundError("Patient not found.");
+
+    if (parsed.data.encounterId) {
+      const encounter = await prisma.encounter.findUnique({ where: { id: parsed.data.encounterId } });
+      if (!encounter || encounter.facilityId !== facilityId || encounter.patientId !== parsed.data.patientId) {
+        throw new NotFoundError("Encounter not found.");
+      }
+    }
+
+    if (parsed.data.bedId) {
+      const bed = await prisma.bed.findUnique({ where: { id: parsed.data.bedId } });
+      if (!bed || bed.facilityId !== facilityId) throw new NotFoundError("Bed not found.");
+    }
+
     const assignment = await assignNurse({
       facilityId,
       departmentId: parsed.data.departmentId,

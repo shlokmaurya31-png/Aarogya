@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Stethoscope, PhoneCall } from "lucide-react";
+import { Stethoscope, PhoneCall, Inbox } from "lucide-react";
 import { Card, CardLabel } from "@/components/ui/Card";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
+import { HandoffInbox } from "@/components/hospital-os/shared/HandoffInbox";
 
 interface Encounter {
   id: string; type: string; status: string; chiefComplaint: string | null; triageLevel: number | null;
@@ -39,6 +40,7 @@ export function DoctorWorkspace({ staffId }: { staffId?: string }) {
   const [encounters, setEncounters] = useState<Encounter[] | null>(null);
   const [queue, setQueue] = useState<QueueEntry[]>([]);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
+  const [showHandoffs, setShowHandoffs] = useState(false);
 
   function loadQueue() {
     if (!staffId) return;
@@ -96,6 +98,7 @@ export function DoctorWorkspace({ staffId }: { staffId?: string }) {
             { label: "Meds needing attention", value: dashboard.medsPendingAttention },
             { label: "Consults", value: dashboard.consultRequests },
             { label: "Discharge candidates", value: dashboard.dischargeCandidates },
+            { label: "Follow-up tasks", value: dashboard.followUpTasks },
           ].map(({ label, value, href }) => {
             const content = (
               <>
@@ -111,7 +114,20 @@ export function DoctorWorkspace({ staffId }: { staffId?: string }) {
               <Card key={label} className="rounded-lg p-2.5">{content}</Card>
             );
           })}
+          <button onClick={() => setShowHandoffs((v) => !v)} className="text-left">
+            <Card className="rounded-lg p-2.5 transition hover:border-cyan/40">
+              <p className="text-[17px] font-semibold tabular-nums">{dashboard.pendingHandoffs}</p>
+              <CardLabel className="mt-0.5 normal-case tracking-normal">Pending handoffs</CardLabel>
+            </Card>
+          </button>
         </div>
+      )}
+
+      {showHandoffs && staffId && (
+        <Card className="mt-4 rounded-[20px]">
+          <div className="flex items-center gap-2"><Inbox size={14} className="text-cyan" /><CardLabel>Pending handoffs</CardLabel></div>
+          <div className="mt-2.5"><HandoffInbox toStaffId={staffId} showPatientName /></div>
+        </Card>
       )}
 
       {staffId && (

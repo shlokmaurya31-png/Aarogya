@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, NotFoundError, BadRequestError } from "@/lib/auth/rbac";
-import { recordAuditEvent } from "@/lib/auth/audit";
+import { completeTask, skipTask, updateTask } from "@/lib/hospital/task";
 
 const VALID_STATUSES = ["OPEN", "ASSIGNED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "OVERDUE"];
 
@@ -19,33 +19,21 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (status && !VALID_STATUSES.includes(status)) throw new BadRequestError(`status must be one of ${VALID_STATUSES.join(", ")}.`);
     if (action === "skip" && !skipReason) throw new BadRequestError("skipReason is required to skip a task.");
 
-    const updated = await prisma.task.update({
-      where: { id },
-      data: {
-        ...(status ? { status } : {}),
-        ...(ownerStaffId !== undefined ? { ownerStaffId } : {}),
-        ...(status === "COMPLETED" ? { completedByStaffId: staff?.id, completedAt: new Date() } : {}),
-        ...(startedAt ? { startedAt: new Date() } : {}),
-        ...(action === "skip" ? { status: "CANCELLED", skippedAt: new Date(), skipReason } : {}),
-      },
-    });
-
-    if (status === "COMPLETED") {
-      await recordAuditEvent(
-        "hospital.task.completed",
-        session.userId,
-        { taskId: id },
-        { facilityId, patientId: task.patientId ?? undefined, encounterId: task.encounterId ?? undefined }
-      );
-    }
+    let updated;
     if (action === "skip") {
-      await recordAuditEvent(
-        "hospital.task.skipped",
-        session.userId,
-        { taskId: id, skipReason },
-        { facilityId, patientId: task.patientId ?? undefined, encounterId: task.encounterId ?? undefined }
-      );
+      updated = await skipTask({ taskId: id, facilityId, skipReason, byUserId: session.userId });
+    } else if (status === "COMPLETED") {
+      updated = await completeTask({ taskId: id, facilityId, completedByStaffId: staff?.id, byUserId: session.userId });
+    } else {
+      updated = await updateTask({
+        taskId: id,
+        facilityId,
+        status: status && status !== "COMPLETED" ? status : undefined,
+        ownerStaffId,
+        startedAt: Boolean(startedAt),
+      });
     }
+
     return { task: updated };
   });
 }

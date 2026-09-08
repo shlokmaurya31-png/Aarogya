@@ -201,7 +201,15 @@ export type AuditEventType =
   | "hospital.procurement.poClosed"
   | "hospital.procurement.goodsReceiptRecorded"
   | "hospital.procurement.goodsReceiptApproved"
-  | "hospital.procurement.goodsReceiptRejected";
+  | "hospital.procurement.goodsReceiptRejected"
+  // Phase 6.7 — Nursing Core (see docs/PHASE_6_7_NURSING.md).
+  | "hospital.io.recorded"
+  | "hospital.nursing.assessmentCreated"
+  | "hospital.nursing.assessmentCompleted"
+  | "hospital.nursing.assessmentSigned"
+  | "hospital.nursing.assessmentAmended"
+  | "hospital.carePlan.interventionCreated"
+  | "hospital.carePlan.interventionCompleted";
 
 export interface AuditEventContext {
   facilityId?: string;

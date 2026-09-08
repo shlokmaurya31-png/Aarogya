@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Pill, Activity, Check, Users, Send, X } from "lucide-react";
+import Link from "next/link";
+import { Pill, Activity, Check, Users, Send, X, Droplet, Inbox, ChartLine } from "lucide-react";
 import { Card, CardLabel } from "@/components/ui/Card";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
+import { HandoffComposer } from "@/components/hospital-os/shared/HandoffComposer";
+import { HandoffInbox } from "@/components/hospital-os/shared/HandoffInbox";
 
 interface MedTask { administrationId: string; medicationOrderId: string; patientName: string; bedLabel: string; drug: string; dose: string; route: string; scheduledAt: string; isControlled?: boolean }
 interface VitalTask { encounterId: string; patientName: string; bedLabel: string; lastRecordedAt: string | null }
@@ -12,6 +15,17 @@ interface Dashboard {
   assignedPatients: { assignmentId: string; patientId: string; patientName: string; uhid: string; bedLabel: string | null; wardName: string | null; encounterId: string | null }[];
   overdueTasks: number; pendingTasks: number; medicationsDue: number; missedAdministrations: number; upcomingAdministrations: number; pendingHandoffs: number;
 }
+
+const VITAL_FIELDS: { key: keyof VitalForm; label: string }[] = [
+  { key: "hr", label: "HR" },
+  { key: "sbp", label: "SBP" },
+  { key: "dbp", label: "DBP" },
+  { key: "rr", label: "RR" },
+  { key: "spo2", label: "SpO2" },
+  { key: "tempC", label: "Temp °C" },
+];
+type VitalForm = { hr: string; sbp: string; dbp: string; rr: string; spo2: string; tempC: string };
+const EMPTY_VITAL_FORM: VitalForm = { hr: "", sbp: "", dbp: "", rr: "", spo2: "", tempC: "" };
 
 export function NurseTasks({ staffId }: { staffId?: string }) {
   const push = useToastStore((s) => s.push);
@@ -21,6 +35,12 @@ export function NurseTasks({ staffId }: { staffId?: string }) {
   const [adminFor, setAdminFor] = useState<MedTask | null>(null);
   const [witnessStaffId, setWitnessStaffId] = useState("");
   const [checksConfirmed, setChecksConfirmed] = useState(false);
+  const [vitalsFor, setVitalsFor] = useState<string | null>(null);
+  const [vitalForm, setVitalForm] = useState<VitalForm>(EMPTY_VITAL_FORM);
+  const [ioFor, setIoFor] = useState<string | null>(null);
+  const [ioForm, setIoForm] = useState({ ioType: "INPUT" as "INPUT" | "OUTPUT", category: "ORAL", quantityMl: "", notes: "" });
+  const [handoffFor, setHandoffFor] = useState<string | null>(null);
+  const [showInbox, setShowInbox] = useState(true);
 
   function load() {
     fetch("/api/hospital/nurse/tasks").then((r) => r.json()).then((d) => {
@@ -48,27 +68,34 @@ export function NurseTasks({ staffId }: { staffId?: string }) {
     load();
   }
 
-  async function recordVital(encounterId: string) {
+  async function submitVitals(encounterId: string) {
+    const payload: Record<string, number> = {};
+    for (const { key } of VITAL_FIELDS) {
+      const raw = vitalForm[key];
+      if (raw.trim() !== "") payload[key] = Number(raw);
+    }
+    if (Object.keys(payload).length === 0) { push("Enter at least one vital reading.", "amber"); return; }
     const res = await fetch(`/api/hospital/encounters/${encounterId}/vitals`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ hr: 78, sbp: 120, dbp: 80, rr: 16, spo2: 97, tempC: 37.0 }),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) { push((await res.json()).error ?? "Failed.", "red"); return; }
     const data = await res.json();
     if (data.abnormal?.length) push(`Vitals recorded — ${data.abnormal.length} out of configured range.`, "amber");
     else push("Vitals recorded.", "emerald");
+    setVitalsFor(null); setVitalForm(EMPTY_VITAL_FORM);
     load();
   }
 
-  async function requestHandoff(patientId: string, encounterId: string | null) {
-    const summary = window.prompt("Handoff summary?");
-    if (!summary) return;
-    const res = await fetch("/api/hospital/handoffs", {
+  async function submitIo(encounterId: string) {
+    if (!ioForm.quantityMl.trim()) { push("Quantity is required.", "amber"); return; }
+    const res = await fetch(`/api/hospital/encounters/${encounterId}/io`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ patientId, encounterId: encounterId ?? undefined, type: "NURSE", summary }),
+      body: JSON.stringify({ ioType: ioForm.ioType, category: ioForm.category, quantityMl: Number(ioForm.quantityMl), notes: ioForm.notes || undefined }),
     });
     if (!res.ok) { push((await res.json()).error ?? "Failed.", "red"); return; }
-    push("Handoff created.", "emerald");
+    push("Intake/output recorded.", "emerald");
+    setIoFor(null); setIoForm({ ioType: "INPUT", category: "ORAL", quantityMl: "", notes: "" });
     load();
   }
 
@@ -98,14 +125,63 @@ export function NurseTasks({ staffId }: { staffId?: string }) {
         </div>
       )}
 
+      {staffId && (
+        <Card className="mt-4 rounded-[20px]">
+          <button onClick={() => setShowInbox((v) => !v)} className="flex w-full items-center gap-2 text-left">
+            <Inbox size={14} className="text-cyan" /><CardLabel>Handoff inbox</CardLabel>
+          </button>
+          {showInbox && <div className="mt-2.5"><HandoffInbox toStaffId={staffId} /></div>}
+        </Card>
+      )}
+
       {dashboard && dashboard.assignedPatients.length > 0 && (
         <Card className="mt-4 rounded-[20px]">
           <div className="flex items-center gap-2"><Users size={14} className="text-cyan" /><CardLabel>My assigned patients</CardLabel></div>
           <div className="mt-2.5 space-y-1.5">
             {dashboard.assignedPatients.map((p) => (
-              <div key={p.assignmentId} className="flex items-center justify-between rounded-md border border-hairline px-3 py-1.5 text-[12px]">
-                <span>{p.patientName} <span className="text-text-tertiary">· {p.uhid}{p.bedLabel ? ` · ${p.bedLabel} (${p.wardName})` : ""}</span></span>
-                <button onClick={() => requestHandoff(p.patientId, p.encounterId)} className="flex items-center gap-1 rounded-md border border-hairline-strong px-2 py-0.5 text-[10.5px] hover:border-cyan/40 hover:text-cyan"><Send size={10} /> Handoff</button>
+              <div key={p.assignmentId} className="rounded-md border border-hairline px-3 py-1.5 text-[12px]">
+                <div className="flex items-center justify-between">
+                  <span>{p.patientName} <span className="text-text-tertiary">· {p.uhid}{p.bedLabel ? ` · ${p.bedLabel} (${p.wardName})` : ""}</span></span>
+                  <div className="flex items-center gap-1.5">
+                    <Link href={`/hospital-os/nurse/patients/${p.patientId}${p.encounterId ? `?encounterId=${p.encounterId}` : ""}`} className="flex items-center gap-1 rounded-md border border-hairline-strong px-2 py-0.5 text-[10.5px] hover:border-cyan/40 hover:text-cyan">
+                      <ChartLine size={10} /> Open chart
+                    </Link>
+                    {p.encounterId && (
+                      <button onClick={() => setIoFor(ioFor === p.encounterId ? null : p.encounterId)} className="flex items-center gap-1 rounded-md border border-hairline-strong px-2 py-0.5 text-[10.5px] hover:border-cyan/40 hover:text-cyan">
+                        <Droplet size={10} /> I/O
+                      </button>
+                    )}
+                    <button onClick={() => setHandoffFor(handoffFor === p.patientId ? null : p.patientId)} className="flex items-center gap-1 rounded-md border border-hairline-strong px-2 py-0.5 text-[10.5px] hover:border-cyan/40 hover:text-cyan">
+                      <Send size={10} /> Handoff
+                    </button>
+                  </div>
+                </div>
+                {handoffFor === p.patientId && (
+                  <HandoffComposer
+                    patientId={p.patientId}
+                    encounterId={p.encounterId}
+                    type="NURSE"
+                    onCreated={() => { setHandoffFor(null); load(); }}
+                    onCancel={() => setHandoffFor(null)}
+                  />
+                )}
+                {ioFor === p.encounterId && p.encounterId && (
+                  <div className="mt-2 space-y-1.5 rounded-md bg-black/[0.02] p-2">
+                    <div className="flex gap-1.5">
+                      <select value={ioForm.ioType} onChange={(e) => setIoForm((f) => ({ ...f, ioType: e.target.value as "INPUT" | "OUTPUT" }))} className="rounded-md border border-hairline bg-white px-2 py-1 text-[11px] outline-none">
+                        <option value="INPUT">Input</option>
+                        <option value="OUTPUT">Output</option>
+                      </select>
+                      <input value={ioForm.category} onChange={(e) => setIoForm((f) => ({ ...f, category: e.target.value }))} placeholder="Category (ORAL, IV, URINE...)" className="flex-1 rounded-md border border-hairline bg-white px-2 py-1 text-[11px] outline-none" />
+                      <input value={ioForm.quantityMl} onChange={(e) => setIoForm((f) => ({ ...f, quantityMl: e.target.value }))} type="number" placeholder="mL" className="w-20 rounded-md border border-hairline bg-white px-2 py-1 text-[11px] outline-none" />
+                    </div>
+                    <input value={ioForm.notes} onChange={(e) => setIoForm((f) => ({ ...f, notes: e.target.value }))} placeholder="Notes (optional)" className="w-full rounded-md border border-hairline bg-white px-2 py-1 text-[11px] outline-none" />
+                    <div className="flex gap-1.5">
+                      <button onClick={() => submitIo(p.encounterId as string)} className="rounded-md bg-cyan px-2.5 py-1 text-[11px] font-medium text-ink hover:brightness-110">Record</button>
+                      <button onClick={() => setIoFor(null)} className="rounded-md border border-hairline-strong px-2.5 py-1 text-[11px]">Cancel</button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -150,9 +226,33 @@ export function NurseTasks({ staffId }: { staffId?: string }) {
               <div key={t.encounterId} className="rounded-lg border border-hairline p-3">
                 <p className="text-[13px] font-medium">{t.patientName} <span className="font-normal text-text-tertiary">· Bed {t.bedLabel}</span></p>
                 <p className="text-[11.5px] text-text-tertiary">Last recorded: {t.lastRecordedAt ? new Date(t.lastRecordedAt).toLocaleTimeString() : "never"}</p>
-                <button onClick={() => recordVital(t.encounterId)} className="mt-2 flex items-center gap-1 rounded-md bg-cyan px-2.5 py-1 text-[11px] font-medium text-ink hover:brightness-110">
-                  <Check size={11} /> Record vitals
-                </button>
+
+                {vitalsFor === t.encounterId ? (
+                  <div className="mt-2 space-y-1.5 rounded-md bg-black/[0.02] p-2">
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {VITAL_FIELDS.map(({ key, label }) => (
+                        <input
+                          key={key}
+                          value={vitalForm[key]}
+                          onChange={(e) => setVitalForm((f) => ({ ...f, [key]: e.target.value }))}
+                          type="number"
+                          placeholder={label}
+                          className="w-full rounded-md border border-hairline bg-white px-2 py-1 text-[11px] outline-none"
+                        />
+                      ))}
+                    </div>
+                    <div className="flex gap-1.5">
+                      <button onClick={() => submitVitals(t.encounterId)} className="flex items-center gap-1 rounded-md bg-cyan px-2.5 py-1 text-[11px] font-medium text-ink hover:brightness-110">
+                        <Check size={11} /> Save vitals
+                      </button>
+                      <button onClick={() => { setVitalsFor(null); setVitalForm(EMPTY_VITAL_FORM); }} className="rounded-md border border-hairline-strong px-2 py-1 text-[11px]"><X size={11} /></button>
+                    </div>
+                  </div>
+                ) : (
+                  <button onClick={() => setVitalsFor(t.encounterId)} className="mt-2 flex items-center gap-1 rounded-md bg-cyan px-2.5 py-1 text-[11px] font-medium text-ink hover:brightness-110">
+                    <Check size={11} /> Record vitals
+                  </button>
+                )}
               </div>
             ))}
             {vitalTasks.length === 0 && <p className="text-[12.5px] text-text-tertiary">No vitals due right now.</p>}

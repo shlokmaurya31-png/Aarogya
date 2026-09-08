@@ -17,12 +17,14 @@ export async function GET(req: NextRequest) {
     const { facilityId } = await requireFacilityStaff("task:view", searchParams.get("facilityId") ?? undefined);
     const status = searchParams.get("status");
     const ownerStaffId = searchParams.get("ownerStaffId");
+    const encounterId = searchParams.get("encounterId");
 
     const tasks = await prisma.task.findMany({
       where: {
         facilityId,
         ...(status ? { status } : { status: { notIn: ["COMPLETED", "CANCELLED"] } }),
         ...(ownerStaffId ? { ownerStaffId } : {}),
+        ...(encounterId ? { encounterId } : {}),
       },
       include: { patient: true, owner: { include: { user: true } }, department: true },
       orderBy: [{ priority: "desc" }, { dueAt: "asc" }],

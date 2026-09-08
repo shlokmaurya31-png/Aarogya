@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
-import { withApiErrors, NotFoundError } from "@/lib/auth/rbac";
+import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { findAbnormalVitals } from "@/lib/hospital/vitalsThresholds";
 
@@ -10,6 +10,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const { id } = await params;
     const body = await req.json().catch(() => null);
     const { session, facilityId, staff } = await requireFacilityStaff("vital:record", body?.facilityId);
+    if (!staff) throw new BadRequestError("Vitals must be recorded by a staff account.");
 
     const encounter = await prisma.encounter.findUnique({ where: { id } });
     if (!encounter || encounter.facilityId !== facilityId) throw new NotFoundError("Encounter not found.");
@@ -17,7 +18,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const vital = await prisma.vital.create({
       data: {
         encounterId: id,
-        recordedByStaffId: staff?.id ?? session.userId,
+        recordedByStaffId: staff.id,
         hr: body?.hr,
         sbp: body?.sbp,
         dbp: body?.dbp,

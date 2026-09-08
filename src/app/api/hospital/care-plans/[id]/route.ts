@@ -10,7 +10,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   return withApiErrors(async () => {
     const { id } = await params;
     const body = await req.json().catch(() => null);
-    const { session, facilityId } = await requireFacilityStaff("carePlan:manage", body?.facilityId);
+    const { session, facilityId, staff } = await requireFacilityStaff("carePlan:manage", body?.facilityId);
+    if (!staff) throw new BadRequestError("Must be performed by a staff account.");
 
     const carePlan = await prisma.carePlan.findUnique({ where: { id } });
     if (!carePlan || carePlan.facilityId !== facilityId) throw new NotFoundError("Care plan not found.");
@@ -29,12 +30,27 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
     if (action === "addIntervention") {
       if (!body?.description || !body?.responsibleRole) throw new BadRequestError("description and responsibleRole are required.");
-      const intervention = await addIntervention(id, body.description, body.responsibleRole);
+      const intervention = await addIntervention({
+        carePlanId: id,
+        facilityId,
+        description: body.description,
+        responsibleRole: body.responsibleRole,
+        createdByStaffId: staff.id,
+        byUserId: session.userId,
+        createTask: Boolean(body.createTask),
+        taskDueAt: body.taskDueAt ? new Date(body.taskDueAt) : undefined,
+      });
       return { intervention };
     }
     if (action === "completeIntervention") {
       if (!body?.interventionId) throw new BadRequestError("interventionId is required.");
-      const intervention = await completeIntervention(body.interventionId);
+      const intervention = await completeIntervention({
+        interventionId: body.interventionId,
+        carePlanId: id,
+        facilityId,
+        completedByStaffId: staff.id,
+        byUserId: session.userId,
+      });
       return { intervention };
     }
     throw new BadRequestError("Unknown action.");

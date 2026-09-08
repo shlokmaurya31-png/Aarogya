@@ -2,13 +2,15 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
-import { AlertTriangle, FlaskConical, ScanLine, Pill, FileText, ShieldAlert, Stethoscope, History, ClipboardList, Send } from "lucide-react";
+import { AlertTriangle, FlaskConical, ScanLine, Pill, FileText, ShieldAlert, Stethoscope, History, ClipboardList, Send, Activity, Inbox } from "lucide-react";
 import { Card, CardLabel } from "@/components/ui/Card";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { AmendmentBadge } from "@/components/hospital-os/diagnostics/shared";
 import { PatientFinancialPanel } from "@/components/hospital-os/PatientFinancialPanel";
+import { HandoffComposer } from "@/components/hospital-os/shared/HandoffComposer";
+import { HandoffInbox } from "@/components/hospital-os/shared/HandoffInbox";
 
 interface TimelineEntry { id: string; timestamp: string; type: string; summary: string; department?: string | null }
 
@@ -75,6 +77,9 @@ export function PatientChart({ patientId }: { patientId: string }) {
   const [imagingDesc, setImagingDesc] = useState("");
   const [noteText, setNoteText] = useState("");
   const [noteType, setNoteType] = useState("PROGRESS");
+  const [amendingNoteId, setAmendingNoteId] = useState<string | null>(null);
+  const [amendmentReason, setAmendmentReason] = useState("");
+  const [handoffOpen, setHandoffOpen] = useState(false);
 
   const load = useCallback(() => {
     fetch(`/api/hospital/patients/${patientId}/chart`).then((r) => r.json()).then(setData);
@@ -117,17 +122,14 @@ export function PatientChart({ patientId }: { patientId: string }) {
 
   async function addNote(supersedesId?: string) {
     if (!encounterId || !noteText.trim()) return;
-    let amendmentReason: string | undefined;
-    if (supersedesId) {
-      amendmentReason = window.prompt("Reason for amending this signed note?") ?? undefined;
-      if (!amendmentReason) return;
-    }
+    if (supersedesId && !amendmentReason.trim()) { push("Amendment reason is required.", "amber"); return; }
     const res = await fetch(`/api/hospital/encounters/${encounterId}/notes`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: noteType, content: { assessment: noteText }, sign: true, supersedesId, amendmentReason }),
+      body: JSON.stringify({ type: noteType, content: { assessment: noteText }, sign: true, supersedesId, amendmentReason: supersedesId ? amendmentReason.trim() : undefined }),
     });
     if (!res.ok) { push((await res.json()).error ?? "Failed to save note.", "red"); return; }
-    push(supersedesId ? "Amendment signed and saved." : "Note signed and saved.", "emerald"); setNoteText(""); load();
+    push(supersedesId ? "Amendment signed and saved." : "Note signed and saved.", "emerald");
+    setNoteText(""); setAmendingNoteId(null); setAmendmentReason(""); load();
   }
 
   async function acknowledgeLab(labOrderId: string) {
@@ -198,18 +200,6 @@ export function PatientChart({ patientId }: { patientId: string }) {
     push("Care plan closed.", "cyan"); load();
   }
 
-  async function requestHandoff() {
-    if (!encounterId) { push("Open this patient from an active encounter to hand off.", "amber"); return; }
-    const summary = window.prompt("Handoff summary?");
-    if (!summary) return;
-    const res = await fetch("/api/hospital/handoffs", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ patientId, encounterId, type: "DOCTOR", summary }),
-    });
-    if (!res.ok) { push((await res.json()).error ?? "Failed to create handoff.", "red"); return; }
-    push("Handoff created.", "emerald");
-  }
-
   if (!data) return <div className="mx-auto max-w-5xl animate-pulse"><div className="h-64 rounded-[20px] bg-black/[0.04]" /></div>;
 
   return (
@@ -222,11 +212,17 @@ export function PatientChart({ patientId }: { patientId: string }) {
         </div>
         {!encounterId && <StatusPill label="Read-only — open from an active encounter to order" tone="amber" className="rounded-md" />}
         {encounterId && (
-          <button onClick={requestHandoff} className="flex items-center gap-1.5 rounded-md border border-hairline-strong px-3 py-1.5 text-[12px] font-medium hover:border-cyan/40 hover:text-cyan">
+          <button onClick={() => setHandoffOpen((v) => !v)} className="flex items-center gap-1.5 rounded-md border border-hairline-strong px-3 py-1.5 text-[12px] font-medium hover:border-cyan/40 hover:text-cyan">
             <Send size={12} /> Request handoff
           </button>
         )}
       </div>
+
+      {handoffOpen && encounterId && (
+        <Card className="mt-3 rounded-[20px]">
+          <HandoffComposer patientId={patientId} encounterId={encounterId} type="DOCTOR" onCreated={() => setHandoffOpen(false)} onCancel={() => setHandoffOpen(false)} />
+        </Card>
+      )}
 
       {data.allergies.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
@@ -413,9 +409,26 @@ export function PatientChart({ patientId }: { patientId: string }) {
                       </div>
                       <p className="mt-1">{n.content.assessment}</p>
                       {n.status === "SIGNED" && encounterId && (
-                        <button onClick={() => noteText.trim() && addNote(n.id)} disabled={!noteText.trim()} className="mt-1.5 rounded-md border border-hairline-strong px-2 py-0.5 text-[10.5px] hover:border-cyan/40 disabled:opacity-40">
-                          Amend (type replacement text above first)
-                        </button>
+                        amendingNoteId === n.id ? (
+                          <div className="mt-1.5 space-y-1">
+                            <input
+                              value={amendmentReason}
+                              onChange={(e) => setAmendmentReason(e.target.value)}
+                              placeholder="Reason for amendment (required)"
+                              className="w-full rounded-md border border-hairline bg-white px-2 py-1 text-[11px] outline-none"
+                            />
+                            <div className="flex gap-1.5">
+                              <button onClick={() => addNote(n.id)} disabled={!noteText.trim() || !amendmentReason.trim()} className="rounded-md bg-cyan px-2 py-0.5 text-[10.5px] font-medium text-ink hover:brightness-110 disabled:opacity-40">
+                                Save amendment (type replacement text above first)
+                              </button>
+                              <button onClick={() => { setAmendingNoteId(null); setAmendmentReason(""); }} className="rounded-md border border-hairline-strong px-2 py-0.5 text-[10.5px]">Cancel</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button onClick={() => setAmendingNoteId(n.id)} className="mt-1.5 rounded-md border border-hairline-strong px-2 py-0.5 text-[10.5px] hover:border-cyan/40">
+                            Amend
+                          </button>
+                        )
                       )}
                     </div>
                   ))}
@@ -427,6 +440,24 @@ export function PatientChart({ patientId }: { patientId: string }) {
         </div>
 
         <div className="space-y-4">
+          <Card className="rounded-[20px]">
+            <div className="flex items-center gap-2"><Activity size={14} className="text-cyan" /><CardLabel>Vitals</CardLabel></div>
+            <div className="mt-2 space-y-1.5">
+              {data.vitals.slice(0, 5).map((v) => (
+                <div key={v.id} className="text-[11.5px]">
+                  <span className="text-text-tertiary">{new Date(v.recordedAt).toLocaleString()}</span>{" "}
+                  HR {v.hr ?? "-"} · BP {v.sbp ?? "-"}/{v.dbp ?? "-"} · SpO2 {v.spo2 ?? "-"}% · Temp {v.tempC ?? "-"}°C
+                </div>
+              ))}
+              {data.vitals.length === 0 && <p className="text-[11.5px] text-text-tertiary">No vitals recorded.</p>}
+            </div>
+          </Card>
+
+          <Card className="rounded-[20px]">
+            <div className="flex items-center gap-2"><Inbox size={14} className="text-cyan" /><CardLabel>Handoffs</CardLabel></div>
+            <div className="mt-2"><HandoffInbox patientId={patientId} showPatientName={false} /></div>
+          </Card>
+
           <Card className="rounded-[20px]">
             <CardLabel>Diagnoses</CardLabel>
             <div className="mt-2 space-y-1.5">

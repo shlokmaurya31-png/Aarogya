@@ -13,7 +13,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const assignment = await prisma.nursingAssignment.findUnique({ where: { id } });
     if (!assignment || assignment.facilityId !== facilityId) throw new NotFoundError("Assignment not found.");
 
-    const updated = await endAssignment(id, session.userId);
+    const updated = await endAssignment({ assignmentId: id, facilityId, byUserId: session.userId });
     return { assignment: updated };
   });
 }

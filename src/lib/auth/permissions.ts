@@ -187,6 +187,13 @@ export const PERMISSIONS = [
   "procurement:po:cancel",
   "procurement:goodsReceipt:create",
   "procurement:goodsReceipt:approve",
+
+  // Phase 6.7 — Nursing Core (see docs/PHASE_6_7_NURSING.md). The
+  // NursingAssessment lifecycle has no existing permission that covers it;
+  // flowsheet/vitals/I-O/handoff/tasks/care-plan reuse clinical:chart:read/
+  // vital:record/io:record/handoff:manage/task:*/carePlan:manage unchanged.
+  "nursing:assessment:create",
+  "nursing:assessment:sign",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -262,6 +269,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "encounter:read",
     "vital:record",
     "clinical:note:create",
+    "clinical:note:sign",
     "medication:administer",
     "bed:manage",
     "allergy:manage",
@@ -276,6 +284,8 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "carePlan:manage",
     "handoff:manage",
     "nursing:assignment:manage",
+    "nursing:assessment:create",
+    "nursing:assessment:sign",
     "io:record",
     "lab:specimen:collect",
     // Phase 6A — ward-level consumption + witnessing breakage/loss.

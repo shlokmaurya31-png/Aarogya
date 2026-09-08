@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { signNote, amendNote } from "@/lib/hospital/clinicalNote";
 
 /**
  * Clinical documentation (brief §18/§185): signed notes are never mutated —
@@ -29,10 +30,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (body?.supersedesId) {
       const amendmentReason = body?.amendmentReason as string | undefined;
       if (!amendmentReason) throw new BadRequestError("amendmentReason is required when amending a signed note.");
-      await prisma.clinicalNote.update({
-        where: { id: body.supersedesId },
-        data: { status: "SUPERSEDED", amendedAt: new Date(), amendmentReason },
+      const note = await amendNote({
+        supersedesId: body.supersedesId,
+        encounterId: id,
+        authorStaffId: staff.id,
+        authorRole: session.role,
+        type,
+        content,
+        amendmentReason,
+        byUserId: session.userId,
       });
+      await recordAuditEvent(
+        "hospital.note.amended",
+        session.userId,
+        { encounterId: id, noteId: note.id, supersedesId: body.supersedesId },
+        { facilityId, patientId: encounter.patientId, encounterId: id }
+      );
+      return { note };
     }
 
     const note = await prisma.clinicalNote.create({
@@ -44,7 +58,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         content,
         status: sign ? "SIGNED" : "DRAFT",
         signedAt: sign ? new Date() : undefined,
-        supersedesId: body?.supersedesId,
       },
     });
 
@@ -54,13 +67,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       { encounterId: id, noteId: note.id, type },
       { facilityId, patientId: encounter.patientId, encounterId: id }
     );
-    if (body?.supersedesId)
-      await recordAuditEvent(
-        "hospital.note.amended",
-        session.userId,
-        { encounterId: id, noteId: note.id, supersedesId: body.supersedesId },
-        { facilityId, patientId: encounter.patientId, encounterId: id }
-      );
     return { note };
   });
 }
@@ -75,7 +81,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   return withApiErrors(async () => {
     const { id } = await params;
     const body = await req.json().catch(() => null);
-    const { session, facilityId, staff } = await requireFacilityStaff("clinical:note:create", body?.facilityId);
+    const { session, facilityId, staff } = await requireFacilityStaff("clinical:note:sign", body?.facilityId);
     if (!staff) throw new BadRequestError("Notes must be signed by a staff account.");
 
     const encounter = await prisma.encounter.findUnique({ where: { id } });
@@ -84,14 +90,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const noteId = body?.noteId as string | undefined;
     if (!noteId || body?.action !== "sign") throw new BadRequestError("noteId and action=\"sign\" are required.");
 
-    const existing = await prisma.clinicalNote.findUnique({ where: { id: noteId } });
-    if (!existing || existing.encounterId !== id) throw new NotFoundError("Note not found.");
-    if (existing.status !== "DRAFT") throw new BadRequestError(`Only a DRAFT note can be signed (current status: ${existing.status}).`);
-
-    const note = await prisma.clinicalNote.update({
-      where: { id: noteId },
-      data: { status: "SIGNED", signedAt: new Date() },
-    });
+    const note = await signNote({ noteId, encounterId: id, byUserId: session.userId });
 
     await recordAuditEvent(
       "hospital.note.signed",
