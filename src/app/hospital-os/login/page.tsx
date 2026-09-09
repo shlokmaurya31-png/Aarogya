@@ -7,13 +7,14 @@ import { Card } from "@/components/ui/Card";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { useToastStore } from "@/store/useToastStore";
 
-const HOSPITAL_ROLES = ["HOSPITAL_ADMIN", "DOCTOR", "NURSE", "LAB_TECHNICIAN", "RADIOLOGY_TECH", "PHARMACIST", "BILLING_STAFF", "AAROGYA_ADMIN"];
+const HOSPITAL_ROLES = ["HOSPITAL_ADMIN", "DOCTOR", "NURSE", "LAB_TECHNICIAN", "RADIOLOGY_TECH", "PHARMACIST", "BILLING_STAFF", "FRONT_DESK", "AAROGYA_ADMIN"];
+const isDev = process.env.NODE_ENV !== "production";
 
 export default function HospitalOsLoginPage() {
   const router = useRouter();
   const push = useToastStore((s) => s.push);
-  const [email, setEmail] = useState("doctor1@amc-demo.aarogya");
-  const [password, setPassword] = useState("Hospital@123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -55,13 +56,15 @@ export default function HospitalOsLoginPage() {
             {loading ? "Signing in..." : "Sign in"}
           </button>
         </form>
-        <div className="mt-5 rounded-md border border-hairline bg-black/[0.02] p-3 text-[11px] leading-relaxed text-text-tertiary">
-          <p className="font-medium text-text-secondary">Demo accounts (dev only, password Hospital@123)</p>
-          <p className="mt-1">admin@amc-demo.aarogya (Hospital Admin)</p>
-          <p>doctor1@amc-demo.aarogya (Doctor)</p>
-          <p>nurse1@amc-demo.aarogya (Nurse)</p>
-          <p>labtech@amc-demo.aarogya · radtech@amc-demo.aarogya · billing@amc-demo.aarogya</p>
-        </div>
+        {isDev && (
+          <div className="mt-5 rounded-md border border-hairline bg-black/[0.02] p-3 text-[11px] leading-relaxed text-text-tertiary">
+            <p className="font-medium text-text-secondary">Demo accounts (dev only, password Hospital@123)</p>
+            <p className="mt-1">admin@amc-demo.aarogya (Hospital Admin)</p>
+            <p>doctor1@amc-demo.aarogya (Doctor)</p>
+            <p>nurse1@amc-demo.aarogya (Nurse)</p>
+            <p>labtech@amc-demo.aarogya · radtech@amc-demo.aarogya · billing@amc-demo.aarogya</p>
+          </div>
+        )}
       </Card>
     </div>
   );
