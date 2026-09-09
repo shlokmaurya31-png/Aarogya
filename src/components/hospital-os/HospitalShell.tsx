@@ -131,7 +131,10 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
   ],
   PHARMACIST: [{ href: "/hospital-os/pharmacy", label: "Pharmacy", icon: Pill }, INVENTORY_GROUP],
   BILLING_STAFF: [BILLING_GROUP_STAFF],
-  FRONT_DESK: [{ href: "/hospital-os/front-desk", label: "Front Desk", icon: UserPlus }],
+  FRONT_DESK: [
+    { href: "/hospital-os/front-desk", label: "Front Desk", icon: UserPlus },
+    { href: "/hospital-os/ed", label: "ED Board", icon: Siren },
+  ],
 };
 
 export function HospitalShell({

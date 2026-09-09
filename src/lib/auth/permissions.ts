@@ -238,6 +238,21 @@ export const PERMISSIONS = [
   "blood:transfusion:record",
   "blood:reaction:record",
   "blood:reaction:manage",
+
+  // Phase B5 — Emergency Department. Arrival/registration is an operational
+  // action (FRONT_DESK/NURSE/DOCTOR/ADMIN); reassessment/resuscitation/location
+  // are ED clinical-operational (DOCTOR/NURSE); disposition is a clinician
+  // decision (DOCTOR/ADMIN only — never NURSE/LAB/RADIOLOGY/FRONT_DESK/BILLING/
+  // PHARMACIST); recording a death is further restricted (ed:disposition:death).
+  // Triage reuses the existing triage:record; ED clinical notes reuse
+  // clinical:note:create/sign; orders/meds/labs/imaging/blood reuse their
+  // existing permissions unchanged.
+  "ed:encounter:create",
+  "ed:reassessment:record",
+  "ed:resuscitation:manage",
+  "ed:location:manage",
+  "ed:disposition:manage",
+  "ed:disposition:death",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -327,6 +342,13 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "blood:transfusion:record",
     "blood:reaction:record",
     "blood:reaction:manage",
+    // Phase B5 — full ED clinical workflow incl. disposition and death.
+    "ed:encounter:create",
+    "ed:reassessment:record",
+    "ed:resuscitation:manage",
+    "ed:location:manage",
+    "ed:disposition:manage",
+    "ed:disposition:death",
   ],
   NURSE: [
     "hospital:command-center:view",
@@ -375,6 +397,12 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "blood:transport:manage",
     "blood:transfusion:record",
     "blood:reaction:record",
+    // Phase B5 — ED arrival/registration, reassessment, resuscitation activation,
+    // and location assignment; NO disposition (a clinician decision).
+    "ed:encounter:create",
+    "ed:reassessment:record",
+    "ed:resuscitation:manage",
+    "ed:location:manage",
   ],
   LAB_TECHNICIAN: [
     "hospital:command-center:view",
@@ -509,6 +537,13 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "blood:issue",
     "blood:transport:manage",
     "blood:reaction:manage",
+    // Phase B5 — ED operational + administrative oversight incl. disposition.
+    "ed:encounter:create",
+    "ed:reassessment:record",
+    "ed:resuscitation:manage",
+    "ed:location:manage",
+    "ed:disposition:manage",
+    "ed:disposition:death",
     // Phase 5 — checker/approval tier: void/approve/manage pricing, plus reconciliation visibility.
     "billing:tariff:manage",
     "billing:package:manage",
@@ -568,6 +603,10 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "appointment:update",
     "appointment:cancel",
     "queue:manage",
+    // Phase B5 — ED arrival/registration only (an operational front-desk action).
+    // FRONT_DESK holds NO ED clinical mutation (triage/reassessment/resuscitation/
+    // location/disposition) permission.
+    "ed:encounter:create",
   ],
   STUDENT: [
     "student:case:view",

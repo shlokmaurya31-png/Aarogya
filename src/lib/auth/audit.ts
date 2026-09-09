@@ -264,7 +264,15 @@ export type AuditEventType =
   | "hospital.blood.transfusionStatusChanged"
   | "hospital.blood.transfusionCompleted"
   | "hospital.blood.reactionReported"
-  | "hospital.blood.reactionStatusChanged";
+  | "hospital.blood.reactionStatusChanged"
+  // Phase B5 — Emergency Department.
+  | "hospital.ed.arrival"
+  | "hospital.ed.locationAssigned"
+  | "hospital.ed.locationReleased"
+  | "hospital.ed.reassessment"
+  | "hospital.ed.resuscitationActivated"
+  | "hospital.ed.resuscitationUpdated"
+  | "hospital.ed.disposition";
 
 export interface AuditEventContext {
   facilityId?: string;

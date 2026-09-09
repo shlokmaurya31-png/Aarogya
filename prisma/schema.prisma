@@ -1049,6 +1049,11 @@ model Encounter {
   // Phase B4 — Blood Bank & Transfusion.
   bloodRequests BloodRequest[]
 
+  // Phase B5 — Emergency Department.
+  edReassessments  EdReassessment[]
+  edResuscitations EdResuscitation[]
+  edDisposition    EdDisposition?
+
   @@index([facilityId])
   @@index([episodeOfCareId])
   @@index([status])
@@ -2674,6 +2679,26 @@ model TriageAssessment {
   assignedArea      String? // "RESUSCITATION" | "HIGH_PRIORITY" | "STANDARD" | "OBSERVATION"
   notes             String?
   createdAt         DateTime             @default(now())
+
+  // Phase B5 — ED triage lifecycle + documentary fields (all additive; the
+  // Phase 2 flow keeps working since status defaults to COMPLETED). Acuity is
+  // still a clinician-entered value — no ESI/severity algorithm is applied.
+  // `amends` links an amendment to the assessment it corrects (provenance);
+  // history is never overwritten, an amendment is always a new row.
+  status             String             @default("COMPLETED") // "DRAFT" | "COMPLETED" | "AMENDED"
+  amends             TriageAssessment?  @relation("TriageAmendment", fields: [amendsId], references: [id])
+  amendsId           String?
+  amendedBy          TriageAssessment[] @relation("TriageAmendment")
+  presentingSymptoms String?
+  allergySummary     String? // documentary reference — canonical Allergy remains the source of truth
+  currentMedications String?
+  relevantHistory    String?
+  painScore          Int? // 0-10 as recorded, never interpreted
+  mentalStatus       String? // documentary (e.g. "ALERT" | "DROWSY" | ...) — not a computed GCS
+  mobility           String?
+  pregnancyStatus    String?
+  isolationRequired  Boolean            @default(false)
+  injuryTrauma       Boolean            @default(false)
 
   @@index([encounterId])
   @@index([facilityId])
@@ -4883,4 +4908,127 @@ model TransfusionReaction {
   @@index([transfusionId])
   @@index([unitId])
   @@index([patientId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase B5 — Emergency Department / Emergency Care Operating System
+// An ORCHESTRATION layer over the canonical clinical core. An ED visit is a
+// canonical Encounter (type=ED) — NOT a new patient/encounter/bed system.
+// Triage (TriageAssessment), current location (EncounterLocation + Bed),
+// vitals (Vital), notes (ClinicalNote), tasks (Task), nursing
+// (NursingAssignment), diagnostics (Lab/Imaging), meds (MedicationOrder),
+// blood (B4), handoffs (ClinicalHandoff), and admission/transfer/discharge
+// (ADT: admitPatient/transferPatient) are all REUSED. These three narrow
+// models add only what the ED needs that no canonical record already carries:
+// repeated reassessment, an explicit high-acuity/resuscitation workflow, and
+// the terminal ED disposition. NO triage/severity/sepsis/stroke/cardiac/AI
+// algorithm — every acuity/priority is a clinician-entered value the system
+// only records, sorts, and displays.
+// ─────────────────────────────────────────────────────────────────────────
+
+enum EdResuscitationStatus {
+  ACTIVATED
+  ACTIVE
+  STABILIZED
+  HANDED_OVER
+  DISPOSITION_PENDING
+  CLOSED
+}
+
+enum EdDispositionType {
+  DISCHARGE
+  ADMIT_WARD
+  ADMIT_ICU
+  TO_OT
+  TRANSFER_OUT
+  REFERRAL
+  LAMA // left against medical advice (after being seen)
+  DAMA // discharge against medical advice
+  LWBS // left without being seen (never assessed)
+  ABSCONDED
+  DECEASED
+}
+
+/**
+ * A recorded ED reassessment (brief §10). Emergency care re-checks a patient
+ * repeatedly; each reassessment is an append-only record referencing the
+ * clinician/nurse and (optionally) the canonical Vital captured at the time.
+ * `escalationRequired` is a clinician-recorded flag, never inferred — it may
+ * spawn a canonical Task, but generates no diagnosis.
+ */
+model EdReassessment {
+  id                  String    @id @default(cuid())
+  encounter           Encounter @relation(fields: [encounterId], references: [id])
+  encounterId         String
+  facilityId          String
+  patientId           String // derived from the encounter, never client-supplied
+  reassessedByStaffId String
+  findings            String?
+  vitalId             String? // optional link to the canonical Vital recorded at reassessment
+  taskId              String? // optional canonical Task spawned for follow-up
+  escalationRequired  Boolean   @default(false)
+  createdAt           DateTime  @default(now())
+
+  @@index([encounterId])
+  @@index([facilityId])
+  @@index([patientId])
+}
+
+/**
+ * Explicit high-acuity / resuscitation workflow (brief §8). ALWAYS explicitly
+ * activated by authorized staff — never auto-inferred from vitals. At most one
+ * open (status <> CLOSED) row per encounter is enforced by a hand-written
+ * partial unique index (see the B5 migration), the same idiom as the nursing
+ * "one open assignment" index — this makes concurrent activation single-winner.
+ */
+model EdResuscitation {
+  id                 String                @id @default(cuid())
+  encounter          Encounter             @relation(fields: [encounterId], references: [id])
+  encounterId        String
+  facilityId         String
+  patientId          String // derived from the encounter
+  status             EdResuscitationStatus @default(ACTIVATED)
+  reason             String?
+  activatedByStaffId String
+  activatedAt        DateTime              @default(now())
+  closedByStaffId    String?
+  closedAt           DateTime?
+  notes              String?
+  updatedAt          DateTime              @updatedAt
+
+  @@index([encounterId])
+  @@index([facilityId])
+}
+
+/**
+ * The terminal ED disposition (brief §17-19). `encounterId` is UNIQUE — the
+ * single-winner guarantee for "two users disposition the same encounter"
+ * (identical mechanism to Admission.encounterId being unique). Admit
+ * dispositions flow through the canonical admitPatient() (ADT); discharge/
+ * LAMA/DAMA/LWBS/absconded/referral/transfer/death close the canonical
+ * Encounter via the existing transitionEncounter(). DECEASED is only a
+ * documentary workflow outcome — no medical certification logic — and is
+ * role-gated (ed:disposition:death). Observation is NOT a disposition (it is a
+ * location state); it deliberately does not consume this row.
+ */
+model EdDisposition {
+  id                     String            @id @default(cuid())
+  encounter              Encounter         @relation(fields: [encounterId], references: [id])
+  encounterId            String            @unique
+  facilityId             String
+  patientId              String // derived from the encounter
+  type                   EdDispositionType
+  destinationDetail      String?
+  reason                 String?
+  transferFacilityName   String?
+  admissionId            String? // set when the disposition admitted via ADT
+  handoffId              String? // set when a handoff accompanied the disposition
+  lastKnownLocation      String? // captured for LWBS/absconded
+  dispositionedByStaffId String
+  dispositionAt          DateTime          @default(now())
+  note                   String?
+
+  @@index([facilityId])
+  @@index([patientId])
+  @@index([type])
 }

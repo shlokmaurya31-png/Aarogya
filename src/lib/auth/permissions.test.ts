@@ -228,3 +228,42 @@ describe("roleHasPermission — Phase B4 Blood Bank boundary", () => {
     }
   });
 });
+
+describe("roleHasPermission — Phase B5 Emergency Department boundary", () => {
+  it("DOCTOR can drive the full ED workflow incl. disposition and death", () => {
+    for (const p of ["ed:encounter:create", "ed:reassessment:record", "ed:resuscitation:manage", "ed:location:manage", "ed:disposition:manage", "ed:disposition:death"] as Permission[]) {
+      expect(roleHasPermission("DOCTOR", p)).toBe(true);
+    }
+  });
+
+  it("NURSE can register/reassess/resuscitate/relocate but CANNOT disposition or record a death", () => {
+    for (const p of ["ed:encounter:create", "ed:reassessment:record", "ed:resuscitation:manage", "ed:location:manage"] as Permission[]) {
+      expect(roleHasPermission("NURSE", p)).toBe(true);
+    }
+    expect(roleHasPermission("NURSE", "ed:disposition:manage")).toBe(false);
+    expect(roleHasPermission("NURSE", "ed:disposition:death")).toBe(false);
+  });
+
+  it("FRONT_DESK can register an ED arrival but holds NO ED clinical mutation permission", () => {
+    expect(roleHasPermission("FRONT_DESK", "ed:encounter:create")).toBe(true);
+    for (const p of ["ed:reassessment:record", "ed:resuscitation:manage", "ed:location:manage", "ed:disposition:manage", "ed:disposition:death", "clinical:note:sign"] as Permission[]) {
+      expect(roleHasPermission("FRONT_DESK", p)).toBe(false);
+    }
+  });
+
+  it("HOSPITAL_ADMIN holds ED operational + disposition permissions", () => {
+    for (const p of ["ed:location:manage", "ed:disposition:manage", "ed:disposition:death"] as Permission[]) {
+      expect(roleHasPermission("HOSPITAL_ADMIN", p)).toBe(true);
+    }
+  });
+
+  it("LAB_TECHNICIAN, RADIOLOGY_TECH, PHARMACIST, and BILLING_STAFF cannot disposition an ED encounter or perform ED clinical mutations", () => {
+    const edClinical: Permission[] = ["ed:reassessment:record", "ed:resuscitation:manage", "ed:location:manage", "ed:disposition:manage", "ed:disposition:death"];
+    for (const p of edClinical) {
+      expect(roleHasPermission("LAB_TECHNICIAN", p)).toBe(false);
+      expect(roleHasPermission("RADIOLOGY_TECH", p)).toBe(false);
+      expect(roleHasPermission("PHARMACIST", p)).toBe(false);
+      expect(roleHasPermission("BILLING_STAFF", p)).toBe(false);
+    }
+  });
+});

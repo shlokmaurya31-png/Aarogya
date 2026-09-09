@@ -20,6 +20,20 @@ export async function recordTriage(input: {
   assignedArea?: string;
   notes?: string;
   byUserId: string;
+  // Phase B5 — optional ED triage lifecycle + documentary fields (all additive;
+  // omitting them preserves the exact Phase 2 behaviour).
+  status?: "DRAFT" | "COMPLETED" | "AMENDED";
+  amendsId?: string;
+  presentingSymptoms?: string;
+  allergySummary?: string;
+  currentMedications?: string;
+  relevantHistory?: string;
+  painScore?: number;
+  mentalStatus?: string;
+  mobility?: string;
+  pregnancyStatus?: string;
+  isolationRequired?: boolean;
+  injuryTrauma?: boolean;
 }) {
   if (input.acuity < 1 || input.acuity > 5) throw new Error("Acuity must be between 1 and 5.");
 
@@ -36,11 +50,24 @@ export async function recordTriage(input: {
         redFlags: input.redFlags,
         assignedArea: input.assignedArea,
         notes: input.notes,
+        status: input.status ?? "COMPLETED",
+        amendsId: input.amendsId,
+        presentingSymptoms: input.presentingSymptoms,
+        allergySummary: input.allergySummary,
+        currentMedications: input.currentMedications,
+        relevantHistory: input.relevantHistory,
+        painScore: input.painScore,
+        mentalStatus: input.mentalStatus,
+        mobility: input.mobility,
+        pregnancyStatus: input.pregnancyStatus,
+        isolationRequired: input.isolationRequired ?? false,
+        injuryTrauma: input.injuryTrauma ?? false,
       },
     });
 
     const updateData: { triageLevel: number; status?: "TRIAGED" } = { triageLevel: input.acuity };
-    if (isEncounterTransitionAllowed(encounter.status, "TRIAGED")) {
+    // A DRAFT triage does not advance the encounter — only a COMPLETED/AMENDED one does.
+    if (input.status !== "DRAFT" && isEncounterTransitionAllowed(encounter.status, "TRIAGED")) {
       updateData.status = "TRIAGED";
     }
     await tx.encounter.update({ where: { id: input.encounterId }, data: updateData });
