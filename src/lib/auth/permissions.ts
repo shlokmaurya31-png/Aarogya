@@ -253,6 +253,29 @@ export const PERMISSIONS = [
   "ed:location:manage",
   "ed:disposition:manage",
   "ed:disposition:death",
+
+  // Phase B6 — Enterprise Pharmacy & Medication Supply Chain. Verification/
+  // hold/reject reuse the existing medication:verify; ordering reuses
+  // clinical:order:medication; administration reuses medication:administer.
+  // These are the genuinely-new pharmacy-operational capabilities. Master/
+  // formulary/recall are HOSPITAL_ADMIN configuration; dispense/return/
+  // quarantine/controlled/transfer/trace are the PHARMACIST's operational
+  // scope; request:create is available to the clinical roles that raise ward
+  // requests; substitution:authorize is an explicit clinician/pharmacist action.
+  "pharmacy:master:manage",
+  "pharmacy:formulary:manage",
+  "pharmacy:dispense",
+  "pharmacy:return",
+  "pharmacy:quarantine",
+  "pharmacy:recall",
+  "pharmacy:controlled:manage",
+  "pharmacy:request:create",
+  "pharmacy:request:fulfill",
+  "pharmacy:transfer",
+  "pharmacy:trace:view",
+  "pharmacy:command:view",
+  "pharmacy:storage:record",
+  "pharmacy:substitution:authorize",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -349,6 +372,12 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "ed:location:manage",
     "ed:disposition:manage",
     "ed:disposition:death",
+    // Phase B6 — clinician pharmacy touchpoints: raise ward requests, authorize
+    // an explicit substitution, and view medication traceability. NO pharmacy
+    // master/formulary/dispense/verify administration.
+    "pharmacy:request:create",
+    "pharmacy:substitution:authorize",
+    "pharmacy:trace:view",
   ],
   NURSE: [
     "hospital:command-center:view",
@@ -403,6 +432,9 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "ed:reassessment:record",
     "ed:resuscitation:manage",
     "ed:location:manage",
+    // Phase B6 — ward medication requests only. NO pharmacy verification/
+    // dispense/master/formulary (nursing never bypasses pharmacy verification).
+    "pharmacy:request:create",
   ],
   LAB_TECHNICIAN: [
     "hospital:command-center:view",
@@ -466,6 +498,19 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "procurement:goodsReceipt:create",
     "procurement:supplier:view",
     "inventory:report:view",
+    // Phase B6 — the pharmacist operational scope. Master/formulary/recall are
+    // deliberately NOT here (they are HOSPITAL_ADMIN configuration).
+    "pharmacy:dispense",
+    "pharmacy:return",
+    "pharmacy:quarantine",
+    "pharmacy:controlled:manage",
+    "pharmacy:request:create",
+    "pharmacy:request:fulfill",
+    "pharmacy:transfer",
+    "pharmacy:trace:view",
+    "pharmacy:command:view",
+    "pharmacy:storage:record",
+    "pharmacy:substitution:authorize",
   ],
   BILLING_STAFF: [
     "hospital:command-center:view",
@@ -544,6 +589,16 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "ed:location:manage",
     "ed:disposition:manage",
     "ed:disposition:death",
+    // Phase B6 — pharmacy configuration + policy: medication master, formulary,
+    // recall management, plus operational quarantine/fulfil/transfer/trace/command.
+    "pharmacy:master:manage",
+    "pharmacy:formulary:manage",
+    "pharmacy:recall",
+    "pharmacy:quarantine",
+    "pharmacy:request:fulfill",
+    "pharmacy:transfer",
+    "pharmacy:trace:view",
+    "pharmacy:command:view",
     // Phase 5 — checker/approval tier: void/approve/manage pricing, plus reconciliation visibility.
     "billing:tariff:manage",
     "billing:package:manage",

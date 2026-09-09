@@ -272,7 +272,23 @@ export type AuditEventType =
   | "hospital.ed.reassessment"
   | "hospital.ed.resuscitationActivated"
   | "hospital.ed.resuscitationUpdated"
-  | "hospital.ed.disposition";
+  | "hospital.ed.disposition"
+  // Phase B6 — Enterprise Pharmacy & Medication Supply Chain.
+  | "hospital.pharmacy.masterUpdated"
+  | "hospital.pharmacy.formularyChanged"
+  | "hospital.pharmacy.dispensed"
+  | "hospital.pharmacy.substitution"
+  | "hospital.pharmacy.returnCreated"
+  | "hospital.pharmacy.returnClassified"
+  | "hospital.pharmacy.controlledWastage"
+  | "hospital.pharmacy.quarantined"
+  | "hospital.pharmacy.quarantineReleased"
+  | "hospital.pharmacy.recallCreated"
+  | "hospital.pharmacy.recallClosed"
+  | "hospital.pharmacy.storageCheck"
+  | "hospital.pharmacy.requestCreated"
+  | "hospital.pharmacy.requestUpdated"
+  | "hospital.pharmacy.transfer";
 
 export interface AuditEventContext {
   facilityId?: string;

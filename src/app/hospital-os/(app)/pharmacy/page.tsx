@@ -1,5 +1,5 @@
-import { PharmacyWorkspace } from "@/components/hospital-os/PharmacyWorkspace";
+import { PharmacyCommandCenter } from "@/components/hospital-os/PharmacyCommandCenter";
 
 export default function PharmacyPage() {
-  return <PharmacyWorkspace />;
+  return <PharmacyCommandCenter />;
 }

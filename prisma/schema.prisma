@@ -571,6 +571,7 @@ model Facility {
   purchaseOrderSequences PurchaseOrderSequence[]
   goodsReceiptSequences  GoodsReceiptSequence[]
   medicationItemLinks    MedicationItemLink[]
+  formularyEntries       FormularyEntry[]
 }
 
 model Department {
@@ -1236,10 +1237,21 @@ model MedicationOrder {
   cancelledReason       String?
   cancelledByStaffId    String?
 
+  // Phase B6 — enterprise pharmacy dispense tracking (all additive). A target
+  // quantity enables partial/multi-lot dispensing bounds; dispensedQuantity is
+  // a guarded accumulator (atomic conditional UPDATE, same idiom as
+  // StockBalance) so cumulative dispensing can never exceed the target under
+  // concurrency. Null target = the pre-B6 unbounded behaviour, unchanged.
+  dispenseTargetQuantity Float?
+  dispenseTargetUnit     String?
+  dispensedQuantity      Float   @default(0)
+
   administrations   MedicationAdministration[]
   safetyWarnings    MedicationSafetyWarning[]
   verifications     MedicationVerification[]
   dispensingRecords DispensingRecord[]
+  returns           MedicationReturn[] // Phase B6
+  substitutions     MedicationSubstitution[] // Phase B6
 
   @@index([encounterId])
   @@index([patientId])
@@ -3691,7 +3703,18 @@ model DispensingRecord {
   notes               String?
   createdAt           DateTime              @default(now())
 
+  // Phase B6 — multi-lot dispensing traceability (all additive). One dispense
+  // that draws from multiple lots creates ONE DispensingRecord per lot, sharing
+  // a dispenseGroupId, each naming its own lot — never flattened into one opaque
+  // record. itemId/itemLotId make the lot→patient trace explicit alongside the
+  // canonical StockLedgerEntry (sourceType=DispensingRecord).
+  dispenseGroupId String?
+  itemId          String?
+  itemLotId       String?
+
   @@index([medicationOrderId])
+  @@index([dispenseGroupId])
+  @@index([itemLotId])
 }
 
 enum ReconciliationSource {
@@ -3917,6 +3940,26 @@ model Item {
   preferredSupplier   Supplier? @relation(fields: [preferredSupplierId], references: [id])
   preferredSupplierId String?
 
+  // Phase B6 — medication-master metadata (all additive/nullable; only
+  // meaningful for category=MEDICATION items, mirroring how Encounter's ED
+  // fields are nullable columns rather than a separate table). This is NOT a
+  // second medication inventory entity — the Item IS the medication master;
+  // MedicationItemLink still bridges MedicationOrder.drugName to it.
+  genericName         String?
+  brandName           String?
+  strength            String?
+  dosageForm          String? // "TABLET" | "CAPSULE" | "INJECTION" | "SYRUP" | ... (free-string)
+  medicationRoute     String?
+  concentration       String?
+  therapeuticCategory String?
+  controlledClass     String? // configurable controlled-drug schedule label — no legal policy engine
+  highAlert           Boolean @default(false)
+  storageRequirement  String? // documentary (e.g. "2-8C") — no IoT/telemetry
+  barcode             String?
+  manufacturer        String?
+  packSize            String?
+  dispensingUnit      String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -3934,6 +3977,7 @@ model Item {
   purchaseOrderLines PurchaseOrderLine[]
   goodsReceiptLines  GoodsReceiptLine[]
   bloodProducts      BloodProduct[] // Phase B4 — optional blood-product bridge into the item master
+  formularyEntries   FormularyEntry[] // Phase B6 — facility formulary listings for this medication
 
   @@index([facilityId])
   @@index([category])
@@ -5031,4 +5075,221 @@ model EdDisposition {
   @@index([facilityId])
   @@index([patientId])
   @@index([type])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase B6 — Enterprise Pharmacy & Medication Supply Chain
+// An ORCHESTRATION layer over the canonical medication + inventory core.
+// MedicationOrder stays the clinical order; Item/ItemLot/StockBalance/
+// StockLedgerEntry/StockReservation/StockTransfer/WasteRecord stay the physical
+// stock system (every movement still goes through issueStock/reserveStock/
+// recordWaste/initiateTransfer/quarantineLot — never a second ledger);
+// MedicationAdministration stays the MAR; AuditEvent stays the audit log.
+// These models add only pharmacy-operational records: the facility formulary,
+// ward/department requests, medication returns, recalls, authorized
+// substitutions, and documentary storage checks. NO dosing/interaction/
+// substitution-recommendation/AI logic — record/verify/dispense/return/
+// quarantine/recall/trace/reconcile only.
+// ─────────────────────────────────────────────────────────────────────────
+
+enum PharmacyRequestStatus {
+  REQUESTED
+  APPROVED
+  RESERVED
+  ISSUED
+  RECEIVED
+  CANCELLED
+  REJECTED
+}
+
+enum MedicationReturnSource {
+  WARD
+  PATIENT
+  CANCELLED_ORDER
+  DISCHARGE
+  OTHER
+}
+
+enum MedicationReturnClassification {
+  RETURN_TO_STOCK
+  QUARANTINE
+  WASTAGE
+}
+
+enum MedicationReturnStatus {
+  PENDING_INSPECTION
+  COMPLETED
+  CANCELLED
+}
+
+enum MedicationRecallStatus {
+  OPEN
+  CLOSED
+}
+
+/**
+ * Facility-scoped, effective-dated formulary. Deactivating sets active=false +
+ * effectiveTo — history is never overwritten (a re-listing is a new row). Being
+ * non-formulary NEVER hard-blocks clinical treatment; it is a
+ * verification-context flag (+ optional requiresAuthorization) surfaced to the
+ * pharmacist, not an ordering gate.
+ */
+model FormularyEntry {
+  id                    String    @id @default(cuid())
+  facility              Facility  @relation(fields: [facilityId], references: [id])
+  facilityId            String
+  item                  Item      @relation(fields: [itemId], references: [id])
+  itemId                String
+  active                Boolean   @default(true)
+  effectiveFrom         DateTime  @default(now())
+  effectiveTo           DateTime?
+  restrictions          String?
+  requiresAuthorization Boolean   @default(false)
+  notes                 String?
+  createdByStaffId      String
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([facilityId, itemId])
+  @@index([facilityId, active])
+}
+
+/**
+ * Operational medication request from a ward/ICU/ED/OT to the pharmacy.
+ * REQUESTED -> REVIEWED/APPROVED -> RESERVED -> ISSUED -> RECEIVED (guarded
+ * updateMany transitions = single-winner). Reserve/issue/transfer all go
+ * through the canonical inventory services (reservationId/transferId link the
+ * real rows) — this model is the request envelope, not a stock ledger.
+ * itemId/locationId/patient/encounter/facility are plain FKs validated
+ * server-side (never client-trusted), same pattern as the B3-B5 child records.
+ */
+model PharmacyRequest {
+  id                   String                @id @default(cuid())
+  facilityId           String
+  itemId               String
+  quantity             Float
+  unit                 String?
+  requestingLocationId String? // ward/ICU/ED/OT store (StockLocation) the request is FOR
+  fulfillLocationId    String? // pharmacy StockLocation fulfilling it
+  patientId            String?
+  encounterId          String?
+  priority             RequestPriority       @default(ROUTINE)
+  status               PharmacyRequestStatus @default(REQUESTED)
+  requestedByStaffId   String
+  reviewedByStaffId    String?
+  reservationId        String?
+  transferId           String?
+  reason               String?
+  notes                String?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+
+  @@index([facilityId, status])
+  @@index([itemId])
+  @@index([encounterId])
+}
+
+/**
+ * Medication return workflow. A return NEVER silently re-enters available stock:
+ * it lands PENDING_INSPECTION and an explicit classification (RETURN_TO_STOCK /
+ * QUARANTINE / WASTAGE) drives the canonical inventory movement (a receipt-style
+ * adjustment, quarantineLot, or recordWaste respectively). Controlled returns
+ * carry a witness. patient/encounter/facility/item/lot are validated server-side.
+ */
+model MedicationReturn {
+  id                 String                          @id @default(cuid())
+  facilityId         String
+  medicationOrder    MedicationOrder?                @relation(fields: [medicationOrderId], references: [id])
+  medicationOrderId  String?
+  itemId             String
+  itemLotId          String?
+  locationId         String
+  quantity           Float
+  unit               String?
+  source             MedicationReturnSource
+  classification     MedicationReturnClassification?
+  status             MedicationReturnStatus          @default(PENDING_INSPECTION)
+  patientId          String?
+  encounterId        String?
+  isControlled       Boolean                         @default(false)
+  witnessStaffId     String?
+  returnedByStaffId  String
+  inspectedByStaffId String?
+  reason             String?
+  notes              String?
+  createdAt          DateTime                        @default(now())
+  updatedAt          DateTime                        @updatedAt
+
+  @@index([facilityId, status])
+  @@index([itemId])
+  @@index([medicationOrderId])
+}
+
+/**
+ * Medication/lot recall over the canonical Item/ItemLot. Creating an OPEN recall
+ * quarantines the affected lot(s) (LotStatus.RECALLED via the canonical lot
+ * service) so they can no longer be issued. Inventory history is never deleted.
+ * Not a national recall network — a local operational foundation.
+ */
+model MedicationRecall {
+  id                String                 @id @default(cuid())
+  facilityId        String
+  itemId            String
+  itemLotId         String?
+  manufacturer      String?
+  batchRef          String?
+  reason            String
+  reference         String?
+  status            MedicationRecallStatus @default(OPEN)
+  effectiveAt       DateTime               @default(now())
+  affectedLocations Json?
+  createdByStaffId  String
+  closedByStaffId   String?
+  closedAt          DateTime?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  @@index([facilityId, status])
+  @@index([itemId])
+  @@index([itemLotId])
+}
+
+/**
+ * Explicitly-authorized medication substitution (brief §23). The system NEVER
+ * recommends or auto-selects a substitution — this records that an authorized
+ * clinician/pharmacist made one, with the original + replacement + reason.
+ */
+model MedicationSubstitution {
+  id                  String          @id @default(cuid())
+  facilityId          String
+  medicationOrder     MedicationOrder @relation(fields: [medicationOrderId], references: [id])
+  medicationOrderId   String
+  originalDrugName    String
+  replacementItemId   String?
+  replacementDrugName String
+  reason              String
+  authorizedByStaffId String
+  createdAt           DateTime        @default(now())
+
+  @@index([facilityId])
+  @@index([medicationOrderId])
+}
+
+/**
+ * Documentary pharmacy storage check (brief §20) — a recorded reading for a
+ * location (e.g. a refrigerator temperature). No IoT/telemetry, no automatic
+ * clinical interpretation; just an auditable manual record.
+ */
+model PharmacyStorageCheck {
+  id                String   @id @default(cuid())
+  facilityId        String
+  locationId        String
+  recordedValue     Float
+  unit              String
+  status            String? // "OK" | "EXCURSION" — a recorded label, not an inference
+  recordedByStaffId String
+  notes             String?
+  checkedAt         DateTime @default(now())
+
+  @@index([facilityId, locationId])
 }

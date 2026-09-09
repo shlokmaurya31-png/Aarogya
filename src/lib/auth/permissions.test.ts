@@ -267,3 +267,47 @@ describe("roleHasPermission — Phase B5 Emergency Department boundary", () => {
     }
   });
 });
+
+describe("roleHasPermission — Phase B6 Enterprise Pharmacy boundary", () => {
+  it("PHARMACIST holds the operational pharmacy scope but NOT master/formulary/recall configuration", () => {
+    for (const p of ["pharmacy:dispense", "pharmacy:return", "pharmacy:quarantine", "pharmacy:controlled:manage", "pharmacy:request:create", "pharmacy:request:fulfill", "pharmacy:transfer", "pharmacy:trace:view", "pharmacy:command:view", "pharmacy:storage:record", "pharmacy:substitution:authorize"] as Permission[]) {
+      expect(roleHasPermission("PHARMACIST", p)).toBe(true);
+    }
+    for (const p of ["pharmacy:master:manage", "pharmacy:formulary:manage", "pharmacy:recall"] as Permission[]) {
+      expect(roleHasPermission("PHARMACIST", p)).toBe(false);
+    }
+  });
+
+  it("HOSPITAL_ADMIN owns pharmacy master/formulary/recall configuration", () => {
+    for (const p of ["pharmacy:master:manage", "pharmacy:formulary:manage", "pharmacy:recall", "pharmacy:quarantine", "pharmacy:request:fulfill", "pharmacy:transfer"] as Permission[]) {
+      expect(roleHasPermission("HOSPITAL_ADMIN", p)).toBe(true);
+    }
+    expect(roleHasPermission("HOSPITAL_ADMIN", "pharmacy:dispense")).toBe(false);
+  });
+
+  it("DOCTOR can raise requests, authorize substitutions, and trace — but cannot dispense or configure pharmacy", () => {
+    for (const p of ["pharmacy:request:create", "pharmacy:substitution:authorize", "pharmacy:trace:view"] as Permission[]) {
+      expect(roleHasPermission("DOCTOR", p)).toBe(true);
+    }
+    for (const p of ["pharmacy:dispense", "pharmacy:master:manage", "pharmacy:formulary:manage", "pharmacy:recall", "pharmacy:controlled:manage"] as Permission[]) {
+      expect(roleHasPermission("DOCTOR", p)).toBe(false);
+    }
+  });
+
+  it("NURSE can raise ward requests only — never dispense, verify, or configure pharmacy", () => {
+    expect(roleHasPermission("NURSE", "pharmacy:request:create")).toBe(true);
+    for (const p of ["pharmacy:dispense", "pharmacy:return", "pharmacy:master:manage", "pharmacy:formulary:manage", "pharmacy:controlled:manage", "medication:verify"] as Permission[]) {
+      expect(roleHasPermission("NURSE", p)).toBe(false);
+    }
+  });
+
+  it("FRONT_DESK, BILLING_STAFF, LAB_TECHNICIAN, and RADIOLOGY_TECH hold no pharmacy mutation permissions", () => {
+    const pharm: Permission[] = ["pharmacy:master:manage", "pharmacy:formulary:manage", "pharmacy:dispense", "pharmacy:return", "pharmacy:quarantine", "pharmacy:recall", "pharmacy:controlled:manage", "pharmacy:request:create", "pharmacy:request:fulfill", "pharmacy:transfer", "pharmacy:substitution:authorize", "pharmacy:storage:record"];
+    for (const p of pharm) {
+      expect(roleHasPermission("FRONT_DESK", p)).toBe(false);
+      expect(roleHasPermission("BILLING_STAFF", p)).toBe(false);
+      expect(roleHasPermission("LAB_TECHNICIAN", p)).toBe(false);
+      expect(roleHasPermission("RADIOLOGY_TECH", p)).toBe(false);
+    }
+  });
+});
