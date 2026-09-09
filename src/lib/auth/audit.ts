@@ -53,6 +53,7 @@ export type AuditEventType =
   | "hospital.task.created"
   | "hospital.task.completed"
   | "hospital.document.created"
+  | "hospital.document.versioned"
   | "hospital.consent.recorded"
   | "hospital.consent.revoked"
   | "hospital.referral.created"

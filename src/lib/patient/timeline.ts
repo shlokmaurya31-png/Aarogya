@@ -38,7 +38,7 @@ const TIMELINE_ROW_LIMIT = 200;
 export async function buildPatientTimeline(patientId: string): Promise<TimelineEntry[]> {
   const patientIds = await resolvePatientIdsForRead(patientId);
 
-  const [encounters, diagnoses, problems, allergies, vitals, notes, medOrders, labOrders, imagingOrders, tasks, referrals, admissions, specimens, labResults, imagingStudies, imagingReports] =
+  const [encounters, diagnoses, problems, allergies, vitals, notes, medOrders, labOrders, imagingOrders, tasks, referrals, admissions, specimens, labResults, imagingStudies, imagingReports, transfers, documents] =
     await Promise.all([
       prisma.encounter.findMany({ where: { patientId: { in: patientIds } }, include: { department: true }, orderBy: { registeredAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
       prisma.diagnosis.findMany({ where: { patientId: { in: patientIds } }, include: { diagnosedBy: { include: { user: true } } }, orderBy: { createdAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
@@ -56,6 +56,8 @@ export async function buildPatientTimeline(patientId: string): Promise<TimelineE
       prisma.labResult.findMany({ where: { labOrder: { patientId: { in: patientIds } } }, orderBy: { resultedAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
       prisma.imagingStudy.findMany({ where: { patientId: { in: patientIds } }, orderBy: { createdAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
       prisma.imagingReport.findMany({ where: { imagingOrder: { patientId: { in: patientIds } } }, orderBy: { reportedAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
+      prisma.transfer.findMany({ where: { admission: { encounter: { patientId: { in: patientIds } } } }, include: { fromBed: true, toBed: true }, orderBy: { transferredAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
+      prisma.clinicalDocument.findMany({ where: { patientId: { in: patientIds } }, include: { uploadedBy: { include: { user: true } } }, orderBy: { createdAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
     ]);
 
   const entries: TimelineEntry[] = [];
@@ -241,7 +243,7 @@ export async function buildPatientTimeline(patientId: string): Promise<TimelineE
       id: `admission-${a.id}`,
       timestamp: a.admittedAt.toISOString(),
       type: "Admission",
-      summary: `Admitted — bed ${a.bed.label}: ${a.reason}`,
+      summary: `Admitted${a.admissionType ? ` (${a.admissionType})` : ""} — bed ${a.bed.label}: ${a.reason}`,
       sourceType: "Admission",
       sourceId: a.id,
     });
@@ -250,11 +252,32 @@ export async function buildPatientTimeline(patientId: string): Promise<TimelineE
         id: `discharge-${a.discharge.id}`,
         timestamp: a.discharge.dischargedAt.toISOString(),
         type: "Discharge",
-        summary: "Discharged",
+        summary: `Discharged${a.discharge.dischargeType ? ` (${a.discharge.dischargeType})` : ""}`,
         sourceType: "Discharge",
         sourceId: a.discharge.id,
       });
     }
+  }
+  for (const t of transfers) {
+    entries.push({
+      id: `transfer-${t.id}`,
+      timestamp: t.transferredAt.toISOString(),
+      type: "Transfer",
+      summary: `Transferred ${t.fromBed.label} → ${t.toBed.label}: ${t.reason}`,
+      sourceType: "Transfer",
+      sourceId: t.id,
+    });
+  }
+  for (const doc of documents) {
+    entries.push({
+      id: `document-${doc.id}`,
+      timestamp: doc.createdAt.toISOString(),
+      type: "Document",
+      summary: `${doc.type} document${doc.version > 1 ? ` (v${doc.version})` : ""}: ${doc.title}`,
+      actor: doc.uploadedBy?.user?.displayName,
+      sourceType: "ClinicalDocument",
+      sourceId: doc.id,
+    });
   }
 
   return entries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));

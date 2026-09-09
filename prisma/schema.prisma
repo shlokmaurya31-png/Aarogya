@@ -2353,6 +2353,12 @@ model ClinicalDocument {
   title             String
   storageRef        String? // nullable — metadata can exist before a file is actually attached
   version           Int                   @default(1)
+  // Phase 6.9 — non-destructive versioning. A "new version" of a clinical
+  // document supersedes the prior row (which is kept, marked SUPERSEDED)
+  // rather than overwriting it, so finalized clinical documents are never
+  // silently lost. Null for an original (v1) document.
+  supersedesId      String?
+  status            String                @default("CURRENT") // "CURRENT" | "SUPERSEDED"
   accessPolicy      String                @default("CLINICAL_STAFF") // "CLINICAL_STAFF" | "PATIENT_VISIBLE" | "RESTRICTED"
   author            HospitalStaffProfile? @relation("DocumentAuthor", fields: [authorStaffId], references: [id])
   authorStaffId     String?

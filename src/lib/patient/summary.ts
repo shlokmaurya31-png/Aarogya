@@ -10,7 +10,7 @@ import { resolvePatientIdsForRead } from "./merge";
 export async function buildPatientSummary(patientId: string) {
   const patientIds = await resolvePatientIdsForRead(patientId);
 
-  const [patient, activeProblems, activeAllergies, activeMedications, recentVitals, recentEncounters, pendingLabOrders, pendingImagingOrders, recentNotes] =
+  const [patient, activeProblems, activeAllergies, activeMedications, recentVitals, recentEncounters, pendingLabOrders, pendingImagingOrders, recentNotes, activeCarePlans, currentLocation, activeAdmission, recentDocuments] =
     await Promise.all([
       prisma.patient.findUnique({ where: { id: patientId }, include: { emergencyContacts: true, identifiers: true } }),
       prisma.problem.findMany({ where: { patientId: { in: patientIds }, status: "active" } }),
@@ -38,6 +38,29 @@ export async function buildPatientSummary(patientId: string) {
         take: 5,
         include: { author: { include: { user: true } } },
       }),
+      // Active care plans (CarePlan now exists — brief §14).
+      prisma.carePlan.findMany({
+        where: { patientId: { in: patientIds }, status: "ACTIVE" },
+        include: { interventions: true },
+        orderBy: { createdAt: "desc" },
+      }),
+      // Current location (brief §4 operational) — the encounter's open location row.
+      prisma.encounterLocation.findFirst({
+        where: { encounter: { patientId: { in: patientIds } }, releasedAt: null },
+        include: { bed: { include: { ward: true } } },
+        orderBy: { assignedAt: "desc" },
+      }),
+      // Active (undischarged) admission → admission/discharge state.
+      prisma.admission.findFirst({
+        where: { encounter: { patientId: { in: patientIds } }, discharge: { is: null } },
+        include: { bed: { include: { ward: true } }, encounter: true },
+        orderBy: { admittedAt: "desc" },
+      }),
+      prisma.clinicalDocument.findMany({
+        where: { patientId: { in: patientIds }, status: "CURRENT" },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+      }),
     ]);
 
   return {
@@ -51,5 +74,9 @@ export async function buildPatientSummary(patientId: string) {
     pendingLabOrders,
     pendingImagingOrders,
     recentNotes,
+    activeCarePlans,
+    currentLocation,
+    activeAdmission,
+    recentDocuments,
   };
 }
