@@ -1,0 +1,16 @@
+import { NextRequest } from "next/server";
+import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
+import { withApiErrors, BadRequestError } from "@/lib/auth/rbac";
+import { transitionReaction } from "@/lib/hospital/blood";
+
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  return withApiErrors(async () => {
+    const { id } = await params;
+    const body = await req.json().catch(() => null);
+    const { session, facilityId, staff } = await requireFacilityStaff("blood:reaction:manage", body?.facilityId);
+    if (!staff) throw new BadRequestError("Reaction management requires a staff account.");
+    if (!body?.to) throw new BadRequestError("to (target status) is required.");
+    const reaction = await transitionReaction({ reactionId: id, facilityId, to: body.to, actorStaffId: staff.id, escalationRef: body.escalationRef, notes: body.notes, byUserId: session.userId });
+    return { reaction };
+  });
+}

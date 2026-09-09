@@ -524,27 +524,33 @@ model Facility {
   operatingTheatres OperatingTheatre[]
   surgeries         Surgery[]
 
+  // Phase B4 — Blood Bank & Transfusion.
+  bloodProducts BloodProduct[]
+  bloodUnits    BloodUnit[]
+  bloodRequests BloodRequest[]
+  transfusions  Transfusion[]
+
   // Phase 4 Milestone B — Laboratory core workflow (brief §6-24).
   specimens       Specimen[]
   labTestCatalogs LabTestCatalog[]
   labPanels       LabPanel[]
 
   // Phase 4 Milestone C — Radiology core workflow.
-  imagingStudies    ImagingStudy[]
-  imagingCatalogs   ImagingCatalog[]
-  imagingResources  ImagingResource[]
+  imagingStudies   ImagingStudy[]
+  imagingCatalogs  ImagingCatalog[]
+  imagingResources ImagingResource[]
 
   // Phase 4.5 — structured audit context (see AuditEvent).
   auditEvents AuditEvent[]
 
   // Phase 5 — Billing + Insurance + Revenue Cycle.
-  billingAccounts BillingAccount[]
-  tariffs         Tariff[]
-  packages        PackageDefinition[]
-  invoices        Invoice[]
+  billingAccounts  BillingAccount[]
+  tariffs          Tariff[]
+  packages         PackageDefinition[]
+  invoices         Invoice[]
   invoiceSequences InvoiceSequence[]
-  payments        Payment[]
-  claims          Claim[]
+  payments         Payment[]
+  claims           Claim[]
 
   // Phase 6A — Inventory + Procurement Foundation.
   items                  Item[]
@@ -575,18 +581,18 @@ model Department {
   facilityId String
   createdAt  DateTime @default(now())
 
-  wards              Ward[]
-  staff              HospitalStaffProfile[]
-  encounters         Encounter[]
-  memberships        DepartmentMembership[]
-  referralsFrom      Referral[]             @relation("ReferralFromDept")
-  referralsTo        Referral[]             @relation("ReferralToDept")
-  tasks              Task[]
-  appointments       Appointment[]
-  scheduleBlocks     DoctorScheduleBlock[]
-  queueEntries       QueueEntry[]
-  admissionRequests  AdmissionRequest[]
-  nursingAssignments NursingAssignment[]
+  wards                Ward[]
+  staff                HospitalStaffProfile[]
+  encounters           Encounter[]
+  memberships          DepartmentMembership[]
+  referralsFrom        Referral[]             @relation("ReferralFromDept")
+  referralsTo          Referral[]             @relation("ReferralToDept")
+  tasks                Task[]
+  appointments         Appointment[]
+  scheduleBlocks       DoctorScheduleBlock[]
+  queueEntries         QueueEntry[]
+  admissionRequests    AdmissionRequest[]
+  nursingAssignments   NursingAssignment[]
   purchaseRequisitions PurchaseRequisition[]
 
   @@unique([facilityId, name])
@@ -843,6 +849,9 @@ model Patient {
   // Phase B3 — Operating Theatre.
   surgeries Surgery[]
 
+  // Phase B4 — Blood Bank & Transfusion.
+  bloodRequests BloodRequest[]
+
   // Phase 4.5 — structured audit context (see AuditEvent).
   auditEvents AuditEvent[]
 
@@ -1036,6 +1045,9 @@ model Encounter {
 
   // Phase B3 — Operating Theatre.
   surgeries Surgery[]
+
+  // Phase B4 — Blood Bank & Transfusion.
+  bloodRequests BloodRequest[]
 
   @@index([facilityId])
   @@index([episodeOfCareId])
@@ -1315,22 +1327,22 @@ model LabResult {
   numericValue  Float?
   abnormalFlag  AbnormalFlag? // computed server-side only when a LabReferenceRange exists — never invented
 
-  status     LabResultStatus @default(ENTERED)
+  status            LabResultStatus @default(ENTERED)
   verifiedByStaffId String?
-  verifiedAt DateTime?
+  verifiedAt        DateTime?
 
   // Amendment chain (brief §18) — a verified result is never edited in
   // place. Amending creates a NEW row (version N+1, isCurrent=true) and
   // flips this row to isCurrent=false; the original stays byte-for-byte
   // intact and readable forever.
-  version            Int        @default(1)
-  isCurrent          Boolean    @default(true)
-  previousVersion    LabResult? @relation("LabResultVersion", fields: [previousVersionId], references: [id])
-  previousVersionId  String?    @unique
-  supersededBy       LabResult? @relation("LabResultVersion")
-  amendedReason      String?
-  amendedByStaffId   String?
-  amendedAt          DateTime?
+  version           Int        @default(1)
+  isCurrent         Boolean    @default(true)
+  previousVersion   LabResult? @relation("LabResultVersion", fields: [previousVersionId], references: [id])
+  previousVersionId String?    @unique
+  supersededBy      LabResult? @relation("LabResultVersion")
+  amendedReason     String?
+  amendedByStaffId  String?
+  amendedAt         DateTime?
 
   @@index([labOrderId])
   @@index([specimenId])
@@ -1369,13 +1381,13 @@ model LabTestCatalog {
 }
 
 model LabPanel {
-  id         String   @id @default(cuid())
+  id         String    @id @default(cuid())
   facility   Facility? @relation(fields: [facilityId], references: [id])
   facilityId String?
-  code       String   @unique
+  code       String    @unique
   name       String
-  active     Boolean  @default(true)
-  createdAt  DateTime @default(now())
+  active     Boolean   @default(true)
+  createdAt  DateTime  @default(now())
 
   tests     LabPanelTest[]
   labOrders LabOrder[]
@@ -1412,10 +1424,10 @@ model LabReferenceRange {
   sex           String? // "male" | "female" | null = applies to any sex
   minAgeYears   Int?
   maxAgeYears   Int?
-  effectiveFrom DateTime  @default(now())
+  effectiveFrom DateTime       @default(now())
   effectiveTo   DateTime?
-  isDemoData    Boolean   @default(true)
-  sourceNote    String    @default("Demo/reference configuration — not clinically validated")
+  isDemoData    Boolean        @default(true)
+  sourceNote    String         @default("Demo/reference configuration — not clinically validated")
 
   @@index([catalogTestId])
 }
@@ -1466,7 +1478,7 @@ model Specimen {
   // never-recollected specimens are unaffected).
   recollectionOf           Specimen?  @relation("SpecimenRecollection", fields: [recollectionOfSpecimenId], references: [id])
   recollectionOfSpecimenId String?    @unique
-  recollections             Specimen[] @relation("SpecimenRecollection")
+  recollections            Specimen[] @relation("SpecimenRecollection")
 
   createdAt DateTime @default(now())
 
@@ -1590,15 +1602,15 @@ model ImagingStudy {
   resource   ImagingResource? @relation(fields: [resourceId], references: [id])
   resourceId String?
 
-  scheduledAt DateTime
+  scheduledAt    DateTime
   // Phase 4.5 hardening: half-open interval end [scheduledAt, scheduledEndAt)
   // used for real overlap detection (see imagingStudyLifecycle.ts) instead of
   // the old exact-timestamp-equality check. Backfilled to scheduledAt+30min
   // for pre-existing rows (see migration).
   scheduledEndAt DateTime
-  arrivedAt   DateTime?
-  startedAt   DateTime?
-  performedAt DateTime?
+  arrivedAt      DateTime?
+  startedAt      DateTime?
+  performedAt    DateTime?
 
   performedByStaffId String?
 
@@ -1607,11 +1619,11 @@ model ImagingStudy {
 
   // Structured safety/prep capture only (brief §10) — never an autonomous
   // clinical decision, just workflow checkboxes a technologist ticks.
-  pregnancyScreened     Boolean @default(false)
-  allergyScreened       Boolean @default(false)
-  mriSafetyScreened     Boolean @default(false)
-  implantScreened       Boolean @default(false)
-  preparationCompleted  Boolean @default(false)
+  pregnancyScreened    Boolean @default(false)
+  allergyScreened      Boolean @default(false)
+  mriSafetyScreened    Boolean @default(false)
+  implantScreened      Boolean @default(false)
+  preparationCompleted Boolean @default(false)
 
   cancelledReason String?
   notes           String?
@@ -1637,18 +1649,18 @@ model ImagingStudy {
  * left the imaging:report:verify permission dead (no route enforced it).
  */
 model ImagingReport {
-  id      String        @id @default(cuid())
+  id             String        @id @default(cuid())
   // Nullable: the 5 pre-Milestone-C ImagingReport rows predate ImagingStudy
   // entirely (verified against live data before migration — see
   // docs/PHASE_4_DIAGNOSTICS_ARCHITECTURE.md) and simply have no study to
   // point at, same reasoning as LabResult.specimenId. Every report created
   // through the new report-entry route always sets this (enforced at the
   // application level, requiring the study to be COMPLETED first).
-  study   ImagingStudy? @relation(fields: [studyId], references: [id])
-  studyId String?
+  study          ImagingStudy? @relation(fields: [studyId], references: [id])
+  studyId        String?
   // Denormalized for query convenience, matching Specimen's pattern —
   // source of truth for "which study" is studyId above.
-  imagingOrder   ImagingOrder @relation(fields: [imagingOrderId], references: [id])
+  imagingOrder   ImagingOrder  @relation(fields: [imagingOrderId], references: [id])
   imagingOrderId String
 
   indication      String?
@@ -1663,18 +1675,18 @@ model ImagingReport {
   reportedByStaffId String
   reportedAt        DateTime             @default(now())
 
-  status     ImagingReportStatus @default(ENTERED)
+  status            ImagingReportStatus @default(ENTERED)
   verifiedByStaffId String?
   verifiedAt        DateTime?
 
   acknowledgedByStaffId String?
   acknowledgedAt        DateTime?
 
-  version           Int             @default(1)
-  isCurrent         Boolean         @default(true)
-  previousVersion   ImagingReport?  @relation("ImagingReportVersion", fields: [previousVersionId], references: [id])
-  previousVersionId String?         @unique
-  supersededBy      ImagingReport?  @relation("ImagingReportVersion")
+  version           Int            @default(1)
+  isCurrent         Boolean        @default(true)
+  previousVersion   ImagingReport? @relation("ImagingReportVersion", fields: [previousVersionId], references: [id])
+  previousVersionId String?        @unique
+  supersededBy      ImagingReport? @relation("ImagingReportVersion")
   amendedReason     String?
   amendedByStaffId  String?
   amendedAt         DateTime?
@@ -1691,20 +1703,20 @@ model ImagingReport {
  * hook has an amount, same caveat as LabTestCatalog.demoPriceInr.
  */
 model ImagingCatalog {
-  id                     String   @id @default(cuid())
+  id                     String    @id @default(cuid())
   facility               Facility? @relation(fields: [facilityId], references: [id])
   facilityId             String? // null = available to every facility
-  code                   String   @unique
+  code                   String    @unique
   name                   String
   modality               String
   bodyRegion             String?
   description            String?
-  contrastRequired       Boolean  @default(false)
+  contrastRequired       Boolean   @default(false)
   prepInstructions       String?
-  defaultDurationMinutes Int      @default(30)
-  demoPriceInr           Float    @default(1500)
-  active                 Boolean  @default(true)
-  createdAt              DateTime @default(now())
+  defaultDurationMinutes Int       @default(30)
+  demoPriceInr           Float     @default(1500)
+  active                 Boolean   @default(true)
+  createdAt              DateTime  @default(now())
 
   imagingOrders ImagingOrder[]
 
@@ -1933,16 +1945,16 @@ enum PreAuthStatus {
  * in financialClearance.ts, matching dischargeBarrierEngine.ts's pattern.
  */
 model PreAuthorization {
-  id                   String        @id @default(cuid())
+  id                   String          @id @default(cuid())
   coverage             PatientCoverage @relation(fields: [coverageId], references: [id])
   coverageId           String
-  encounter            Encounter     @relation(fields: [encounterId], references: [id])
+  encounter            Encounter       @relation(fields: [encounterId], references: [id])
   encounterId          String
   requestedAmountMinor Int
   approvedAmountMinor  Int?
-  status               PreAuthStatus @default(REQUESTED)
+  status               PreAuthStatus   @default(REQUESTED)
   payerReferenceNo     String? // payer's own reference — manual entry, no live API
-  requestedAt          DateTime      @default(now())
+  requestedAt          DateTime        @default(now())
   decidedAt            DateTime?
   notes                String?
   requestedByUserId    String
@@ -2134,22 +2146,22 @@ enum PaymentStatus {
  * Bill.totalAmount. Invariant: allocatedMinor + refundedMinor <= amountMinor.
  */
 model Payment {
-  id               String        @id @default(cuid())
+  id               String         @id @default(cuid())
   billingAccount   BillingAccount @relation(fields: [billingAccountId], references: [id])
   billingAccountId String
-  patient          Patient       @relation(fields: [patientId], references: [id])
+  patient          Patient        @relation(fields: [patientId], references: [id])
   patientId        String
-  facility         Facility      @relation(fields: [facilityId], references: [id])
+  facility         Facility       @relation(fields: [facilityId], references: [id])
   facilityId       String
   amountMinor      Int // immutable — total received
-  allocatedMinor   Int           @default(0)
-  refundedMinor    Int           @default(0)
-  currency         String        @default("INR")
+  allocatedMinor   Int            @default(0)
+  refundedMinor    Int            @default(0)
+  currency         String         @default("INR")
   method           PaymentMethod
-  status           PaymentStatus @default(RECEIVED)
-  idempotencyKey   String        @unique
+  status           PaymentStatus  @default(RECEIVED)
+  idempotencyKey   String         @unique
   referenceNo      String?
-  receivedAt       DateTime      @default(now())
+  receivedAt       DateTime       @default(now())
   receivedByUserId String
   voidedAt         DateTime?
   voidedByUserId   String?
@@ -2162,7 +2174,9 @@ model Payment {
   @@index([facilityId, receivedAt])
 }
 
-/** Append-only — never edited or deleted. Correcting a mis-allocation means voiding the payment or issuing a FinancialAdjustment, never mutating an allocation row. */
+/**
+ * Append-only — never edited or deleted. Correcting a mis-allocation means voiding the payment or issuing a FinancialAdjustment, never mutating an allocation row.
+ */
 model PaymentAllocation {
   id                String   @id @default(cuid())
   payment           Payment  @relation(fields: [paymentId], references: [id])
@@ -2801,7 +2815,9 @@ model SlaPolicy {
 // plain string, matching the existing Vital/IntakeOutputRecord convention.
 // ─────────────────────────────────────────────────────────────────────────
 
-/** ICU unit type — extensible; free-string not used since these are a small closed operational set. */
+/**
+ * ICU unit type — extensible; free-string not used since these are a small closed operational set.
+ */
 enum IcuType {
   MICU
   SICU
@@ -2951,19 +2967,21 @@ enum AnesthesiaType {
   OTHER
 }
 
-/** Configurable procedure catalog (not a hardcoded taxonomy). */
+/**
+ * Configurable procedure catalog (not a hardcoded taxonomy).
+ */
 model Procedure {
-  id                     String    @id @default(cuid())
-  facility               Facility  @relation(fields: [facilityId], references: [id])
+  id                     String   @id @default(cuid())
+  facility               Facility @relation(fields: [facilityId], references: [id])
   facilityId             String
   code                   String
   name                   String
   description            String?
   specialty              String?
   typicalDurationMinutes Int?
-  active                 Boolean   @default(true)
-  createdAt              DateTime  @default(now())
-  updatedAt              DateTime  @updatedAt
+  active                 Boolean  @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 
   surgeries Surgery[]
 
@@ -2971,18 +2989,20 @@ model Procedure {
   @@index([facilityId])
 }
 
-/** Operating theatre configuration + explicitly-declared capabilities (resource matching only, no clinical inference). */
+/**
+ * Operating theatre configuration + explicitly-declared capabilities (resource matching only, no clinical inference).
+ */
 model OperatingTheatre {
-  id            String   @id @default(cuid())
-  facility      Facility @relation(fields: [facilityId], references: [id])
-  facilityId    String
-  departmentId  String?
-  name          String
-  type          String? // "GENERAL" | "ORTHOPEDIC" | "CARDIAC" | "NEURO" | "OBSTETRIC" | ... (free-string, extensible)
-  active        Boolean  @default(true)
-  capabilities  Json? // explicitly-configured capability tags, e.g. { imaging: true, laminarFlow: true }
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id           String   @id @default(cuid())
+  facility     Facility @relation(fields: [facilityId], references: [id])
+  facilityId   String
+  departmentId String?
+  name         String
+  type         String? // "GENERAL" | "ORTHOPEDIC" | "CARDIAC" | "NEURO" | "OBSTETRIC" | ... (free-string, extensible)
+  active       Boolean  @default(true)
+  capabilities Json? // explicitly-configured capability tags, e.g. { imaging: true, laminarFlow: true }
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   schedules SurgerySchedule[]
 
@@ -2991,59 +3011,59 @@ model OperatingTheatre {
 }
 
 model Surgery {
-  id                  String        @id @default(cuid())
-  facility            Facility      @relation(fields: [facilityId], references: [id])
-  facilityId          String
-  patient             Patient       @relation(fields: [patientId], references: [id])
-  patientId           String
-  encounter           Encounter     @relation(fields: [encounterId], references: [id])
-  encounterId         String
-  procedure           Procedure?    @relation(fields: [procedureId], references: [id])
-  procedureId         String?
-  procedureName       String // denormalized at request time so history is stable even if the catalog entry changes
-  indication          String?
-  laterality          String? // "LEFT" | "RIGHT" | "BILATERAL" | "NA"
-  urgency             String        @default("ELECTIVE") // "ELECTIVE" | "URGENT" | "EMERGENCY"
-  status              SurgeryStatus @default(REQUESTED)
-  requestedByStaffId  String
-  requestedDate       DateTime?
-  reviewedByStaffId   String?
-  reviewedAt          DateTime?
-  approvedByStaffId   String?
-  approvedAt          DateTime?
-  cancelledReason     String?
-  cancelledAt         DateTime?
+  id                 String        @id @default(cuid())
+  facility           Facility      @relation(fields: [facilityId], references: [id])
+  facilityId         String
+  patient            Patient       @relation(fields: [patientId], references: [id])
+  patientId          String
+  encounter          Encounter     @relation(fields: [encounterId], references: [id])
+  encounterId        String
+  procedure          Procedure?    @relation(fields: [procedureId], references: [id])
+  procedureId        String?
+  procedureName      String // denormalized at request time so history is stable even if the catalog entry changes
+  indication         String?
+  laterality         String? // "LEFT" | "RIGHT" | "BILATERAL" | "NA"
+  urgency            String        @default("ELECTIVE") // "ELECTIVE" | "URGENT" | "EMERGENCY"
+  status             SurgeryStatus @default(REQUESTED)
+  requestedByStaffId String
+  requestedDate      DateTime?
+  reviewedByStaffId  String?
+  reviewedAt         DateTime?
+  approvedByStaffId  String?
+  approvedAt         DateTime?
+  cancelledReason    String?
+  cancelledAt        DateTime?
 
   // Pre-op workflow (documentation, not a medical-fitness determination).
-  consentStatus       String? // "PENDING" | "OBTAINED" | "REFUSED" | "NA"
-  consentAt           DateTime?
-  consentByStaffId    String?
-  consentDocumentId   String?
-  preOpReady          Boolean       @default(false)
-  preOpNotes          String?
+  consentStatus     String? // "PENDING" | "OBTAINED" | "REFUSED" | "NA"
+  consentAt         DateTime?
+  consentByStaffId  String?
+  consentDocumentId String?
+  preOpReady        Boolean   @default(false)
+  preOpNotes        String?
 
   // Procedure execution.
-  actualStart         DateTime?
-  actualEnd           DateTime?
-  surgeonStaffId      String?
-  operativeFindings   String?
-  operativeDetails    String?
-  complications       String?
+  actualStart          DateTime?
+  actualEnd            DateTime?
+  surgeonStaffId       String?
+  operativeFindings    String?
+  operativeDetails     String?
+  complications        String?
   estimatedBloodLossMl Int?
-  recoveryDestination String? // "PACU" | "ICU" | "WARD"
-  operativeNoteId     String?
+  recoveryDestination  String? // "PACU" | "ICU" | "WARD"
+  operativeNoteId      String?
 
-  notes               String?
-  createdAt           DateTime      @default(now())
-  updatedAt           DateTime      @updatedAt
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  schedule    SurgerySchedule?
-  team        SurgeryTeamMember[]
-  checklist   SurgeryChecklistItem[]
-  anesthesia  AnesthesiaRecord?
-  specimens   SurgicalSpecimen[]
-  itemUsages  SurgeryItemUsage[]
-  recovery    RecoveryRecord?
+  schedule   SurgerySchedule?
+  team       SurgeryTeamMember[]
+  checklist  SurgeryChecklistItem[]
+  anesthesia AnesthesiaRecord?
+  specimens  SurgicalSpecimen[]
+  itemUsages SurgeryItemUsage[]
+  recovery   RecoveryRecord?
 
   @@index([facilityId])
   @@index([patientId])
@@ -3059,19 +3079,19 @@ model Surgery {
  * scheduled at most once at a time).
  */
 model SurgerySchedule {
-  id               String           @id @default(cuid())
-  surgery          Surgery          @relation(fields: [surgeryId], references: [id])
-  surgeryId        String           @unique
-  operatingTheatre OperatingTheatre @relation(fields: [operatingTheatreId], references: [id])
+  id                 String           @id @default(cuid())
+  surgery            Surgery          @relation(fields: [surgeryId], references: [id])
+  surgeryId          String           @unique
+  operatingTheatre   OperatingTheatre @relation(fields: [operatingTheatreId], references: [id])
   operatingTheatreId String
-  facilityId       String
-  startAt          DateTime
-  endAt            DateTime
-  status           String           @default("SCHEDULED") // "SCHEDULED" | "CANCELLED"
-  schedulerStaffId String
-  notes            String?
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
+  facilityId         String
+  startAt            DateTime
+  endAt              DateTime
+  status             String           @default("SCHEDULED") // "SCHEDULED" | "CANCELLED"
+  schedulerStaffId   String
+  notes              String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
 
   @@index([operatingTheatreId, startAt])
   @@index([facilityId])
@@ -3089,17 +3109,19 @@ model SurgeryTeamMember {
   @@index([surgeryId])
 }
 
-/** WHO-style surgical safety checklist items, grouped by phase. Configurable label set seeded per surgery on demand. */
+/**
+ * WHO-style surgical safety checklist items, grouped by phase. Configurable label set seeded per surgery on demand.
+ */
 model SurgeryChecklistItem {
-  id             String    @id @default(cuid())
-  surgery        Surgery   @relation(fields: [surgeryId], references: [id])
-  surgeryId      String
-  phase          String // "BEFORE_INDUCTION" | "BEFORE_INCISION" | "BEFORE_LEAVING"
-  itemKey        String
-  label          String
-  checked        Boolean   @default(false)
+  id               String    @id @default(cuid())
+  surgery          Surgery   @relation(fields: [surgeryId], references: [id])
+  surgeryId        String
+  phase            String // "BEFORE_INDUCTION" | "BEFORE_INCISION" | "BEFORE_LEAVING"
+  itemKey          String
+  label            String
+  checked          Boolean   @default(false)
   checkedByStaffId String?
-  checkedAt      DateTime?
+  checkedAt        DateTime?
 
   @@unique([surgeryId, itemKey])
   @@index([surgeryId, phase])
@@ -3127,8 +3149,8 @@ model AnesthesiaRecord {
  * Surgery, never client-supplied.
  */
 model SurgicalSpecimen {
-  id                 String    @id @default(cuid())
-  surgery            Surgery   @relation(fields: [surgeryId], references: [id])
+  id                 String   @id @default(cuid())
+  surgery            Surgery  @relation(fields: [surgeryId], references: [id])
   surgeryId          String
   facilityId         String
   patientId          String
@@ -3137,9 +3159,9 @@ model SurgicalSpecimen {
   site               String?
   label              String?
   destinationLab     String?
-  status             String    @default("COLLECTED") // "COLLECTED" | "SENT" | "RECEIVED"
+  status             String   @default("COLLECTED") // "COLLECTED" | "SENT" | "RECEIVED"
   collectedByStaffId String
-  collectedAt        DateTime  @default(now())
+  collectedAt        DateTime @default(now())
   notes              String?
 
   @@index([surgeryId])
@@ -3153,8 +3175,8 @@ model SurgicalSpecimen {
  * second stock ledger.
  */
 model SurgeryItemUsage {
-  id                String   @id @default(cuid())
-  surgery           Surgery  @relation(fields: [surgeryId], references: [id])
+  id                String    @id @default(cuid())
+  surgery           Surgery   @relation(fields: [surgeryId], references: [id])
   surgeryId         String
   facilityId        String
   patientId         String
@@ -3166,10 +3188,10 @@ model SurgeryItemUsage {
   serialNumber      String?
   site              String?
   quantity          Float
-  stockConsumed     Boolean  @default(false)
+  stockConsumed     Boolean   @default(false)
   implantedAt       DateTime?
   recordedByStaffId String
-  createdAt         DateTime @default(now())
+  createdAt         DateTime  @default(now())
 
   @@index([surgeryId])
   @@index([patientId])
@@ -3177,19 +3199,19 @@ model SurgeryItemUsage {
 }
 
 model RecoveryRecord {
-  id                  String    @id @default(cuid())
-  surgery             Surgery   @relation(fields: [surgeryId], references: [id])
-  surgeryId           String    @unique
-  destination         String? // "PACU" | "ICU" | "WARD"
-  status              String    @default("PENDING") // "PENDING" | "IN_RECOVERY" | "READY_FOR_TRANSFER" | "TRANSFERRED"
-  arrivalAt           DateTime?
-  departureAt         DateTime?
-  responsibleStaffId  String?
-  nurseStaffId        String?
-  handoffId           String?
-  notes               String?
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  id                 String    @id @default(cuid())
+  surgery            Surgery   @relation(fields: [surgeryId], references: [id])
+  surgeryId          String    @unique
+  destination        String? // "PACU" | "ICU" | "WARD"
+  status             String    @default("PENDING") // "PENDING" | "IN_RECOVERY" | "READY_FOR_TRANSFER" | "TRANSFERRED"
+  arrivalAt          DateTime?
+  departureAt        DateTime?
+  responsibleStaffId String?
+  nurseStaffId       String?
+  handoffId          String?
+  notes              String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -3850,18 +3872,18 @@ enum GoodsReceiptStatus {
  * NOT duplicated here — see MedicationItemLink for the mapping.
  */
 model Item {
-  id         String       @id @default(cuid())
-  facility   Facility?    @relation(fields: [facilityId], references: [id])
-  facilityId String?
-  sku        String       @unique
-  name       String
+  id          String        @id @default(cuid())
+  facility    Facility?     @relation(fields: [facilityId], references: [id])
+  facilityId  String?
+  sku         String        @unique
+  name        String
   description String?
-  category   ItemCategory
-  baseUnit   UnitOfMeasure
-  active     Boolean      @default(true)
-  trackLots   Boolean     @default(true)
-  trackExpiry Boolean     @default(true)
-  trackSerial Boolean     @default(false) // foundation flag only — no serial-number model this phase
+  category    ItemCategory
+  baseUnit    UnitOfMeasure
+  active      Boolean       @default(true)
+  trackLots   Boolean       @default(true)
+  trackExpiry Boolean       @default(true)
+  trackSerial Boolean       @default(false) // foundation flag only — no serial-number model this phase
 
   reorderMinLevel     Float?
   reorderMaxLevel     Float?
@@ -3886,12 +3908,15 @@ model Item {
   requisitionLines   PurchaseRequisitionLine[]
   purchaseOrderLines PurchaseOrderLine[]
   goodsReceiptLines  GoodsReceiptLine[]
+  bloodProducts      BloodProduct[] // Phase B4 — optional blood-product bridge into the item master
 
   @@index([facilityId])
   @@index([category])
 }
 
-/** Item-scoped unit conversion — "N base units per 1 of this unit" (e.g. 1 BOX = 100 TABLET). Never crosses incompatible dimensions (see inventory/units.ts). */
+/**
+ * Item-scoped unit conversion — "N base units per 1 of this unit" (e.g. 1 BOX = 100 TABLET). Never crosses incompatible dimensions (see inventory/units.ts).
+ */
 model ItemUnitConversion {
   id               String        @id @default(cuid())
   item             Item          @relation(fields: [itemId], references: [id])
@@ -3922,7 +3947,9 @@ model MedicationItemLink {
   @@unique([facilityId, drugNameKey])
 }
 
-/** Facility -> Store/Warehouse -> Bin hierarchy. A stock balance never exists without a meaningful location. */
+/**
+ * Facility -> Store/Warehouse -> Bin hierarchy. A stock balance never exists without a meaningful location.
+ */
 model StockLocation {
   id               String         @id @default(cuid())
   facility         Facility       @relation(fields: [facilityId], references: [id])
@@ -3934,16 +3961,17 @@ model StockLocation {
   active           Boolean        @default(true)
   createdAt        DateTime       @default(now())
 
-  children           StockLocation[]     @relation("LocationHierarchy")
+  children           StockLocation[]    @relation("LocationHierarchy")
   stockBalances      StockBalance[]
   stockLedgerEntries StockLedgerEntry[]
   stockReservations  StockReservation[]
-  transfersFrom      StockTransfer[]     @relation("TransferFrom")
-  transfersTo        StockTransfer[]     @relation("TransferTo")
+  transfersFrom      StockTransfer[]    @relation("TransferFrom")
+  transfersTo        StockTransfer[]    @relation("TransferTo")
   stockAdjustments   StockAdjustment[]
   wasteRecords       WasteRecord[]
   stockTakes         StockTake[]
   goodsReceiptLines  GoodsReceiptLine[]
+  bloodUnits         BloodUnit[] // Phase B4 — current physical location of a serialized blood unit
 
   @@unique([facilityId, name])
   @@index([facilityId, active])
@@ -3981,6 +4009,7 @@ model ItemLot {
   stockAdjustments   StockAdjustment[]
   wasteRecords       WasteRecord[]
   stockTakeLines     StockTakeLine[]
+  bloodUnits         BloodUnit[] // Phase B4 — serialized blood units carry a canonical lot for batch/recall traceability
 
   @@unique([itemId, facilityId, lotNumber])
   @@index([facilityId, status])
@@ -4014,8 +4043,8 @@ model StockLedgerEntry {
   // RECEIPT/ISSUE/WASTE/ADJUSTMENT/TRANSFER move onHandDelta; RESERVATION/
   // RELEASE move only reservedDelta; an issue that consumes a prior
   // reservation moves both in the same entry.
-  onHandDelta   Float @default(0)
-  reservedDelta Float @default(0)
+  onHandDelta   Float         @default(0)
+  reservedDelta Float         @default(0)
   unit          UnitOfMeasure // denormalized item.baseUnit at post time
 
   wasteReason      WasteReason?
@@ -4070,119 +4099,129 @@ model StockBalance {
   @@index([facilityId, locationId])
 }
 
-/** Reserves stock ahead of consumption (future OT/ICU/procedure/pharmacy/blood-product use) — reduces AVAILABLE, never onHand, until consumed or released. */
+/**
+ * Reserves stock ahead of consumption (future OT/ICU/procedure/pharmacy/blood-product use) — reduces AVAILABLE, never onHand, until consumed or released.
+ */
 model StockReservation {
-  id              String                 @id @default(cuid())
-  facility        Facility               @relation(fields: [facilityId], references: [id])
-  facilityId      String
-  item            Item                   @relation(fields: [itemId], references: [id])
-  itemId          String
-  lot             ItemLot                @relation(fields: [lotId], references: [id]) // FEFO-selected at reservation time
-  lotId           String
-  location        StockLocation          @relation(fields: [locationId], references: [id])
-  locationId      String
-  quantity        Float
-  status          StockReservationStatus @default(ACTIVE)
-  reservedForType String?
-  reservedForId   String?
-  patientId       String?
-  encounterId     String?
+  id                 String                 @id @default(cuid())
+  facility           Facility               @relation(fields: [facilityId], references: [id])
+  facilityId         String
+  item               Item                   @relation(fields: [itemId], references: [id])
+  itemId             String
+  lot                ItemLot                @relation(fields: [lotId], references: [id]) // FEFO-selected at reservation time
+  lotId              String
+  location           StockLocation          @relation(fields: [locationId], references: [id])
+  locationId         String
+  quantity           Float
+  status             StockReservationStatus @default(ACTIVE)
+  reservedForType    String?
+  reservedForId      String?
+  patientId          String?
+  encounterId        String?
   requestedByStaffId String
-  expiresAt        DateTime? // staff-observed only, never auto-transitioned — no cron in this codebase
-  releasedAt       DateTime?
-  releasedByUserId String?
-  idempotencyKey   String   @unique
-  createdAt        DateTime  @default(now())
+  expiresAt          DateTime? // staff-observed only, never auto-transitioned — no cron in this codebase
+  releasedAt         DateTime?
+  releasedByUserId   String?
+  idempotencyKey     String                 @unique
+  createdAt          DateTime               @default(now())
 
   @@index([facilityId, itemId, lotId, locationId])
   @@index([status])
 }
 
-/** Location-to-location stock move, same facility only this phase. */
+/**
+ * Location-to-location stock move, same facility only this phase.
+ */
 model StockTransfer {
-  id             String              @id @default(cuid())
-  facility       Facility            @relation(fields: [facilityId], references: [id])
-  facilityId     String
-  item           Item                @relation(fields: [itemId], references: [id])
-  itemId         String
-  lot            ItemLot             @relation(fields: [lotId], references: [id])
-  lotId          String
-  fromLocation   StockLocation       @relation("TransferFrom", fields: [fromLocationId], references: [id])
-  fromLocationId String
-  toLocation     StockLocation       @relation("TransferTo", fields: [toLocationId], references: [id])
-  toLocationId   String
-  quantity       Float
-  status         StockTransferStatus @default(DRAFT)
-  reason         String?
+  id                 String              @id @default(cuid())
+  facility           Facility            @relation(fields: [facilityId], references: [id])
+  facilityId         String
+  item               Item                @relation(fields: [itemId], references: [id])
+  itemId             String
+  lot                ItemLot             @relation(fields: [lotId], references: [id])
+  lotId              String
+  fromLocation       StockLocation       @relation("TransferFrom", fields: [fromLocationId], references: [id])
+  fromLocationId     String
+  toLocation         StockLocation       @relation("TransferTo", fields: [toLocationId], references: [id])
+  toLocationId       String
+  quantity           Float
+  status             StockTransferStatus @default(DRAFT)
+  reason             String?
   requestedByStaffId String
   initiatedAt        DateTime?
   receivedByStaffId  String?
   receivedAt         DateTime?
   cancelledAt        DateTime?
   cancelledReason    String?
-  idempotencyKey     String         @unique
-  createdAt          DateTime        @default(now())
+  idempotencyKey     String              @unique
+  createdAt          DateTime            @default(now())
 
   @@index([facilityId, status])
 }
 
-/** Controlled quantity correction. Normal-impact posts immediately (POSTED); high-impact is gated behind approval (PENDING_APPROVAL) with a same-actor guard. */
+/**
+ * Controlled quantity correction. Normal-impact posts immediately (POSTED); high-impact is gated behind approval (PENDING_APPROVAL) with a same-actor guard.
+ */
 model StockAdjustment {
-  id             String                @id @default(cuid())
-  facility       Facility              @relation(fields: [facilityId], references: [id])
-  facilityId     String
-  item           Item                  @relation(fields: [itemId], references: [id])
-  itemId         String
-  lot            ItemLot               @relation(fields: [lotId], references: [id])
-  lotId          String
-  location       StockLocation         @relation(fields: [locationId], references: [id])
-  locationId     String
-  quantityDelta  Float // signed
-  reason         AdjustmentReason
-  notes          String?
-  status         StockAdjustmentStatus @default(POSTED)
+  id                 String                @id @default(cuid())
+  facility           Facility              @relation(fields: [facilityId], references: [id])
+  facilityId         String
+  item               Item                  @relation(fields: [itemId], references: [id])
+  itemId             String
+  lot                ItemLot               @relation(fields: [lotId], references: [id])
+  lotId              String
+  location           StockLocation         @relation(fields: [locationId], references: [id])
+  locationId         String
+  quantityDelta      Float // signed
+  reason             AdjustmentReason
+  notes              String?
+  status             StockAdjustmentStatus @default(POSTED)
   requestedByStaffId String
   approvedByStaffId  String?
   approvedAt         DateTime?
   rejectedAt         DateTime?
   rejectionReason    String?
-  sourceType     String? // e.g. "StockTakeLine" when auto-created by a completed stocktake
-  sourceId       String?
-  idempotencyKey String @unique
-  createdAt      DateTime @default(now())
+  sourceType         String? // e.g. "StockTakeLine" when auto-created by a completed stocktake
+  sourceId           String?
+  idempotencyKey     String                @unique
+  createdAt          DateTime              @default(now())
 
   stockTakeLine StockTakeLine?
 
   @@index([facilityId, status])
 }
 
-/** Explicit waste record — its own ledger movement type, never an invisible quantity decrement. */
+/**
+ * Explicit waste record — its own ledger movement type, never an invisible quantity decrement.
+ */
 model WasteRecord {
-  id             String            @id @default(cuid())
-  facility       Facility          @relation(fields: [facilityId], references: [id])
-  facilityId     String
-  item           Item              @relation(fields: [itemId], references: [id])
-  itemId         String
-  lot            ItemLot           @relation(fields: [lotId], references: [id])
-  lotId          String
-  location       StockLocation     @relation(fields: [locationId], references: [id])
-  locationId     String
-  quantity       Float // positive magnitude
-  reason         WasteReason
-  status         WasteRecordStatus @default(POSTED)
-  patientId      String?
-  encounterId    String?
+  id                 String            @id @default(cuid())
+  facility           Facility          @relation(fields: [facilityId], references: [id])
+  facilityId         String
+  item               Item              @relation(fields: [itemId], references: [id])
+  itemId             String
+  lot                ItemLot           @relation(fields: [lotId], references: [id])
+  lotId              String
+  location           StockLocation     @relation(fields: [locationId], references: [id])
+  locationId         String
+  quantity           Float // positive magnitude
+  reason             WasteReason
+  status             WasteRecordStatus @default(POSTED)
+  patientId          String?
+  encounterId        String?
   requestedByStaffId String
   approvedByStaffId  String?
   approvedAt         DateTime?
   notes              String?
-  idempotencyKey     String       @unique
-  createdAt          DateTime      @default(now())
+  idempotencyKey     String            @unique
+  createdAt          DateTime          @default(now())
 
   @@index([facilityId, status])
 }
 
-/** Physical stock count foundation. A variance NEVER silently overwrites systemQuantity — completing the stocktake creates one StockAdjustment per non-zero-variance line. */
+/**
+ * Physical stock count foundation. A variance NEVER silently overwrites systemQuantity — completing the stocktake creates one StockAdjustment per non-zero-variance line.
+ */
 model StockTake {
   id                 String          @id @default(cuid())
   facility           Facility        @relation(fields: [facilityId], references: [id])
@@ -4204,12 +4243,12 @@ model StockTake {
 }
 
 model StockTakeLine {
-  id                    String   @id @default(cuid())
-  stockTake             StockTake @relation(fields: [stockTakeId], references: [id])
+  id                    String           @id @default(cuid())
+  stockTake             StockTake        @relation(fields: [stockTakeId], references: [id])
   stockTakeId           String
-  item                  Item      @relation(fields: [itemId], references: [id])
+  item                  Item             @relation(fields: [itemId], references: [id])
   itemId                String
-  lot                   ItemLot   @relation(fields: [lotId], references: [id])
+  lot                   ItemLot          @relation(fields: [lotId], references: [id])
   lotId                 String
   systemQuantity        Float // snapshotted when the line is added
   countedQuantity       Float?
@@ -4220,7 +4259,9 @@ model StockTakeLine {
   @@unique([stockTakeId, itemId, lotId])
 }
 
-/** Facility ownership, business contact info only — no unnecessary personal data. */
+/**
+ * Facility ownership, business contact info only — no unnecessary personal data.
+ */
 model Supplier {
   id               String   @id @default(cuid())
   facility         Facility @relation(fields: [facilityId], references: [id])
@@ -4241,40 +4282,42 @@ model Supplier {
   @@unique([facilityId, code])
 }
 
-/** Copies billing/sequence.ts's InvoiceSequence idiom exactly, one dedicated table per numbered-document type (established convention — not a generalized shared sequencer). */
+/**
+ * Copies billing/sequence.ts's InvoiceSequence idiom exactly, one dedicated table per numbered-document type (established convention — not a generalized shared sequencer).
+ */
 model PurchaseRequisitionSequence {
-  id         String @id @default(cuid())
+  id         String   @id @default(cuid())
   facility   Facility @relation(fields: [facilityId], references: [id])
   facilityId String
   fiscalYear Int
-  nextValue  Int    @default(1)
+  nextValue  Int      @default(1)
 
   @@unique([facilityId, fiscalYear])
 }
 
 model PurchaseRequisition {
-  id                String              @id @default(cuid())
-  requisitionNumber String?             // assigned atomically at SUBMIT; scoped unique per facility, not globally (see @@unique below) — the sequence counter itself resets per facility+fiscalYear, so the formatted number is only guaranteed unique within one facility
-  facility          Facility            @relation(fields: [facilityId], references: [id])
-  facilityId        String
-  department        Department          @relation(fields: [departmentId], references: [id])
-  departmentId      String
-  requestedByStaffId String
-  status            RequisitionStatus   @default(DRAFT)
-  priority          RequisitionPriority @default(ROUTINE)
-  justification     String
-  requiredByDate    DateTime?
+  id                      String              @id @default(cuid())
+  requisitionNumber       String? // assigned atomically at SUBMIT; scoped unique per facility, not globally (see @@unique below) — the sequence counter itself resets per facility+fiscalYear, so the formatted number is only guaranteed unique within one facility
+  facility                Facility            @relation(fields: [facilityId], references: [id])
+  facilityId              String
+  department              Department          @relation(fields: [departmentId], references: [id])
+  departmentId            String
+  requestedByStaffId      String
+  status                  RequisitionStatus   @default(DRAFT)
+  priority                RequisitionPriority @default(ROUTINE)
+  justification           String
+  requiredByDate          DateTime?
   supersedesRequisitionId String? // a "revision" is cancel + clone into a new DRAFT, never an in-place edit
-  submittedAt       DateTime?
-  approvedAt        DateTime?
-  approvedByStaffId String?
-  rejectedAt        DateTime?
-  rejectedByStaffId String?
-  rejectionReason   String?
-  cancelledAt       DateTime?
-  cancelledReason   String?
-  idempotencyKey    String             @unique
-  createdAt         DateTime            @default(now())
+  submittedAt             DateTime?
+  approvedAt              DateTime?
+  approvedByStaffId       String?
+  rejectedAt              DateTime?
+  rejectedByStaffId       String?
+  rejectionReason         String?
+  cancelledAt             DateTime?
+  cancelledReason         String?
+  idempotencyKey          String              @unique
+  createdAt               DateTime            @default(now())
 
   lines          PurchaseRequisitionLine[]
   purchaseOrders PurchaseOrder[]
@@ -4298,29 +4341,29 @@ model PurchaseRequisitionLine {
 }
 
 model PurchaseOrderSequence {
-  id         String @id @default(cuid())
+  id         String   @id @default(cuid())
   facility   Facility @relation(fields: [facilityId], references: [id])
   facilityId String
   fiscalYear Int
-  nextValue  Int    @default(1)
+  nextValue  Int      @default(1)
 
   @@unique([facilityId, fiscalYear])
 }
 
 model PurchaseOrder {
-  id                   String              @id @default(cuid())
-  orderNumber          String?             // assigned atomically on DRAFT -> PENDING_APPROVAL; scoped unique per facility, not globally (see @@unique below)
-  facility             Facility            @relation(fields: [facilityId], references: [id])
+  id                   String               @id @default(cuid())
+  orderNumber          String? // assigned atomically on DRAFT -> PENDING_APPROVAL; scoped unique per facility, not globally (see @@unique below)
+  facility             Facility             @relation(fields: [facilityId], references: [id])
   facilityId           String
-  supplier             Supplier            @relation(fields: [supplierId], references: [id])
+  supplier             Supplier             @relation(fields: [supplierId], references: [id])
   supplierId           String
   requisition          PurchaseRequisition? @relation(fields: [requisitionId], references: [id])
   requisitionId        String?
-  status               PurchaseOrderStatus @default(DRAFT)
-  currency             String              @default("INR")
-  subtotalMinor        Int                 @default(0)
-  taxMinor             Int                 @default(0)
-  totalMinor           Int                 @default(0) // always server-computed — see procurement/pricing.ts
+  status               PurchaseOrderStatus  @default(DRAFT)
+  currency             String               @default("INR")
+  subtotalMinor        Int                  @default(0)
+  taxMinor             Int                  @default(0)
+  totalMinor           Int                  @default(0) // always server-computed — see procurement/pricing.ts
   expectedDeliveryDate DateTime?
   createdByStaffId     String
   approvedByStaffId    String?
@@ -4329,8 +4372,8 @@ model PurchaseOrder {
   cancelledAt          DateTime?
   cancelledReason      String?
   closedAt             DateTime?
-  idempotencyKey       String             @unique
-  createdAt            DateTime            @default(now())
+  idempotencyKey       String               @unique
+  createdAt            DateTime             @default(now())
 
   lines         PurchaseOrderLine[]
   goodsReceipts GoodsReceipt[]
@@ -4358,19 +4401,21 @@ model PurchaseOrderLine {
 }
 
 model GoodsReceiptSequence {
-  id         String @id @default(cuid())
+  id         String   @id @default(cuid())
   facility   Facility @relation(fields: [facilityId], references: [id])
   facilityId String
   fiscalYear Int
-  nextValue  Int    @default(1)
+  nextValue  Int      @default(1)
 
   @@unique([facilityId, fiscalYear])
 }
 
-/** idempotencyKey is the natural key for "this receiving submission" — NOT purchaseOrderLineId alone, which would wrongly forbid legitimate multiple partial deliveries against the same line. */
+/**
+ * idempotencyKey is the natural key for "this receiving submission" — NOT purchaseOrderLineId alone, which would wrongly forbid legitimate multiple partial deliveries against the same line.
+ */
 model GoodsReceipt {
   id                String             @id @default(cuid())
-  receiptNumber     String?            // scoped unique per facility, not globally (see @@unique below)
+  receiptNumber     String? // scoped unique per facility, not globally (see @@unique below)
   purchaseOrder     PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id])
   purchaseOrderId   String
   facility          Facility           @relation(fields: [facilityId], references: [id])
@@ -4383,7 +4428,7 @@ model GoodsReceipt {
   rejectedByStaffId String?
   rejectedAt        DateTime?
   rejectionReason   String?
-  idempotencyKey    String            @unique
+  idempotencyKey    String             @unique
   notes             String?
 
   lines GoodsReceiptLine[]
@@ -4414,4 +4459,428 @@ model GoodsReceiptLine {
 
   @@index([purchaseOrderLineId])
   @@index([goodsReceiptId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase B4 — Blood Bank & Transfusion Management
+// Composes the canonical Patient/Encounter/ADT/ClinicalNote/Item-ItemLot/
+// AuditEvent systems — no parallel patient/encounter/inventory/audit. Blood
+// units are SERIALIZED (each unit is one discrete, individually-tracked row),
+// so a unit's own status column is the concurrency-control point: a guarded
+// updateMany transition (WHERE id=? AND status=?) is single-winner per unit —
+// the correct model for serialized stock and the reason a dedicated BloodUnit
+// exists rather than forcing serialized units through the fungible quantity-
+// based StockBalance. Canonical inventory is still referenced (BloodProduct.item,
+// BloodUnit.itemLot/location) for batch/recall traceability — NO second stock
+// ledger is created. Child records (compat test, reservation, issue, transfusion,
+// reaction) copy patientId/encounterId/facilityId from the parent request/unit,
+// never from the client (wrong-patient-safe by construction, same pattern as
+// SurgicalSpecimen). HARD SAFETY BOUNDARY: no ABO/Rh compatibility algorithm,
+// no antibody-screen/crossmatch interpretation, no severity/reaction inference,
+// no dosing/threshold logic — the app records explicit lab/authorized results
+// and enforces configured workflow states only.
+// ─────────────────────────────────────────────────────────────────────────
+
+enum AboGroup {
+  A
+  B
+  AB
+  O
+}
+
+enum RhStatus {
+  POSITIVE
+  NEGATIVE
+}
+
+enum BloodUnitStatus {
+  AVAILABLE
+  RESERVED
+  ISSUED
+  IN_TRANSIT
+  TRANSFUSING
+  TRANSFUSED
+  RETURNED
+  WASTED
+  QUARANTINED
+  EXPIRED
+  DISCARDED
+}
+
+enum BloodRequestStatus {
+  REQUESTED
+  REVIEWED
+  APPROVED
+  COMPATIBILITY_PENDING
+  READY
+  ISSUED
+  COMPLETED
+  CANCELLED
+  REJECTED
+}
+
+enum BloodRequestPriority {
+  ROUTINE
+  URGENT
+  EMERGENCY
+}
+
+enum BloodCompatibilityStatus {
+  PENDING
+  IN_PROGRESS
+  COMPATIBLE
+  INCOMPATIBLE
+  CANCELLED
+}
+
+enum BloodReservationStatus {
+  ACTIVE
+  RELEASED
+  CONSUMED
+}
+
+enum TransfusionStatus {
+  RECEIVED
+  IN_PROGRESS
+  PAUSED
+  COMPLETED
+  STOPPED
+}
+
+enum TransfusionReactionStatus {
+  REPORTED
+  UNDER_REVIEW
+  ESCALATED
+  RESOLVED
+}
+
+/**
+ * Configurable blood-product master (not a hardcoded global taxonomy). Optionally bridges to the canonical Item catalog for inventory integration.
+ */
+model BloodProduct {
+  id                     String   @id @default(cuid())
+  facility               Facility @relation(fields: [facilityId], references: [id])
+  facilityId             String
+  code                   String
+  name                   String
+  componentType          String // configurable: "WHOLE_BLOOD" | "PRBC" | "FFP" | "PLATELETS" | "CRYOPRECIPITATE" | ... (extensible)
+  defaultUnitDescription String?
+  storageRequirement     String? // free-text configurable label; no invented temperature/shelf-life rule
+  active                 Boolean  @default(true)
+  item                   Item?    @relation(fields: [itemId], references: [id])
+  itemId                 String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  units    BloodUnit[]
+  requests BloodRequest[]
+
+  @@unique([facilityId, code])
+  @@index([facilityId])
+}
+
+/**
+ * An individual, serialized blood unit — the authoritative inventory record for
+ * that physical unit. `status` is the concurrency-control point (guarded
+ * updateMany). Blood group is only ever an explicitly-recorded/authorized value,
+ * never inferred. New units default to QUARANTINED (testing pending) and must be
+ * explicitly released to AVAILABLE.
+ */
+model BloodUnit {
+  id                  String          @id @default(cuid())
+  facility            Facility        @relation(fields: [facilityId], references: [id])
+  facilityId          String
+  product             BloodProduct    @relation(fields: [productId], references: [id])
+  productId           String
+  unitNumber          String // unique traceable identifier within the facility
+  aboGroup            AboGroup? // explicit recorded result, never inferred from demographics
+  rhStatus            RhStatus?
+  bloodGroupStatus    String          @default("PENDING") // "PENDING" | "CONFIRMED" — set only from an authorized typing record
+  collectedAt         DateTime?
+  expiresAt           DateTime? // null = unknown; enforced server-side when present
+  status              BloodUnitStatus @default(QUARANTINED)
+  itemLot             ItemLot?        @relation(fields: [itemLotId], references: [id]) // canonical batch/recall traceability
+  itemLotId           String?
+  location            StockLocation?  @relation(fields: [locationId], references: [id])
+  locationId          String?
+  donorReference      String? // minimal source reference — NOT a donor CRM
+  sourceOrganization  String?
+  collectionEventRef  String?
+  quarantineReason    String?
+  recalled            Boolean         @default(false)
+  recallReason        String?
+  notes               String?
+  registeredByStaffId String
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  typingRecords      BloodTypingRecord[]
+  compatibilityTests BloodCompatibilityTest[]
+  reservations       BloodReservation[]
+  issues             BloodIssue[]
+  transfusions       Transfusion[]
+  reactions          TransfusionReaction[]
+
+  @@unique([facilityId, unitNumber])
+  @@index([facilityId, status])
+  @@index([productId])
+  @@index([expiresAt])
+}
+
+/**
+ * Blood typing / type-&-screen record. References EITHER a patient (recipient
+ * type & screen) or a unit (donor unit typing) — never invents a group. Result
+ * fields hold explicitly-provided lab values; interpretation is out of scope.
+ */
+model BloodTypingRecord {
+  id                 String     @id @default(cuid())
+  facilityId         String
+  patientId          String? // recipient typing (from a specimen), plain FK — no parallel patient record
+  encounterId        String?
+  unit               BloodUnit? @relation(fields: [unitId], references: [id])
+  unitId             String?
+  aboGroup           AboGroup?
+  rhStatus           RhStatus?
+  antibodyScreen     String? // explicitly-provided result text, not interpreted
+  specimenRef        String?
+  status             String     @default("PENDING") // "PENDING" | "RESULTED" | "VERIFIED"
+  performedByStaffId String?
+  verifiedByStaffId  String?
+  verifiedAt         DateTime?
+  notes              String?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  @@index([facilityId])
+  @@index([patientId])
+  @@index([unitId])
+}
+
+/**
+ * Transfusion / blood request. Real Patient/Encounter/Facility relations (like Surgery); children derive identity from here.
+ */
+model BloodRequest {
+  id                           String               @id @default(cuid())
+  facility                     Facility             @relation(fields: [facilityId], references: [id])
+  facilityId                   String
+  patient                      Patient              @relation(fields: [patientId], references: [id])
+  patientId                    String
+  encounter                    Encounter            @relation(fields: [encounterId], references: [id])
+  encounterId                  String
+  product                      BloodProduct?        @relation(fields: [productId], references: [id])
+  productId                    String?
+  productName                  String // denormalized at request time so history is stable
+  quantity                     Int                  @default(1)
+  priority                     BloodRequestPriority @default(ROUTINE)
+  indication                   String?
+  status                       BloodRequestStatus   @default(REQUESTED)
+  requestedByStaffId           String
+  requestedAt                  DateTime             @default(now())
+  requiredBy                   DateTime?
+  reviewedByStaffId            String?
+  reviewedAt                   DateTime?
+  approvedByStaffId            String?
+  approvedAt                   DateTime?
+  cancelledReason              String?
+  cancelledAt                  DateTime?
+  // Emergency release (explicit authorized action; no invented universal-donor or emergency-compatibility policy).
+  emergencyRelease             Boolean              @default(false)
+  emergencyReason              String?
+  emergencyAuthorizedByStaffId String?
+  emergencyAuthorizedAt        DateTime?
+  surgeryId                    String? // OT integration (a surgery may request blood) — plain FK, no B3 model churn
+  notes                        String?
+  createdAt                    DateTime             @default(now())
+  updatedAt                    DateTime             @updatedAt
+
+  compatibilityTests BloodCompatibilityTest[]
+  reservations       BloodReservation[]
+  issues             BloodIssue[]
+  transfusions       Transfusion[]
+
+  @@index([facilityId, status])
+  @@index([patientId])
+  @@index([encounterId])
+  @@index([surgeryId])
+}
+
+/**
+ * Compatibility testing (type & screen / crossmatch). Records explicitly-entered
+ * laboratory results + authorized verification — NEVER computes ABO/Rh
+ * compatibility. A unit is issued only after a COMPATIBLE, verified result
+ * (or an explicit emergency release), never on raw ABO equality.
+ */
+model BloodCompatibilityTest {
+  id                String                   @id @default(cuid())
+  facilityId        String
+  request           BloodRequest             @relation(fields: [requestId], references: [id])
+  requestId         String
+  patientId         String // derived from request
+  encounterId       String // derived from request
+  unit              BloodUnit?               @relation(fields: [unitId], references: [id])
+  unitId            String?
+  testType          String                   @default("CROSSMATCH") // "TYPE_AND_SCREEN" | "CROSSMATCH"
+  aboResult         AboGroup?
+  rhResult          RhStatus?
+  antibodyScreen    String? // explicitly-provided result text
+  crossmatchResult  String? // explicitly-recorded lab result label, not computed
+  status            BloodCompatibilityStatus @default(PENDING)
+  testedByStaffId   String?
+  verifiedByStaffId String?
+  verifiedAt        DateTime?
+  notes             String?
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+
+  @@index([facilityId])
+  @@index([requestId])
+  @@index([unitId])
+}
+
+/**
+ * Reservation of a specific unit for a request. The unit's AVAILABLE->RESERVED status guard is the actual double-reservation race barrier; this row records the linkage/history.
+ */
+model BloodReservation {
+  id                String                 @id @default(cuid())
+  facilityId        String
+  unit              BloodUnit              @relation(fields: [unitId], references: [id])
+  unitId            String
+  request           BloodRequest           @relation(fields: [requestId], references: [id])
+  requestId         String
+  patientId         String // derived from request
+  encounterId       String // derived from request
+  status            BloodReservationStatus @default(ACTIVE)
+  reservedByStaffId String
+  expiresAt         DateTime?
+  releasedAt        DateTime?
+  releasedReason    String?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  @@index([facilityId])
+  @@index([unitId])
+  @@index([requestId])
+  @@index([patientId])
+}
+
+/**
+ * Issue of a unit from the blood bank to a clinical area, incl. transport/receipt handoff.
+ */
+model BloodIssue {
+  id                  String       @id @default(cuid())
+  facilityId          String
+  unit                BloodUnit    @relation(fields: [unitId], references: [id])
+  unitId              String
+  request             BloodRequest @relation(fields: [requestId], references: [id])
+  requestId           String
+  patientId           String // derived
+  encounterId         String // derived
+  compatibilityTestId String? // verification link
+  emergencyRelease    Boolean      @default(false)
+  status              String       @default("ISSUED") // "ISSUED" | "IN_TRANSIT" | "RECEIVED" | "RETURNED"
+  issuedByStaffId     String
+  issueLocation       String?
+  recipientLocation   String?
+  dispatchedByStaffId String?
+  dispatchedAt        DateTime?
+  receivedByStaffId   String?
+  receivedAt          DateTime?
+  returnedReason      String?
+  returnedAt          DateTime?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  @@index([facilityId])
+  @@index([unitId])
+  @@index([requestId])
+  @@index([patientId])
+}
+
+/**
+ * Bedside transfusion record. Structured bedside verification is documentation support, not a replacement for institutional bedside policy. Issue != transfusion.
+ */
+model Transfusion {
+  id                      String            @id @default(cuid())
+  facility                Facility          @relation(fields: [facilityId], references: [id])
+  facilityId              String
+  request                 BloodRequest      @relation(fields: [requestId], references: [id])
+  requestId               String
+  unit                    BloodUnit         @relation(fields: [unitId], references: [id])
+  unitId                  String
+  patientId               String // derived
+  encounterId             String // derived
+  productName             String // derived from the unit's product
+  status                  TransfusionStatus @default(RECEIVED)
+  administeredByStaffId   String?
+  patientIdentityVerified Boolean           @default(false)
+  unitIdentityVerified    Boolean           @default(false)
+  productVerified         Boolean           @default(false)
+  bloodGroupReviewed      Boolean           @default(false)
+  compatibilityReviewed   Boolean           @default(false)
+  expiryReviewed          Boolean           @default(false)
+  secondCheckStaffId      String?
+  verifiedAt              DateTime?
+  startedAt               DateTime?
+  pausedAt                DateTime?
+  endedAt                 DateTime?
+  stoppedReason           String?
+  notes                   String?
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @updatedAt
+
+  observations TransfusionObservation[]
+  reactions    TransfusionReaction[]
+
+  @@index([facilityId, status])
+  @@index([requestId])
+  @@index([unitId])
+  @@index([patientId])
+}
+
+/**
+ * Transfusion-specific observation. Canonical Vital is reused for true vitals; this captures observations tied to the transfusion timeline.
+ */
+model TransfusionObservation {
+  id                String      @id @default(cuid())
+  transfusion       Transfusion @relation(fields: [transfusionId], references: [id])
+  transfusionId     String
+  observationType   String // "TEMPERATURE" | "PULSE" | "BP" | "RR" | "SPO2" | "NOTE" | ... (free-string)
+  value             String
+  recordedByStaffId String
+  recordedAt        DateTime    @default(now())
+
+  @@index([transfusionId])
+}
+
+/**
+ * Transfusion reaction / incident — a RECORDING workflow only. Symptoms and
+ * action-taken are documented as entered; the system never diagnoses the
+ * reaction, infers severity, or recommends treatment. Reporting a reaction
+ * quarantines the associated unit (never returns it to available inventory).
+ */
+model TransfusionReaction {
+  id                String                    @id @default(cuid())
+  facilityId        String
+  transfusion       Transfusion               @relation(fields: [transfusionId], references: [id])
+  transfusionId     String
+  unit              BloodUnit                 @relation(fields: [unitId], references: [id])
+  unitId            String
+  patientId         String // derived
+  encounterId       String // derived
+  status            TransfusionReactionStatus @default(REPORTED)
+  reportedByStaffId String
+  reportedAt        DateTime                  @default(now())
+  symptoms          String? // as documented — never auto-diagnosed
+  actionTaken       String? // as documented — no treatment recommendation
+  escalationRef     String?
+  resolvedByStaffId String?
+  resolvedAt        DateTime?
+  notes             String?
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+
+  @@index([facilityId])
+  @@index([transfusionId])
+  @@index([unitId])
+  @@index([patientId])
 }

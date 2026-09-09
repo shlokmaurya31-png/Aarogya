@@ -218,6 +218,26 @@ export const PERMISSIONS = [
   "ot:implant:record",
   "ot:specimen:record",
   "ot:recovery:manage",
+
+  // Phase B4 — Blood Bank & Transfusion Management. Config (products/units/
+  // inventory disposition) is HOSPITAL_ADMIN; blood typing/crossmatch is the
+  // LAB_TECHNICIAN's authorized lab workflow; request/clinical review is
+  // DOCTOR; bedside verification/transfusion/observation/reaction reporting is
+  // NURSE. See role grants below for the least-privilege split.
+  "blood:configuration:manage",
+  "blood:unit:manage",
+  "blood:inventory:manage",
+  "blood:typing:record",
+  "blood:compatibility:record",
+  "blood:compatibility:verify",
+  "blood:request:create",
+  "blood:request:review",
+  "blood:reservation:manage",
+  "blood:issue",
+  "blood:transport:manage",
+  "blood:transfusion:record",
+  "blood:reaction:record",
+  "blood:reaction:manage",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -300,6 +320,13 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "ot:implant:record",
     "ot:specimen:record",
     "ot:recovery:manage",
+    // Phase B4 — request blood, clinical review/authorization (incl. emergency
+    // release), bedside transfusion oversight, reaction reporting + management.
+    "blood:request:create",
+    "blood:request:review",
+    "blood:transfusion:record",
+    "blood:reaction:record",
+    "blood:reaction:manage",
   ],
   NURSE: [
     "hospital:command-center:view",
@@ -343,6 +370,11 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "ot:specimen:record",
     "ot:implant:record",
     "ot:recovery:manage",
+    // Phase B4 — bedside receipt, bedside verification + transfusion recording,
+    // observations, and reaction REPORTING (not reaction management/follow-up).
+    "blood:transport:manage",
+    "blood:transfusion:record",
+    "blood:reaction:record",
   ],
   LAB_TECHNICIAN: [
     "hospital:command-center:view",
@@ -363,6 +395,16 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "inventory:stock:issue",
     "inventory:stock:waste",
     "procurement:requisition:create",
+    // Phase B4 — the blood-bank operator: authorized typing/crossmatch +
+    // recording/verifying results, and physical unit custody (register/release/
+    // quarantine/waste), reservation, issue, and dispatch.
+    "blood:typing:record",
+    "blood:compatibility:record",
+    "blood:compatibility:verify",
+    "blood:unit:manage",
+    "blood:reservation:manage",
+    "blood:issue",
+    "blood:transport:manage",
   ],
   RADIOLOGY_TECH: [
     "hospital:command-center:view",
@@ -458,6 +500,15 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "ot:theatre:manage",
     "ot:procedure:review",
     "ot:procedure:schedule",
+    // Phase B4 — blood-bank configuration + operational management.
+    "blood:configuration:manage",
+    "blood:unit:manage",
+    "blood:inventory:manage",
+    "blood:request:review",
+    "blood:reservation:manage",
+    "blood:issue",
+    "blood:transport:manage",
+    "blood:reaction:manage",
     // Phase 5 — checker/approval tier: void/approve/manage pricing, plus reconciliation visibility.
     "billing:tariff:manage",
     "billing:package:manage",

@@ -6,7 +6,7 @@ import {
   LayoutGrid, BedDouble, ClipboardList, LogOut, Building2, Stethoscope,
   ClipboardCheck, FlaskConical, ScanLine, Receipt, DoorOpen,
   UserPlus, Siren, ArrowRightLeft, Pill, Microscope,
-  ShieldCheck, BarChart3, Settings2, Boxes, Truck, HeartPulse, Scissors,
+  ShieldCheck, BarChart3, Settings2, Boxes, Truck, HeartPulse, Scissors, Droplet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusPill } from "@/components/ui/StatusPill";
@@ -78,6 +78,7 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     { href: "/hospital-os/discharge", label: "Discharge", icon: DoorOpen },
     { href: "/hospital-os/icu", label: "ICU", icon: HeartPulse },
     { href: "/hospital-os/ot", label: "Operating Theatre", icon: Scissors },
+    { href: "/hospital-os/blood", label: "Blood Bank", icon: Droplet },
     DIAGNOSTICS_GROUP,
     { href: "/hospital-os/pharmacy", label: "Pharmacy", icon: Pill },
     INVENTORY_GROUP,
@@ -101,6 +102,7 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     { href: "/hospital-os/discharge", label: "Discharge", icon: DoorOpen },
     { href: "/hospital-os/icu", label: "ICU", icon: HeartPulse },
     { href: "/hospital-os/ot", label: "Operating Theatre", icon: Scissors },
+    { href: "/hospital-os/blood", label: "Blood Bank", icon: Droplet },
     DIAGNOSTICS_GROUP,
   ],
   NURSE: [
@@ -110,6 +112,7 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     { href: "/hospital-os/transfers", label: "Transfers", icon: ArrowRightLeft },
     { href: "/hospital-os/icu", label: "ICU", icon: HeartPulse },
     { href: "/hospital-os/ot", label: "Operating Theatre", icon: Scissors },
+    { href: "/hospital-os/blood", label: "Blood Bank", icon: Droplet },
     DIAGNOSTICS_GROUP,
   ],
   // Single-purpose operational roles keep their direct one-click link to
@@ -119,6 +122,7 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
   // backward for a role whose entire job is that one page.
   LAB_TECHNICIAN: [
     { href: "/hospital-os/lab", label: "Lab Queue", icon: FlaskConical },
+    { href: "/hospital-os/blood", label: "Blood Bank", icon: Droplet },
     { href: "/hospital-os/diagnostics", label: "Diagnostics", icon: Microscope },
   ],
   RADIOLOGY_TECH: [

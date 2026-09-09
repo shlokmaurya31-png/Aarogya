@@ -239,7 +239,32 @@ export type AuditEventType =
   | "hospital.ot.specimenCollected"
   | "hospital.ot.implantRecorded"
   | "hospital.ot.consumableRecorded"
-  | "hospital.ot.recoveryUpdated";
+  | "hospital.ot.recoveryUpdated"
+  // Phase B4 — Blood Bank & Transfusion Management.
+  | "hospital.blood.productConfigured"
+  | "hospital.blood.unitRegistered"
+  | "hospital.blood.unitReleased"
+  | "hospital.blood.unitQuarantined"
+  | "hospital.blood.unitRecalled"
+  | "hospital.blood.unitWasted"
+  | "hospital.blood.typingRecorded"
+  | "hospital.blood.requestCreated"
+  | "hospital.blood.requestStatusChanged"
+  | "hospital.blood.emergencyReleaseAuthorized"
+  | "hospital.blood.compatibilityRecorded"
+  | "hospital.blood.compatibilityVerified"
+  | "hospital.blood.unitsReserved"
+  | "hospital.blood.reservationReleased"
+  | "hospital.blood.unitIssued"
+  | "hospital.blood.unitDispatched"
+  | "hospital.blood.unitReceived"
+  | "hospital.blood.unitReturned"
+  | "hospital.blood.transfusionStarted"
+  | "hospital.blood.transfusionObservationRecorded"
+  | "hospital.blood.transfusionStatusChanged"
+  | "hospital.blood.transfusionCompleted"
+  | "hospital.blood.reactionReported"
+  | "hospital.blood.reactionStatusChanged";
 
 export interface AuditEventContext {
   facilityId?: string;

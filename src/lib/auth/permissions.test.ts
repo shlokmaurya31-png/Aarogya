@@ -182,3 +182,49 @@ describe("roleHasPermission — Phase B3 Operating Theatre boundary", () => {
     }
   });
 });
+
+describe("roleHasPermission — Phase B4 Blood Bank boundary", () => {
+  it("DOCTOR can request, review/authorize, record transfusion, and manage reactions — but not run the blood-bank inventory or lab testing", () => {
+    for (const p of ["blood:request:create", "blood:request:review", "blood:transfusion:record", "blood:reaction:record", "blood:reaction:manage"] as Permission[]) {
+      expect(roleHasPermission("DOCTOR", p)).toBe(true);
+    }
+    for (const p of ["blood:unit:manage", "blood:issue", "blood:typing:record", "blood:compatibility:verify", "blood:configuration:manage"] as Permission[]) {
+      expect(roleHasPermission("DOCTOR", p)).toBe(false);
+    }
+  });
+
+  it("NURSE can receive, verify+record transfusion, and REPORT reactions — but cannot manage reactions, issue, or configure", () => {
+    expect(roleHasPermission("NURSE", "blood:transport:manage")).toBe(true);
+    expect(roleHasPermission("NURSE", "blood:transfusion:record")).toBe(true);
+    expect(roleHasPermission("NURSE", "blood:reaction:record")).toBe(true);
+    expect(roleHasPermission("NURSE", "blood:reaction:manage")).toBe(false);
+    expect(roleHasPermission("NURSE", "blood:issue")).toBe(false);
+    expect(roleHasPermission("NURSE", "blood:request:create")).toBe(false);
+    expect(roleHasPermission("NURSE", "blood:configuration:manage")).toBe(false);
+  });
+
+  it("LAB_TECHNICIAN runs typing/crossmatch and blood-bank unit custody/issue — but has no clinical request/transfusion/reaction role", () => {
+    for (const p of ["blood:typing:record", "blood:compatibility:record", "blood:compatibility:verify", "blood:unit:manage", "blood:reservation:manage", "blood:issue", "blood:transport:manage"] as Permission[]) {
+      expect(roleHasPermission("LAB_TECHNICIAN", p)).toBe(true);
+    }
+    for (const p of ["blood:request:create", "blood:transfusion:record", "blood:reaction:manage", "blood:configuration:manage"] as Permission[]) {
+      expect(roleHasPermission("LAB_TECHNICIAN", p)).toBe(false);
+    }
+  });
+
+  it("HOSPITAL_ADMIN owns blood-bank configuration + operational management", () => {
+    for (const p of ["blood:configuration:manage", "blood:unit:manage", "blood:inventory:manage", "blood:reservation:manage", "blood:issue", "blood:reaction:manage"] as Permission[]) {
+      expect(roleHasPermission("HOSPITAL_ADMIN", p)).toBe(true);
+    }
+  });
+
+  it("FRONT_DESK, BILLING_STAFF, PHARMACIST, and RADIOLOGY_TECH hold no blood-bank clinical/operational mutation permissions", () => {
+    const bloodPerms: Permission[] = ["blood:configuration:manage", "blood:unit:manage", "blood:inventory:manage", "blood:typing:record", "blood:compatibility:record", "blood:compatibility:verify", "blood:request:create", "blood:request:review", "blood:reservation:manage", "blood:issue", "blood:transport:manage", "blood:transfusion:record", "blood:reaction:record", "blood:reaction:manage"];
+    for (const p of bloodPerms) {
+      expect(roleHasPermission("FRONT_DESK", p)).toBe(false);
+      expect(roleHasPermission("BILLING_STAFF", p)).toBe(false);
+      expect(roleHasPermission("PHARMACIST", p)).toBe(false);
+      expect(roleHasPermission("RADIOLOGY_TECH", p)).toBe(false);
+    }
+  });
+});
