@@ -215,7 +215,16 @@ export type AuditEventType =
   | "hospital.nursing.assessmentSigned"
   | "hospital.nursing.assessmentAmended"
   | "hospital.carePlan.interventionCreated"
-  | "hospital.carePlan.interventionCompleted";
+  | "hospital.carePlan.interventionCompleted"
+  // Phase B1 — ICU Foundation.
+  | "hospital.icu.unitConfigured"
+  | "hospital.icu.admitted"
+  | "hospital.icu.transferred"
+  | "hospital.icu.observationRecorded"
+  | "hospital.icu.deviceRecorded"
+  | "hospital.icu.deviceStatusChanged"
+  | "hospital.icu.infusionRecorded"
+  | "hospital.icu.infusionStatusChanged";
 
 export interface AuditEventContext {
   facilityId?: string;

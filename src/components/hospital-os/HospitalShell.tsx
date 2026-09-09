@@ -6,7 +6,7 @@ import {
   LayoutGrid, BedDouble, ClipboardList, LogOut, Building2, Stethoscope,
   ClipboardCheck, FlaskConical, ScanLine, Receipt, DoorOpen,
   UserPlus, Siren, ArrowRightLeft, Pill, Microscope,
-  ShieldCheck, BarChart3, Settings2, Boxes, Truck,
+  ShieldCheck, BarChart3, Settings2, Boxes, Truck, HeartPulse,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusPill } from "@/components/ui/StatusPill";
@@ -76,6 +76,7 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     { href: "/hospital-os/admissions", label: "Admissions", icon: ClipboardList },
     { href: "/hospital-os/transfers", label: "Transfers", icon: ArrowRightLeft },
     { href: "/hospital-os/discharge", label: "Discharge", icon: DoorOpen },
+    { href: "/hospital-os/icu", label: "ICU", icon: HeartPulse },
     DIAGNOSTICS_GROUP,
     { href: "/hospital-os/pharmacy", label: "Pharmacy", icon: Pill },
     INVENTORY_GROUP,
@@ -97,6 +98,7 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     { href: "/hospital-os/admissions", label: "Admissions", icon: ClipboardList },
     { href: "/hospital-os/transfers", label: "Transfers", icon: ArrowRightLeft },
     { href: "/hospital-os/discharge", label: "Discharge", icon: DoorOpen },
+    { href: "/hospital-os/icu", label: "ICU", icon: HeartPulse },
     DIAGNOSTICS_GROUP,
   ],
   NURSE: [
@@ -104,6 +106,7 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     { href: "/hospital-os/ed", label: "ED Board", icon: Siren },
     { href: "/hospital-os/beds", label: "Beds", icon: BedDouble },
     { href: "/hospital-os/transfers", label: "Transfers", icon: ArrowRightLeft },
+    { href: "/hospital-os/icu", label: "ICU", icon: HeartPulse },
     DIAGNOSTICS_GROUP,
   ],
   // Single-purpose operational roles keep their direct one-click link to

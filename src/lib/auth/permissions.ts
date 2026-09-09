@@ -194,6 +194,15 @@ export const PERMISSIONS = [
   // vital:record/io:record/handoff:manage/task:*/carePlan:manage unchanged.
   "nursing:assessment:create",
   "nursing:assessment:sign",
+
+  // Phase B1 — ICU Foundation. Unit configuration is an admin action;
+  // admission/transfer reuse the existing admission:* permissions;
+  // flowsheet observations / devices / infusions are clinical recording
+  // actions for DOCTOR/NURSE.
+  "icu:unit:manage",
+  "icu:flowsheet:record",
+  "icu:device:manage",
+  "icu:infusion:manage",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -261,6 +270,10 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "medication:discontinue",
     // Phase 6A — narrow view-only, per the brief's explicit instruction.
     "inventory:item:view",
+    // Phase B1 — ICU clinical recording.
+    "icu:flowsheet:record",
+    "icu:device:manage",
+    "icu:infusion:manage",
   ],
   NURSE: [
     "hospital:command-center:view",
@@ -295,6 +308,10 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "inventory:stock:reserve",
     "inventory:stock:waste",
     "procurement:requisition:create",
+    // Phase B1 — ICU clinical recording.
+    "icu:flowsheet:record",
+    "icu:device:manage",
+    "icu:infusion:manage",
   ],
   LAB_TECHNICIAN: [
     "hospital:command-center:view",
@@ -404,6 +421,8 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "lab:catalog:manage",
     "radiology:catalog:manage",
     "radiology:resource:manage",
+    // Phase B1 — ICU unit configuration (admin action).
+    "icu:unit:manage",
     // Phase 5 — checker/approval tier: void/approve/manage pricing, plus reconciliation visibility.
     "billing:tariff:manage",
     "billing:package:manage",

@@ -513,6 +513,12 @@ model Facility {
   intakeOutputRecords       IntakeOutputRecord[]
   medicationReconciliations MedicationReconciliation[]
 
+  // Phase B1 — ICU Foundation.
+  icuUnits        IcuUnit[]
+  icuObservations IcuObservation[]
+  icuDevices      IcuDevice[]
+  icuInfusions    IcuInfusion[]
+
   // Phase 4 Milestone B — Laboratory core workflow (brief §6-24).
   specimens       Specimen[]
   labTestCatalogs LabTestCatalog[]
@@ -651,6 +657,14 @@ model Bed {
   status            BedStatus @default(AVAILABLE)
   genderRestriction String? // "male" | "female" | null (no restriction)
   isolationRequired Boolean   @default(false)
+  // Phase B1 — ICU bed capabilities (resource-matching attributes, not
+  // clinical decisions). The bed stays the canonical bed; these are
+  // additive booleans + an optional link to the ICU unit that owns it.
+  icuCapable        Boolean   @default(false)
+  ventilatorCapable Boolean   @default(false)
+  negativePressure  Boolean   @default(false)
+  icuUnit           IcuUnit?  @relation(fields: [icuUnitId], references: [id])
+  icuUnitId         String?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
@@ -815,6 +829,11 @@ model Patient {
   medicationReconciliations MedicationReconciliation[]
   specimens                 Specimen[]
   imagingStudies            ImagingStudy[]
+
+  // Phase B1 — ICU Foundation.
+  icuObservations IcuObservation[]
+  icuDevices      IcuDevice[]
+  icuInfusions    IcuInfusion[]
 
   // Phase 4.5 — structured audit context (see AuditEvent).
   auditEvents AuditEvent[]
@@ -1001,6 +1020,11 @@ model Encounter {
   medicationReconciliations MedicationReconciliation[]
   specimens                 Specimen[]
   imagingStudies            ImagingStudy[]
+
+  // Phase B1 — ICU Foundation.
+  icuObservations IcuObservation[]
+  icuDevices      IcuDevice[]
+  icuInfusions    IcuInfusion[]
 
   @@index([facilityId])
   @@index([episodeOfCareId])
@@ -2755,6 +2779,136 @@ model SlaPolicy {
   updatedAt        DateTime @updatedAt
 
   @@unique([facilityId, metric])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase B1 — ICU Foundation. Additive on top of the existing Facility/
+// Ward/Bed/Encounter/ADT/Vital/MAR/Task/Note/Handoff machinery — no parallel
+// patient/encounter/bed/medication/nursing system. ICU observations are
+// documentary records (recording + provenance), never automated clinical
+// interpretation or scoring. See docs (Phase B1). recordedByStaffId is a
+// plain string, matching the existing Vital/IntakeOutputRecord convention.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** ICU unit type — extensible; free-string not used since these are a small closed operational set. */
+enum IcuType {
+  MICU
+  SICU
+  CCU
+  NICU
+  PICU
+  HDU
+  GENERAL_ICU
+}
+
+model IcuUnit {
+  id                String   @id @default(cuid())
+  facility          Facility @relation(fields: [facilityId], references: [id])
+  facilityId        String
+  departmentId      String?
+  name              String
+  icuType           IcuType  @default(GENERAL_ICU)
+  active            Boolean  @default(true)
+  ventilatorCapable Boolean  @default(false)
+  isolationCapable  Boolean  @default(false)
+  bedCapacity       Int? // configured capacity — informational, not enforced
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  beds Bed[]
+
+  @@unique([facilityId, name])
+  @@index([facilityId])
+}
+
+/**
+ * A single ICU flowsheet observation. `type` selects the shape of `values`
+ * (a documentary JSON blob, same pattern as NursingAssessment.findings /
+ * ClinicalNote.content): "VENTILATOR" | "NEURO" | "ABG". Vital signs use the
+ * existing Vital model (not duplicated here); I/O uses IntakeOutputRecord.
+ * No interpretation/scoring is computed — values are recorded as entered.
+ */
+model IcuObservation {
+  id                String    @id @default(cuid())
+  facility          Facility  @relation(fields: [facilityId], references: [id])
+  facilityId        String
+  patient           Patient   @relation(fields: [patientId], references: [id])
+  patientId         String
+  encounter         Encounter @relation(fields: [encounterId], references: [id])
+  encounterId       String
+  type              String // "VENTILATOR" | "NEURO" | "ABG"
+  values            Json
+  recordedByStaffId String
+  recordedAt        DateTime  @default(now())
+
+  @@index([encounterId, type])
+  @@index([facilityId])
+  @@index([patientId])
+}
+
+/**
+ * ICU device/line association with a coherent lifecycle
+ * (PLANNED -> ACTIVE -> REMOVED/DISCONTINUED). Records only — no biomedical
+ * integration or telemetry. `deviceType`/`site` are free strings; no clinical
+ * complication taxonomy is invented (notes are free text).
+ */
+model IcuDevice {
+  id                String    @id @default(cuid())
+  facility          Facility  @relation(fields: [facilityId], references: [id])
+  facilityId        String
+  patient           Patient   @relation(fields: [patientId], references: [id])
+  patientId         String
+  encounter         Encounter @relation(fields: [encounterId], references: [id])
+  encounterId       String
+  deviceType        String // "CENTRAL_LINE" | "ARTERIAL_LINE" | "URINARY_CATHETER" | "DRAIN" | "ETT" | "TRACHEOSTOMY" | ...
+  site              String?
+  status            String    @default("PLANNED") // "PLANNED" | "ACTIVE" | "REMOVED" | "DISCONTINUED"
+  insertedAt        DateTime?
+  removedAt         DateTime?
+  notes             String?
+  recordedByStaffId String
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([encounterId])
+  @@index([facilityId])
+  @@index([patientId])
+  @@index([status])
+}
+
+/**
+ * ICU infusion tracking. References the canonical MedicationOrder where one
+ * exists (this is NOT a second MAR — the order stays authoritative); it
+ * records the running infusion's rate/concentration/lifecycle over time. No
+ * dosing recommendation logic.
+ */
+model IcuInfusion {
+  id                String    @id @default(cuid())
+  facility          Facility  @relation(fields: [facilityId], references: [id])
+  facilityId        String
+  patient           Patient   @relation(fields: [patientId], references: [id])
+  patientId         String
+  encounter         Encounter @relation(fields: [encounterId], references: [id])
+  encounterId       String
+  medicationOrderId String? // canonical order, when the infusion is order-backed
+  drugName          String
+  route             String?
+  concentration     String?
+  rate              Float?
+  rateUnit          String? // e.g. "mL/hr", "mcg/kg/min" — recorded as entered
+  status            String    @default("RUNNING") // "RUNNING" | "PAUSED" | "STOPPED"
+  startedAt         DateTime  @default(now())
+  stoppedAt         DateTime?
+  prescriberStaffId String?
+  recordedByStaffId String
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([encounterId])
+  @@index([facilityId])
+  @@index([patientId])
+  @@index([status])
 }
 
 // ─────────────────────────────────────────────────────────────────────────

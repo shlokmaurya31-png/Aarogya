@@ -124,3 +124,28 @@ describe("roleHasPermission — Phase 6.7 Nursing Core boundary", () => {
     }
   });
 });
+
+describe("roleHasPermission — Phase B1 ICU boundary", () => {
+  it("DOCTOR and NURSE can record ICU flowsheet observations, devices and infusions", () => {
+    for (const role of ["DOCTOR", "NURSE"] as const) {
+      expect(roleHasPermission(role, "icu:flowsheet:record")).toBe(true);
+      expect(roleHasPermission(role, "icu:device:manage")).toBe(true);
+      expect(roleHasPermission(role, "icu:infusion:manage")).toBe(true);
+    }
+  });
+
+  it("ICU unit configuration is restricted to HOSPITAL_ADMIN (not DOCTOR/NURSE)", () => {
+    expect(roleHasPermission("HOSPITAL_ADMIN", "icu:unit:manage")).toBe(true);
+    expect(roleHasPermission("DOCTOR", "icu:unit:manage")).toBe(false);
+    expect(roleHasPermission("NURSE", "icu:unit:manage")).toBe(false);
+  });
+
+  it("non-clinical roles hold no ICU recording or config permissions", () => {
+    const icuPerms: Permission[] = ["icu:unit:manage", "icu:flowsheet:record", "icu:device:manage", "icu:infusion:manage"];
+    for (const p of icuPerms) {
+      expect(roleHasPermission("FRONT_DESK", p)).toBe(false);
+      expect(roleHasPermission("BILLING_STAFF", p)).toBe(false);
+      expect(roleHasPermission("PHARMACIST", p)).toBe(false);
+    }
+  });
+});
