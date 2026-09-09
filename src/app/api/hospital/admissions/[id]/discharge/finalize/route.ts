@@ -4,6 +4,8 @@ import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { finalizeDischarge, DischargeNotReadyError, InvalidEncounterTransitionError } from "@/lib/hospital/admission";
 
+const DISCHARGE_TYPES = ["ROUTINE", "LAMA", "DAMA", "ABSCONDED", "DEATH", "TRANSFER", "REFERRAL"];
+
 /** Requires clinician sign-off (brief §37) and every readiness flag true; frees the bed to CLEANING. */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return withApiErrors(async () => {
@@ -15,9 +17,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!admission || admission.encounter.facilityId !== facilityId || !admission.discharge) throw new NotFoundError("Discharge not found.");
 
     const summary = body?.dischargeSummary ?? {};
+    const dischargeType = body?.dischargeType as string | undefined;
+    if (dischargeType && !DISCHARGE_TYPES.includes(dischargeType)) {
+      throw new BadRequestError(`dischargeType must be one of ${DISCHARGE_TYPES.join(", ")}.`);
+    }
 
     try {
-      const discharge = await finalizeDischarge(admission.discharge.id, session.userId, summary);
+      const discharge = await finalizeDischarge(admission.discharge.id, session.userId, summary, dischargeType || undefined);
       return { discharge };
     } catch (err) {
       if (err instanceof DischargeNotReadyError || err instanceof InvalidEncounterTransitionError) throw new BadRequestError(err.message);

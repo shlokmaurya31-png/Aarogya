@@ -3,7 +3,7 @@
 // Datasource is SQLite for zero-setup local dev (no Docker/Postgres required).
 // Every type used below (String/Int/Float/Boolean/DateTime/Json) has a direct
 // Postgres equivalent, so moving to production is a one-line datasource change:
-//   provider = "postgresql"
+//   provider = "sqlite"
 //   url      = env("DATABASE_URL")   // postgres://...
 // See docs/STUDENT_PLATFORM_ARCHITECTURE.md §2.10 and
 // docs/REAL_CLINICAL_DATA_INTEGRATION.md for the migration path.
@@ -1015,6 +1015,12 @@ model Admission {
   bed              Bed                  @relation(fields: [bedId], references: [id])
   bedId            String
   reason           String
+  // Phase 6.8 (brief §14) — admission context. Free-string per the repo's
+  // enum-as-documented-string convention (cf. EncounterType comments):
+  // "ELECTIVE" | "EMERGENCY" | "DAYCARE" | "OBSERVATION" | "MATERNITY" |
+  // "PEDIATRIC" | "ISOLATION" | "REFERRAL". Nullable — legacy rows and
+  // admissions that don't specify one stay null.
+  admissionType    String?
   expectedLosDays  Int?
   admittingStaff   HospitalStaffProfile @relation("AdmittingStaff", fields: [admittingStaffId], references: [id])
   admittingStaffId String
@@ -1049,6 +1055,10 @@ model Discharge {
   id                 String    @id @default(cuid())
   admission          Admission @relation(fields: [admissionId], references: [id])
   admissionId        String    @unique
+  // Phase 6.8 (brief §18) — discharge context. Free-string per repo
+  // convention: "ROUTINE" | "LAMA" | "DAMA" | "ABSCONDED" | "DEATH" |
+  // "TRANSFER" | "REFERRAL". Nullable until finalized.
+  dischargeType      String?
   clinicallyReady    Boolean   @default(false)
   documentationReady Boolean   @default(false)
   billingReady       Boolean   @default(false)

@@ -33,6 +33,7 @@ export function AdmissionsWorklist() {
   const [encounterId, setEncounterId] = useState("");
   const [bedId, setBedId] = useState("");
   const [reason, setReason] = useState("");
+  const [admissionType, setAdmissionType] = useState("ELECTIVE");
 
   const [requests, setRequests] = useState<AdmissionRequest[] | null>(null);
   const [eligibleBedsFor, setEligibleBedsFor] = useState<string | null>(null);
@@ -75,7 +76,7 @@ export function AdmissionsWorklist() {
     if (!encounterId || !bedId || !reason.trim()) return;
     const res = await fetch("/api/hospital/admissions", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ encounterId, bedId, reason }),
+      body: JSON.stringify({ encounterId, bedId, reason, admissionType }),
     });
     const data = await res.json();
     if (!res.ok) { push(data.error ?? "Admission failed.", "red"); return; }
@@ -113,6 +114,14 @@ export function AdmissionsWorklist() {
               <select value={bedId} onChange={(e) => setBedId(e.target.value)} className="mt-1.5 w-full rounded-md border border-hairline bg-black/[0.02] px-3 py-2 text-[13px] outline-none focus:border-cyan/40">
                 <option value="">Select...</option>
                 {beds.map((b) => <option key={b.id} value={b.id}>{b.label} — {b.wardName}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-[11px] uppercase tracking-[0.1em] text-text-tertiary">Admission type</label>
+              <select value={admissionType} onChange={(e) => setAdmissionType(e.target.value)} className="mt-1.5 w-full rounded-md border border-hairline bg-black/[0.02] px-3 py-2 text-[13px] outline-none focus:border-cyan/40">
+                {["ELECTIVE", "EMERGENCY", "DAYCARE", "OBSERVATION", "MATERNITY", "PEDIATRIC", "ISOLATION", "REFERRAL"].map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
               </select>
             </div>
             <div>

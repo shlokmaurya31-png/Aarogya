@@ -4,6 +4,8 @@ import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { admitPatient, BedNotAvailableError, InvalidEncounterTransitionError } from "@/lib/hospital/admission";
 
+const ADMISSION_TYPES = ["ELECTIVE", "EMERGENCY", "DAYCARE", "OBSERVATION", "MATERNITY", "PEDIATRIC", "ISOLATION", "REFERRAL"];
+
 export async function GET(req: NextRequest) {
   return withApiErrors(async () => {
     const { searchParams } = new URL(req.url);
@@ -25,8 +27,11 @@ export async function POST(req: NextRequest) {
     const { session, facilityId, staff } = await requireFacilityStaff("admission:create", body?.facilityId);
     if (!staff) throw new BadRequestError("Admissions must be created by a staff account.");
 
-    const { encounterId, bedId, reason, expectedLosDays } = body ?? {};
+    const { encounterId, bedId, reason, expectedLosDays, admissionType } = body ?? {};
     if (!encounterId || !bedId || !reason) throw new BadRequestError("encounterId, bedId and reason are required.");
+    if (admissionType && !ADMISSION_TYPES.includes(admissionType)) {
+      throw new BadRequestError(`admissionType must be one of ${ADMISSION_TYPES.join(", ")}.`);
+    }
 
     const encounter = await prisma.encounter.findUnique({ where: { id: encounterId } });
     if (!encounter || encounter.facilityId !== facilityId) throw new NotFoundError("Encounter not found.");
@@ -39,6 +44,7 @@ export async function POST(req: NextRequest) {
         bedId,
         admittingStaffId: staff.id,
         reason,
+        admissionType: admissionType || undefined,
         expectedLosDays,
         byUserId: session.userId,
       });

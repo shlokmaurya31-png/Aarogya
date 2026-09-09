@@ -11,6 +11,7 @@ import { AmendmentBadge } from "@/components/hospital-os/diagnostics/shared";
 import { PatientFinancialPanel } from "@/components/hospital-os/PatientFinancialPanel";
 import { HandoffComposer } from "@/components/hospital-os/shared/HandoffComposer";
 import { HandoffInbox } from "@/components/hospital-os/shared/HandoffInbox";
+import { PatientIdentityPanel } from "@/components/hospital-os/PatientIdentityPanel";
 
 interface TimelineEntry { id: string; timestamp: string; type: string; summary: string; department?: string | null }
 
@@ -440,6 +441,8 @@ export function PatientChart({ patientId }: { patientId: string }) {
         </div>
 
         <div className="space-y-4">
+          <PatientIdentityPanel patientId={patientId} />
+
           <Card className="rounded-[20px]">
             <div className="flex items-center gap-2"><Activity size={14} className="text-cyan" /><CardLabel>Vitals</CardLabel></div>
             <div className="mt-2 space-y-1.5">

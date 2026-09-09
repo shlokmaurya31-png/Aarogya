@@ -39,6 +39,11 @@ export type AuditEventType =
   | "hospital.patient.updated"
   | "hospital.patient.merged"
   | "hospital.patient.viewed"
+  // Phase 6.8 — EMPI identity mutations.
+  | "hospital.patient.unmerged"
+  | "hospital.patient.identifierAdded"
+  | "hospital.patient.emergencyContactAdded"
+  | "hospital.patient.deceasedRecorded"
   | "hospital.encounter.cancelled"
   | "hospital.diagnosis.added"
   | "hospital.problem.added"

@@ -26,6 +26,7 @@ export async function admitPatient(input: {
   bedId: string;
   admittingStaffId: string;
   reason: string;
+  admissionType?: string;
   expectedLosDays?: number;
   byUserId: string;
 }) {
@@ -66,7 +67,21 @@ export async function admitPatient(input: {
         bedId: input.bedId,
         admittingStaffId: input.admittingStaffId,
         reason: input.reason,
+        admissionType: input.admissionType,
         expectedLosDays: input.expectedLosDays,
+      },
+    });
+
+    // Location history (brief §20/§21) — the admission bed is the first
+    // location for this encounter. transferPatient()/finalizeDischarge()
+    // close and open EncounterLocation rows the same way, so the encounter
+    // always has an auditable location timeline.
+    await tx.encounterLocation.create({
+      data: {
+        encounterId: input.encounterId,
+        facilityId: bed.facilityId,
+        bedId: input.bedId,
+        assignedByStaffId: input.admittingStaffId,
       },
     });
 
@@ -78,7 +93,7 @@ export async function admitPatient(input: {
   await recordAuditEvent(
     "hospital.admission.created",
     input.byUserId,
-    { admissionId: admission.id, encounterId: input.encounterId, bedId: input.bedId },
+    { admissionId: admission.id, encounterId: input.encounterId, bedId: input.bedId, admissionType: input.admissionType },
     { ...auditContext, encounterId: input.encounterId }
   );
 
@@ -124,6 +139,22 @@ export async function transferPatient(input: {
 
     await tx.admission.update({ where: { id: input.admissionId }, data: { bedId: toBed.id } });
 
+    // Location history: close the current open location, open one at the
+    // destination bed — so the encounter never shows two simultaneous
+    // active locations.
+    await tx.encounterLocation.updateMany({
+      where: { encounterId: admission.encounterId, releasedAt: null },
+      data: { releasedAt: new Date() },
+    });
+    await tx.encounterLocation.create({
+      data: {
+        encounterId: admission.encounterId,
+        facilityId: toBed.facilityId,
+        bedId: toBed.id,
+        assignedByStaffId: admission.admittingStaffId,
+      },
+    });
+
     return { transfer: created, auditContext: { facilityId: admission.encounter.facilityId, patientId: admission.encounter.patientId, encounterId: admission.encounterId } };
   });
 
@@ -158,7 +189,7 @@ export class DischargeNotReadyError extends Error {
 }
 
 /** Finalizes discharge: requires every readiness flag true, then frees the bed to CLEANING (brief §50 — bed workflow: discharged -> cleaning requested -> ... -> available). */
-export async function finalizeDischarge(dischargeId: string, byUserId: string, dischargeSummary: unknown) {
+export async function finalizeDischarge(dischargeId: string, byUserId: string, dischargeSummary: unknown, dischargeType?: string) {
   const result = await prisma.$transaction(async (tx) => {
     const discharge = await tx.discharge.findUniqueOrThrow({ where: { id: dischargeId }, include: { admission: { include: { encounter: true } } } });
     const missing = (["clinicallyReady", "documentationReady", "billingReady", "insuranceReady", "pharmacyReady", "transportReady"] as const).filter(
@@ -179,7 +210,13 @@ export async function finalizeDischarge(dischargeId: string, byUserId: string, d
     const dischargedAt = new Date();
     const updated = await tx.discharge.update({
       where: { id: dischargeId },
-      data: { dischargedAt, signedByStaffId: byUserId, dischargeSummary: dischargeSummary as object },
+      data: { dischargedAt, signedByStaffId: byUserId, dischargeSummary: dischargeSummary as object, dischargeType },
+    });
+
+    // Location history: release the encounter's open location at discharge.
+    await tx.encounterLocation.updateMany({
+      where: { encounterId: discharge.admission.encounterId, releasedAt: null },
+      data: { releasedAt: dischargedAt },
     });
 
     // Phase 5 — bed/accommodation billing. One bounded policy: any partial
@@ -227,7 +264,7 @@ export async function finalizeDischarge(dischargeId: string, byUserId: string, d
   await recordAuditEvent(
     "hospital.discharge.finalized",
     byUserId,
-    { dischargeId },
+    { dischargeId, dischargeType },
     { facilityId: result.auditContext.facilityId, patientId: result.auditContext.patientId, encounterId: result.auditContext.encounterId }
   );
   return result.discharge;

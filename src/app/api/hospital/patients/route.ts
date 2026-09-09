@@ -4,12 +4,7 @@ import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
-
-function generateUhid(facilityId: string) {
-  const code = facilityId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 4).toUpperCase();
-  const rand = Math.random().toString(36).slice(2, 8).toUpperCase();
-  return `UHID-${code}-${rand}`;
-}
+import { createPatientWithUhid } from "@/lib/hospital/uhid";
 
 export async function GET(req: NextRequest) {
   return withApiErrors(async () => {
@@ -21,7 +16,15 @@ export async function GET(req: NextRequest) {
       where: {
         facilityId,
         ...(q
-          ? { OR: [{ fullName: { contains: q } }, { uhid: { contains: q } }, { phone: { contains: q } }] }
+          ? {
+              OR: [
+                { fullName: { contains: q } },
+                { uhid: { contains: q } },
+                { phone: { contains: q } },
+                // Phase 6.8 — search by any patient identifier (ABHA/MRN/insurance).
+                { identifiers: { some: { value: { contains: q } } } },
+              ],
+            }
           : {}),
       },
       orderBy: { createdAt: "desc" },
@@ -48,17 +51,19 @@ export async function POST(req: NextRequest) {
     const parsed = RegisterSchema.safeParse(body);
     if (!parsed.success) return { error: "Invalid patient data.", issues: parsed.error.issues };
 
-    const patient = await prisma.patient.create({
-      data: {
-        uhid: generateUhid(facilityId),
-        facilityId,
-        fullName: parsed.data.fullName,
-        sex: parsed.data.sex,
-        ageYears: parsed.data.ageYears,
-        phone: parsed.data.phone,
-        bloodGroup: parsed.data.bloodGroup,
-      },
-    });
+    const patient = await createPatientWithUhid(facilityId, (uhid) =>
+      prisma.patient.create({
+        data: {
+          uhid,
+          facilityId,
+          fullName: parsed.data.fullName,
+          sex: parsed.data.sex,
+          ageYears: parsed.data.ageYears,
+          phone: parsed.data.phone,
+          bloodGroup: parsed.data.bloodGroup,
+        },
+      })
+    );
 
     await recordAuditEvent(
       "hospital.patient.registered",

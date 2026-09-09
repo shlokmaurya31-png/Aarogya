@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { hashPassword } from "@/lib/auth/password";
 import { createSession } from "@/lib/auth/session";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { generateCandidateUhid } from "@/lib/hospital/uhid";
 
 /**
  * Real Role.PATIENT self-service account creation (brief §34 priority:
@@ -22,12 +23,6 @@ const RegisterSchema = z.object({
   phone: z.string().optional(),
   dob: z.string().optional(),
 });
-
-function generateUhid(facilityId: string) {
-  const code = facilityId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 4).toUpperCase();
-  const rand = Math.random().toString(36).slice(2, 8).toUpperCase();
-  return `UHID-${code}-${rand}`;
-}
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
@@ -48,6 +43,7 @@ export async function POST(req: NextRequest) {
   }
 
   const passwordHash = await hashPassword(input.password);
+  const uhid = await generateCandidateUhid(facility.id);
 
   const result = await prisma.$transaction(async (tx) => {
     const user = await tx.user.create({
@@ -55,7 +51,7 @@ export async function POST(req: NextRequest) {
     });
     const patient = await tx.patient.create({
       data: {
-        uhid: generateUhid(facility.id),
+        uhid,
         facilityId: facility.id,
         fullName: input.fullName,
         sex: input.sex,

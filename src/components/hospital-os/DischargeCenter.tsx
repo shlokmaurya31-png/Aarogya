@@ -38,6 +38,7 @@ export function DischargeCenter() {
   const [admissions, setAdmissions] = useState<Admission[] | null>(null);
   const [barriers, setBarriers] = useState<Record<string, BarrierState>>({});
   const [expectedDate, setExpectedDate] = useState<Record<string, string>>({});
+  const [dischargeType, setDischargeType] = useState<Record<string, string>>({});
 
   function load() {
     fetch("/api/hospital/admissions").then((r) => r.json()).then(async (d) => {
@@ -86,7 +87,11 @@ export function DischargeCenter() {
 
   async function finalize(admissionId: string) {
     const res = await fetch(`/api/hospital/admissions/${admissionId}/discharge/finalize`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dischargeSummary: { note: "Discharged via Discharge Command Center." } }),
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        dischargeSummary: { note: "Discharged via Discharge Command Center." },
+        dischargeType: dischargeType[admissionId] ?? "ROUTINE",
+      }),
     });
     const data = await res.json();
     if (!res.ok) { push(data.error ?? "Not ready to discharge.", "red"); return; }
@@ -119,6 +124,15 @@ export function DischargeCenter() {
               ) : (
                 <div className="flex items-center gap-2">
                   {barriers[a.id] && <StatusPill label={barriers[a.id].bucketLabel} tone={BUCKET_TONE[barriers[a.id].bucket] ?? "neutral"} className="rounded-md" />}
+                  <select
+                    value={dischargeType[a.id] ?? "ROUTINE"}
+                    onChange={(e) => setDischargeType((prev) => ({ ...prev, [a.id]: e.target.value }))}
+                    className="rounded-md border border-hairline bg-black/[0.02] px-2 py-2 text-[11.5px] outline-none focus:border-cyan/40"
+                  >
+                    {["ROUTINE", "LAMA", "DAMA", "ABSCONDED", "DEATH", "TRANSFER", "REFERRAL"].map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
                   <button
                     onClick={() => finalize(a.id)}
                     className="flex items-center gap-1.5 rounded-md bg-emerald px-3.5 py-2 text-[12px] font-medium text-white hover:brightness-110"
