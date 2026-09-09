@@ -336,23 +336,104 @@ export async function updateInfusionStatus(input: {
 // ── Rounding composition (read-only over canonical records) ───────────────
 
 export async function buildIcuRounding(encounterId: string) {
-  const encounter = await prisma.encounter.findUniqueOrThrow({ where: { id: encounterId }, include: { patient: true } });
-  const [location, vitals, observations, infusions, devices, io, medications, tasks, notes, handoffs, problems, labs, imaging] = await Promise.all([
+  const encounter = await prisma.encounter.findUniqueOrThrow({
+    where: { id: encounterId },
+    include: { patient: true, attendingStaff: { include: { user: true } } },
+  });
+  const [location, admission, vitals, observations, infusions, devices, io, medications, administrations, tasks, notes, handoffs, problems, carePlans, currentAssessment, labs, imaging, transfers] = await Promise.all([
     prisma.encounterLocation.findFirst({ where: { encounterId, releasedAt: null }, include: { bed: { include: { ward: true, icuUnit: true } } }, orderBy: { assignedAt: "desc" } }),
-    prisma.vital.findMany({ where: { encounterId }, orderBy: { recordedAt: "desc" }, take: 10 }),
-    prisma.icuObservation.findMany({ where: { encounterId }, orderBy: { recordedAt: "desc" }, take: 30 }),
-    prisma.icuInfusion.findMany({ where: { encounterId }, orderBy: { startedAt: "desc" }, take: 30 }),
-    prisma.icuDevice.findMany({ where: { encounterId }, orderBy: { createdAt: "desc" }, take: 30 }),
-    prisma.intakeOutputRecord.findMany({ where: { encounterId }, orderBy: { recordedAt: "desc" }, take: 30 }),
+    prisma.admission.findUnique({ where: { encounterId }, include: { bed: { include: { ward: true } } } }),
+    prisma.vital.findMany({ where: { encounterId }, orderBy: { recordedAt: "desc" }, take: 24 }),
+    prisma.icuObservation.findMany({ where: { encounterId }, orderBy: { recordedAt: "desc" }, take: 60 }),
+    prisma.icuInfusion.findMany({ where: { encounterId }, orderBy: { startedAt: "desc" }, take: 40 }),
+    prisma.icuDevice.findMany({ where: { encounterId }, orderBy: { createdAt: "desc" }, take: 40 }),
+    prisma.intakeOutputRecord.findMany({ where: { encounterId }, orderBy: { recordedAt: "desc" }, take: 60 }),
     prisma.medicationOrder.findMany({ where: { encounterId, status: { in: ["ORDERED", "VERIFIED", "DISPENSED", "ACTIVE"] } }, orderBy: { orderedAt: "desc" } }),
+    prisma.medicationAdministration.findMany({ where: { medicationOrder: { encounterId }, administeredAt: { not: null } }, include: { medicationOrder: true }, orderBy: { administeredAt: "desc" }, take: 15 }),
     prisma.task.findMany({ where: { encounterId, status: { notIn: ["COMPLETED", "CANCELLED"] } }, orderBy: { createdAt: "desc" }, take: 30 }),
     prisma.clinicalNote.findMany({ where: { encounterId }, orderBy: { createdAt: "desc" }, take: 5, include: { author: { include: { user: true } } } }),
-    prisma.clinicalHandoff.findMany({ where: { encounterId }, orderBy: { createdAt: "desc" }, take: 5 }),
+    prisma.clinicalHandoff.findMany({ where: { encounterId }, orderBy: { createdAt: "desc" }, take: 5, include: { fromStaff: { include: { user: true } }, toStaff: { include: { user: true } } } }),
     prisma.problem.findMany({ where: { patientId: encounter.patientId, status: "active" } }),
+    prisma.carePlan.findMany({ where: { encounterId, status: "ACTIVE" }, include: { interventions: true }, orderBy: { createdAt: "desc" } }),
+    prisma.nursingAssessment.findFirst({ where: { encounterId, isCurrent: true }, orderBy: { createdAt: "desc" } }),
     prisma.labOrder.findMany({ where: { encounterId }, include: { results: { where: { isCurrent: true } } }, orderBy: { orderedAt: "desc" }, take: 10 }),
     prisma.imagingOrder.findMany({ where: { encounterId }, include: { reports: { where: { isCurrent: true } } }, orderBy: { orderedAt: "desc" }, take: 10 }),
+    prisma.transfer.findMany({ where: { admission: { encounterId } }, include: { fromBed: true, toBed: true }, orderBy: { transferredAt: "desc" } }),
   ]);
-  return { encounter, location, vitals, observations, infusions, devices, io, medications, tasks, notes, handoffs, problems, labs, imaging };
+
+  // Transparent I/O totals over the returned window (§13) — never mixes
+  // units (IntakeOutputRecord is uniformly mL) and shows the arithmetic.
+  const totalInput = io.filter((r) => r.ioType === "INPUT").reduce((s, r) => s + r.quantityMl, 0);
+  const totalOutput = io.filter((r) => r.ioType === "OUTPUT").reduce((s, r) => s + r.quantityMl, 0);
+  const ioTotals = { totalInputMl: totalInput, totalOutputMl: totalOutput, netMl: totalInput - totalOutput, entryCount: io.length };
+
+  // Length of stay derived from canonical timestamps (§29): ICU stay from
+  // the current open ICU location; total encounter stay from registration.
+  const now = Date.now();
+  const icuStayMs = location ? now - new Date(location.assignedAt).getTime() : null;
+  const encounterStayMs = now - new Date(encounter.registeredAt).getTime();
+  const los = {
+    icuStayHours: icuStayMs !== null ? Math.floor(icuStayMs / 3_600_000) : null,
+    encounterStayHours: Math.floor(encounterStayMs / 3_600_000),
+    admittedAt: admission?.admittedAt ?? null,
+    icuSince: location?.assignedAt ?? null,
+    registeredAt: encounter.registeredAt,
+  };
+
+  return { encounter, location, admission, los, vitals, observations, infusions, devices, io, ioTotals, medications, administrations, tasks, notes, handoffs, problems, carePlans, currentAssessment, labs, imaging, transfers };
+}
+
+/**
+ * ICU-scoped longitudinal timeline (§26) — pure composition over canonical
+ * records for one encounter (ICU admission/transfers, vitals, ICU
+ * observations, infusions, devices, I/O, labs, imaging, notes, tasks,
+ * handoffs, nursing assessments, care-plan activity). No second event store.
+ */
+export interface IcuTimelineEntry {
+  id: string;
+  timestamp: string;
+  type: string;
+  summary: string;
+  actor?: string | null;
+  sourceType: string;
+  sourceId: string;
+}
+
+export async function buildIcuTimeline(encounterId: string): Promise<IcuTimelineEntry[]> {
+  const [admission, transfers, vitals, observations, infusions, devices, io, notes, tasks, handoffs, assessments, labResults, imagingReports, carePlans] = await Promise.all([
+    prisma.admission.findUnique({ where: { encounterId }, include: { bed: true } }),
+    prisma.transfer.findMany({ where: { admission: { encounterId } }, include: { fromBed: true, toBed: true } }),
+    prisma.vital.findMany({ where: { encounterId }, orderBy: { recordedAt: "desc" }, take: 100 }),
+    prisma.icuObservation.findMany({ where: { encounterId }, orderBy: { recordedAt: "desc" }, take: 100 }),
+    prisma.icuInfusion.findMany({ where: { encounterId }, orderBy: { startedAt: "desc" }, take: 100 }),
+    prisma.icuDevice.findMany({ where: { encounterId }, orderBy: { createdAt: "desc" }, take: 100 }),
+    prisma.intakeOutputRecord.findMany({ where: { encounterId }, orderBy: { recordedAt: "desc" }, take: 100 }),
+    prisma.clinicalNote.findMany({ where: { encounterId }, include: { author: { include: { user: true } } }, orderBy: { createdAt: "desc" }, take: 50 }),
+    prisma.task.findMany({ where: { encounterId }, orderBy: { createdAt: "desc" }, take: 50 }),
+    prisma.clinicalHandoff.findMany({ where: { encounterId }, orderBy: { createdAt: "desc" }, take: 50 }),
+    prisma.nursingAssessment.findMany({ where: { encounterId }, orderBy: { createdAt: "desc" }, take: 50 }),
+    prisma.labResult.findMany({ where: { labOrder: { encounterId } }, orderBy: { resultedAt: "desc" }, take: 50 }),
+    prisma.imagingReport.findMany({ where: { imagingOrder: { encounterId } }, orderBy: { reportedAt: "desc" }, take: 50 }),
+    prisma.carePlan.findMany({ where: { encounterId }, orderBy: { createdAt: "desc" }, take: 50 }),
+  ]);
+
+  const e: IcuTimelineEntry[] = [];
+  if (admission) e.push({ id: `adm-${admission.id}`, timestamp: admission.admittedAt.toISOString(), type: "Admission", summary: `Admitted — bed ${admission.bed.label}${admission.admissionType ? ` (${admission.admissionType})` : ""}`, sourceType: "Admission", sourceId: admission.id });
+  for (const t of transfers) e.push({ id: `xfer-${t.id}`, timestamp: t.transferredAt.toISOString(), type: "Transfer", summary: `Transfer ${t.fromBed.label} → ${t.toBed.label}`, sourceType: "Transfer", sourceId: t.id });
+  for (const v of vitals) e.push({ id: `vit-${v.id}`, timestamp: v.recordedAt.toISOString(), type: "Vital", summary: `HR ${v.hr ?? "-"} · BP ${v.sbp ?? "-"}/${v.dbp ?? "-"} · SpO2 ${v.spo2 ?? "-"}%`, sourceType: "Vital", sourceId: v.id });
+  for (const o of observations) e.push({ id: `obs-${o.id}`, timestamp: o.recordedAt.toISOString(), type: `Observation:${o.type}`, summary: Object.entries(o.values as Record<string, unknown>).map(([k, val]) => `${k}:${val}`).join(" "), sourceType: "IcuObservation", sourceId: o.id });
+  for (const inf of infusions) e.push({ id: `inf-${inf.id}`, timestamp: inf.startedAt.toISOString(), type: "Infusion", summary: `${inf.drugName} ${inf.rate ?? "-"} ${inf.rateUnit ?? ""} (${inf.status})`, sourceType: "IcuInfusion", sourceId: inf.id });
+  for (const d of devices) e.push({ id: `dev-${d.id}`, timestamp: (d.insertedAt ?? d.createdAt).toISOString(), type: "Device", summary: `${d.deviceType}${d.site ? ` (${d.site})` : ""} — ${d.status}`, sourceType: "IcuDevice", sourceId: d.id });
+  for (const r of io) e.push({ id: `io-${r.id}`, timestamp: r.recordedAt.toISOString(), type: "I/O", summary: `${r.ioType} · ${r.category} · ${r.quantityMl}mL`, sourceType: "IntakeOutputRecord", sourceId: r.id });
+  for (const n of notes) e.push({ id: `note-${n.id}`, timestamp: n.createdAt.toISOString(), type: "Note", summary: `${n.type} note ${n.status.toLowerCase()}`, actor: n.author?.user?.displayName, sourceType: "ClinicalNote", sourceId: n.id });
+  for (const t of tasks) e.push({ id: `task-${t.id}`, timestamp: t.createdAt.toISOString(), type: "Task", summary: `${t.title} (${t.status})`, sourceType: "Task", sourceId: t.id });
+  for (const h of handoffs) e.push({ id: `ho-${h.id}`, timestamp: h.createdAt.toISOString(), type: "Handoff", summary: `Handoff ${h.status.toLowerCase()} — ${h.summary}`, sourceType: "ClinicalHandoff", sourceId: h.id });
+  for (const a of assessments) e.push({ id: `na-${a.id}`, timestamp: a.createdAt.toISOString(), type: "NursingAssessment", summary: `Nursing assessment v${a.version} (${a.status})`, sourceType: "NursingAssessment", sourceId: a.id });
+  for (const r of labResults) e.push({ id: `lab-${r.id}`, timestamp: r.resultedAt.toISOString(), type: "LabResult", summary: `Lab result${r.isCritical ? " — CRITICAL" : ""}: ${r.value} ${r.unit ?? ""}`, sourceType: "LabResult", sourceId: r.id });
+  for (const r of imagingReports) e.push({ id: `img-${r.id}`, timestamp: r.reportedAt.toISOString(), type: "ImagingReport", summary: `Imaging report${r.isCritical ? " — CRITICAL" : ""}: ${r.impression}`, sourceType: "ImagingReport", sourceId: r.id });
+  for (const cp of carePlans) e.push({ id: `cp-${cp.id}`, timestamp: cp.createdAt.toISOString(), type: "CarePlan", summary: `Care plan: ${cp.problem} (${cp.status})`, sourceType: "CarePlan", sourceId: cp.id });
+
+  return e.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 }
 
 /** ICU patient board — occupied ICU-capable beds with a latest-vital summary. */
