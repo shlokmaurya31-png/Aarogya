@@ -276,6 +276,18 @@ export const PERMISSIONS = [
   "pharmacy:command:view",
   "pharmacy:storage:record",
   "pharmacy:substitution:authorize",
+
+  // Phase B7 — Advanced Diagnostics. The full specimen/result/study/report
+  // lifecycle reuses the existing lab:* / imaging:* / radiology:* permissions
+  // unchanged (collect/receive/accept/reject/result:enter/verify/release/amend/
+  // acknowledge, report:enter/verify/amend/acknowledge, schedule/study:execute).
+  // These three are the genuinely-new LIS quality-management capabilities. PACS
+  // acquisition reuses radiology:study:execute; barcode lookup + specimen
+  // identity reuse lab:specimen:collect. `lab:result:release` remains the
+  // authorized-reviewer (pathologist) gate — no new production role invented.
+  "lab:qc:manage",
+  "lab:calibration:manage",
+  "lab:external:manage",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -449,6 +461,10 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "lab:specimen:reject",
     "lab:result:verify",
     "lab:result:amend",
+    // Phase B7 — LIS quality management + external-lab boundary.
+    "lab:qc:manage",
+    "lab:calibration:manage",
+    "lab:external:manage",
     // Phase 6A — reagent/consumable consumption boundary (no dedicated UI yet).
     "inventory:item:view",
     "inventory:stock:view",
@@ -567,6 +583,10 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "lab:catalog:manage",
     "radiology:catalog:manage",
     "radiology:resource:manage",
+    // Phase B7 — diagnostic quality-management oversight.
+    "lab:qc:manage",
+    "lab:calibration:manage",
+    "lab:external:manage",
     // Phase B1 — ICU unit configuration (admin action).
     "icu:unit:manage",
     // Phase B3 — OT/procedure-catalog configuration + operational scheduling/review.

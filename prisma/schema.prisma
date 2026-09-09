@@ -1471,6 +1471,14 @@ model Specimen {
   specimenType    String
   status          SpecimenStatus @default(ORDERED)
 
+  // Phase B7 — specimen identity. `barcode` is the scannable value (defaulted
+  // to the accession number at accession time); accessionNumber stays the
+  // human-readable identifier. `containerType` is documentary (tube/container).
+  // A barcode is never sufficient authorization — every mutation still
+  // re-validates facility/patient/encounter/order ownership server-side.
+  barcode       String?
+  containerType String?
+
   collectedByStaffId String?
   collectedAt        DateTime?
   collectionNotes    String?
@@ -1634,6 +1642,21 @@ model ImagingStudy {
   contrastRequired Boolean @default(false)
   contrastGiven    Boolean @default(false)
 
+  // Phase B7 — DICOM/PACS BOUNDARY (metadata + external-resource reference
+  // only; NOT a DICOM server or image store). studyInstanceUid/seriesUid are
+  // recorded identifiers; pacsReference is an opaque external-viewer/resource
+  // handle; imageAvailability tracks whether images exist in the external PACS
+  // ("NONE" | "PENDING" | "AVAILABLE"). dicomMetadata holds recorded tag values
+  // as JSON — no image bytes ever live in this database.
+  studyInstanceUid  String?
+  seriesUid         String?
+  numberOfImages    Int?
+  pacsReference     String?
+  imageAvailability String    @default("NONE")
+  acquisitionAt     DateTime?
+  technicalNotes    String?
+  dicomMetadata     Json?
+
   // Structured safety/prep capture only (brief §10) — never an autonomous
   // clinical decision, just workflow checkboxes a technologist ticks.
   pregnancyScreened    Boolean @default(false)
@@ -1752,6 +1775,12 @@ model ImagingResource {
   name       String
   modality   String
   active     Boolean  @default(true)
+
+  // Phase B7 — schedulable-resource metadata (still not a DICOM AE-title/device
+  // registry — deeper biomedical/equipment management is a later phase).
+  roomLabel    String?
+  location     String?
+  capabilities Json?
 
   studies ImagingStudy[]
 
@@ -5292,4 +5321,111 @@ model PharmacyStorageCheck {
   checkedAt         DateTime @default(now())
 
   @@index([facilityId, locationId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase B7 — Advanced Diagnostics: LIS quality management + external lab.
+// Additive operational-depth records over the Phase 4 diagnostics core
+// (Specimen/LabResult/ImagingStudy/ImagingReport lifecycles are reused, not
+// rebuilt). QC/calibration are quality-management DOCUMENTATION — never a
+// scientific analyzer engine and never a source of clinical claims. The
+// external-lab record is a clean referral/result-exchange boundary, NOT a live
+// integration. facilityId/patientId/encounterId/labOrderId are plain FKs
+// validated server-side (same pattern as the B5-B6 child records) — no
+// canonical entity is duplicated.
+// ─────────────────────────────────────────────────────────────────────────
+
+enum LabQcReviewStatus {
+  PENDING
+  REVIEWED
+  REJECTED
+}
+
+enum ExternalLabStatus {
+  DRAFT
+  SENT
+  RESULT_RECEIVED
+  REVIEWED
+  CANCELLED
+}
+
+/**
+ * Documentary laboratory QC run record (brief §15). Not an analyzer QC engine.
+ */
+model LabQcRecord {
+  id                 String            @id @default(cuid())
+  facilityId         String
+  catalogTestId      String?
+  instrumentId       String
+  runAt              DateTime          @default(now())
+  controlType        String // documentary, e.g. "LOW" | "NORMAL" | "HIGH"
+  controlLot         String?
+  observedValue      Float?
+  expectedValue      Float?
+  unit               String?
+  result             String? // documentary "PASS" | "FAIL" label entered by staff, never computed as a clinical claim
+  status             LabQcReviewStatus @default(PENDING)
+  performedByStaffId String
+  reviewedByStaffId  String?
+  reviewedAt         DateTime?
+  notes              String?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  @@index([facilityId, status])
+  @@index([instrumentId])
+}
+
+/**
+ * Documentary instrument calibration record (brief §15).
+ */
+model LabCalibrationRecord {
+  id                 String            @id @default(cuid())
+  facilityId         String
+  instrumentId       String
+  calibrationType    String
+  calibratedAt       DateTime          @default(now())
+  status             LabQcReviewStatus @default(PENDING)
+  performedByStaffId String
+  reviewedByStaffId  String?
+  reviewedAt         DateTime?
+  nextDueAt          DateTime?
+  notes              String?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  @@index([facilityId, status])
+  @@index([instrumentId])
+}
+
+/**
+ * External-laboratory referral boundary (brief §16). Records that a test was
+ * sent out and its result/document reference came back — a clean seam for a
+ * future connector, NOT a live external integration. patient/encounter/order
+ * are validated server-side; the result is a reference/document link, never
+ * fabricated values.
+ */
+model ExternalLabReferral {
+  id                String            @id @default(cuid())
+  facilityId        String
+  labOrderId        String?
+  patientId         String
+  encounterId       String?
+  externalLabName   String
+  externalAccession String?
+  testDescription   String?
+  status            ExternalLabStatus @default(DRAFT)
+  sentByStaffId     String
+  sentAt            DateTime?
+  resultReceivedAt  DateTime?
+  resultDocumentRef String?
+  reviewedByStaffId String?
+  reviewedAt        DateTime?
+  notes             String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@index([facilityId, status])
+  @@index([patientId])
+  @@index([labOrderId])
 }

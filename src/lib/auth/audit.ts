@@ -288,7 +288,16 @@ export type AuditEventType =
   | "hospital.pharmacy.storageCheck"
   | "hospital.pharmacy.requestCreated"
   | "hospital.pharmacy.requestUpdated"
-  | "hospital.pharmacy.transfer";
+  | "hospital.pharmacy.transfer"
+  // Phase B7 — Advanced Diagnostics (LIS quality management + PACS boundary).
+  | "hospital.lab.specimenIdentitySet"
+  | "hospital.lab.qcRecorded"
+  | "hospital.lab.qcReviewed"
+  | "hospital.lab.calibrationRecorded"
+  | "hospital.lab.calibrationReviewed"
+  | "hospital.lab.externalReferralCreated"
+  | "hospital.lab.externalReferralUpdated"
+  | "hospital.imaging.acquisitionRecorded";
 
 export interface AuditEventContext {
   facilityId?: string;

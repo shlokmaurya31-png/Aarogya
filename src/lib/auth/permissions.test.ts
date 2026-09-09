@@ -311,3 +311,37 @@ describe("roleHasPermission — Phase B6 Enterprise Pharmacy boundary", () => {
     }
   });
 });
+
+describe("roleHasPermission — Phase B7 Advanced Diagnostics boundary", () => {
+  it("LAB_TECHNICIAN can run QC/calibration/external-lab, the specimen lifecycle, and result verify/release/amend", () => {
+    for (const p of ["lab:qc:manage", "lab:calibration:manage", "lab:external:manage", "lab:specimen:collect", "lab:specimen:reject", "lab:result:enter", "lab:result:verify", "lab:result:release", "lab:result:amend"] as Permission[]) {
+      expect(roleHasPermission("LAB_TECHNICIAN", p)).toBe(true);
+    }
+  });
+
+  it("HOSPITAL_ADMIN holds diagnostic quality-management oversight; RADIOLOGY_TECH performs acquisition (study:execute) but not lab QC", () => {
+    for (const p of ["lab:qc:manage", "lab:calibration:manage", "lab:external:manage"] as Permission[]) {
+      expect(roleHasPermission("HOSPITAL_ADMIN", p)).toBe(true);
+    }
+    expect(roleHasPermission("RADIOLOGY_TECH", "radiology:study:execute")).toBe(true);
+    for (const p of ["lab:qc:manage", "lab:calibration:manage", "lab:external:manage"] as Permission[]) {
+      expect(roleHasPermission("RADIOLOGY_TECH", p)).toBe(false);
+    }
+  });
+
+  it("DOCTOR acknowledges critical results but does not run the lab bench (no QC/calibration/external/result-entry)", () => {
+    expect(roleHasPermission("DOCTOR", "lab:result:acknowledge")).toBe(true);
+    for (const p of ["lab:qc:manage", "lab:calibration:manage", "lab:external:manage", "lab:result:enter", "lab:result:release"] as Permission[]) {
+      expect(roleHasPermission("DOCTOR", p)).toBe(false);
+    }
+  });
+
+  it("FRONT_DESK, BILLING_STAFF, NURSE, and PHARMACIST hold no lab QC/calibration/external-lab permissions", () => {
+    for (const p of ["lab:qc:manage", "lab:calibration:manage", "lab:external:manage"] as Permission[]) {
+      expect(roleHasPermission("FRONT_DESK", p)).toBe(false);
+      expect(roleHasPermission("BILLING_STAFF", p)).toBe(false);
+      expect(roleHasPermission("NURSE", p)).toBe(false);
+      expect(roleHasPermission("PHARMACIST", p)).toBe(false);
+    }
+  });
+});

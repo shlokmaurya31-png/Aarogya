@@ -1,5 +1,5 @@
-import { RadiologyQueue } from "@/components/hospital-os/RadiologyQueue";
+import { RadiologyWorkspace } from "@/components/hospital-os/RadiologyWorkspace";
 
 export default function HospitalOsRadiologyPage() {
-  return <RadiologyQueue />;
+  return <RadiologyWorkspace />;
 }

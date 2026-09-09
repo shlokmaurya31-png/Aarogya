@@ -1,5 +1,5 @@
-import { LabQueue } from "@/components/hospital-os/LabQueue";
+import { LabWorkspace } from "@/components/hospital-os/LabWorkspace";
 
 export default function HospitalOsLabPage() {
-  return <LabQueue />;
+  return <LabWorkspace />;
 }
