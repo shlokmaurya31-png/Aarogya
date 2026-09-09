@@ -149,3 +149,36 @@ describe("roleHasPermission — Phase B1 ICU boundary", () => {
     }
   });
 });
+
+describe("roleHasPermission — Phase B3 Operating Theatre boundary", () => {
+  it("DOCTOR can drive the surgical clinical workflow", () => {
+    for (const p of ["ot:procedure:create", "ot:procedure:review", "ot:procedure:schedule", "ot:procedure:manage", "ot:anesthesia:record", "ot:procedure:document", "ot:implant:record", "ot:specimen:record", "ot:recovery:manage"] as Permission[]) {
+      expect(roleHasPermission("DOCTOR", p)).toBe(true);
+    }
+  });
+
+  it("NURSE can record checklist/specimens/implants/recovery but cannot create or document the procedure", () => {
+    expect(roleHasPermission("NURSE", "ot:checklist:record")).toBe(true);
+    expect(roleHasPermission("NURSE", "ot:specimen:record")).toBe(true);
+    expect(roleHasPermission("NURSE", "ot:implant:record")).toBe(true);
+    expect(roleHasPermission("NURSE", "ot:recovery:manage")).toBe(true);
+    expect(roleHasPermission("NURSE", "ot:procedure:create")).toBe(false);
+    expect(roleHasPermission("NURSE", "ot:procedure:document")).toBe(false);
+    expect(roleHasPermission("NURSE", "ot:anesthesia:record")).toBe(false);
+  });
+
+  it("OT/procedure configuration is HOSPITAL_ADMIN only (not DOCTOR/NURSE)", () => {
+    expect(roleHasPermission("HOSPITAL_ADMIN", "ot:theatre:manage")).toBe(true);
+    expect(roleHasPermission("DOCTOR", "ot:theatre:manage")).toBe(false);
+    expect(roleHasPermission("NURSE", "ot:theatre:manage")).toBe(false);
+  });
+
+  it("FRONT_DESK, BILLING_STAFF, and PHARMACIST hold no surgical clinical mutation permissions", () => {
+    const otPerms: Permission[] = ["ot:theatre:manage", "ot:procedure:create", "ot:procedure:schedule", "ot:procedure:manage", "ot:checklist:record", "ot:anesthesia:record", "ot:procedure:document", "ot:implant:record", "ot:specimen:record", "ot:recovery:manage"];
+    for (const p of otPerms) {
+      expect(roleHasPermission("FRONT_DESK", p)).toBe(false);
+      expect(roleHasPermission("BILLING_STAFF", p)).toBe(false);
+      expect(roleHasPermission("PHARMACIST", p)).toBe(false);
+    }
+  });
+});

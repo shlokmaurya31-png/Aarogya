@@ -224,7 +224,22 @@ export type AuditEventType =
   | "hospital.icu.deviceRecorded"
   | "hospital.icu.deviceStatusChanged"
   | "hospital.icu.infusionRecorded"
-  | "hospital.icu.infusionStatusChanged";
+  | "hospital.icu.infusionStatusChanged"
+  // Phase B3 — Operating Theatre & Surgical Workflow.
+  | "hospital.ot.theatreConfigured"
+  | "hospital.ot.procedureConfigured"
+  | "hospital.ot.surgeryRequested"
+  | "hospital.ot.surgeryStatusChanged"
+  | "hospital.ot.surgeryScheduled"
+  | "hospital.ot.surgeryScheduleCancelled"
+  | "hospital.ot.checklistUpdated"
+  | "hospital.ot.anesthesiaRecorded"
+  | "hospital.ot.procedureStarted"
+  | "hospital.ot.procedureCompleted"
+  | "hospital.ot.specimenCollected"
+  | "hospital.ot.implantRecorded"
+  | "hospital.ot.consumableRecorded"
+  | "hospital.ot.recoveryUpdated";
 
 export interface AuditEventContext {
   facilityId?: string;

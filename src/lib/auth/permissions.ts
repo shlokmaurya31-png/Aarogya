@@ -203,6 +203,21 @@ export const PERMISSIONS = [
   "icu:flowsheet:record",
   "icu:device:manage",
   "icu:infusion:manage",
+
+  // Phase B3 — Operating Theatre & Surgical Workflow. Theatre/procedure-
+  // catalog config is an admin action; surgical clinical actions are
+  // DOCTOR/NURSE per least privilege (see role grants below).
+  "ot:theatre:manage",
+  "ot:procedure:create",
+  "ot:procedure:review",
+  "ot:procedure:schedule",
+  "ot:procedure:manage",
+  "ot:checklist:record",
+  "ot:anesthesia:record",
+  "ot:procedure:document",
+  "ot:implant:record",
+  "ot:specimen:record",
+  "ot:recovery:manage",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -274,6 +289,17 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "icu:flowsheet:record",
     "icu:device:manage",
     "icu:infusion:manage",
+    // Phase B3 — surgeon-side surgical workflow.
+    "ot:procedure:create",
+    "ot:procedure:review",
+    "ot:procedure:schedule",
+    "ot:procedure:manage",
+    "ot:checklist:record",
+    "ot:anesthesia:record",
+    "ot:procedure:document",
+    "ot:implant:record",
+    "ot:specimen:record",
+    "ot:recovery:manage",
   ],
   NURSE: [
     "hospital:command-center:view",
@@ -312,6 +338,11 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "icu:flowsheet:record",
     "icu:device:manage",
     "icu:infusion:manage",
+    // Phase B3 — nursing surgical workflow (checklist, specimens, implants, recovery).
+    "ot:checklist:record",
+    "ot:specimen:record",
+    "ot:implant:record",
+    "ot:recovery:manage",
   ],
   LAB_TECHNICIAN: [
     "hospital:command-center:view",
@@ -423,6 +454,10 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "radiology:resource:manage",
     // Phase B1 — ICU unit configuration (admin action).
     "icu:unit:manage",
+    // Phase B3 — OT/procedure-catalog configuration + operational scheduling/review.
+    "ot:theatre:manage",
+    "ot:procedure:review",
+    "ot:procedure:schedule",
     // Phase 5 — checker/approval tier: void/approve/manage pricing, plus reconciliation visibility.
     "billing:tariff:manage",
     "billing:package:manage",

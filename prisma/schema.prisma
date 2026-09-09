@@ -519,6 +519,11 @@ model Facility {
   icuDevices      IcuDevice[]
   icuInfusions    IcuInfusion[]
 
+  // Phase B3 — Operating Theatre.
+  procedures        Procedure[]
+  operatingTheatres OperatingTheatre[]
+  surgeries         Surgery[]
+
   // Phase 4 Milestone B — Laboratory core workflow (brief §6-24).
   specimens       Specimen[]
   labTestCatalogs LabTestCatalog[]
@@ -835,6 +840,9 @@ model Patient {
   icuDevices      IcuDevice[]
   icuInfusions    IcuInfusion[]
 
+  // Phase B3 — Operating Theatre.
+  surgeries Surgery[]
+
   // Phase 4.5 — structured audit context (see AuditEvent).
   auditEvents AuditEvent[]
 
@@ -1025,6 +1033,9 @@ model Encounter {
   icuObservations IcuObservation[]
   icuDevices      IcuDevice[]
   icuInfusions    IcuInfusion[]
+
+  // Phase B3 — Operating Theatre.
+  surgeries Surgery[]
 
   @@index([facilityId])
   @@index([episodeOfCareId])
@@ -2909,6 +2920,276 @@ model IcuInfusion {
   @@index([facilityId])
   @@index([patientId])
   @@index([status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase B3 — Operating Theatre & Surgical Workflow. Additive; composes the
+// existing Patient/Encounter/ADT/ClinicalNote/Item-ItemLot-stock/Charge
+// systems — no parallel patient/encounter/bed/medication/inventory/note.
+// Specimen/implant patient/encounter/facility are DERIVED from the parent
+// Surgery server-side (never client-supplied), making wrong-patient
+// attachment structurally impossible. staffId fields are plain strings,
+// matching the Vital/IcuObservation convention. No clinical scoring/
+// dosing/decision logic — recording + workflow + provenance only.
+// ─────────────────────────────────────────────────────────────────────────
+
+enum SurgeryStatus {
+  REQUESTED
+  REVIEWED
+  APPROVED
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum AnesthesiaType {
+  GENERAL
+  REGIONAL
+  LOCAL
+  SEDATION
+  OTHER
+}
+
+/** Configurable procedure catalog (not a hardcoded taxonomy). */
+model Procedure {
+  id                     String    @id @default(cuid())
+  facility               Facility  @relation(fields: [facilityId], references: [id])
+  facilityId             String
+  code                   String
+  name                   String
+  description            String?
+  specialty              String?
+  typicalDurationMinutes Int?
+  active                 Boolean   @default(true)
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  surgeries Surgery[]
+
+  @@unique([facilityId, code])
+  @@index([facilityId])
+}
+
+/** Operating theatre configuration + explicitly-declared capabilities (resource matching only, no clinical inference). */
+model OperatingTheatre {
+  id            String   @id @default(cuid())
+  facility      Facility @relation(fields: [facilityId], references: [id])
+  facilityId    String
+  departmentId  String?
+  name          String
+  type          String? // "GENERAL" | "ORTHOPEDIC" | "CARDIAC" | "NEURO" | "OBSTETRIC" | ... (free-string, extensible)
+  active        Boolean  @default(true)
+  capabilities  Json? // explicitly-configured capability tags, e.g. { imaging: true, laminarFlow: true }
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  schedules SurgerySchedule[]
+
+  @@unique([facilityId, name])
+  @@index([facilityId])
+}
+
+model Surgery {
+  id                  String        @id @default(cuid())
+  facility            Facility      @relation(fields: [facilityId], references: [id])
+  facilityId          String
+  patient             Patient       @relation(fields: [patientId], references: [id])
+  patientId           String
+  encounter           Encounter     @relation(fields: [encounterId], references: [id])
+  encounterId         String
+  procedure           Procedure?    @relation(fields: [procedureId], references: [id])
+  procedureId         String?
+  procedureName       String // denormalized at request time so history is stable even if the catalog entry changes
+  indication          String?
+  laterality          String? // "LEFT" | "RIGHT" | "BILATERAL" | "NA"
+  urgency             String        @default("ELECTIVE") // "ELECTIVE" | "URGENT" | "EMERGENCY"
+  status              SurgeryStatus @default(REQUESTED)
+  requestedByStaffId  String
+  requestedDate       DateTime?
+  reviewedByStaffId   String?
+  reviewedAt          DateTime?
+  approvedByStaffId   String?
+  approvedAt          DateTime?
+  cancelledReason     String?
+  cancelledAt         DateTime?
+
+  // Pre-op workflow (documentation, not a medical-fitness determination).
+  consentStatus       String? // "PENDING" | "OBTAINED" | "REFUSED" | "NA"
+  consentAt           DateTime?
+  consentByStaffId    String?
+  consentDocumentId   String?
+  preOpReady          Boolean       @default(false)
+  preOpNotes          String?
+
+  // Procedure execution.
+  actualStart         DateTime?
+  actualEnd           DateTime?
+  surgeonStaffId      String?
+  operativeFindings   String?
+  operativeDetails    String?
+  complications       String?
+  estimatedBloodLossMl Int?
+  recoveryDestination String? // "PACU" | "ICU" | "WARD"
+  operativeNoteId     String?
+
+  notes               String?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  schedule    SurgerySchedule?
+  team        SurgeryTeamMember[]
+  checklist   SurgeryChecklistItem[]
+  anesthesia  AnesthesiaRecord?
+  specimens   SurgicalSpecimen[]
+  itemUsages  SurgeryItemUsage[]
+  recovery    RecoveryRecord?
+
+  @@index([facilityId])
+  @@index([patientId])
+  @@index([encounterId])
+  @@index([status])
+}
+
+/**
+ * OT time slot for a surgery. Overlap prevention: an app-level check gives a
+ * clean error, and a Postgres EXCLUDE constraint (surgery_schedule_no_overlap,
+ * hand-written in the postgres baseline like imaging_resource_no_overlap) is
+ * the actual race-proof guarantee. surgeryId is unique (a surgery is
+ * scheduled at most once at a time).
+ */
+model SurgerySchedule {
+  id               String           @id @default(cuid())
+  surgery          Surgery          @relation(fields: [surgeryId], references: [id])
+  surgeryId        String           @unique
+  operatingTheatre OperatingTheatre @relation(fields: [operatingTheatreId], references: [id])
+  operatingTheatreId String
+  facilityId       String
+  startAt          DateTime
+  endAt            DateTime
+  status           String           @default("SCHEDULED") // "SCHEDULED" | "CANCELLED"
+  schedulerStaffId String
+  notes            String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@index([operatingTheatreId, startAt])
+  @@index([facilityId])
+}
+
+model SurgeryTeamMember {
+  id        String   @id @default(cuid())
+  surgery   Surgery  @relation(fields: [surgeryId], references: [id])
+  surgeryId String
+  staffId   String
+  role      String // "SURGEON" | "ASSISTANT_SURGEON" | "ANESTHETIST" | "ANESTHETIST_ASSISTANT" | "SCRUB_NURSE" | "CIRCULATING_NURSE" | "TECHNICIAN"
+  createdAt DateTime @default(now())
+
+  @@unique([surgeryId, staffId, role])
+  @@index([surgeryId])
+}
+
+/** WHO-style surgical safety checklist items, grouped by phase. Configurable label set seeded per surgery on demand. */
+model SurgeryChecklistItem {
+  id             String    @id @default(cuid())
+  surgery        Surgery   @relation(fields: [surgeryId], references: [id])
+  surgeryId      String
+  phase          String // "BEFORE_INDUCTION" | "BEFORE_INCISION" | "BEFORE_LEAVING"
+  itemKey        String
+  label          String
+  checked        Boolean   @default(false)
+  checkedByStaffId String?
+  checkedAt      DateTime?
+
+  @@unique([surgeryId, itemKey])
+  @@index([surgeryId, phase])
+}
+
+model AnesthesiaRecord {
+  id                  String         @id @default(cuid())
+  surgery             Surgery        @relation(fields: [surgeryId], references: [id])
+  surgeryId           String         @unique
+  type                AnesthesiaType
+  anesthetistStaffId  String
+  status              String         @default("PLANNED") // "PLANNED" | "IN_PROGRESS" | "COMPLETED"
+  startAt             DateTime?
+  endAt               DateTime?
+  preAssessmentNoteId String?
+  intraOpNotes        String?
+  complications       String?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+}
+
+/**
+ * Surgical specimen collection record (feeds the pathology/lab workflow —
+ * NOT a parallel lab). patient/encounter/facility are copied from the parent
+ * Surgery, never client-supplied.
+ */
+model SurgicalSpecimen {
+  id                 String    @id @default(cuid())
+  surgery            Surgery   @relation(fields: [surgeryId], references: [id])
+  surgeryId          String
+  facilityId         String
+  patientId          String
+  encounterId        String
+  specimenType       String
+  site               String?
+  label              String?
+  destinationLab     String?
+  status             String    @default("COLLECTED") // "COLLECTED" | "SENT" | "RECEIVED"
+  collectedByStaffId String
+  collectedAt        DateTime  @default(now())
+  notes              String?
+
+  @@index([surgeryId])
+  @@index([patientId])
+}
+
+/**
+ * Surgical implant OR consumable usage. References canonical Item/ItemLot by
+ * id (validated via the inventory facility-scope helpers + issueStock, which
+ * performs the actual transactional, over-issue-safe consumption). Not a
+ * second stock ledger.
+ */
+model SurgeryItemUsage {
+  id                String   @id @default(cuid())
+  surgery           Surgery  @relation(fields: [surgeryId], references: [id])
+  surgeryId         String
+  facilityId        String
+  patientId         String
+  encounterId       String
+  usageType         String // "IMPLANT" | "CONSUMABLE"
+  itemId            String
+  itemLotId         String?
+  manufacturer      String?
+  serialNumber      String?
+  site              String?
+  quantity          Float
+  stockConsumed     Boolean  @default(false)
+  implantedAt       DateTime?
+  recordedByStaffId String
+  createdAt         DateTime @default(now())
+
+  @@index([surgeryId])
+  @@index([patientId])
+  @@index([itemId])
+}
+
+model RecoveryRecord {
+  id                  String    @id @default(cuid())
+  surgery             Surgery   @relation(fields: [surgeryId], references: [id])
+  surgeryId           String    @unique
+  destination         String? // "PACU" | "ICU" | "WARD"
+  status              String    @default("PENDING") // "PENDING" | "IN_RECOVERY" | "READY_FOR_TRANSFER" | "TRANSFERRED"
+  arrivalAt           DateTime?
+  departureAt         DateTime?
+  responsibleStaffId  String?
+  nurseStaffId        String?
+  handoffId           String?
+  notes               String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 }
 
 // ─────────────────────────────────────────────────────────────────────────
