@@ -123,6 +123,12 @@ function HeroNav() {
           Aarogya Scholar
         </Link>
         <Link
+          href="/hospital-os/login"
+          className="rounded-full border border-black/10 bg-black/[0.05] px-4 py-2 text-[12.5px] font-medium text-text-primary backdrop-blur transition hover:border-cyan/40 hover:bg-cyan/10 hover:text-cyan"
+        >
+          Hospital
+        </Link>
+        <Link
           href="/login"
           className="rounded-full border border-black/10 bg-black/[0.05] px-4 py-2 text-[12.5px] font-medium text-text-primary backdrop-blur transition hover:border-cyan/40 hover:bg-cyan/10 hover:text-cyan"
         >
