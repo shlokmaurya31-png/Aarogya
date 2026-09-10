@@ -50,3 +50,7 @@ next-env.d.ts
 /dev.db
 /dev.db-journal
 /.data/
+
+# Prisma shadow database (local migration artifact)
+/shadow.db
+/shadow.db-journal

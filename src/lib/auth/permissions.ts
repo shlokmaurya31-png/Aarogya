@@ -326,6 +326,40 @@ export const PERMISSIONS = [
   "biomedical:calibration:manage",
   "infection:incident:create",
   "infection:manage",
+
+  // Phase B10 — Quality, Patient Safety, Workforce, Credentialing & Authorization
+  // Foundation. Clinical roles RAISE quality incidents and read relevant quality
+  // information; investigation/RCA/CAPA/standards/audit MANAGEMENT and the entire
+  // workforce/credential/privilege administration map to HOSPITAL_ADMIN (the
+  // quality/workforce manager in this closed role set). credential:verify/
+  // privilege:grant are separated from plain management so a maker/checker split
+  // is possible. There is deliberately no giant new role hierarchy (brief §29).
+  "quality:command:view",
+  "quality:incident:create",
+  "quality:incident:read",
+  "quality:incident:investigate",
+  "quality:incident:close",
+  "quality:rca:create",
+  "quality:rca:review",
+  "quality:capa:create",
+  "quality:capa:manage",
+  "quality:standard:manage",
+  "quality:evidence:manage",
+  "quality:audit:manage",
+  "workforce:command:view",
+  "workforce:staff:read",
+  "workforce:assignment:manage",
+  "workforce:availability:manage",
+  "workforce:shift:manage",
+  "workforce:requirement:manage",
+  "credential:read",
+  "credential:manage",
+  "credential:verify",
+  "credential:suspend",
+  "privilege:read",
+  "privilege:manage",
+  "privilege:grant",
+  "privilege:revoke",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -438,6 +472,17 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "pharmacy:request:create",
     "pharmacy:substitution:authorize",
     "pharmacy:trace:view",
+    // Phase B10 — clinicians report quality incidents, own/assigned
+    // investigations, author RCA/CAPA, and read their own credentials/
+    // privileges. NO workforce/credential/privilege administration.
+    "quality:command:view",
+    "quality:incident:create",
+    "quality:incident:read",
+    "quality:incident:investigate",
+    "quality:rca:create",
+    "quality:capa:create",
+    "credential:read",
+    "privilege:read",
   ],
   NURSE: [
     "hospital:command-center:view",
@@ -506,6 +551,13 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     // Phase B6 — ward medication requests only. NO pharmacy verification/
     // dispense/master/formulary (nursing never bypasses pharmacy verification).
     "pharmacy:request:create",
+    // Phase B10 — nurses report safety incidents (falls, pressure injuries,
+    // medication near-misses) and read their own credentials/privileges.
+    "quality:command:view",
+    "quality:incident:create",
+    "quality:incident:read",
+    "credential:read",
+    "privilege:read",
   ],
   LAB_TECHNICIAN: [
     "hospital:command-center:view",
@@ -540,6 +592,12 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "blood:reservation:manage",
     "blood:issue",
     "blood:transport:manage",
+    // Phase B10 — report diagnostic/specimen safety incidents; read own
+    // credentials/privileges (lab result verification is privilege-gated).
+    "quality:incident:create",
+    "quality:incident:read",
+    "credential:read",
+    "privilege:read",
   ],
   RADIOLOGY_TECH: [
     "hospital:command-center:view",
@@ -549,6 +607,11 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "imaging:report:enter",
     "radiology:schedule",
     "radiology:study:execute",
+    // Phase B10 — report imaging safety incidents; read own credentials/privileges.
+    "quality:incident:create",
+    "quality:incident:read",
+    "credential:read",
+    "privilege:read",
     // Phase 6A — contrast/disposable consumption boundary (no dedicated UI yet).
     "inventory:item:view",
     "inventory:stock:view",
@@ -591,6 +654,12 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "inventory:request:fulfill",
     "inventory:serial:manage",
     "inventory:valuation:view",
+    // Phase B10 — report medication safety incidents; read own credentials/
+    // privileges (controlled-drug handling is privilege-gated in the foundation).
+    "quality:incident:create",
+    "quality:incident:read",
+    "credential:read",
+    "privilege:read",
   ],
   BILLING_STAFF: [
     "hospital:command-center:view",
@@ -782,6 +851,37 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "biomedical:calibration:manage",
     "infection:incident:create",
     "infection:manage",
+    // Phase B10 — the quality + workforce manager. Full quality lifecycle
+    // (investigate/close/RCA review/CAPA/standards/evidence/audit) plus the
+    // entire workforce/credential/privilege administration. Dedicated Quality
+    // Manager / Credentialing Officer roles are intentionally NOT invented here
+    // (brief §29 — no large new role hierarchy).
+    "quality:command:view",
+    "quality:incident:create",
+    "quality:incident:read",
+    "quality:incident:investigate",
+    "quality:incident:close",
+    "quality:rca:create",
+    "quality:rca:review",
+    "quality:capa:create",
+    "quality:capa:manage",
+    "quality:standard:manage",
+    "quality:evidence:manage",
+    "quality:audit:manage",
+    "workforce:command:view",
+    "workforce:staff:read",
+    "workforce:assignment:manage",
+    "workforce:availability:manage",
+    "workforce:shift:manage",
+    "workforce:requirement:manage",
+    "credential:read",
+    "credential:manage",
+    "credential:verify",
+    "credential:suspend",
+    "privilege:read",
+    "privilege:manage",
+    "privilege:grant",
+    "privilege:revoke",
   ],
   FRONT_DESK: [
     "hospital:command-center:view",
@@ -804,6 +904,9 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "operations:command:view",
     "transport:request:create",
     "housekeeping:request:create",
+    // Phase B10 — front office may report a safety event (e.g. a fall in the
+    // waiting area). No quality management, no workforce/credential access.
+    "quality:incident:create",
   ],
   STUDENT: [
     "student:case:view",
@@ -846,6 +949,14 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "inventory:item:view",
     "inventory:report:view",
     "procurement:po:view",
+    // Phase B10 — cross-facility read-only oversight of quality + workforce
+    // (matching its existing narrow, view-only footprint). No mutation.
+    "quality:command:view",
+    "quality:incident:read",
+    "workforce:command:view",
+    "workforce:staff:read",
+    "credential:read",
+    "privilege:read",
   ],
 };
 

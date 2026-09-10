@@ -67,6 +67,17 @@ export async function withApiErrors<T>(fn: () => Promise<T>): Promise<NextRespon
     if (err instanceof BadRequestError) {
       return NextResponse.json({ error: err.message }, { status: 400 });
     }
+    // Generic fallthrough for domain errors that carry an explicit HTTP status
+    // (e.g. Phase B10's CredentialAuthorizationError, a 403 that is NOT a
+    // missing-RBAC-permission ForbiddenError). Only 4xx client errors are
+    // surfaced this way; anything else remains a masked 500.
+    if (err && typeof err === "object" && "status" in err) {
+      const status = (err as { status?: unknown }).status;
+      const message = err instanceof Error ? err.message : "Request failed.";
+      if (typeof status === "number" && status >= 400 && status < 500) {
+        return NextResponse.json({ error: message }, { status });
+      }
+    }
     console.error(err);
     return NextResponse.json({ error: "Internal error." }, { status: 500 });
   }
