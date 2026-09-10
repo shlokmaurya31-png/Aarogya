@@ -382,3 +382,46 @@ describe("roleHasPermission — Phase B8 Enterprise Inventory + Procurement boun
     }
   });
 });
+
+describe("roleHasPermission — Phase B9 Hospital Operations boundary", () => {
+  it("HOSPITAL_ADMIN is the operations manager (full housekeeping/ambulance/biomedical/infection)", () => {
+    for (const p of ["operations:command:view", "housekeeping:request:manage", "dietary:order:manage", "transport:request:manage", "ambulance:manage", "ambulance:dispatch", "maintenance:manage", "biomedical:manage", "biomedical:calibration:manage", "infection:manage"] as Permission[]) {
+      expect(roleHasPermission("HOSPITAL_ADMIN", p)).toBe(true);
+    }
+  });
+
+  it("NURSE coordinates ward operations (housekeeping/transport/meal) but cannot dispatch ambulances or manage biomedical", () => {
+    for (const p of ["housekeeping:request:create", "housekeeping:request:manage", "transport:request:manage", "dietary:meal:manage", "infection:incident:create"] as Permission[]) {
+      expect(roleHasPermission("NURSE", p)).toBe(true);
+    }
+    for (const p of ["ambulance:dispatch", "ambulance:manage", "biomedical:manage", "dietary:order:manage", "infection:manage"] as Permission[]) {
+      expect(roleHasPermission("NURSE", p)).toBe(false);
+    }
+  });
+
+  it("DOCTOR orders diets + manages infection incidents but does not run housekeeping/ambulance/biomedical", () => {
+    expect(roleHasPermission("DOCTOR", "dietary:order:manage")).toBe(true);
+    expect(roleHasPermission("DOCTOR", "infection:manage")).toBe(true);
+    for (const p of ["housekeeping:request:manage", "ambulance:dispatch", "biomedical:manage", "maintenance:manage"] as Permission[]) {
+      expect(roleHasPermission("DOCTOR", p)).toBe(false);
+    }
+  });
+
+  it("FRONT_DESK raises transport/housekeeping requests only — no operational management", () => {
+    expect(roleHasPermission("FRONT_DESK", "transport:request:create")).toBe(true);
+    expect(roleHasPermission("FRONT_DESK", "housekeeping:request:create")).toBe(true);
+    for (const p of ["housekeeping:request:manage", "transport:request:manage", "ambulance:dispatch", "biomedical:manage", "infection:manage"] as Permission[]) {
+      expect(roleHasPermission("FRONT_DESK", p)).toBe(false);
+    }
+  });
+
+  it("BILLING_STAFF, LAB_TECHNICIAN, RADIOLOGY_TECH, PHARMACIST hold no operational management permissions", () => {
+    const ops: Permission[] = ["housekeeping:request:manage", "dietary:order:manage", "transport:request:manage", "ambulance:manage", "ambulance:dispatch", "maintenance:manage", "biomedical:manage", "biomedical:calibration:manage", "infection:manage"];
+    for (const p of ops) {
+      expect(roleHasPermission("BILLING_STAFF", p)).toBe(false);
+      expect(roleHasPermission("LAB_TECHNICIAN", p)).toBe(false);
+      expect(roleHasPermission("RADIOLOGY_TECH", p)).toBe(false);
+      expect(roleHasPermission("PHARMACIST", p)).toBe(false);
+    }
+  });
+});

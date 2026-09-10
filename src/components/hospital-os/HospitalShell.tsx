@@ -6,7 +6,7 @@ import {
   LayoutGrid, BedDouble, ClipboardList, LogOut, Building2, Stethoscope,
   ClipboardCheck, FlaskConical, ScanLine, Receipt, DoorOpen,
   UserPlus, Siren, ArrowRightLeft, Pill, Microscope,
-  ShieldCheck, BarChart3, Settings2, Boxes, Truck, HeartPulse, Scissors, Droplet,
+  ShieldCheck, BarChart3, Settings2, Boxes, Truck, HeartPulse, Scissors, Droplet, Wrench,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusPill } from "@/components/ui/StatusPill";
@@ -82,6 +82,7 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     DIAGNOSTICS_GROUP,
     { href: "/hospital-os/pharmacy", label: "Pharmacy", icon: Pill },
     INVENTORY_GROUP,
+    { href: "/hospital-os/operations", label: "Operations", icon: Wrench },
     BILLING_GROUP_ADMIN,
   ],
   AAROGYA_ADMIN: [
@@ -104,6 +105,7 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     { href: "/hospital-os/ot", label: "Operating Theatre", icon: Scissors },
     { href: "/hospital-os/blood", label: "Blood Bank", icon: Droplet },
     DIAGNOSTICS_GROUP,
+    { href: "/hospital-os/operations", label: "Operations", icon: Wrench },
   ],
   NURSE: [
     { href: "/hospital-os/nurse", label: "My Shift", icon: ClipboardCheck },
@@ -114,6 +116,7 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     { href: "/hospital-os/ot", label: "Operating Theatre", icon: Scissors },
     { href: "/hospital-os/blood", label: "Blood Bank", icon: Droplet },
     DIAGNOSTICS_GROUP,
+    { href: "/hospital-os/operations", label: "Operations", icon: Wrench },
   ],
   // Single-purpose operational roles keep their direct one-click link to
   // their own worklist (unchanged) and additionally get the cross-domain
@@ -136,6 +139,7 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
   FRONT_DESK: [
     { href: "/hospital-os/front-desk", label: "Front Desk", icon: UserPlus },
     { href: "/hospital-os/ed", label: "ED Board", icon: Siren },
+    { href: "/hospital-os/operations", label: "Operations", icon: Wrench },
   ],
 };
 

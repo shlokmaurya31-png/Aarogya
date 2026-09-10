@@ -310,7 +310,36 @@ export type AuditEventType =
   | "hospital.procurement.quotationRecorded"
   | "hospital.procurement.supplierSelected"
   | "hospital.procurement.invoiceRecorded"
-  | "hospital.procurement.invoiceReviewed";
+  | "hospital.procurement.invoiceReviewed"
+  // Phase B9 — Hospital Operations Layer.
+  | "hospital.ops.housekeepingCreated"
+  | "hospital.ops.housekeepingUpdated"
+  | "hospital.ops.dietOrderCreated"
+  | "hospital.ops.dietOrderUpdated"
+  | "hospital.ops.mealPlanned"
+  | "hospital.ops.mealUpdated"
+  | "hospital.ops.transportCreated"
+  | "hospital.ops.transportUpdated"
+  | "hospital.ops.ambulanceCreated"
+  | "hospital.ops.ambulanceStatusChanged"
+  | "hospital.ops.ambulanceTripCreated"
+  | "hospital.ops.ambulanceDispatched"
+  | "hospital.ops.ambulanceTripUpdated"
+  | "hospital.ops.maintenanceCreated"
+  | "hospital.ops.maintenanceUpdated"
+  | "hospital.ops.preventiveScheduled"
+  | "hospital.ops.preventiveCompleted"
+  | "hospital.ops.downtimeStarted"
+  | "hospital.ops.downtimeEnded"
+  | "hospital.ops.equipmentCreated"
+  | "hospital.ops.equipmentStatusChanged"
+  | "hospital.ops.calibrationRecorded"
+  | "hospital.ops.biomedMaintenanceRecorded"
+  | "hospital.ops.equipmentMoved"
+  | "hospital.ops.infectionReported"
+  | "hospital.ops.infectionUpdated"
+  | "hospital.ops.infectionInvestigationCreated"
+  | "hospital.ops.exposureRecorded";
 
 export interface AuditEventContext {
   facilityId?: string;

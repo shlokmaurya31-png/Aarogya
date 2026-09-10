@@ -303,6 +303,29 @@ export const PERMISSIONS = [
   "inventory:request:create",
   "inventory:request:fulfill",
   "inventory:serial:manage",
+
+  // Phase B9 — Hospital Operations Layer. Clinical roles RAISE operational
+  // requests (housekeeping/transport/maintenance/infection) and order diets;
+  // operational MANAGEMENT (assign/execute/inspect, ambulance dispatch,
+  // biomedical/facilities) maps to HOSPITAL_ADMIN as the operations manager in
+  // this closed role set — dedicated housekeeping/facilities/biomedical roles
+  // are deferred to B10 (workforce/credentialing). Nurses coordinate ward-level
+  // housekeeping/transport/meal execution.
+  "operations:command:view",
+  "housekeeping:request:create",
+  "housekeeping:request:manage",
+  "dietary:order:manage",
+  "dietary:meal:manage",
+  "transport:request:create",
+  "transport:request:manage",
+  "ambulance:manage",
+  "ambulance:dispatch",
+  "maintenance:request:create",
+  "maintenance:manage",
+  "biomedical:manage",
+  "biomedical:calibration:manage",
+  "infection:incident:create",
+  "infection:manage",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -372,6 +395,14 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "inventory:item:view",
     // Phase B8 — clinicians may raise a department supply request (consume-side only).
     "inventory:request:create",
+    // Phase B9 — clinicians order diets, report infections, raise operational requests.
+    "operations:command:view",
+    "dietary:order:manage",
+    "housekeeping:request:create",
+    "transport:request:create",
+    "maintenance:request:create",
+    "infection:incident:create",
+    "infection:manage",
     // Phase B1 — ICU clinical recording.
     "icu:flowsheet:record",
     "icu:device:manage",
@@ -442,6 +473,16 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "inventory:stock:waste",
     "procurement:requisition:create",
     "inventory:request:create", // Phase B8 — ward supply requests
+    // Phase B9 — ward-level operations: raise + coordinate housekeeping/transport,
+    // manage meal delivery, report infections. NO ambulance/biomedical/facilities.
+    "operations:command:view",
+    "housekeeping:request:create",
+    "housekeeping:request:manage",
+    "transport:request:create",
+    "transport:request:manage",
+    "dietary:meal:manage",
+    "maintenance:request:create",
+    "infection:incident:create",
     // Phase B1 — ICU clinical recording.
     "icu:flowsheet:record",
     "icu:device:manage",
@@ -723,6 +764,24 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "inventory:valuation:view",
     "inventory:request:fulfill",
     "inventory:serial:manage",
+    // Phase B9 — the operations manager: full housekeeping/dietary/transport/
+    // ambulance/maintenance/biomedical/infection management (dedicated
+    // operational sub-roles deferred to B10).
+    "operations:command:view",
+    "housekeeping:request:create",
+    "housekeeping:request:manage",
+    "dietary:order:manage",
+    "dietary:meal:manage",
+    "transport:request:create",
+    "transport:request:manage",
+    "ambulance:manage",
+    "ambulance:dispatch",
+    "maintenance:request:create",
+    "maintenance:manage",
+    "biomedical:manage",
+    "biomedical:calibration:manage",
+    "infection:incident:create",
+    "infection:manage",
   ],
   FRONT_DESK: [
     "hospital:command-center:view",
@@ -740,6 +799,11 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     // FRONT_DESK holds NO ED clinical mutation (triage/reassessment/resuscitation/
     // location/disposition) permission.
     "ed:encounter:create",
+    // Phase B9 — front office raises transport/housekeeping requests + views the
+    // operations board. NO operational management, dispatch, or biomedical.
+    "operations:command:view",
+    "transport:request:create",
+    "housekeeping:request:create",
   ],
   STUDENT: [
     "student:case:view",

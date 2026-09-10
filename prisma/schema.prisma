@@ -5694,3 +5694,419 @@ model InventorySerial {
   @@unique([facilityId, serialNumber])
   @@index([facilityId, itemId, status])
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase B9 — Hospital Operations Layer (housekeeping, dietary, transport,
+// ambulance, maintenance, biomedical, infection control). The OPERATIONAL
+// nervous system AROUND the clinical core — every record reuses canonical
+// Patient/Encounter/Bed/Ward/Department/Facility/HospitalStaffProfile/Item/
+// AuditEvent (plain FK strings validated server-side, no canonical back-relation
+// churn, same pattern as B5-B8). Lifecycles are guarded String state machines
+// (Task/Bed convention) so the migration stays fully additive (no new enums, no
+// table rebuilds). NO parallel patient/staff/inventory/audit; NO clinical
+// intelligence (no infection diagnosis, no nutrition engine, no telemetry/IoT).
+// Bed turnaround goes through the canonical completeBedCleaning() ADT service.
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Housekeeping / cleaning request. REQUESTED -> ASSIGNED -> IN_PROGRESS ->
+ * COMPLETED -> INSPECTED -> CLOSED (+ CANCELLED). When isDischargeCleaning and a
+ * bed is linked, COMPLETED calls the canonical completeBedCleaning() so the bed
+ * only becomes AVAILABLE after cleaning is done.
+ */
+model HousekeepingRequest {
+  id                  String    @id @default(cuid())
+  facilityId          String
+  bedId               String?
+  wardId              String?
+  areaLabel           String?
+  requestType         String // "ROUTINE" | "DISCHARGE" | "TERMINAL" | "SPILL" | "ISOLATION" | "URGENT" | "DEEP" | "MAINTENANCE_RELATED"
+  priority            String    @default("ROUTINE") // "ROUTINE" | "URGENT" | "STAT"
+  reason              String?
+  status              String    @default("REQUESTED") // REQUESTED|ASSIGNED|IN_PROGRESS|COMPLETED|INSPECTED|CLOSED|CANCELLED
+  isDischargeCleaning Boolean   @default(false)
+  encounterId         String?
+  requestedByStaffId  String
+  assignedToStaffId   String?
+  inspectedByStaffId  String?
+  requestedAt         DateTime  @default(now())
+  assignedAt          DateTime?
+  startedAt           DateTime?
+  completedAt         DateTime?
+  inspectedAt         DateTime?
+  closedAt            DateTime?
+  cancelledAt         DateTime?
+  cancelledReason     String?
+  notes               String?
+  taskId              String? // optional canonical Task link for the assignment worklist
+  updatedAt           DateTime  @updatedAt
+
+  @@index([facilityId, status])
+  @@index([bedId])
+  @@index([assignedToStaffId])
+}
+
+/**
+ * Diet order for a patient (documentary; records the authorized order, no nutrition recommendation).
+ */
+model DietOrder {
+  id               String    @id @default(cuid())
+  facilityId       String
+  patientId        String
+  encounterId      String
+  dietType         String // "REGULAR" | "LIQUID" | "SOFT" | "CLEAR_LIQUID" | "NPO" | "THERAPEUTIC" | "OTHER"
+  restrictions     String? // documentary reference; canonical Allergy remains the source of truth
+  status           String    @default("ACTIVE") // ACTIVE | DISCONTINUED | CANCELLED
+  orderedByStaffId String
+  effectiveFrom    DateTime  @default(now())
+  effectiveTo      DateTime?
+  notes            String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  meals Meal[]
+
+  @@index([facilityId, status])
+  @@index([patientId])
+  @@index([encounterId])
+}
+
+/**
+ * A single meal instance in the kitchen->delivery workflow.
+ */
+model Meal {
+  id                 String    @id @default(cuid())
+  facilityId         String
+  dietOrder          DietOrder @relation(fields: [dietOrderId], references: [id])
+  dietOrderId        String
+  patientId          String
+  encounterId        String
+  mealPeriod         String // "BREAKFAST" | "LUNCH" | "DINNER" | "SNACK"
+  plannedFor         DateTime
+  status             String    @default("PLANNED") // PLANNED|PREPARING|READY|DELIVERED|REFUSED|MISSED|CANCELLED
+  preparedByStaffId  String?
+  deliveredByStaffId String?
+  preparedAt         DateTime?
+  readyAt            DateTime?
+  deliveredAt        DateTime?
+  refusedAt          DateTime?
+  notes              String?
+  updatedAt          DateTime  @updatedAt
+
+  @@index([facilityId, status])
+  @@index([dietOrderId])
+  @@index([patientId])
+}
+
+/**
+ * Generic patient transport request. Pickup/destination reference canonical beds or a location label, validated server-side.
+ */
+model PatientTransportRequest {
+  id                 String    @id @default(cuid())
+  facilityId         String
+  patientId          String
+  encounterId        String?
+  pickupBedId        String?
+  pickupLabel        String?
+  destinationBedId   String?
+  destinationLabel   String?
+  transportType      String // "WHEELCHAIR" | "STRETCHER" | "BED" | "WALKING" | "OTHER"
+  priority           String    @default("ROUTINE")
+  equipmentNote      String?
+  status             String    @default("REQUESTED") // REQUESTED|ACCEPTED|ASSIGNED|EN_ROUTE_TO_PICKUP|PATIENT_PICKED_UP|IN_TRANSIT|ARRIVED|COMPLETED|CANCELLED|REJECTED
+  requestedByStaffId String
+  assignedToStaffId  String?
+  requestedAt        DateTime  @default(now())
+  acceptedAt         DateTime?
+  assignedAt         DateTime?
+  pickedUpAt         DateTime?
+  arrivedAt          DateTime?
+  completedAt        DateTime?
+  cancelledAt        DateTime?
+  cancelledReason    String?
+  notes              String?
+  updatedAt          DateTime  @updatedAt
+
+  @@index([facilityId, status])
+  @@index([patientId])
+  @@index([assignedToStaffId])
+}
+
+/**
+ * An ambulance in the fleet. status is the fleet-availability control point (guarded AVAILABLE->ON_TRIP prevents double dispatch).
+ */
+model Ambulance {
+  id           String   @id @default(cuid())
+  facilityId   String
+  registration String
+  type         String // "BLS" | "ALS" | "PATIENT_TRANSPORT" | "OTHER" (documentary)
+  status       String   @default("AVAILABLE") // AVAILABLE | ON_TRIP | MAINTENANCE | OUT_OF_SERVICE
+  capabilities Json?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  trips AmbulanceTrip[]
+
+  @@unique([facilityId, registration])
+  @@index([facilityId, status])
+}
+
+/**
+ * An ambulance trip transporting a patient (does NOT create a second patient/encounter — reuses canonical ADT).
+ */
+model AmbulanceTrip {
+  id                  String     @id @default(cuid())
+  facilityId          String
+  ambulance           Ambulance? @relation(fields: [ambulanceId], references: [id])
+  ambulanceId         String?
+  patientId           String?
+  encounterId         String?
+  origin              String
+  destination         String
+  crewNote            String? // crew are canonical staff; a documentary note references them, no duplicate employee accounts
+  status              String     @default("REQUESTED") // REQUESTED|DISPATCHED|EN_ROUTE|AT_PICKUP|PATIENT_ONBOARD|IN_TRANSIT|ARRIVED|COMPLETED|CANCELLED|FAILED_DISPATCH
+  requestedByStaffId  String
+  dispatchedByStaffId String?
+  requestedAt         DateTime   @default(now())
+  dispatchedAt        DateTime?
+  arrivedAt           DateTime?
+  completedAt         DateTime?
+  cancelledAt         DateTime?
+  cancelledReason     String?
+  notes               String?
+  updatedAt           DateTime   @updatedAt
+
+  @@index([facilityId, status])
+  @@index([ambulanceId])
+}
+
+/**
+ * Facilities maintenance request / work order. REPORTED->TRIAGED->ASSIGNED->IN_PROGRESS->RESOLVED->VERIFIED->CLOSED (+ CANCELLED). Optionally references a biomedical asset.
+ */
+model MaintenanceRequest {
+  id                 String    @id @default(cuid())
+  facilityId         String
+  locationLabel      String?
+  wardId             String?
+  equipmentId        String? // optional BiomedicalEquipment link
+  issueType          String // "ELECTRICAL" | "PLUMBING" | "HVAC" | "STRUCTURAL" | "EQUIPMENT" | "OTHER"
+  description        String
+  priority           String    @default("ROUTINE")
+  status             String    @default("REPORTED") // REPORTED|TRIAGED|ASSIGNED|IN_PROGRESS|RESOLVED|VERIFIED|CLOSED|CANCELLED
+  requestedByStaffId String
+  assignedToStaffId  String?
+  verifiedByStaffId  String?
+  reportedAt         DateTime  @default(now())
+  assignedAt         DateTime?
+  startedAt          DateTime?
+  resolvedAt         DateTime?
+  verifiedAt         DateTime?
+  closedAt           DateTime?
+  cancelledAt        DateTime?
+  cancelledReason    String?
+  resolutionNote     String?
+  notes              String?
+  updatedAt          DateTime  @updatedAt
+
+  @@index([facilityId, status])
+  @@index([equipmentId])
+  @@index([assignedToStaffId])
+}
+
+/**
+ * Scheduled preventive-maintenance record (documentary; no predictive engine).
+ */
+model PreventiveMaintenance {
+  id                 String    @id @default(cuid())
+  facilityId         String
+  equipmentId        String?
+  assetLabel         String?
+  maintenanceType    String
+  dueAt              DateTime
+  status             String    @default("SCHEDULED") // SCHEDULED | DONE | CANCELLED
+  performedAt        DateTime?
+  performedByStaffId String?
+  result             String?
+  nextDueAt          DateTime?
+  notes              String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([facilityId, status])
+  @@index([equipmentId])
+}
+
+/**
+ * Asset/equipment downtime window.
+ */
+model AssetDowntime {
+  id            String    @id @default(cuid())
+  facilityId    String
+  equipmentId   String?
+  assetLabel    String?
+  locationLabel String?
+  reason        String
+  status        String    @default("ACTIVE") // ACTIVE | RESOLVED
+  startedAt     DateTime  @default(now())
+  endedAt       DateTime?
+  byStaffId     String
+  notes         String?
+  updatedAt     DateTime  @updatedAt
+
+  @@index([facilityId, status])
+  @@index([equipmentId])
+}
+
+/**
+ * Biomedical equipment registry (inventory/asset identity + service/calibration status — NO telemetry, NO device protocol integration).
+ */
+model BiomedicalEquipment {
+  id                String    @id @default(cuid())
+  facilityId        String
+  assetTag          String
+  serialNumber      String?
+  manufacturer      String?
+  model             String?
+  category          String // "MONITOR" | "VENTILATOR" | "INFUSION_PUMP" | "DEFIBRILLATOR" | "IMAGING" | "OTHER"
+  departmentId      String?
+  locationLabel     String?
+  status            String    @default("IN_SERVICE") // IN_SERVICE | UNDER_MAINTENANCE | OUT_OF_SERVICE | RETIRED
+  calibrationStatus String? // documentary "CALIBRATED" | "DUE" | "OVERDUE"
+  warrantyUntil     DateTime?
+  nextServiceAt     DateTime?
+  active            Boolean   @default(true)
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  calibrations BiomedicalCalibrationRecord[]
+  maintenance  BiomedicalMaintenanceRecord[]
+  movements    EquipmentMovement[]
+
+  @@unique([facilityId, assetTag])
+  @@index([facilityId, status])
+}
+
+model BiomedicalCalibrationRecord {
+  id                 String              @id @default(cuid())
+  facilityId         String
+  equipment          BiomedicalEquipment @relation(fields: [equipmentId], references: [id])
+  equipmentId        String
+  calibratedAt       DateTime            @default(now())
+  performedByStaffId String
+  result             String? // documentary "PASS" | "FAIL"
+  certificateRef     String?
+  nextDueAt          DateTime?
+  notes              String?
+  createdAt          DateTime            @default(now())
+
+  @@index([equipmentId])
+  @@index([facilityId])
+}
+
+model BiomedicalMaintenanceRecord {
+  id                 String              @id @default(cuid())
+  facilityId         String
+  equipment          BiomedicalEquipment @relation(fields: [equipmentId], references: [id])
+  equipmentId        String
+  maintenanceType    String // "PREVENTIVE" | "CORRECTIVE" | "INSPECTION"
+  performedAt        DateTime            @default(now())
+  performedByStaffId String
+  result             String?
+  notes              String?
+  createdAt          DateTime            @default(now())
+
+  @@index([equipmentId])
+  @@index([facilityId])
+}
+
+/**
+ * Equipment location movement (guarded update of the equipment locationLabel + this history row).
+ */
+model EquipmentMovement {
+  id             String              @id @default(cuid())
+  facilityId     String
+  equipment      BiomedicalEquipment @relation(fields: [equipmentId], references: [id])
+  equipmentId    String
+  fromLocation   String?
+  toLocation     String?
+  reason         String?
+  movedByStaffId String
+  movedAt        DateTime            @default(now())
+
+  @@index([equipmentId])
+  @@index([facilityId])
+}
+
+/**
+ * Infection-control incident — a DOCUMENTATION + workflow record, NEVER an
+ * autonomous surveillance/diagnosis engine. Isolation reuses the canonical
+ * bed/location (isolationRequired is a documentary operational flag; the
+ * authoritative isolation capability stays on Bed). Outbreak = a grouping query
+ * over incidents by type/ward/date.
+ */
+model InfectionIncident {
+  id                String    @id @default(cuid())
+  facilityId        String
+  patientId         String?
+  encounterId       String?
+  wardId            String?
+  locationLabel     String?
+  incidentType      String // documentary, e.g. "HAI" | "CLABSI" | "CAUTI" | "SSI" | "MDRO" | "OTHER"
+  onsetAt           DateTime?
+  status            String    @default("REPORTED") // REPORTED|UNDER_REVIEW|INVESTIGATION|ACTION_REQUIRED|RESOLVED|CLOSED|CANCELLED
+  isolationRequired Boolean   @default(false)
+  reportedByStaffId String
+  reviewedByStaffId String?
+  reportedAt        DateTime  @default(now())
+  reviewedAt        DateTime?
+  resolvedAt        DateTime?
+  closedAt          DateTime?
+  cancelledAt       DateTime?
+  notes             String?
+  updatedAt         DateTime  @updatedAt
+
+  investigations InfectionInvestigation[]
+  exposures      ExposureRecord[]
+
+  @@index([facilityId, status])
+  @@index([incidentType])
+  @@index([patientId])
+}
+
+model InfectionInvestigation {
+  id                  String            @id @default(cuid())
+  facilityId          String
+  incident            InfectionIncident @relation(fields: [incidentId], references: [id])
+  incidentId          String
+  investigatorStaffId String
+  findings            String?
+  actionTaken         String?
+  status              String            @default("OPEN") // OPEN | COMPLETED
+  createdAt           DateTime          @default(now())
+  completedAt         DateTime?
+
+  @@index([incidentId])
+  @@index([facilityId])
+}
+
+/**
+ * Documentary exposure/contact record linked to an incident (no speculative contact-tracing inference).
+ */
+model ExposureRecord {
+  id                String            @id @default(cuid())
+  facilityId        String
+  incident          InfectionIncident @relation(fields: [incidentId], references: [id])
+  incidentId        String
+  affectedPersonRef String // documentary reference (patient/staff); no second identity table
+  locationLabel     String?
+  exposureAt        DateTime?
+  status            String            @default("DOCUMENTED") // DOCUMENTED | REVIEWED
+  reviewedByStaffId String?
+  notes             String?
+  createdAt         DateTime          @default(now())
+
+  @@index([incidentId])
+  @@index([facilityId])
+}
