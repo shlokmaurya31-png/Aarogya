@@ -1,6 +1,5 @@
-import { InventoryStock } from "@/components/hospital-os/InventoryStock";
+import { InventoryWorkspace } from "@/components/hospital-os/InventoryWorkspace";
 
 export default function HospitalOsInventoryPage() {
-  return <InventoryStock />;
+  return <InventoryWorkspace />;
 }
-

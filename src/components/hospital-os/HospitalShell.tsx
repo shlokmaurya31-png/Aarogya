@@ -130,6 +130,8 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     { href: "/hospital-os/diagnostics", label: "Diagnostics", icon: Microscope },
   ],
   PHARMACIST: [{ href: "/hospital-os/pharmacy", label: "Pharmacy", icon: Pill }, INVENTORY_GROUP],
+  // Phase B8 — the dedicated procurement role: inventory + procurement pipeline.
+  PROCUREMENT_OFFICER: [{ href: "/hospital-os", label: "Command Center", icon: LayoutGrid }, INVENTORY_GROUP],
   BILLING_STAFF: [BILLING_GROUP_STAFF],
   FRONT_DESK: [
     { href: "/hospital-os/front-desk", label: "Front Desk", icon: UserPlus },

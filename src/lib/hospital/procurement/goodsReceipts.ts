@@ -38,6 +38,7 @@ export interface GoodsReceiptLineInput {
   acceptedQuantity: number;
   rejectedQuantity?: number;
   rejectionReason?: string;
+  unitCostMinor?: number; // Phase B8 — acquisition cost (INR paise) captured at receipt
   locationId: string;
   unit: UnitOfMeasure;
 }
@@ -86,6 +87,7 @@ export async function recordGoodsReceipt(
         acceptedQuantity: line.acceptedQuantity,
         rejectedQuantity: line.rejectedQuantity ?? 0,
         rejectionReason: line.rejectionReason,
+        unitCostMinor: line.unitCostMinor,
         locationId: line.locationId,
         unit: line.unit,
       },
@@ -133,6 +135,12 @@ export async function approveGoodsReceipt(tx: Tx, receiptId: string, input: { ap
       manufacturedAt: line.manufacturedAt,
       expiresAt: line.expiresAt,
     });
+    // Phase B8 — establish the lot's acquisition cost on first receipt into it
+    // (immutable thereafter; historical valuation is never rewritten when
+    // supplier pricing later changes).
+    if (line.unitCostMinor != null) {
+      await tx.itemLot.updateMany({ where: { id: lot.id, unitCostMinor: null }, data: { unitCostMinor: line.unitCostMinor } });
+    }
     const balance = await getOrCreateStockBalance(tx, { facilityId: receipt.facilityId, itemId: line.itemId, lotId: lot.id, locationId: line.locationId });
     await atomicIncrementOnHand(tx, balance.id, line.acceptedQuantity);
     await postLedgerEntry(tx, {

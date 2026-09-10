@@ -288,6 +288,21 @@ export const PERMISSIONS = [
   "lab:qc:manage",
   "lab:calibration:manage",
   "lab:external:manage",
+
+  // Phase B8 — Enterprise Inventory + Procurement Depth. Existing Phase 6A
+  // inventory/procurement permissions (inventory:stock:*, inventory:lot:*,
+  // procurement:requisition/po/goodsReceipt:*) are reused unchanged. These are
+  // the genuinely-new enterprise capabilities: RFQ/contract/invoice procurement
+  // depth (PROCUREMENT_OFFICER + HOSPITAL_ADMIN), sensitive supplier data
+  // (GST/PAN/bank), inventory valuation, and generic department supply requests.
+  "procurement:rfq:manage",
+  "procurement:contract:manage",
+  "procurement:invoice:manage",
+  "procurement:supplier:sensitive:view",
+  "inventory:valuation:view",
+  "inventory:request:create",
+  "inventory:request:fulfill",
+  "inventory:serial:manage",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -355,6 +370,8 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "medication:discontinue",
     // Phase 6A — narrow view-only, per the brief's explicit instruction.
     "inventory:item:view",
+    // Phase B8 — clinicians may raise a department supply request (consume-side only).
+    "inventory:request:create",
     // Phase B1 — ICU clinical recording.
     "icu:flowsheet:record",
     "icu:device:manage",
@@ -424,6 +441,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "inventory:stock:reserve",
     "inventory:stock:waste",
     "procurement:requisition:create",
+    "inventory:request:create", // Phase B8 — ward supply requests
     // Phase B1 — ICU clinical recording.
     "icu:flowsheet:record",
     "icu:device:manage",
@@ -527,6 +545,11 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "pharmacy:command:view",
     "pharmacy:storage:record",
     "pharmacy:substitution:authorize",
+    // Phase B8 — pharmacy store also raises/fulfils generic supply requests and manages serials.
+    "inventory:request:create",
+    "inventory:request:fulfill",
+    "inventory:serial:manage",
+    "inventory:valuation:view",
   ],
   BILLING_STAFF: [
     "hospital:command-center:view",
@@ -549,6 +572,33 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "procurement:supplier:view",
     "procurement:po:view",
     "inventory:report:view",
+    // Phase B8 — finance can read inventory valuation + review supplier invoices.
+    "inventory:valuation:view",
+    "procurement:invoice:manage",
+  ],
+  // Phase B8 — the dedicated procurement role Phase 6A flagged as missing. Owns
+  // the RFQ->PO->receipt procurement pipeline + supplier/contract/invoice depth.
+  // Separation of duties is preserved by the existing same-actor approval guards.
+  PROCUREMENT_OFFICER: [
+    "hospital:command-center:view",
+    "inventory:item:view",
+    "inventory:stock:view",
+    "inventory:report:view",
+    "inventory:valuation:view",
+    "procurement:supplier:view",
+    "procurement:supplier:manage",
+    "procurement:supplier:sensitive:view",
+    "procurement:requisition:approve",
+    "procurement:po:view",
+    "procurement:po:create",
+    "procurement:po:approve",
+    "procurement:po:cancel",
+    "procurement:goodsReceipt:create",
+    "procurement:goodsReceipt:approve",
+    "procurement:rfq:manage",
+    "procurement:contract:manage",
+    "procurement:invoice:manage",
+    "inventory:request:fulfill",
   ],
   HOSPITAL_ADMIN: [
     "hospital:command-center:view",
@@ -665,6 +715,14 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "procurement:po:cancel",
     "procurement:goodsReceipt:create",
     "procurement:goodsReceipt:approve",
+    // Phase B8 — enterprise procurement + inventory oversight.
+    "procurement:rfq:manage",
+    "procurement:contract:manage",
+    "procurement:invoice:manage",
+    "procurement:supplier:sensitive:view",
+    "inventory:valuation:view",
+    "inventory:request:fulfill",
+    "inventory:serial:manage",
   ],
   FRONT_DESK: [
     "hospital:command-center:view",

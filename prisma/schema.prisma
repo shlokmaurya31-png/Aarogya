@@ -43,6 +43,11 @@ enum Role {
   // department/displayRole that says so (brief §66's "if role exists"),
   // consistent with "do not create duplicate users/roles unnecessarily".
   FRONT_DESK
+  // Phase B8 — the dedicated procurement role Phase 6A flagged as missing.
+  // Owns RFQ/PO/supplier/contract/invoice/comparison; separation of duties is
+  // preserved by the existing same-actor approval guards (a PROCUREMENT_OFFICER
+  // still cannot approve their own submission).
+  PROCUREMENT_OFFICER
 }
 
 model User {
@@ -4098,6 +4103,11 @@ model ItemLot {
   quarantinedByUserId String?
   releasedAt          DateTime?
   releasedByUserId    String?
+  // Phase B8 — costing. The actual acquisition cost of THIS lot (INR paise),
+  // captured at goods-receipt time and never rewritten when supplier pricing
+  // changes later — historical valuation stays immutable. Null for pre-B8 lots
+  // and internally-created lots (adjustments/found stock) with no known cost.
+  unitCostMinor       Int?
   createdAt           DateTime  @default(now())
 
   stockBalances      StockBalance[]
@@ -4372,10 +4382,25 @@ model Supplier {
   address          String?
   paymentTermsDays Int?
   active           Boolean  @default(true)
+  // Phase B8 — supplier-master depth. GST/PAN/bank are SENSITIVE and gated
+  // behind procurement:supplier:sensitive:view (never exposed to clinical
+  // staff). `categories` is a documentary tag list (JSON). Performance metrics
+  // are DERIVED from procurement transactions, not stored/invented here.
+  legalName        String?
+  tradeName        String?
+  gstNumber        String?
+  panNumber        String?
+  bankAccountRef   String?
+  categories       Json?
+  complianceNote   String?
+  slaNote          String?
   createdAt        DateTime @default(now())
 
   preferredForItems Item[]
   purchaseOrders    PurchaseOrder[]
+  contracts         SupplierContract[]
+  rfqQuotations     RfqQuotation[]
+  invoices          SupplierInvoice[]
 
   @@unique([facilityId, code])
 }
@@ -4551,6 +4576,7 @@ model GoodsReceiptLine {
   acceptedQuantity    Float
   rejectedQuantity    Float             @default(0) // captured, never enters usable stock
   rejectionReason     String?
+  unitCostMinor       Int? // Phase B8 — acquisition cost of this received line (INR paise); flows to ItemLot.unitCostMinor
   location            StockLocation     @relation(fields: [locationId], references: [id])
   locationId          String
   unit                UnitOfMeasure
@@ -5428,4 +5454,243 @@ model ExternalLabReferral {
   @@index([facilityId, status])
   @@index([patientId])
   @@index([labOrderId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase B8 — Enterprise Inventory + Procurement Depth.
+// ONE canonical supply chain: every department consumes from the SAME
+// Item/ItemLot/StockLedgerEntry/StockBalance/StockReservation inventory and
+// procures through the SAME requisition/PO/GR pipeline. These models add the
+// missing enterprise-procurement depth on top of the Phase 6A foundation:
+// RFQ + vendor comparison, effective supplier pricing/contracts, the supplier-
+// invoice three-way-match BOUNDARY (not accounting), a GENERIC department
+// supply request (no per-department inventory), and minimal serialized-item
+// identity. Costing lives on ItemLot.unitCostMinor (captured at receipt, never
+// rewritten). facilityId/itemId/locationId are plain FKs validated server-side
+// (same pattern as B5-B7); Supplier relations are explicit for the comparison/
+// contract/invoice joins. No second inventory, no second ledger, no accounting.
+// ─────────────────────────────────────────────────────────────────────────
+
+enum RfqStatus {
+  DRAFT
+  SENT
+  CLOSED
+  CANCELLED
+}
+
+enum RfqQuotationStatus {
+  PENDING
+  SUBMITTED
+  SELECTED
+  REJECTED
+}
+
+enum SupplierInvoiceStatus {
+  RECEIVED
+  MATCHED
+  DISCREPANCY
+  APPROVED
+  REJECTED
+}
+
+enum DepartmentSupplyRequestStatus {
+  REQUESTED
+  APPROVED
+  RESERVED
+  ISSUED
+  RECEIVED
+  CANCELLED
+  REJECTED
+}
+
+enum InventorySerialStatus {
+  IN_STOCK
+  RESERVED
+  ISSUED
+  RETURNED
+  DISPOSED
+}
+
+/**
+ * Effective-dated supplier price/contract for an item. Historical PO/receipt prices are NEVER rewritten when this changes; only future procurement reads the new effective price.
+ */
+model SupplierContract {
+  id               String    @id @default(cuid())
+  facilityId       String
+  supplier         Supplier  @relation(fields: [supplierId], references: [id])
+  supplierId       String
+  itemId           String
+  agreedPriceMinor Int
+  currency         String    @default("INR")
+  effectiveFrom    DateTime  @default(now())
+  effectiveTo      DateTime?
+  moq              Float?
+  leadTimeDays     Int?
+  paymentTermsDays Int?
+  contractRef      String?
+  active           Boolean   @default(true)
+  createdByStaffId String
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([facilityId, itemId, active])
+  @@index([supplierId])
+}
+
+/**
+ * Request-for-quotation: an INTERNAL procurement record (not an email marketplace).
+ */
+model Rfq {
+  id               String    @id @default(cuid())
+  facilityId       String
+  rfqNumber        String?
+  requisitionId    String?
+  status           RfqStatus @default(DRAFT)
+  validUntil       DateTime?
+  notes            String?
+  createdByStaffId String
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  lines      RfqLine[]
+  quotations RfqQuotation[]
+
+  @@index([facilityId, status])
+}
+
+model RfqLine {
+  id       String        @id @default(cuid())
+  rfq      Rfq           @relation(fields: [rfqId], references: [id])
+  rfqId    String
+  itemId   String
+  quantity Float
+  unit     UnitOfMeasure
+
+  @@index([rfqId])
+}
+
+/**
+ * A supplier quotation against an RFQ (for vendor comparison; selection stays an authorized human decision, never an algorithm).
+ */
+model RfqQuotation {
+  id                String             @id @default(cuid())
+  rfq               Rfq                @relation(fields: [rfqId], references: [id])
+  rfqId             String
+  facilityId        String
+  supplier          Supplier           @relation(fields: [supplierId], references: [id])
+  supplierId        String
+  status            RfqQuotationStatus @default(PENDING)
+  subtotalMinor     Int                @default(0)
+  taxMinor          Int                @default(0)
+  totalMinor        Int                @default(0)
+  deliveryDays      Int?
+  validUntil        DateTime?
+  notes             String?
+  selected          Boolean            @default(false)
+  recordedByStaffId String
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  lines RfqQuotationLine[]
+
+  @@unique([rfqId, supplierId])
+  @@index([facilityId])
+}
+
+model RfqQuotationLine {
+  id             String       @id @default(cuid())
+  quotation      RfqQuotation @relation(fields: [quotationId], references: [id])
+  quotationId    String
+  itemId         String
+  unitPriceMinor Int
+  taxPercent     Float        @default(0)
+  lineTotalMinor Int
+
+  @@index([quotationId])
+}
+
+/**
+ * Supplier-invoice three-way-match BOUNDARY (PO / Goods Receipt / Invoice).
+ * Documentary only, NOT an accounting ledger. Detects quantity/price mismatch,
+ * missing receipt, and duplicate invoice reference (the @@unique). Full finance
+ * integration is deferred.
+ */
+model SupplierInvoice {
+  id                String                @id @default(cuid())
+  facilityId        String
+  supplier          Supplier              @relation(fields: [supplierId], references: [id])
+  supplierId        String
+  purchaseOrderId   String?
+  invoiceRef        String
+  invoiceDate       DateTime?
+  totalMinor        Int
+  status            SupplierInvoiceStatus @default(RECEIVED)
+  quantityMismatch  Boolean               @default(false)
+  priceMismatch     Boolean               @default(false)
+  missingReceipt    Boolean               @default(false)
+  matchNotes        String?
+  recordedByStaffId String
+  reviewedByStaffId String?
+  reviewedAt        DateTime?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  @@unique([facilityId, supplierId, invoiceRef])
+  @@index([facilityId, status])
+  @@index([purchaseOrderId])
+}
+
+/**
+ * GENERIC department supply request (ward/ICU/OT/ED/lab/radiology) against the
+ * ONE canonical inventory. REQUESTED to APPROVED to RESERVED to ISSUED to
+ * RECEIVED (guarded transitions); reserve/issue go through the canonical
+ * reserveStock/issueStock services (reservationId links the real row). Not a
+ * per-department inventory. patient/encounter are optional.
+ */
+model DepartmentSupplyRequest {
+  id                   String                        @id @default(cuid())
+  facilityId           String
+  departmentId         String?
+  requestingLocationId String?
+  fulfillLocationId    String?
+  itemId               String
+  quantity             Float
+  unit                 String?
+  urgency              String                        @default("ROUTINE")
+  reason               String?
+  status               DepartmentSupplyRequestStatus @default(REQUESTED)
+  patientId            String?
+  encounterId          String?
+  requestedByStaffId   String
+  reviewedByStaffId    String?
+  reservationId        String?
+  transferId           String?
+  notes                String?
+  createdAt            DateTime                      @default(now())
+  updatedAt            DateTime                      @updatedAt
+
+  @@index([facilityId, status])
+  @@index([itemId])
+}
+
+/**
+ * Minimal serialized-inventory identity (brief section 8): inventory identity
+ * only, NOT biomedical equipment management. A serial is IN_STOCK to RESERVED/
+ * ISSUED to RETURNED/DISPOSED; guarded transitions keep it single-valued.
+ */
+model InventorySerial {
+  id                String                @id @default(cuid())
+  facilityId        String
+  itemId            String
+  lotId             String?
+  serialNumber      String
+  currentLocationId String?
+  status            InventorySerialStatus @default(IN_STOCK)
+  receivedAt        DateTime?
+  notes             String?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  @@unique([facilityId, serialNumber])
+  @@index([facilityId, itemId, status])
 }

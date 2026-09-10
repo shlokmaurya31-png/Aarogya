@@ -1,5 +1,5 @@
-import { Procurement } from "@/components/hospital-os/Procurement";
+import { ProcurementWorkspace } from "@/components/hospital-os/ProcurementWorkspace";
 
 export default function HospitalOsProcurementPage() {
-  return <Procurement />;
+  return <ProcurementWorkspace />;
 }

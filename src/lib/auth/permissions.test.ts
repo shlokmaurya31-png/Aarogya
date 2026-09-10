@@ -345,3 +345,40 @@ describe("roleHasPermission — Phase B7 Advanced Diagnostics boundary", () => {
     }
   });
 });
+
+describe("roleHasPermission — Phase B8 Enterprise Inventory + Procurement boundary", () => {
+  it("PROCUREMENT_OFFICER owns the RFQ/PO/supplier/contract/invoice pipeline", () => {
+    for (const p of ["procurement:rfq:manage", "procurement:contract:manage", "procurement:invoice:manage", "procurement:supplier:manage", "procurement:supplier:sensitive:view", "procurement:po:create", "procurement:po:approve", "procurement:goodsReceipt:approve", "procurement:requisition:approve", "inventory:valuation:view"] as Permission[]) {
+      expect(roleHasPermission("PROCUREMENT_OFFICER", p)).toBe(true);
+    }
+  });
+
+  it("PROCUREMENT_OFFICER holds no clinical mutation permissions", () => {
+    for (const p of ["clinical:order:medication", "clinical:note:sign", "ed:disposition:manage", "pharmacy:dispense", "lab:result:release", "blood:issue"] as Permission[]) {
+      expect(roleHasPermission("PROCUREMENT_OFFICER", p)).toBe(false);
+    }
+  });
+
+  it("HOSPITAL_ADMIN retains procurement oversight incl. sensitive supplier data + valuation", () => {
+    for (const p of ["procurement:rfq:manage", "procurement:contract:manage", "procurement:invoice:manage", "procurement:supplier:sensitive:view", "inventory:valuation:view"] as Permission[]) {
+      expect(roleHasPermission("HOSPITAL_ADMIN", p)).toBe(true);
+    }
+  });
+
+  it("clinical roles can raise supply requests but never fulfil them or read sensitive supplier data", () => {
+    expect(roleHasPermission("DOCTOR", "inventory:request:create")).toBe(true);
+    expect(roleHasPermission("NURSE", "inventory:request:create")).toBe(true);
+    for (const p of ["inventory:request:fulfill", "procurement:supplier:sensitive:view", "procurement:rfq:manage", "procurement:contract:manage"] as Permission[]) {
+      expect(roleHasPermission("DOCTOR", p)).toBe(false);
+      expect(roleHasPermission("NURSE", p)).toBe(false);
+    }
+  });
+
+  it("sensitive supplier data + procurement pipeline are hidden from FRONT_DESK, LAB_TECHNICIAN, and RADIOLOGY_TECH", () => {
+    for (const p of ["procurement:supplier:sensitive:view", "procurement:rfq:manage", "procurement:contract:manage", "procurement:invoice:manage", "procurement:po:approve", "inventory:valuation:view"] as Permission[]) {
+      expect(roleHasPermission("FRONT_DESK", p)).toBe(false);
+      expect(roleHasPermission("LAB_TECHNICIAN", p)).toBe(false);
+      expect(roleHasPermission("RADIOLOGY_TECH", p)).toBe(false);
+    }
+  });
+});

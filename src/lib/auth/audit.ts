@@ -297,7 +297,20 @@ export type AuditEventType =
   | "hospital.lab.calibrationReviewed"
   | "hospital.lab.externalReferralCreated"
   | "hospital.lab.externalReferralUpdated"
-  | "hospital.imaging.acquisitionRecorded";
+  | "hospital.imaging.acquisitionRecorded"
+  // Phase B8 — Enterprise Inventory + Procurement Depth.
+  | "hospital.inventory.deptRequestCreated"
+  | "hospital.inventory.deptRequestUpdated"
+  | "hospital.inventory.serialRegistered"
+  | "hospital.inventory.serialUpdated"
+  | "hospital.procurement.contractCreated"
+  | "hospital.procurement.contractDeactivated"
+  | "hospital.procurement.rfqCreated"
+  | "hospital.procurement.rfqUpdated"
+  | "hospital.procurement.quotationRecorded"
+  | "hospital.procurement.supplierSelected"
+  | "hospital.procurement.invoiceRecorded"
+  | "hospital.procurement.invoiceReviewed";
 
 export interface AuditEventContext {
   facilityId?: string;
