@@ -31,6 +31,36 @@ export class BadRequestError extends Error {
   }
 }
 
+/**
+ * A write lost a genuine concurrency race and is safely retryable by the caller.
+ * Distinct from BadRequestError: nothing about the request was invalid, the
+ * record simply changed underneath it (Phase B gate §46 — validation,
+ * authorization, not-found, conflict and concurrency failures must be
+ * distinguishable by clients).
+ */
+export class ConflictError extends Error {
+  status = 409 as const;
+  constructor(message = "This record changed concurrently. Refresh and try again.") {
+    super(message);
+  }
+}
+
+/**
+ * PostgreSQL reports lost concurrency races as deadlock_detected (40P01) or
+ * serialization_failure (40001); Prisma surfaces the latter as P2034. These are
+ * NOT server bugs — under real parallel load one transaction is chosen as the
+ * victim — so they must map to a retryable 409 rather than a masked 500.
+ * SQLite's analogue is SQLITE_BUSY. Detected structurally (no reliance on a
+ * Prisma error subclass) so this holds across engines and Prisma versions.
+ */
+function isRetryableConcurrencyError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const code = (err as { code?: unknown }).code;
+  if (code === "P2034" || code === "40P01" || code === "40001") return true;
+  const message = err instanceof Error ? err.message : "";
+  return /deadlock detected|could not serialize access|database is locked|SQLITE_BUSY/i.test(message);
+}
+
 /** Verifies the session cookie AND that the user still exists. Never trusts client-sent role. */
 export async function requireSession(): Promise<SessionPayload> {
   const session = await getSession();
@@ -66,6 +96,18 @@ export async function withApiErrors<T>(fn: () => Promise<T>): Promise<NextRespon
     }
     if (err instanceof BadRequestError) {
       return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    if (err instanceof ConflictError) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    // A lost database-level race is a retryable conflict, not an internal error.
+    // Mapped before the generic fallthrough and before the 500, and deliberately
+    // reported with a fixed message so no database internals reach the client.
+    if (isRetryableConcurrencyError(err)) {
+      return NextResponse.json(
+        { error: "This record changed concurrently. Refresh and try again." },
+        { status: 409 }
+      );
     }
     // Generic fallthrough for domain errors that carry an explicit HTTP status
     // (e.g. Phase B10's CredentialAuthorizationError, a 403 that is NOT a

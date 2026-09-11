@@ -95,12 +95,16 @@ export async function requirePrivilege(db: Db, args: { staffId: string; facility
   if (privs.some((p) => p.status === "REVOKED")) {
     if (!privs.some((p) => p.status === "ACTIVE")) throw new CredentialAuthorizationError("REVOKED_PRIVILEGE", "Required clinical privilege has been revoked.");
   }
-  const active = privs.find((p) => p.status === "ACTIVE");
+  // Pick an ACTIVE *and* unexpired grant. Selecting the first ACTIVE row and
+  // only then testing its expiry wrongly denied a staff member who holds a
+  // superseded expired grant alongside a current one — and disagreed with
+  // hasActivePrivilege(), which already uses this predicate.
+  const active = privs.find((p) => p.status === "ACTIVE" && deriveExpiryState(p.expiresAt) !== "EXPIRED");
   if (!active) {
+    if (privs.some((p) => p.status === "ACTIVE")) throw new CredentialAuthorizationError("EXPIRED_PRIVILEGE", "Required clinical privilege has expired.");
     if (privs.some((p) => p.status === "SUSPENDED")) throw new CredentialAuthorizationError("SUSPENDED_PRIVILEGE", "Required clinical privilege is suspended.");
     throw new CredentialAuthorizationError("EXPIRED_PRIVILEGE", "Required clinical privilege is not active.");
   }
-  if (deriveExpiryState(active.expiresAt) === "EXPIRED") throw new CredentialAuthorizationError("EXPIRED_PRIVILEGE", "Required clinical privilege has expired.");
 }
 
 export async function requireCredential(db: Db, args: { staffId: string; facilityId: string; credentialType: string }): Promise<void> {
@@ -113,8 +117,12 @@ export async function requireCredential(db: Db, args: { staffId: string; facilit
     if (creds.some((c) => c.status === "SUSPENDED" || c.status === "REVOKED")) throw new CredentialAuthorizationError("SUSPENDED_CREDENTIAL", "Required credential is suspended or revoked.");
     throw new CredentialAuthorizationError("MISSING_CREDENTIAL", "Required credential is not verified.");
   }
-  const verified = creds.find((c) => c.status === "VERIFIED")!;
-  if (deriveExpiryState(verified.expiresAt) === "EXPIRED") throw new CredentialAuthorizationError("EXPIRED_CREDENTIAL", "Required credential has expired.");
+  // Same correction as requirePrivilege: accept any VERIFIED-and-unexpired
+  // credential rather than testing whichever VERIFIED row happened to come back
+  // first, so a renewed registration alongside its expired predecessor passes.
+  if (!creds.some((c) => c.status === "VERIFIED" && deriveExpiryState(c.expiresAt) !== "EXPIRED")) {
+    throw new CredentialAuthorizationError("EXPIRED_CREDENTIAL", "Required credential has expired.");
+  }
 }
 
 /**

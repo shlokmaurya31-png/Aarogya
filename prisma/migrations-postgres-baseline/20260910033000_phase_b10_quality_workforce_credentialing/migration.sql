@@ -142,6 +142,25 @@ CREATE TABLE "ComplianceEvidence" (
 );
 
 -- CreateTable
+CREATE TABLE "QualityAudit" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "facilityId" TEXT NOT NULL,
+    "title" TEXT NOT NULL,
+    "scope" TEXT,
+    "departmentId" TEXT,
+    "auditorStaffId" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'PLANNED',
+    "summary" TEXT,
+    "plannedStartAt" TIMESTAMP(3),
+    "startedAt" TIMESTAMP(3),
+    "completedAt" TIMESTAMP(3),
+    "closedAt" TIMESTAMP(3),
+    "createdByStaffId" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL
+);
+
+-- CreateTable
 CREATE TABLE "QualityFinding" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "facilityId" TEXT NOT NULL,
@@ -161,25 +180,6 @@ CREATE TABLE "QualityFinding" (
     "updatedAt" TIMESTAMP(3) NOT NULL,
     CONSTRAINT "QualityFinding_auditId_fkey" FOREIGN KEY ("auditId") REFERENCES "QualityAudit" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
     CONSTRAINT "QualityFinding_incidentId_fkey" FOREIGN KEY ("incidentId") REFERENCES "QualityIncident" ("id") ON DELETE SET NULL ON UPDATE CASCADE
-);
-
--- CreateTable
-CREATE TABLE "QualityAudit" (
-    "id" TEXT NOT NULL PRIMARY KEY,
-    "facilityId" TEXT NOT NULL,
-    "title" TEXT NOT NULL,
-    "scope" TEXT,
-    "departmentId" TEXT,
-    "auditorStaffId" TEXT NOT NULL,
-    "status" TEXT NOT NULL DEFAULT 'PLANNED',
-    "summary" TEXT,
-    "plannedStartAt" TIMESTAMP(3),
-    "startedAt" TIMESTAMP(3),
-    "completedAt" TIMESTAMP(3),
-    "closedAt" TIMESTAMP(3),
-    "createdByStaffId" TEXT NOT NULL,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL
 );
 
 -- CreateTable

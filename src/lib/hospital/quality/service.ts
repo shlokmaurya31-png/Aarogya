@@ -4,6 +4,7 @@ import { recordAuditEvent } from "@/lib/auth/audit";
 import {
   INCIDENT_TRANSITIONS, CAPA_TRANSITIONS, AUDIT_TRANSITIONS, INCIDENT_SEVERITIES, INCIDENT_CATEGORIES,
   isTransitionAllowed, assertQualityStaffInFacility, assertPatientInFacility, assertEncounterInFacility,
+  assertQualityRefsInFacility,
 } from "@/lib/hospital/quality/shared";
 
 /**
@@ -19,6 +20,21 @@ export class QualityConcurrencyError extends BadRequestError {
   constructor(message = "This record changed state concurrently. Refresh and try again.") { super(message); }
 }
 
+/**
+ * Translate ONLY a unique-constraint violation into the caller-facing duplicate
+ * message. A blanket `.catch(() => throw BadRequestError(...))` reported an
+ * unrelated failure — a foreign-key violation, a dropped connection, a bug — as
+ * "already exists", which both misleads the user and hides real faults from the
+ * 500 path and the server log (gate §46).
+ */
+function asDuplicateError(message: string) {
+  return (e: unknown): never => {
+    const code = (e as { code?: unknown })?.code;
+    if (code === "P2002" || (e instanceof Error && /unique/i.test(e.message))) throw new BadRequestError(message);
+    throw e;
+  };
+}
+
 // ══ INCIDENTS ════════════════════════════════════════════════════════════════
 export async function createQualityIncident(input: {
   facilityId: string; category: string; severity?: string; title: string; description: string;
@@ -30,6 +46,7 @@ export async function createQualityIncident(input: {
   if (input.severity && !INCIDENT_SEVERITIES.includes(input.severity as (typeof INCIDENT_SEVERITIES)[number])) throw new BadRequestError("Unknown severity.");
   if (input.patientId) await assertPatientInFacility(prisma, input.patientId, input.facilityId);
   if (input.encounterId) await assertEncounterInFacility(prisma, input.encounterId, input.facilityId, input.patientId);
+  await assertQualityRefsInFacility(prisma, input.facilityId, { departmentId: input.departmentId });
   if (input.infectionIncidentId) {
     const inf = await prisma.infectionIncident.findUnique({ where: { id: input.infectionIncidentId } });
     if (!inf || inf.facilityId !== input.facilityId) throw new NotFoundError("Infection incident not found in this facility.");
@@ -64,6 +81,10 @@ export async function transitionIncident(input: {
   return prisma.$transaction(async (tx) => {
     const inc = await tx.qualityIncident.findUnique({ where: { id: input.incidentId } });
     if (!inc || inc.facilityId !== input.facilityId) throw new NotFoundError("Quality incident not found.");
+    // actorStaffId is persisted onto the transition record as the accountable
+    // party, so it must be a real active staff member of this facility rather
+    // than any id the client cares to send (gate §38 audit-actor forgery).
+    await assertQualityStaffInFacility(tx, input.actorStaffId, input.facilityId);
     if (!isTransitionAllowed(INCIDENT_TRANSITIONS, inc.status, input.to)) throw new BadRequestError(`Illegal incident transition ${inc.status} -> ${input.to}.`);
     const data: Record<string, unknown> = { status: input.to };
     if (input.to === "UNDER_INVESTIGATION") {
@@ -87,6 +108,7 @@ export async function reopenIncident(input: { incidentId: string; facilityId: st
   return prisma.$transaction(async (tx) => {
     const inc = await tx.qualityIncident.findUnique({ where: { id: input.incidentId } });
     if (!inc || inc.facilityId !== input.facilityId) throw new NotFoundError("Quality incident not found.");
+    await assertQualityStaffInFacility(tx, input.actorStaffId, input.facilityId);
     const r = await tx.qualityIncident.updateMany({ where: { id: inc.id, status: "CLOSED" }, data: { status: "UNDER_INVESTIGATION", reopenedAt: new Date(), closedAt: null } });
     if (r.count !== 1) throw new BadRequestError("Only a closed incident can be reopened.");
     await tx.qualityIncidentTransition.create({ data: { facilityId: inc.facilityId, incidentId: inc.id, fromStatus: "CLOSED", toStatus: "UNDER_INVESTIGATION", reason: input.reason, actorStaffId: input.actorStaffId } });
@@ -111,7 +133,7 @@ export async function createRca(input: {
       rootCauses: input.rootCauses, findings: input.findings, recommendations: input.recommendations,
       authoredByStaffId: input.authoredByStaffId,
     },
-  }).catch(() => { throw new BadRequestError("An RCA already exists for this incident."); });
+  }).catch(asDuplicateError("An RCA already exists for this incident."));
   await recordAuditEvent("hospital.quality.rcaCreated", input.byUserId, { rcaId: rca.id, incidentId: input.incidentId }, { facilityId: input.facilityId });
   return rca;
 }
@@ -122,10 +144,21 @@ export async function updateRca(input: { rcaId: string; facilityId: string; patc
     const rca = await tx.rootCauseAnalysis.findUnique({ where: { id: input.rcaId } });
     if (!rca || rca.facilityId !== input.facilityId) throw new NotFoundError("RCA not found.");
     if (rca.status === "REVIEWED") throw new BadRequestError("A reviewed RCA is locked; create a new version to make changes.");
-    const data: Record<string, unknown> = { ...input.patch, version: { increment: 1 } };
     if (input.patch.status && !["DRAFT", "UNDER_REVIEW"].includes(input.patch.status)) throw new BadRequestError("Use reviewRca to mark an RCA reviewed.");
+    // Allow-list the patch. The caller is untrusted JSON: spreading it straight
+    // into the update let a client set facilityId (moving an RCA into another
+    // facility), reviewedByStaffId/reviewedAt (forging a review attestation and
+    // defeating maker/checker), incidentId (re-pointing the RCA at a different
+    // incident) or authoredByStaffId. Only these fields are ever writable here;
+    // review is exclusively reviewRca()'s job.
+    const EDITABLE = ["methodology", "problemStatement", "contributingFactors", "rootCauses", "findings", "recommendations", "status"] as const;
+    const data: Record<string, unknown> = { version: { increment: 1 } };
+    for (const key of EDITABLE) {
+      if (input.patch[key] !== undefined) data[key] = input.patch[key];
+    }
     const r = await tx.rootCauseAnalysis.updateMany({ where: { id: rca.id, version: rca.version }, data });
     if (r.count !== 1) throw new QualityConcurrencyError();
+    await tx.auditEvent.create({ data: { type: "hospital.quality.rcaUpdated", userId: input.byUserId, detail: { rcaId: rca.id, incidentId: rca.incidentId, fields: Object.keys(data).filter((k) => k !== "version") }, facilityId: rca.facilityId } });
     return tx.rootCauseAnalysis.findUniqueOrThrow({ where: { id: rca.id } });
   });
 }
@@ -135,6 +168,13 @@ export async function reviewRca(input: { rcaId: string; facilityId: string; revi
     const rca = await tx.rootCauseAnalysis.findUnique({ where: { id: input.rcaId } });
     if (!rca || rca.facilityId !== input.facilityId) throw new NotFoundError("RCA not found.");
     await assertQualityStaffInFacility(tx, input.reviewedByStaffId, input.facilityId);
+    // Maker/checker: the author of an RCA cannot sign off their own analysis.
+    // This mirrors approvePurchaseOrder/approveRequisition's same-actor guard —
+    // an RCA review is the attestation that an independent reviewer examined the
+    // investigation, and it is worthless if the author can self-certify.
+    if (rca.authoredByStaffId === input.reviewedByStaffId) {
+      throw new BadRequestError("An RCA must be reviewed by someone other than its author.");
+    }
     const r = await tx.rootCauseAnalysis.updateMany({ where: { id: rca.id, status: { in: ["DRAFT", "UNDER_REVIEW"] } }, data: { status: "REVIEWED", reviewedByStaffId: input.reviewedByStaffId, reviewedAt: new Date() } });
     if (r.count !== 1) throw new BadRequestError("RCA is already reviewed.");
     await tx.auditEvent.create({ data: { type: "hospital.quality.rcaReviewed", userId: input.byUserId, detail: { rcaId: rca.id, incidentId: rca.incidentId }, facilityId: rca.facilityId } });
@@ -149,10 +189,11 @@ export async function createCapa(input: {
   createdByStaffId: string; byUserId: string;
 }) {
   if (!["CORRECTIVE", "PREVENTIVE"].includes(input.actionType)) throw new BadRequestError("actionType must be CORRECTIVE or PREVENTIVE.");
-  if (input.incidentId) {
-    const inc = await prisma.qualityIncident.findUnique({ where: { id: input.incidentId } });
-    if (!inc || inc.facilityId !== input.facilityId) throw new NotFoundError("Quality incident not found.");
-  }
+  // incidentId/findingId/departmentId are all client-supplied; each must be
+  // proven to live in this facility before it is persisted (gate §25).
+  await assertQualityRefsInFacility(prisma, input.facilityId, {
+    incidentId: input.incidentId, findingId: input.findingId, departmentId: input.departmentId,
+  });
   if (input.ownerStaffId) await assertQualityStaffInFacility(prisma, input.ownerStaffId, input.facilityId);
   const capa = await prisma.capaAction.create({
     data: {
@@ -181,7 +222,15 @@ export async function transitionCapa(input: {
       data.completedAt = new Date();
       if (input.evidenceDocumentId) data.evidenceDocumentId = input.evidenceDocumentId;
     }
-    if (input.to === "VERIFIED") { await assertQualityStaffInFacility(tx, input.actorStaffId, input.facilityId); data.verifiedByStaffId = input.actorStaffId; data.verifiedAt = new Date(); }
+    if (input.to === "VERIFIED") {
+      await assertQualityStaffInFacility(tx, input.actorStaffId, input.facilityId);
+      // Maker/checker: effectiveness verification is an independent check, so
+      // neither the owner who performed the action nor its creator may verify it.
+      if (capa.ownerStaffId === input.actorStaffId || capa.createdByStaffId === input.actorStaffId) {
+        throw new BadRequestError("A CAPA must be verified by someone other than its owner or creator.");
+      }
+      data.verifiedByStaffId = input.actorStaffId; data.verifiedAt = new Date();
+    }
     if (input.to === "CLOSED") data.closedAt = new Date();
     if (input.to === "CANCELLED") data.cancelledAt = new Date();
     const r = await tx.capaAction.updateMany({ where: { id: capa.id, status: capa.status }, data });
@@ -196,7 +245,7 @@ export async function transitionCapa(input: {
 export async function createStandard(input: { facilityId: string; code: string; title: string; description?: string; category?: string; ownerStaffId?: string; reviewDueAt?: Date; createdByStaffId: string; byUserId: string }) {
   const standard = await prisma.qualityStandard.create({
     data: { facilityId: input.facilityId, code: input.code, title: input.title, description: input.description, category: input.category, ownerStaffId: input.ownerStaffId, reviewDueAt: input.reviewDueAt, createdByStaffId: input.createdByStaffId },
-  }).catch(() => { throw new BadRequestError("A standard with this code already exists for this facility."); });
+  }).catch(asDuplicateError("A standard with this code already exists for this facility."));
   await recordAuditEvent("hospital.quality.standardCreated", input.byUserId, { standardId: standard.id, code: standard.code }, { facilityId: input.facilityId });
   return standard;
 }
@@ -206,7 +255,7 @@ export async function addMeasure(input: { facilityId: string; standardId: string
   if (!standard || standard.facilityId !== input.facilityId) throw new NotFoundError("Standard not found in this facility.");
   const measure = await prisma.qualityMeasure.create({
     data: { facilityId: input.facilityId, standardId: input.standardId, code: input.code, title: input.title, description: input.description, ownerStaffId: input.ownerStaffId },
-  }).catch(() => { throw new BadRequestError("A measure with this code already exists for this standard."); });
+  }).catch(asDuplicateError("A measure with this code already exists for this standard."));
   await recordAuditEvent("hospital.quality.measureCreated", input.byUserId, { measureId: measure.id, standardId: input.standardId }, { facilityId: input.facilityId });
   return measure;
 }
@@ -216,6 +265,7 @@ export async function setMeasureStatus(input: { facilityId: string; measureId: s
   if (!valid.includes(input.status)) throw new BadRequestError("Unknown measure status.");
   const measure = await prisma.qualityMeasure.findUnique({ where: { id: input.measureId } });
   if (!measure || measure.facilityId !== input.facilityId) throw new NotFoundError("Measure not found.");
+  await assertQualityStaffInFacility(prisma, input.reviewedByStaffId, input.facilityId);
   const updated = await prisma.qualityMeasure.update({ where: { id: measure.id }, data: { status: input.status, reviewedByStaffId: input.reviewedByStaffId, reviewedAt: new Date() } });
   await recordAuditEvent("hospital.quality.measureReviewed", input.byUserId, { measureId: measure.id, status: input.status }, { facilityId: input.facilityId });
   return updated;
@@ -234,13 +284,21 @@ export async function attachEvidence(input: {
     const doc = await prisma.clinicalDocument.findUnique({ where: { id: input.documentId } });
     if (!doc || doc.facilityId !== input.facilityId) throw new NotFoundError("Document not found in this facility.");
   }
+  // Every target this evidence can be hung off is client-supplied. Validating
+  // only the document left the parent links open: a reporter in facility A
+  // could attach evidence onto facility B's incident/RCA/CAPA/audit purely by
+  // guessing an id (gate §25 evidence IDOR).
+  await assertQualityRefsInFacility(prisma, input.facilityId, {
+    incidentId: input.incidentId, rcaId: input.rcaId, capaId: input.capaId, standardId: input.standardId,
+    measureId: input.measureId, findingId: input.findingId, auditId: input.auditId,
+  });
   const evidence = await prisma.complianceEvidence.create({
     data: {
       facilityId: input.facilityId, description: input.description, evidenceType: input.evidenceType, documentId: input.documentId,
       incidentId: input.incidentId, rcaId: input.rcaId, capaId: input.capaId, standardId: input.standardId,
       measureId: input.measureId, findingId: input.findingId, auditId: input.auditId, providedByStaffId: input.providedByStaffId,
     },
-  }).catch(() => { throw new BadRequestError("This document is already attached to that measurable element."); });
+  }).catch(asDuplicateError("This document is already attached to that measurable element."));
   await recordAuditEvent("hospital.quality.evidenceAttached", input.byUserId, { evidenceId: evidence.id, documentId: input.documentId }, { facilityId: input.facilityId });
   return evidence;
 }
@@ -275,10 +333,11 @@ export async function createFinding(input: {
   facilityId: string; title: string; description: string; sourceType?: string; severity?: string;
   auditId?: string; standardId?: string; measureId?: string; incidentId?: string; identifiedByStaffId: string; byUserId: string;
 }) {
-  if (input.auditId) {
-    const audit = await prisma.qualityAudit.findUnique({ where: { id: input.auditId } });
-    if (!audit || audit.facilityId !== input.facilityId) throw new NotFoundError("Audit not found in this facility.");
-  }
+  // auditId was validated but standardId/measureId/incidentId were written
+  // straight through, so a finding could be linked across facilities (gate §25).
+  await assertQualityRefsInFacility(prisma, input.facilityId, {
+    auditId: input.auditId, standardId: input.standardId, measureId: input.measureId, incidentId: input.incidentId,
+  });
   const finding = await prisma.qualityFinding.create({
     data: { facilityId: input.facilityId, title: input.title, description: input.description, sourceType: input.sourceType, severity: input.severity, auditId: input.auditId, standardId: input.standardId, measureId: input.measureId, incidentId: input.incidentId, identifiedByStaffId: input.identifiedByStaffId },
   });

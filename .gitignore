@@ -54,3 +54,6 @@ next-env.d.ts
 # Prisma shadow database (local migration artifact)
 /shadow.db
 /shadow.db-journal
+
+# Phase B gate: disposable PostgreSQL migration-replay harness
+/.pgreplay/

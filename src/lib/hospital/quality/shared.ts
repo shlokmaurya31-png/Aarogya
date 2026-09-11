@@ -52,11 +52,56 @@ export function isTransitionAllowed(map: Record<string, string[]>, from: string,
   return map[from]?.includes(to) ?? false;
 }
 
-/** Validates that a staff id is an ACTIVE profile of the given facility. Never trusts a client-supplied staff id. */
+/**
+ * Validates that a staff id is an ACTIVE profile of the given facility. Never
+ * trusts a client-supplied staff id. A staff member who has left, been
+ * suspended or been deactivated must not be assignable as an investigator,
+ * reviewer, auditor or CAPA owner (gate §26), so status is enforced here rather
+ * than merely documented.
+ */
 export async function assertQualityStaffInFacility(db: Tx | typeof prisma, staffId: string, facilityId: string) {
   const staff = await db.hospitalStaffProfile.findUnique({ where: { id: staffId } });
   if (!staff || staff.facilityId !== facilityId) throw new NotFoundError("Staff member not found in this facility.");
+  if (staff.status !== "ACTIVE") throw new BadRequestError("That staff member is not active.");
   return staff;
+}
+
+const QUALITY_REF_LABELS: Record<string, string> = {
+  incidentId: "Quality incident", rcaId: "RCA", capaId: "CAPA action",
+  standardId: "Standard", measureId: "Measure", findingId: "Finding",
+  auditId: "Audit", departmentId: "Department",
+};
+
+/**
+ * Every optional parent reference a quality record can carry must be proven to
+ * live in the caller's facility before it is written. Without this, a reporter
+ * in facility A could attach evidence to — or hang a CAPA/finding off — a
+ * record in facility B, a cross-facility write reachable purely by guessing an
+ * id (gate §8/§25). Unknown ids are reported as not-found so the endpoint never
+ * confirms that a protected record exists in another facility.
+ */
+export async function assertQualityRefsInFacility(
+  db: Tx | typeof prisma,
+  facilityId: string,
+  refs: Partial<Record<keyof typeof QUALITY_REF_LABELS, string | undefined>>
+) {
+  const lookups: Record<string, (id: string) => Promise<{ facilityId: string } | null>> = {
+    incidentId: (id) => db.qualityIncident.findUnique({ where: { id }, select: { facilityId: true } }),
+    rcaId: (id) => db.rootCauseAnalysis.findUnique({ where: { id }, select: { facilityId: true } }),
+    capaId: (id) => db.capaAction.findUnique({ where: { id }, select: { facilityId: true } }),
+    standardId: (id) => db.qualityStandard.findUnique({ where: { id }, select: { facilityId: true } }),
+    measureId: (id) => db.qualityMeasure.findUnique({ where: { id }, select: { facilityId: true } }),
+    findingId: (id) => db.qualityFinding.findUnique({ where: { id }, select: { facilityId: true } }),
+    auditId: (id) => db.qualityAudit.findUnique({ where: { id }, select: { facilityId: true } }),
+    departmentId: (id) => db.department.findUnique({ where: { id }, select: { facilityId: true } }),
+  };
+  for (const [key, id] of Object.entries(refs)) {
+    if (!id) continue;
+    const row = await lookups[key](id);
+    if (!row || row.facilityId !== facilityId) {
+      throw new NotFoundError(`${QUALITY_REF_LABELS[key] ?? "Record"} not found in this facility.`);
+    }
+  }
 }
 
 /** Patient linkage is optional; when present it must belong to the same facility (wrong-patient protection, brief §31). */

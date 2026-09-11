@@ -696,6 +696,7 @@ model Bed {
 
   @@unique([facilityId, label])
   @@index([status])
+  @@index([icuUnitId])
 }
 
 model BedStateEvent {

@@ -116,6 +116,15 @@ export async function selectQuotation(input: { quotationId: string; facilityId: 
   return prisma.$transaction(async (tx) => {
     const quotation = await tx.rfqQuotation.findUnique({ where: { id: input.quotationId } });
     if (!quotation || quotation.facilityId !== input.facilityId) throw new NotFoundError("Quotation not found.");
+    // Serialize the whole award decision on the parent RFQ row BEFORE touching
+    // any quotation. Without this, two concurrent awards on the same RFQ each
+    // lock their own quotation first and then reach for the other's in the
+    // losing-bid sweep below — a circular wait that PostgreSQL breaks by killing
+    // one transaction with deadlock_detected (40P01). Locking the parent first
+    // makes both transactions contend on the SAME row in the SAME order, so the
+    // loser blocks and then fails cleanly on the guarded update below rather
+    // than deadlocking. Verified by scripts/verify-postgres-phase-b-final.ts.
+    await tx.rfq.updateMany({ where: { id: quotation.rfqId, facilityId: input.facilityId }, data: { updatedAt: new Date() } });
     const r = await tx.rfqQuotation.updateMany({ where: { id: quotation.id, status: "SUBMITTED", selected: false }, data: { status: "SELECTED", selected: true } });
     if (r.count !== 1) throw new BadRequestError("Quotation is not selectable (already decided).");
     // Mark the other submitted quotations for this RFQ as rejected (losing bids).

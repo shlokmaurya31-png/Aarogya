@@ -106,6 +106,19 @@ export async function createShift(input: {
   } catch (e) {
     // (staffId, startAt) unique collision — two users assigned the identical shift concurrently (brief §32 race #6).
     if (e && typeof e === "object" && "code" in e && (e as { code?: string }).code === "P2002") throw new WorkforceConcurrencyError("An identical shift for this staff member already exists.");
+    // The findFirst overlap check above is not atomic under PostgreSQL's READ
+    // COMMITTED, so two genuinely overlapping shifts can both pass it. The
+    // staff_shift_no_overlap EXCLUDE constraint is what actually stops them, and
+    // it surfaces as exclusion_violation (23P01) or, when the two inserts wait on
+    // each other's range lock, deadlock_detected (40P01). Both mean the same
+    // thing to the caller — someone else just booked an overlapping shift — so
+    // both are reported as the domain conflict rather than escaping as a 500.
+    const code = (e as { code?: string; meta?: { code?: string } })?.code;
+    const pgCode = (e as { meta?: { code?: string } })?.meta?.code;
+    const msg = e instanceof Error ? e.message : "";
+    if (code === "23P01" || pgCode === "23P01" || pgCode === "40P01" || /exclusion constraint|staff_shift_no_overlap|deadlock detected/i.test(msg)) {
+      throw new WorkforceConcurrencyError("This staff member already has an overlapping scheduled shift.");
+    }
     throw e;
   }
 }
@@ -176,7 +189,20 @@ async function guardedCredentialStatus(input: { facilityId: string; credentialId
   });
 }
 
-export function verifyCredential(input: { facilityId: string; credentialId: string; verifiedByStaffId: string; byUserId: string }) {
+/**
+ * Verification is the maker/checker half of credentialing, so it enforces two
+ * things the generic status guard cannot: the verifier must be an active member
+ * of this facility, and must not be the person who recorded the credential or
+ * the person it belongs to. Without that, a staff member could file their own
+ * registration and mark it VERIFIED — self-credentialing straight past every
+ * requireCredential() gate (gate §39 maker/checker, §10 escalation).
+ */
+export async function verifyCredential(input: { facilityId: string; credentialId: string; verifiedByStaffId: string; byUserId: string }) {
+  const cred = await prisma.credential.findUnique({ where: { id: input.credentialId } });
+  if (!cred || cred.facilityId !== input.facilityId) throw new NotFoundError("Credential not found.");
+  await assertStaffInFacility(prisma, input.verifiedByStaffId, input.facilityId);
+  if (cred.staffId === input.verifiedByStaffId) throw new BadRequestError("A credential cannot be verified by the staff member it belongs to.");
+  if (cred.createdByStaffId === input.verifiedByStaffId) throw new BadRequestError("A credential must be verified by someone other than the person who recorded it.");
   return guardedCredentialStatus({ facilityId: input.facilityId, credentialId: input.credentialId, from: ["PENDING", "SUSPENDED"], to: "VERIFIED", audit: "hospital.workforce.credentialVerified", extra: { verifiedByStaffId: input.verifiedByStaffId, verifiedAt: new Date() }, byUserId: input.byUserId });
 }
 export function suspendCredential(input: { facilityId: string; credentialId: string; byUserId: string }) {
@@ -197,6 +223,15 @@ export async function grantPrivilege(input: {
   documentId?: string; notes?: string; grantedByStaffId: string; byUserId: string;
 }) {
   await assertStaffInFacility(prisma, input.staffId, input.facilityId);
+  await assertStaffInFacility(prisma, input.grantedByStaffId, input.facilityId);
+  // Granting yourself a clinical privilege is the most direct escalation path
+  // there is, so it is refused outright (gate §39). createCredential already
+  // validates its document reference; do the same here.
+  if (input.staffId === input.grantedByStaffId) throw new BadRequestError("A clinical privilege cannot be granted to yourself.");
+  if (input.documentId) {
+    const doc = await prisma.clinicalDocument.findUnique({ where: { id: input.documentId } });
+    if (!doc || doc.facilityId !== input.facilityId) throw new NotFoundError("Document not found in this facility.");
+  }
   const priv = await prisma.staffPrivilege.create({
     data: { facilityId: input.facilityId, staffId: input.staffId, privilegeType: input.privilegeType, scope: input.scope, expiresAt: input.expiresAt, documentId: input.documentId, notes: input.notes, grantedByStaffId: input.grantedByStaffId },
   });
