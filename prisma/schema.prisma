@@ -6660,6 +6660,7 @@ model HealthInformationExchange {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  callbacks  AbdmCallbackEvent[]
   provenance InteropProvenance[]
   imported   ImportedResource[]
 
@@ -6808,4 +6809,52 @@ model InteropConnection {
 
   @@unique([facilityId, system])
   @@index([facilityId])
+}
+
+/// Phase C2 — inbound ABDM callback ledger.
+///
+/// The ABDM Consent Manager calls back asynchronously (consent notify, health
+/// information on-request). Those callbacks are UNAUTHENTICATED as far as the
+/// application is concerned — the documented headers carry REQUEST-ID,
+/// TIMESTAMP and X-HIU-ID, none of which prove origin — so every callback must
+/// be independently verified, correlated to an exchange we actually started,
+/// and recorded exactly once.
+///
+/// This table IS the replay-protection mechanism: the unique constraint on
+/// (facilityId, callbackKind, externalRequestId) means a replayed callback
+/// collides instead of being processed twice. It is deliberately a ledger
+/// rather than a queue — nothing here drives clinical state on its own.
+model AbdmCallbackEvent {
+  id         String @id @default(cuid())
+  facilityId String
+
+  /// Which documented callback path this arrived on.
+  callbackKind String
+
+  /// REQUEST-ID / response.requestId from the payload. Replay key.
+  externalRequestId String
+  /// Our correlation id, when the callback could be matched to a request.
+  correlationId     String?
+
+  exchange   HealthInformationExchange? @relation(fields: [exchangeId], references: [id])
+  exchangeId String?
+  consentId  String?
+
+  /// ACCEPTED | REJECTED | DUPLICATE | UNMATCHED
+  status          String  @default("ACCEPTED")
+  rejectionReason String?
+
+  /// Payload is referenced by hash and size, never stored wholesale.
+  payloadHash  String?
+  payloadBytes Int?
+
+  /// Source address, for abuse investigation. Not an authorisation input.
+  sourceAddress String?
+
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+
+  @@unique([facilityId, callbackKind, externalRequestId])
+  @@index([facilityId, status])
+  @@index([exchangeId])
 }

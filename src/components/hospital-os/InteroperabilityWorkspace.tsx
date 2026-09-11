@@ -22,10 +22,11 @@ import { ToastViewport } from "@/components/shared/ToastViewport";
  * credentials. Showing them as one number would imply connectivity that may not
  * exist.
  */
-type Tab = "overview" | "identities" | "consents" | "exchanges" | "imports" | "connections";
+type Tab = "overview" | "abdm" | "identities" | "consents" | "exchanges" | "imports" | "connections";
 
 const TABS: { id: Tab; label: string; icon: typeof Fingerprint }[] = [
   { id: "overview", label: "Overview", icon: Activity },
+  { id: "abdm", label: "ABDM Connection", icon: Network },
   { id: "identities", label: "External Identities", icon: Fingerprint },
   { id: "consents", label: "Consents", icon: ShieldCheck },
   { id: "exchanges", label: "Exchanges", icon: Share2 },
@@ -33,7 +34,7 @@ const TABS: { id: Tab; label: string; icon: typeof Fingerprint }[] = [
   { id: "connections", label: "Registry Connections", icon: Network },
 ];
 
-const ENDPOINTS: Record<Exclude<Tab, "overview" | "connections">, { url: string; key: string }> = {
+const ENDPOINTS: Record<Exclude<Tab, "overview" | "connections" | "abdm">, { url: string; key: string }> = {
   identities: { url: "/api/hospital/interoperability/identifiers", key: "identifiers" },
   consents: { url: "/api/hospital/interoperability/consents", key: "consents" },
   exchanges: { url: "/api/hospital/interoperability/exchanges", key: "exchanges" },
@@ -70,6 +71,8 @@ export function InteroperabilityWorkspace() {
   // (which would trigger a cascading render).
   const [loaded, setLoaded] = useState<{ tab: Tab; data: any[] } | null>(null);
   const [connections, setConnections] = useState<any>(null);
+  const [abdm, setAbdm] = useState<any>(null);
+  const [testing, setTesting] = useState(false);
 
   const loadConnections = useCallback(() => {
     fetch("/api/hospital/interoperability/connections")
@@ -79,8 +82,36 @@ export function InteroperabilityWorkspace() {
   }, []);
   useEffect(loadConnections, [loadConnections]);
 
+  // Configured state only — this deliberately makes NO network call to ABDM, so
+  // opening the workspace never authenticates against a national gateway.
+  const loadAbdm = useCallback(() => {
+    fetch("/api/hospital/interoperability/abdm/connection-test")
+      .then((r) => r.json())
+      .then((d) => setAbdm(d ?? null))
+      .catch(() => setAbdm(null));
+  }, []);
+  useEffect(loadAbdm, [loadAbdm]);
+
+  // The ONLY action that performs a real handshake. Explicit, audited.
+  async function runConnectionTest() {
+    setTesting(true);
+    try {
+      const res = await fetch("/api/hospital/interoperability/abdm/connection-test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { push(data.error ?? "Connection test failed.", "red"); return; }
+      setAbdm((prev: any) => ({ ...(prev ?? {}), health: data.health }));
+      push(`ABDM: ${data.health?.state ?? "UNKNOWN"}`, data.health?.state === "AVAILABLE" ? "emerald" : "amber");
+    } finally {
+      setTesting(false);
+    }
+  }
+
   const loadRows = useCallback((t: Tab) => {
-    if (t === "overview" || t === "connections") return;
+    if (t === "overview" || t === "connections" || t === "abdm") return;
     const e = ENDPOINTS[t];
     fetch(e.url)
       .then((r) => r.json())
@@ -158,6 +189,124 @@ export function InteroperabilityWorkspace() {
         </Card>
       )}
 
+      {tab === "abdm" && (
+        <div className="space-y-4">
+          <Card>
+            <CardLabel>ABDM connection</CardLabel>
+
+            {/* State is the whole answer. AVAILABLE is the ONLY value that means
+                connected, and it is only ever produced by a live handshake. */}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Metric
+                label="State"
+                value={abdm?.health?.state ?? "—"}
+                tone={
+                  abdm?.health?.state === "AVAILABLE" ? "emerald"
+                    : abdm?.health?.state === "DISABLED" ? "neutral"
+                      : abdm?.health?.state === "UNKNOWN" ? "amber" : "red"
+                }
+              />
+              <Metric label="Environment" value={abdm?.health?.environment ?? "—"} />
+              <Metric
+                label="Credentials"
+                value={abdm?.health?.config?.credentialsConfigured ? "Set" : "Not set"}
+                tone={abdm?.health?.config?.credentialsConfigured ? "emerald" : "neutral"}
+              />
+              <Metric
+                label="Callbacks"
+                value={abdm?.health?.config?.callbacksConfigured ? "Ready" : "Off"}
+                tone={abdm?.health?.config?.callbacksConfigured ? "emerald" : "neutral"}
+              />
+            </div>
+
+            <p className="mt-3 text-xs text-text-secondary">{abdm?.health?.message ?? "Loading…"}</p>
+
+            {abdm?.health?.state !== "AVAILABLE" && (
+              <p className="mt-2 rounded-xl border border-hairline px-3 py-2 text-[11px] leading-relaxed text-text-tertiary">
+                This deployment has not established a verified ABDM connection. Configuration
+                alone is reported as UNKNOWN on purpose: only a successful handshake against
+                the configured gateway is shown as AVAILABLE. Clinical workflows are unaffected.
+              </p>
+            )}
+
+            {(abdm?.health?.config?.warnings ?? []).map((w: string) => (
+              <div key={w} className="mt-2 flex items-start gap-2 rounded-xl border border-amber/40 bg-amber/5 px-3 py-2 text-[11px] text-amber">
+                <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                <span>{w}</span>
+              </div>
+            ))}
+
+            <button
+              onClick={runConnectionTest}
+              disabled={testing}
+              className="mt-3 rounded-full border border-hairline px-3 py-1.5 text-xs transition hover:text-cyan disabled:opacity-50"
+            >
+              {testing ? "Testing…" : "Run connection test"}
+            </button>
+            <p className="mt-1 text-[10px] text-text-tertiary">
+              Performs a real session handshake. Requires connection-management permission and is audited.
+            </p>
+          </Card>
+
+          <Card>
+            <CardLabel>Verified contract</CardLabel>
+            <div className="mt-3 space-y-1 text-[11px] text-text-secondary">
+              <p>
+                Source: <span className="text-text-primary">{abdm?.health?.contractSource?.document ?? "—"}</span>{" "}
+                v{abdm?.health?.contractSource?.version ?? "—"}
+              </p>
+              <p>Milestone: {abdm?.health?.contractSource?.milestone ?? "—"}</p>
+              <p>Verified on: {abdm?.health?.contractSource?.verifiedOn ?? "—"}</p>
+            </div>
+            <p className="mt-2 text-[10px] text-text-tertiary">
+              Capabilities without a verified official contract are not implemented. See
+              docs/interoperability/abdm-contract-matrix.md.
+            </p>
+          </Card>
+
+          <Card>
+            <CardLabel>FHIR profiles</CardLabel>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Metric label="FHIR" value={abdm?.profiles?.ig?.fhirVersion ?? "—"} />
+              <Metric label="IG version" value={abdm?.profiles?.ig?.version ?? "—"} />
+              <Metric label="Registered" value={abdm?.profiles?.produced ?? 0} />
+              <Metric label="Validated" value={abdm?.profiles?.validated ?? 0} tone="amber" />
+            </div>
+            {abdm && !abdm?.profiles?.profileValidationImplemented && (
+              <p className="mt-3 rounded-xl border border-hairline px-3 py-2 text-[11px] leading-relaxed text-text-tertiary">
+                Resources are structurally valid FHIR R4. ABDM profile conformance is NOT
+                asserted: the StructureDefinition package is not bundled with this deployment.
+              </p>
+            )}
+            <div className="mt-3 space-y-1">
+              {(abdm?.profiles?.profiles ?? []).slice(0, 20).map((pr: any) => (
+                <div key={pr.canonical} className="flex items-center justify-between gap-2 text-[11px]">
+                  <span className="truncate text-text-secondary">{pr.resourceType}</span>
+                  <StatusPill tone={pr.status === "REGISTERED" ? "cyan" : "neutral"} label={pr.status} />
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          <Card>
+            <CardLabel>Callback endpoints</CardLabel>
+            <div className="mt-3 space-y-1">
+              {(abdm?.callbackRoutes ?? []).map((r: any) => (
+                <div key={r.kind} className="text-[11px]">
+                  <p className="text-text-secondary">{r.kind}</p>
+                  <p className="truncate font-mono text-[10px] text-text-tertiary">{r.url ?? r.path}</p>
+                </div>
+              ))}
+            </div>
+            {abdm && !abdm?.health?.config?.callbacksConfigured && (
+              <p className="mt-3 text-[11px] text-text-tertiary">
+                Inbound callbacks are refused until a callback base URL and token are configured.
+              </p>
+            )}
+          </Card>
+        </div>
+      )}
+
       {tab === "connections" && (
         <Card>
           <CardLabel>Registry connections</CardLabel>
@@ -184,7 +333,7 @@ export function InteroperabilityWorkspace() {
         </Card>
       )}
 
-      {tab !== "overview" && tab !== "connections" && (
+      {tab !== "overview" && tab !== "connections" && tab !== "abdm" && (
         <Card>
           <CardLabel>{TABS.find((t) => t.id === tab)?.label}</CardLabel>
           {rows === null && <p className="mt-3 text-xs text-text-tertiary">Loading…</p>}

@@ -243,6 +243,35 @@ export async function dispatchExchange(
   input: { facilityId: string; exchangeId: string; byUserId: string; actorStaffId?: string | null },
   options: DispatchOptions = {}
 ) {
+  // Re-check consent BEFORE moving to PROCESSING.
+  //
+  // Composition would refuse anyway — exportPatientToFhir re-runs the same
+  // check — so no data could escape either way. But a consent revoked between
+  // authorization and dispatch would otherwise drive the exchange through
+  // PROCESSING and out to FAILED, which reads to an operator as a transport
+  // problem rather than a withdrawn consent, and leaves a PROCESSING window on
+  // a record the patient has already withdrawn. Checking first keeps the
+  // guarantee structural instead of incidental.
+  const pending = await prisma.healthInformationExchange.findUnique({ where: { id: input.exchangeId } });
+  if (!pending || pending.facilityId !== input.facilityId) throw new NotFoundError("Exchange not found.");
+  if (pending.direction === "OUTBOUND" && pending.patientId) {
+    try {
+      await assertExchangeAuthorized({
+        facilityId: pending.facilityId,
+        patientId: pending.patientId,
+        purpose: pending.purpose,
+        scopes: pending.requestedScopes.split(",").filter(Boolean),
+        consentId: pending.consentId,
+      });
+    } catch (e) {
+      return markFailed(
+        pending.id, input.facilityId,
+        e instanceof Error ? e.message : "Consent is no longer valid for this exchange.",
+        input.byUserId, false
+      );
+    }
+  }
+
   const started = await transition(
     input.exchangeId, input.facilityId, "PROCESSING",
     { processingStartedAt: new Date(), lastError: null },

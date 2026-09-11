@@ -376,6 +376,17 @@ export type AuditEventType =
   | "hospital.interop.externalMappingConflict"
   | "hospital.interop.terminologyMapped"
   | "hospital.interop.connectionConfigured"
+  // Phase C2 — ABDM contract and sandbox readiness. Callback events are
+  // separate from exchange events because a callback is an UNAUTHENTICATED
+  // inbound arrival that may never correlate to anything we started.
+  | "hospital.interop.connectionTested"
+  | "hospital.interop.callbackReceived"
+  | "hospital.interop.callbackRejected"
+  | "hospital.interop.callbackReplayed"
+  | "hospital.interop.abdmRequestSent"
+  | "hospital.interop.abdmRequestFailed"
+  | "hospital.interop.consentStatusSynchronised"
+  | "hospital.interop.profileValidationFailed"
   | "hospital.quality.rcaReviewed"
   | "hospital.quality.capaCreated"
   | "hospital.quality.capaCompleted"
