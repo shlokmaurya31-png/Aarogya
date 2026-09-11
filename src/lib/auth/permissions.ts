@@ -360,6 +360,29 @@ export const PERMISSIONS = [
   "privilege:manage",
   "privilege:grant",
   "privilege:revoke",
+
+  // Phase C1 — India digital health interoperability. Read/manage are split so a
+  // clinician can see that a patient has an ABHA link or a consent on file
+  // without being able to create registry mappings or authorise a transfer.
+  // Exchange authorisation is deliberately separate from exchange request:
+  // requesting a transfer and approving it are different acts.
+  "interop:overview:view",
+  "interop:identifier:read",
+  "interop:identifier:manage",
+  "interop:identifier:verify",
+  "interop:consent:read",
+  "interop:consent:manage",
+  "interop:consent:grant",
+  "interop:consent:revoke",
+  "interop:exchange:read",
+  "interop:exchange:request",
+  "interop:exchange:authorize",
+  "interop:fhir:export",
+  "interop:fhir:import",
+  "interop:import:review",
+  "interop:terminology:read",
+  "interop:terminology:manage",
+  "interop:connection:manage",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -381,6 +404,17 @@ export const OPERATIONAL_ONLY_ACTIONS = [
 const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
   PATIENT: ["patient:self:read"],
   DOCTOR: [
+    // Phase C1 — a treating clinician sees interoperability state for their
+    // patients and can initiate a referral/second-opinion transfer, but cannot
+    // create registry mappings, grant consent on the patient's behalf, or
+    // authorise the transfer they themselves requested.
+    "interop:overview:view",
+    "interop:identifier:read",
+    "interop:consent:read",
+    "interop:exchange:read",
+    "interop:exchange:request",
+    "interop:fhir:export",
+    "interop:terminology:read",
     "hospital:command-center:view",
     "patient:read",
     "clinical:chart:read",
@@ -711,6 +745,26 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "inventory:request:fulfill",
   ],
   HOSPITAL_ADMIN: [
+    // Phase C1 — the facility interoperability administrator: registry
+    // mappings, consent lifecycle, exchange authorisation, import review,
+    // terminology and connection configuration.
+    "interop:overview:view",
+    "interop:identifier:read",
+    "interop:identifier:manage",
+    "interop:identifier:verify",
+    "interop:consent:read",
+    "interop:consent:manage",
+    "interop:consent:grant",
+    "interop:consent:revoke",
+    "interop:exchange:read",
+    "interop:exchange:request",
+    "interop:exchange:authorize",
+    "interop:fhir:export",
+    "interop:fhir:import",
+    "interop:import:review",
+    "interop:terminology:read",
+    "interop:terminology:manage",
+    "interop:connection:manage",
     "hospital:command-center:view",
     "hospital:admin:manage",
     "patient:read",
@@ -884,6 +938,13 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "privilege:revoke",
   ],
   FRONT_DESK: [
+    // Phase C1 — the registration desk is where an ABHA is captured and a
+    // sharing consent is recorded. No export, no exchange authorisation.
+    "interop:overview:view",
+    "interop:identifier:read",
+    "interop:identifier:manage",
+    "interop:consent:read",
+    "interop:consent:manage",
     "hospital:command-center:view",
     "patient:read",
     "patient:write",

@@ -6484,3 +6484,328 @@ model StaffPrivilege {
   @@index([privilegeType])
   @@index([expiresAt])
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// PHASE C1 — India Digital Health Interoperability Foundation.
+//
+// These models are an INTEROPERABILITY BOUNDARY that sits ABOVE the canonical
+// clinical domain. They deliberately do NOT replace anything: Patient stays the
+// patient, Facility stays the facility, HospitalStaffProfile stays the staff
+// member. ABHA/HFR/HPR identifiers are MAPPINGS onto those records, and FHIR is
+// a representation produced from them on demand — never a second database.
+//
+// Nothing here is on the critical path of clinical care. If every external
+// system is unreachable, admission, medication, documentation and discharge all
+// continue to work; only exchange does not. See docs/PHASE_C1_INTEROPERABILITY.md.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// A mapping from a canonical Aarogya record to an identifier issued by an
+/// external registry (ABHA for patients, HFR for facilities, HPR for staff).
+/// Generic on purpose — one table per registry would multiply identical
+/// lifecycle/sync logic — but strongly validated in the service layer, and
+/// always facility-scoped so one facility can never read or reuse the mapping
+/// belonging to another.
+model ExternalIdentifier {
+  id         String @id @default(cuid())
+  facilityId String
+  entityType String // PATIENT | FACILITY | STAFF | ENCOUNTER | ORGANIZATION | DOCUMENT
+  entityId   String
+  system     String // canonical URI, e.g. https://healthid.abdm.gov.in
+  value      String
+  use        String @default("OFFICIAL") // OFFICIAL | SECONDARY | OLD
+  status     String @default("ACTIVE") // ACTIVE | SUPERSEDED | REVOKED | INVALID
+  source     String @default("LOCAL_ENTRY") // LOCAL_ENTRY | REGISTRY_LOOKUP | IMPORTED
+
+  // Verification is NEVER inferred. A mapping stays UNVERIFIED until a real
+  // registry response sets it; no code path marks it VERIFIED without one.
+  verificationStatus String    @default("UNVERIFIED") // UNVERIFIED | VERIFIED | FAILED
+  verifiedAt         DateTime?
+
+  // Registry synchronisation state. Adapter-invoked; no scheduler, no polling.
+  lastSyncedAt      DateTime?
+  syncStatus        String?
+  syncError         String?
+  retryCount        Int       @default(0)
+  externalUpdatedAt DateTime?
+
+  periodStart      DateTime?
+  periodEnd        DateTime?
+  createdByStaffId String?
+  version          Int       @default(1)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  provenance InteropProvenance[]
+
+  // One live mapping of a given system identifier per facility, and one
+  // identifier per system per entity. Together these stop a second patient from
+  // being silently linked to an ABHA that already belongs to someone else.
+  @@unique([facilityId, system, value])
+  @@unique([facilityId, entityType, entityId, system])
+  @@index([facilityId, entityType, entityId])
+  @@index([system, value])
+}
+
+/// Consent governing HEALTH INFORMATION EXCHANGE. Deliberately separate from the
+/// existing clinical `Consent` model, which records procedure/treatment consent
+/// captured by a staff member and carries no recipient, no facility and no data
+/// scope. Collapsing the two would conflate "the patient agreed to this
+/// operation" with "the patient agreed that this recipient may receive this
+/// class of their records until this date".
+model InteropConsent {
+  id         String @id @default(cuid())
+  facilityId String
+  patientId  String
+
+  purpose String // TREATMENT | REFERRAL | SECOND_OPINION | INSURANCE | PATIENT_ACCESS | RESEARCH | OTHER
+  status  String @default("REQUESTED") // REQUESTED | GRANTED | ACTIVE | EXPIRED | REVOKED | DECLINED | CANCELLED
+
+  // Who the patient is sharing WITH. Required, so consent can never degrade
+  // into "this patient data is shareable with anyone".
+  recipientType       String // FACILITY | ORGANIZATION | PRACTITIONER | PATIENT | EXTERNAL_SYSTEM
+  recipientIdentifier String
+  recipientSystem     String?
+  recipientName       String?
+
+  // Identifier issued by an external consent manager, when one exists. Null for
+  // a purely local consent; NOT invented to imitate an ABDM consent artefact.
+  externalConsentRef String?
+
+  requestedAt      DateTime  @default(now())
+  grantedAt        DateTime?
+  expiresAt        DateTime?
+  revokedAt        DateTime?
+  revokedReason    String?
+  revokedByStaffId String?
+  declinedAt       DateTime?
+  cancelledAt      DateTime?
+
+  // PATIENT means the patient themselves granted it; STAFF_RECORDED means a
+  // staff member recorded a consent obtained offline.
+  grantedBy        String?
+  source           String   @default("LOCAL")
+  createdByStaffId String?
+  version          Int      @default(1)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  scopes    InteropConsentScope[]
+  exchanges HealthInformationExchange[]
+
+  @@index([facilityId, patientId])
+  @@index([facilityId, status])
+  @@index([expiresAt])
+}
+
+/// One data class a consent covers. A child table rather than a delimited
+/// string, so scope is queryable and each entry is individually validated —
+/// consent is never a boolean.
+model InteropConsentScope {
+  id        String         @id @default(cuid())
+  consent   InteropConsent @relation(fields: [consentId], references: [id], onDelete: Cascade)
+  consentId String
+  scope     String // ALL_CLINICAL | DIAGNOSIS | LAB | IMAGING | MEDICATION | DOCUMENTS | ENCOUNTER | ALLERGY | VITALS | CARE_PLAN | BILLING
+  createdAt DateTime       @default(now())
+
+  @@unique([consentId, scope])
+  @@index([consentId])
+}
+
+/// A request to move health information across the interoperability boundary.
+/// Created and committed inside the LOCAL transaction; the external call happens
+/// afterwards through the adapter, so a remote failure can never roll back or
+/// corrupt completed clinical care.
+model HealthInformationExchange {
+  id         String  @id @default(cuid())
+  facilityId String
+  patientId  String?
+
+  direction String // OUTBOUND | INBOUND
+  purpose   String
+  status    String @default("REQUESTED") // REQUESTED | AUTHORIZED | PROCESSING | COMPLETED | REJECTED | FAILED | CANCELLED
+
+  consent   InteropConsent? @relation(fields: [consentId], references: [id])
+  consentId String?
+
+  destinationSystem   String
+  destinationEndpoint String?
+  requestedScopes     String
+
+  // Idempotency: a retried request carrying the same key resolves to the SAME
+  // exchange rather than creating a duplicate external transfer.
+  idempotencyKey    String  @unique
+  correlationId     String?
+  externalRequestId String?
+
+  requestedByStaffId  String?
+  requestedAt         DateTime  @default(now())
+  authorizedAt        DateTime?
+  authorizedByStaffId String?
+  processingStartedAt DateTime?
+  completedAt         DateTime?
+  rejectedAt          DateTime?
+  rejectionReason     String?
+  failedAt            DateTime?
+  failureReason       String?
+
+  // Bounded retry metadata only — no queue, no scheduler.
+  retryCount  Int       @default(0)
+  maxRetries  Int       @default(3)
+  nextRetryAt DateTime?
+  lastError   String?
+
+  resourceCount Int?
+  bundleHash    String?
+  version       Int      @default(1)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  provenance InteropProvenance[]
+  imported   ImportedResource[]
+
+  @@index([facilityId, status])
+  @@index([facilityId, patientId])
+  @@index([nextRetryAt])
+}
+
+/// Where a clinical representation came from, as distinct from what Aarogya did
+/// about it. AuditEvent answers "what did Aarogya do?"; this answers "what is the
+/// origin of this representation?". Keeping them separate is what stops imported
+/// external data from ever being presented as locally authored.
+model InteropProvenance {
+  id         String  @id @default(cuid())
+  facilityId String
+  patientId  String?
+
+  entityType String
+  entityId   String?
+
+  direction  String // OUTBOUND | INBOUND
+  dataOrigin String // LOCAL | EXTERNAL | IMPORTED | MAPPED | DERIVED
+
+  sourceSystem         String
+  externalResourceType String?
+  externalResourceId   String?
+  externalVersion      String?
+
+  exchange   HealthInformationExchange? @relation(fields: [exchangeId], references: [id])
+  exchangeId String?
+  consentId  String?
+
+  externalIdentifier   ExternalIdentifier? @relation(fields: [externalIdentifierId], references: [id])
+  externalIdentifierId String?
+
+  // Server-derived actor. Never taken from an external payload.
+  actorUserId  String?
+  actorStaffId String?
+
+  correlationId String?
+  requestId     String?
+
+  // Payload is referenced by hash and size, not stored wholesale.
+  payloadHash        String?
+  payloadContentType String?
+  payloadBytes       Int?
+
+  recordedAt DateTime @default(now())
+
+  @@index([facilityId, entityType, entityId])
+  @@index([facilityId, patientId])
+  @@index([sourceSystem, externalResourceId])
+}
+
+/// Stable identity for a resource received from outside: source system +
+/// resource type + external id. The unique constraint is what makes import
+/// idempotent — replaying the same resource resolves to the same row instead of
+/// creating a duplicate clinical record.
+model ImportedResource {
+  id         String @id @default(cuid())
+  facilityId String
+
+  sourceSystem       String
+  resourceType       String
+  externalResourceId String
+  externalVersion    String?
+
+  localEntityType String?
+  localEntityId   String?
+
+  // CONFLICT is an explicit review state. An external record that disagrees
+  // with a local one is NEVER auto-merged.
+  status          String  @default("RECEIVED") // RECEIVED | MAPPED | IMPORTED | REJECTED | CONFLICT
+  conflictReason  String?
+  rejectionReason String?
+
+  exchange   HealthInformationExchange? @relation(fields: [exchangeId], references: [id])
+  exchangeId String?
+
+  payloadHash  String?
+  payloadBytes Int?
+
+  receivedAt        DateTime  @default(now())
+  importedAt        DateTime?
+  reviewedAt        DateTime?
+  reviewedByStaffId String?
+  version           Int       @default(1)
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([facilityId, sourceSystem, resourceType, externalResourceId])
+  @@index([facilityId, status])
+}
+
+/// Mapping between an Aarogya local code and an external terminology code.
+/// The layer, not the data — no national terminology set is bundled.
+model TerminologyMapping {
+  id         String  @id @default(cuid())
+  facilityId String?
+
+  domain String // DIAGNOSIS | LAB | MEDICATION | OBSERVATION | PROCEDURE | UNIT
+
+  localSystem  String
+  localCode    String
+  localDisplay String?
+
+  externalSystem  String
+  externalCode    String
+  externalDisplay String?
+
+  status     String  @default("ACTIVE") // ACTIVE | RETIRED
+  mapVersion String?
+
+  createdByStaffId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([facilityId, domain, localSystem, localCode, externalSystem])
+  @@index([domain, externalSystem, externalCode])
+}
+
+/// Per-facility configuration for one external system. Holds the ENVIRONMENT and
+/// a reference to where credentials live — never a secret value itself.
+model InteropConnection {
+  id         String @id @default(cuid())
+  facilityId String
+  system     String // ABDM | HFR | HPR | NHCX
+
+  // Defaults to DISABLED so interoperability is opt-in and a misconfigured
+  // deployment cannot silently start talking to a live national registry.
+  environment String  @default("DISABLED") // DISABLED | SANDBOX | PRODUCTION
+  enabled     Boolean @default(false)
+
+  baseUrl        String?
+  /// NAME of the environment variable holding the client id — not the id, and
+  /// never the secret. Nothing credential-bearing is persisted.
+  clientIdEnvVar String?
+
+  status       String    @default("NOT_CONFIGURED") // NOT_CONFIGURED | CONFIGURED | ERROR
+  capabilities Json?
+  lastSyncedAt DateTime?
+  lastError    String?
+
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([facilityId, system])
+  @@index([facilityId])
+}

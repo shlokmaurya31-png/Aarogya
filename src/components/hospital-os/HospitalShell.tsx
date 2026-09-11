@@ -6,8 +6,7 @@ import {
   LayoutGrid, BedDouble, ClipboardList, LogOut, Building2, Stethoscope,
   ClipboardCheck, FlaskConical, ScanLine, Receipt, DoorOpen,
   UserPlus, Siren, ArrowRightLeft, Pill, Microscope,
-  ShieldCheck, BarChart3, Settings2, Boxes, Truck, HeartPulse, Scissors, Droplet, Wrench,
-} from "lucide-react";
+  ShieldCheck, BarChart3, Settings2, Boxes, Truck, HeartPulse, Scissors, Droplet, Wrench, Network} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { ToastViewport } from "@/components/shared/ToastViewport";
@@ -83,6 +82,7 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     { href: "/hospital-os/pharmacy", label: "Pharmacy", icon: Pill },
     INVENTORY_GROUP,
     { href: "/hospital-os/operations", label: "Operations", icon: Wrench },
+    { href: "/hospital-os/interoperability", label: "Interoperability", icon: Network },
     BILLING_GROUP_ADMIN,
   ],
   AAROGYA_ADMIN: [
