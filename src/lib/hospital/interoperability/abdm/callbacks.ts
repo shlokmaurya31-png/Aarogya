@@ -5,6 +5,9 @@ import { hashPayload } from "../provenance";
 import { ABDM_CALLBACK_PATHS, type AbdmCallbackKind } from "./contract";
 import type { AbdmConfig } from "./config";
 import { InteropError, callbackError } from "./errors";
+import {
+  isProtocolTransitionAllowed, protocolStateFromConsentStatus, type AbdmProtocolState,
+} from "./protocolState";
 
 /**
  * Phase C2 — inbound ABDM callback boundary.
@@ -120,7 +123,129 @@ export interface CallbackResult {
   status: CallbackStatus;
   eventId: string | null;
   exchangeId: string | null;
+  /** ABDM protocol state after applying the callback, when one was applied. */
+  protocolState?: string | null;
   reason?: string;
+}
+
+/**
+ * Read the consent/protocol outcome a callback reports, defensively.
+ *
+ * The body is untrusted, so nothing is coerced: an unrecognised status yields
+ * null and the protocol state is left alone rather than guessed.
+ */
+export function readCallbackOutcome(parsed: unknown): {
+  consentStatus: string | null;
+  abdmConsentId: string | null;
+  transactionId: string | null;
+  errorCode: string | null;
+} {
+  const out = { consentStatus: null as string | null, abdmConsentId: null as string | null, transactionId: null as string | null, errorCode: null as string | null };
+  if (!parsed || typeof parsed !== "object") return out;
+  const root = parsed as Record<string, unknown>;
+
+  const err = root.error;
+  if (err && typeof err === "object") {
+    const code = (err as Record<string, unknown>).code;
+    if (typeof code === "string") out.errorCode = code.slice(0, 64);
+  }
+
+  // Consent notify shape: { notification: { status, consentDetail: { consentId } } }
+  const notification = root.notification;
+  if (notification && typeof notification === "object") {
+    const n = notification as Record<string, unknown>;
+    if (typeof n.status === "string") out.consentStatus = n.status.slice(0, 32);
+    const detail = n.consentDetail;
+    if (detail && typeof detail === "object") {
+      const cid = (detail as Record<string, unknown>).consentId;
+      if (typeof cid === "string") out.abdmConsentId = cid.slice(0, 128);
+    }
+    const cid2 = n.consentId;
+    if (!out.abdmConsentId && typeof cid2 === "string") out.abdmConsentId = cid2.slice(0, 128);
+  }
+
+  // Health-information on-request shape: { hiRequest: { transactionId, sessionStatus } }
+  const hiRequest = root.hiRequest;
+  if (hiRequest && typeof hiRequest === "object") {
+    const h = hiRequest as Record<string, unknown>;
+    if (typeof h.transactionId === "string") out.transactionId = h.transactionId.slice(0, 128);
+    if (!out.consentStatus && typeof h.sessionStatus === "string") out.consentStatus = h.sessionStatus.slice(0, 32);
+  }
+
+  return out;
+}
+
+/**
+ * Apply a validated callback to the exchange's ABDM protocol state.
+ *
+ * Returns the resulting state, or null when the callback carried nothing
+ * actionable. An illegal transition is recorded and IGNORED rather than thrown:
+ * the callback itself was authentic and correlated, so rejecting the whole
+ * delivery would make the gateway retry something we have deliberately refused.
+ */
+async function applyCallbackToProtocolState(args: {
+  exchange: { id: string; abdmProtocolState: string | null; patientId: string | null };
+  parsed: unknown;
+  kind: AbdmCallbackKind;
+  facilityId: string;
+  byUserId: string | null;
+}): Promise<string | null> {
+  const outcome = readCallbackOutcome(args.parsed);
+
+  let target: AbdmProtocolState | null = null;
+  if (outcome.errorCode) {
+    target = "ERRORED";
+  } else if (outcome.consentStatus) {
+    const mapped = protocolStateFromConsentStatus(outcome.consentStatus);
+    // An unknown external status is NOT applied. Better to leave the state
+    // honest than to invent a transition from a value we do not understand.
+    target = mapped.known ? mapped.state : null;
+  } else if (outcome.transactionId) {
+    target = "ACKNOWLEDGED";
+  }
+
+  if (!target) return args.exchange.abdmProtocolState;
+
+  if (!isProtocolTransitionAllowed(args.exchange.abdmProtocolState, target)) {
+    await recordAuditEvent(
+      "hospital.interop.callbackRejected",
+      args.byUserId,
+      {
+        exchangeId: args.exchange.id,
+        reason: "illegal protocol transition",
+        from: args.exchange.abdmProtocolState ?? "NOT_SUBMITTED",
+        attempted: target,
+      },
+      { facilityId: args.facilityId }
+    );
+    return args.exchange.abdmProtocolState;
+  }
+
+  await prisma.healthInformationExchange.update({
+    where: { id: args.exchange.id },
+    data: {
+      abdmProtocolState: target,
+      abdmLastEventAt: new Date(),
+      ...(outcome.abdmConsentId ? { abdmConsentId: outcome.abdmConsentId } : {}),
+      ...(outcome.transactionId ? { abdmTransactionId: outcome.transactionId } : {}),
+      ...(outcome.errorCode ? { abdmErrorCode: outcome.errorCode } : {}),
+      version: { increment: 1 },
+    },
+  });
+
+  await recordAuditEvent(
+    "hospital.interop.abdmCallbackApplied",
+    args.byUserId,
+    {
+      exchangeId: args.exchange.id,
+      callbackKind: args.kind,
+      from: args.exchange.abdmProtocolState ?? "NOT_SUBMITTED",
+      to: target,
+      errorCode: outcome.errorCode,
+    },
+    { facilityId: args.facilityId, patientId: args.exchange.patientId ?? undefined }
+  );
+  return target;
 }
 
 /**
@@ -203,10 +328,25 @@ export async function receiveCallback(args: {
       { facilityId, patientId: exchange?.patientId ?? undefined }
     );
 
+    // 4 — apply the callback to the ABDM PROTOCOL state only.
+    //
+    // A callback never writes clinical data and never moves the local exchange
+    // lifecycle directly. It reports what the gateway/patient decided; the
+    // protocol state machine decides whether that is a legal transition, which
+    // is what stops a replayed or malicious callback from walking a terminal
+    // artefact (DENIED/REVOKED) back into a live one.
+    let protocolApplied: string | null = null;
+    if (exchange) {
+      protocolApplied = await applyCallbackToProtocolState({
+        exchange, parsed, kind: envelope.kind, facilityId, byUserId: args.byUserId ?? null,
+      });
+    }
+
     return {
       status: exchange ? "ACCEPTED" : "UNMATCHED",
       eventId: event.id,
       exchangeId: exchange?.id ?? null,
+      protocolState: protocolApplied,
       reason: exchange ? undefined : "No matching exchange in this facility.",
     };
   } catch (e) {

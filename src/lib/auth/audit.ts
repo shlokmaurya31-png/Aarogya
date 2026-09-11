@@ -387,6 +387,11 @@ export type AuditEventType =
   | "hospital.interop.abdmRequestFailed"
   | "hospital.interop.consentStatusSynchronised"
   | "hospital.interop.profileValidationFailed"
+  // Phase C3 — real ABDM exchange. Protocol state is audited separately from
+  // local exchange state because the two legitimately diverge.
+  | "hospital.interop.abdmProtocolStateChanged"
+  | "hospital.interop.abdmCallbackApplied"
+  | "hospital.interop.abdmSandboxTest"
   | "hospital.quality.rcaReviewed"
   | "hospital.quality.capaCreated"
   | "hospital.quality.capaCompleted"

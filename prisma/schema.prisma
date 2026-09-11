@@ -6654,6 +6654,21 @@ model HealthInformationExchange {
   nextRetryAt DateTime?
   lastError   String?
 
+  // ── Phase C3: ABDM protocol tracking ─────────────────────────────────
+  // The ABDM protocol state is tracked SEPARATELY from `status` above.
+  // `status` is what Aarogya thinks; these are what the gateway told us.
+  // Collapsing them would make it impossible to represent an exchange we
+  // authorized locally but never submitted, or one the CM acknowledged
+  // while our own processing later failed.
+  abdmProtocolState String? // NOT_SUBMITTED | SUBMITTED | ACKNOWLEDGED | GRANTED | DENIED | EXPIRED | ERRORED
+  /// Consent artefact id issued by the Consent Manager. NOT our consentId.
+  abdmConsentId     String?
+  /// Transaction id the CM returns on a health-information request.
+  abdmTransactionId String?
+  /// Last protocol error code (ABDM-XXXX). Never a payload.
+  abdmErrorCode     String?
+  abdmLastEventAt   DateTime?
+
   resourceCount Int?
   bundleHash    String?
   version       Int      @default(1)
@@ -6666,6 +6681,7 @@ model HealthInformationExchange {
 
   @@index([facilityId, status])
   @@index([facilityId, patientId])
+  @@index([abdmConsentId])
   @@index([nextRetryAt])
 }
 

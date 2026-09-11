@@ -387,9 +387,28 @@ export function InteroperabilityWorkspace() {
                     {r.failureReason ? <span className="text-red"> · {r.failureReason}</span> : null}
                     {r.retryCount > 0 ? ` · ${r.retryCount}/${r.maxRetries} retries` : ""}
                   </p>
+                  {/* ABDM protocol state is shown SEPARATELY from the local
+                      status. "authorized locally but never submitted" and
+                      "the patient declined" are different facts and must not
+                      be collapsed into one badge. */}
+                  <p className="mt-0.5 text-[10px] text-text-tertiary">
+                    ABDM: <span className="text-text-secondary">{r.abdmProtocolState ?? "NOT_SUBMITTED"}</span>
+                    {r.abdmErrorCode ? <span className="text-red"> · {r.abdmErrorCode}</span> : null}
+                    {r.abdmConsentId ? " · consent artefact linked" : ""}
+                  </p>
                 </div>
                 <div className="flex items-center gap-2">
                   <StatusPill tone={tone(r.status)} label={r.status} />
+                  {r.abdmProtocolState && (
+                    <StatusPill
+                      tone={
+                        r.abdmProtocolState === "GRANTED" ? "emerald"
+                          : ["DENIED", "REVOKED", "ERRORED", "EXPIRED"].includes(r.abdmProtocolState) ? "red"
+                            : "cyan"
+                      }
+                      label={r.abdmProtocolState}
+                    />
+                  )}
                   {r.status === "REQUESTED" && (
                     <button
                       onClick={() => patch(`/api/hospital/interoperability/exchanges/${r.id}`, { action: "authorize" }, "Exchange authorized.")}

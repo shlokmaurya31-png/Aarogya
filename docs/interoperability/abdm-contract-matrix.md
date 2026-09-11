@@ -25,16 +25,16 @@ mapped? **Sandbox**: has it run against a real ABDM environment?
 
 | Capability | Contract | Version | Adapter | Implemented | Sandbox verified | External blocker |
 | --- | --- | --- | --- | --- | --- | --- |
-| Gateway session / auth token | ✅ M3 §3.2.1 | v3 | ✅ | ✅ `abdm/session.ts` | ❌ | Bridge credentials (`ABDM_CLIENT_ID`/`SECRET`) |
-| OpenID configuration | ✅ M3 §3.2.2 | v3 | ✅ path pinned | ❌ not called | ❌ | Not needed until token verification is added |
-| OAuth certificate (JWKS) | ✅ M3 §3.2.3 | v3 | ✅ path pinned | ❌ not called | ❌ | Only needed if gateway JWTs are verified locally |
+| Gateway session / auth token | ✅ M3 §3.2.1 | v3 | ✅ | ✅ `abdm/session.ts` | ⚠️ **contract verified live** (HTTP 400 `ABDM-9999` on invalid credentials) | Valid bridge credentials |
+| OpenID configuration | ✅ M3 §3.2.2 | v3 | ✅ | ✅ called | ✅ **REAL SANDBOX PASS** (HTTP 200) | — |
+| OAuth certificate (JWKS) | ✅ M3 §3.2.3 | v3 | ✅ | ✅ called | ✅ **REAL SANDBOX PASS** (HTTP 200) | — |
 | Bridge callback URL registration | ✅ M3 §3.2.4 | v3 | ✅ path pinned | ❌ | ❌ | Requires a registered bridge + public HTTPS callback host |
 | Bridge service lookup | ✅ M3 §3.2.5 | v3 | ✅ path pinned | ❌ | ❌ | Requires registered bridge |
-| Consent request init (HIU) | ✅ M3 §4 | v3 | ✅ | ⚠️ mapped, not wired | ❌ | Bridge credentials + registered HIU id |
-| Consent request status | ✅ M3 §4 | v3 | ✅ path pinned | ❌ | ❌ | As above |
-| Consent fetch (artefact) | ✅ M3 §4 | v3 | ✅ path pinned | ❌ | ❌ | As above |
-| Consent notify callback (CM→HIU) | ✅ M3 §4.3.3 | v3 | ✅ | ✅ `abdm/callbacks.ts` | ❌ | Public HTTPS callback URL |
-| Health information request | ✅ M3 §5 | v3 | ✅ | ⚠️ mapped, not wired | ❌ | Bridge credentials + `dataPushUrl` host |
+| Consent request init (HIU) | ✅ M3 §4 | v3 | ✅ | ✅ `abdm/requests.ts` + `abdm/client.ts` | ❌ | Bridge credentials + registered callback URL |
+| Consent request status | ✅ M3 §4 | v3 | ✅ | ✅ `abdm/client.ts` | ❌ | As above |
+| Consent fetch (artefact) | ✅ M3 §4 | v3 | ✅ | ✅ `abdm/client.ts` | ❌ | As above |
+| Consent notify callback (CM→HIU) | ✅ M3 §4.3.3 | v3 | ✅ | ✅ `abdm/callbacks.ts` + protocol state applied | ❌ | Public HTTPS callback URL |
+| Health information request | ✅ M3 §5 | v3 | ✅ | ✅ `abdm/requests.ts` + `abdm/client.ts` | ❌ | Bridge credentials + public `dataPushUrl` |
 | Health information data push / ECDH | ✅ M3 §5 (parameters) | v3 | ⚠️ parameters pinned | ❌ | ❌ | Needs registered `dataPushUrl`; crypto deliberately not built unexercised |
 | Subscription requests | ✅ M3 §6 | v3 | ✅ paths pinned | ❌ | ❌ | Out of C2 scope |
 | **ABHA creation** | ❌ **NOT VERIFIED** (M1 doc not obtained) | — | — | ❌ | ❌ | M1 specification; Aadhaar/OTP explicitly out of scope |
@@ -46,10 +46,30 @@ mapped? **Sandbox**: has it run against a real ABDM environment?
 | FHIR R4 resource mapping | ✅ IG 6.5.0 | 4.0.1 | n/a | ✅ 15 resources | n/a | — |
 | FHIR DocumentBundle | ✅ IG 6.5.0 | 4.0.1 | n/a | ✅ | n/a | — |
 | FHIR **profile validation** | ✅ profiles exist | 6.5.0 | ✅ seam | ❌ `NOT_IMPLEMENTED` | ❌ | StructureDefinition package not bundled |
-| Error envelope normalisation | ✅ M3 §4.3.2 | v3 | n/a | ✅ `abdm/errors.ts` | ❌ | — |
+| Error envelope normalisation | ✅ M3 §4.3.2 | v3 | n/a | ✅ `abdm/errors.ts` | ✅ **verified against a real `ABDM-9999` envelope** | — |
 | Local ↔ ABDM consent mapping | ✅ M3 §4 vocabularies | v3 | n/a | ✅ `abdm/mapping.ts` | ❌ | — |
 | Callback replay protection | ⚠️ not specified by ABDM | — | n/a | ✅ DB unique constraint | ❌ | — |
 | Callback signature verification | ❌ **not specified** in M3 | — | — | ❌ | ❌ | ABDM does not document a body signature; shared secret used instead |
+
+
+## Phase C3 update — 2026-09-11
+
+Contract **re-verified**: ABDM Milestone 3 v2.5 (2025-03-03) is still the
+current published version. No endpoint, header or vocabulary changed.
+
+Three rows moved to real-sandbox status by executing genuine calls against
+`dev.abdm.gov.in`. The session row is marked *contract verified* rather than
+*sandbox verified*: the gateway parsed our request and rejected the
+credentials with a domain error, which proves the URL, headers and body are
+correct but does not prove a valid credential would be accepted.
+
+Request construction for consent init/status/fetch and health-information
+request is now **implemented** (`abdm/requests.ts`, `abdm/client.ts`) rather
+than merely mapped, and callbacks now drive a dedicated ABDM protocol state
+machine (`abdm/protocolState.ts`). None of these has been executed against
+the gateway, because each needs credentials and a registered callback host.
+
+Full detail: `docs/interoperability/abdm-sandbox-verification.md`.
 
 ## Notes on the gaps that matter
 

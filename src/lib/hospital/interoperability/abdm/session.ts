@@ -117,19 +117,45 @@ export async function getAbdmSession(
     if (isUsable(cached)) return cached;
   }
 
-  const response = await abdmRequest<SessionResponseBody>({
-    config,
-    path: ABDM_ENDPOINTS.session,
-    method: "POST",
-    operation: "session",
-    // The session call is the one request that carries NO bearer token.
-    body: {
-      clientId: config.clientId,
-      clientSecret: config.clientSecret,
-      grantType: ABDM_GRANT_TYPE,
-    },
-    fetchImpl: options.fetchImpl,
-  });
+  let response;
+  try {
+    response = await abdmRequest<SessionResponseBody>({
+      config,
+      path: ABDM_ENDPOINTS.session,
+      method: "POST",
+      operation: "session",
+      // The session call is the one request that carries NO bearer token.
+      body: {
+        clientId: config.clientId,
+        clientSecret: config.clientSecret,
+        grantType: ABDM_GRANT_TYPE,
+      },
+      fetchImpl: options.fetchImpl,
+    });
+  } catch (error) {
+    // OBSERVED AGAINST THE LIVE SANDBOX (2026-09-11): ABDM answers bad client
+    // credentials with HTTP 400 + {"error":{"code":"ABDM-9999","message":
+    // "Invalid user credentials"}}, not the 401 the status code alone would
+    // imply. Left unhandled, the generic mapping classifies that as
+    // VALIDATION_ERROR, and the health check then reports UNKNOWN instead of
+    // AUTHENTICATION_FAILED — telling an operator with a bad secret to go
+    // looking for a network fault.
+    //
+    // Retry behaviour is unaffected: both kinds are non-retryable. This is
+    // purely so the diagnosis matches reality. Scoped to the session
+    // operation, where a credential rejection is the only thing a 400 of this
+    // shape can mean.
+    if (error instanceof InteropError && error.httpStatus === 400) {
+      throw new InteropError({
+        kind: "AUTHENTICATION_ERROR",
+        message: "The ABDM gateway rejected the configured client credentials.",
+        externalCode: error.externalCode,
+        httpStatus: error.httpStatus,
+        requestId: error.requestId,
+      });
+    }
+    throw error;
+  }
 
   const session = parseSession(response.body);
   cache.set(key, session);
