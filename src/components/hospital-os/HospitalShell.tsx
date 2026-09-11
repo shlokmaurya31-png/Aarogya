@@ -38,6 +38,9 @@ const BILLING_GROUP_ADMIN: NavItem = {
   children: [
     { href: "/hospital-os/billing", label: "Encounters", icon: Receipt },
     { href: "/hospital-os/claims", label: "Claims", icon: ShieldCheck },
+    // Phase C5 — the NHCX protocol boundary, deliberately a separate entry from
+    // Claims so "not sent" never looks like "not answered".
+    { href: "/hospital-os/claims/exchange", label: "Claims Exchange", icon: Network },
     { href: "/hospital-os/billing/reconciliation", label: "Reconciliation", icon: BarChart3 },
     { href: "/hospital-os/billing/settings", label: "Settings", icon: Settings2 },
   ],

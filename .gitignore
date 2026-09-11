@@ -58,5 +58,9 @@ next-env.d.ts
 # Phase B gate: disposable PostgreSQL migration-replay harness
 /.pgreplay/
 
+# Disposable SQLite databases used to replay migrations from zero
+/prisma/*-replay.db
+/prisma/*-replay.db-journal
+
 # Local dev-server log
 /.pgreplay-dev.log

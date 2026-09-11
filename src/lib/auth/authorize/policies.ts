@@ -204,6 +204,64 @@ export const ACTION_POLICIES: Record<string, ActionPolicy> = {
     description: "A patient reading their own record.",
   },
 
+  // ── Claims exchange (Phase C5) ───────────────────────────────────────────
+  "claim.read": {
+    permission: "billing:invoice:create",
+    dataClass: "FINANCIAL",
+    minimumRelationship: "FACILITY_STAFF",
+    breakGlassAllowed: false,
+    description: "Read a claim and its submission history.",
+  },
+  "claim.submit": {
+    permission: "billing:invoice:issue",
+    dataClass: "FINANCIAL",
+    minimumRelationship: "FACILITY_STAFF",
+    // Disclosure to a payer requires consent, exactly like any other
+    // external disclosure. A claim is not an exception to C4.
+    requireConsent: true,
+    allowedPurposes: ["INSURANCE"],
+    // An emergency justifies reading a chart. It does not justify
+    // transmitting a claim to an insurer without the patient's agreement.
+    breakGlassAllowed: false,
+    // Composing the package is where the chart is read and minimised into an
+    // export-shaped snapshot that is then one call away from leaving the
+    // facility. On a session authenticated hours ago that is the same exposure
+    // as transmitting it, so composition carries step-up too.
+    requireStepUp: true,
+    auditDecision: true,
+    description: "Compose a claim submission package for an external payer.",
+  },
+  "claim.dispatch": {
+    permission: "billing:invoice:issue",
+    dataClass: "FINANCIAL",
+    minimumRelationship: "FACILITY_STAFF",
+    requireConsent: true,
+    allowedPurposes: ["INSURANCE"],
+    breakGlassAllowed: false,
+    // Sending money-bearing clinical data outside the facility is the
+    // highest-risk action in this phase.
+    requireStepUp: true,
+    auditDecision: true,
+    description: "Transmit a claim submission to the external claims network.",
+  },
+  "claim.adjust": {
+    permission: "billing:adjustment:approve",
+    dataClass: "FINANCIAL",
+    minimumRelationship: "FACILITY_STAFF",
+    breakGlassAllowed: false,
+    requireStepUp: true,
+    auditDecision: true,
+    description: "Manually adjust a claim amount. Maker/checker enforced in the service.",
+  },
+  "claim.reconcile": {
+    permission: "billing:adjustment:approve",
+    dataClass: "FINANCIAL",
+    requireFacility: true,
+    breakGlassAllowed: false,
+    auditDecision: true,
+    description: "Reconcile an external settlement against canonical payments.",
+  },
+
   // ── Financial ────────────────────────────────────────────────────────────
   "billing.export": {
     permission: "billing:invoice:create",

@@ -2361,7 +2361,8 @@ model Claim {
   createdByUserId      String
   createdAt            DateTime          @default(now())
 
-  lines ClaimLine[]
+  submissions ClaimSubmission[]
+  lines       ClaimLine[]
 
   @@index([facilityId, status])
 }
@@ -6999,4 +7000,344 @@ model PrivacyRequest {
 
   @@index([facilityId, status])
   @@index([facilityId, patientId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// PHASE C5 — NHCX / health claims exchange boundary.
+//
+// These models sit ABOVE canonical billing. Nothing here replaces Claim,
+// ClaimLine, Invoice, Payment, PatientCoverage, Payer or PreAuthorization —
+// those remain the financial source of truth and are untouched.
+//
+// Each addition was checked against the existing schema first:
+//
+//   ClaimSubmission          Claim.invoiceId is @unique, so a resubmission
+//                            cannot be a second Claim row. Versioned submission
+//                            attempts therefore need their own table, which is
+//                            also what makes the original submission
+//                            reproducible after billing data moves on.
+//
+//   ClaimSubmissionDocument  Which document VERSION was actually sent. A
+//                            document can be superseded later; the claim
+//                            package must still reconstruct exactly.
+//
+//   NhcxExchange             Protocol-level attempt record with its own state,
+//                            deliberately separate from Claim.status — the same
+//                            separation C3 established between local exchange
+//                            state and ABDM protocol state.
+//
+//   NhcxCallbackEvent        Replay protection for a publicly reachable
+//                            endpoint, enforced by a unique constraint.
+//
+//   ClaimQuery               Payer clarification requests. No existing model
+//                            represents a question against a claim.
+//
+//   ClaimSettlement          External settlement notification, kept distinct
+//                            from canonical Payment so reconciliation compares
+//                            two independent records rather than one.
+//
+//   ReconciliationException  Detected mismatches. Deliberately a finding, not
+//                            an automatic financial correction.
+//
+// Payer participant codes are NOT a new model: they are ExternalIdentifier
+// rows with entityType "PAYER", reusing the C1 mapping table.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// One immutable submission attempt for a claim.
+///
+/// `snapshot` captures what was actually sent. Billing data keeps moving after
+/// submission — invoices get adjusted, documents get superseded — so
+/// reconstructing a historical submission from live data would produce
+/// something that was never sent. The snapshot is the record of truth for
+/// "what did we claim", and it is never rewritten.
+model ClaimSubmission {
+  id         String @id @default(cuid())
+  facilityId String
+  claim      Claim  @relation(fields: [claimId], references: [id])
+  claimId    String
+
+  /// 1 for the original, incrementing per resubmission. Unique per claim.
+  version Int
+
+  /// ORIGINAL | RESUBMISSION | APPEAL
+  submissionType String @default("ORIGINAL")
+
+  /// DRAFT | READY | SUBMITTED | ACKNOWLEDGED | ACCEPTED | REJECTED | FAILED | SUPERSEDED
+  status String @default("DRAFT")
+
+  /// Server-derived at build time from canonical records. Never client-supplied.
+  claimedAmountMinor  Int
+  /// Populated only from an external adjudication response.
+  approvedAmountMinor Int?
+
+  /// Why this resubmission exists. Required for version > 1.
+  correctionReason String?
+
+  /// Canonical context captured at build time, so the snapshot is self-describing.
+  patientId   String
+  encounterId String?
+  coverageId  String
+  payerId     String
+  invoiceId   String
+
+  /// The composed claim package. Stored as the exact payload that was built,
+  /// with its hash, so an exchange can prove byte-identity later.
+  snapshot      Json?
+  snapshotHash  String?
+  snapshotBytes Int?
+
+  /// External claim reference issued by the payer/exchange, when one is returned.
+  externalReference String?
+
+  builtAt           DateTime  @default(now())
+  submittedAt       DateTime?
+  respondedAt       DateTime?
+  builtByUserId     String
+  submittedByUserId String?
+
+  documents ClaimSubmissionDocument[]
+  exchanges NhcxExchange[]
+  queries   ClaimQuery[]
+
+  /// Optimistic-concurrency counter, named apart from `version` above — that one
+  /// is the business-meaningful submission attempt number.
+  lockVersion Int @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([claimId, version])
+  @@index([facilityId, status])
+  @@index([claimId])
+}
+
+/// Exactly which document version a submission included.
+model ClaimSubmissionDocument {
+  id           String          @id @default(cuid())
+  facilityId   String
+  submission   ClaimSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  submissionId String
+
+  documentId      String
+  /// Version number of ClinicalDocument at inclusion time.
+  documentVersion Int
+  documentType    String
+  title           String
+
+  /// Content/metadata hash, for integrity verification of what was sent.
+  contentHash String?
+
+  /// Classification at inclusion time, so a later reclassification does not
+  /// rewrite history.
+  dataClass String?
+
+  includedAt DateTime @default(now())
+
+  // Explicitly named: the generated name exceeds PostgreSQL's 63-character
+  // identifier limit and would be silently truncated, leaving the SQLite and
+  // PostgreSQL trees permanently drifted.
+  @@unique([submissionId, documentId, documentVersion], map: "ClaimSubmissionDocument_submission_document_version_key")
+  @@index([facilityId])
+}
+
+/// A protocol-level exchange attempt against the external network.
+///
+/// Kept separate from Claim.status: an exchange can fail without the claim
+/// changing state, and a claim can be locally corrected without any exchange.
+/// Collapsing them would make "we never sent it" indistinguishable from "they
+/// rejected it".
+model NhcxExchange {
+  id         String @id @default(cuid())
+  facilityId String
+
+  submission   ClaimSubmission? @relation(fields: [submissionId], references: [id])
+  submissionId String?
+
+  /// Which canonical record this concerns; a pre-auth exchange has no submission.
+  claimId            String?
+  preAuthorizationId String?
+
+  /// COVERAGE_ELIGIBILITY | PREAUTH | CLAIM | COMMUNICATION | STATUS | PAYMENT_NOTICE
+  exchangeType String
+  /// OUTBOUND | INBOUND
+  direction    String @default("OUTBOUND")
+
+  /// NOT_SUBMITTED | SUBMITTED | ACKNOWLEDGED | RESPONDED | FAILED | CANCELLED
+  protocolState String @default("NOT_SUBMITTED")
+
+  /// Deterministic key. A retried submission resolves to the SAME exchange
+  /// rather than creating a duplicate external request.
+  idempotencyKey    String  @unique
+  /// Server-generated. Never accepted from a client or a callback body.
+  correlationId     String  @unique
+  /// Reference the external network issued, when one comes back.
+  externalReference String?
+
+  /// Normalised failure category; see nhcx/errors.ts.
+  errorCategory String?
+  errorMessage  String?
+
+  attemptCount Int       @default(0)
+  maxAttempts  Int       @default(3)
+  nextRetryAt  DateTime?
+
+  requestedAt    DateTime  @default(now())
+  submittedAt    DateTime?
+  acknowledgedAt DateTime?
+  completedAt    DateTime?
+  latencyMs      Int?
+
+  requestedByUserId String?
+
+  callbacks NhcxCallbackEvent[]
+
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([facilityId, protocolState])
+  @@index([facilityId, exchangeType])
+  @@index([nextRetryAt])
+  @@index([externalReference])
+}
+
+/// Inbound callback ledger. The unique constraint IS the replay guard.
+model NhcxCallbackEvent {
+  id         String @id @default(cuid())
+  facilityId String
+
+  exchange   NhcxExchange? @relation(fields: [exchangeId], references: [id])
+  exchangeId String?
+
+  /// Correlation the callback claimed, used to resolve the exchange.
+  correlationId   String
+  /// The external message identity. Replay key.
+  externalEventId String
+  messageType     String
+
+  /// ACCEPTED | DUPLICATE | UNMATCHED | REJECTED | CONFLICT
+  status          String  @default("ACCEPTED")
+  rejectionReason String?
+
+  /// Recorded by hash and size; the body is never stored wholesale.
+  payloadHash   String?
+  payloadBytes  Int?
+  sourceAddress String?
+
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+
+  @@unique([facilityId, messageType, externalEventId])
+  @@index([facilityId, status])
+  @@index([correlationId])
+}
+
+/// A payer question against a submitted claim, and the provider response.
+model ClaimQuery {
+  id         String @id @default(cuid())
+  facilityId String
+
+  submission   ClaimSubmission @relation(fields: [submissionId], references: [id])
+  submissionId String
+  claimId      String
+
+  /// Payer-supplied reference for the query, when present.
+  externalQueryId String?
+  /// Free-text question from the payer. Untrusted external content.
+  questionText    String
+  /// Structured reason code when the protocol supplies one.
+  reasonCode      String?
+
+  /// RECEIVED | UNDER_REVIEW | RESPONSE_DRAFT | RESPONSE_SUBMITTED | ACKNOWLEDGED | RESOLVED | CLOSED
+  status String @default("RECEIVED")
+
+  responseText        String?
+  respondedByUserId   String?
+  respondedAt         DateTime?
+  /// Documents attached to the response, each authorized individually.
+  responseDocumentIds String?
+
+  dueAt      DateTime?
+  receivedAt DateTime  @default(now())
+  resolvedAt DateTime?
+
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([facilityId, status])
+  @@index([claimId])
+}
+
+/// An external settlement notification.
+///
+/// Deliberately NOT a Payment. Reconciliation compares this against canonical
+/// Payment records; making them the same row would leave nothing to compare and
+/// would let an external message write directly into the financial ledger.
+model ClaimSettlement {
+  id         String @id @default(cuid())
+  facilityId String
+  claimId    String
+
+  /// Payer/exchange settlement reference. Unique per facility — the same
+  /// settlement arriving twice must not double-count.
+  externalSettlementRef String
+
+  settledAmountMinor Int
+  settlementDate     DateTime?
+  /// NOTIFIED | RECONCILED | DISPUTED | REJECTED
+  status             String    @default("NOTIFIED")
+
+  /// Canonical Payment this was matched to, once an operator reconciles it.
+  paymentId          String?
+  reconciledAt       DateTime?
+  reconciledByUserId String?
+  notes              String?
+
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([facilityId, externalSettlementRef])
+  @@index([facilityId, status])
+  @@index([claimId])
+}
+
+/// A detected mismatch between claim, invoice, payment and settlement.
+///
+/// A finding, never an automatic correction. Reconciliation must not quietly
+/// move money; it surfaces the discrepancy for an authorized human.
+model ReconciliationException {
+  id         String @id @default(cuid())
+  facilityId String
+
+  claimId      String?
+  invoiceId    String?
+  paymentId    String?
+  settlementId String?
+
+  /// AMOUNT_MISMATCH | MISSING_SETTLEMENT | DUPLICATE_SETTLEMENT | OVERPAYMENT |
+  /// UNDERPAYMENT | ORPHAN_EXTERNAL_REFERENCE | UNMATCHED_CLAIM | STALE_EXTERNAL_STATUS
+  exceptionType String
+  severity      String @default("WARNING") // INFO | WARNING | CRITICAL
+
+  expectedAmountMinor Int?
+  actualAmountMinor   Int?
+  varianceMinor       Int?
+
+  detail String
+
+  /// OPEN | ACKNOWLEDGED | RESOLVED | DISMISSED
+  status           String    @default("OPEN")
+  resolutionNote   String?
+  resolvedByUserId String?
+  resolvedAt       DateTime?
+
+  detectedAt DateTime @default(now())
+  version    Int      @default(1)
+  updatedAt  DateTime @updatedAt
+
+  @@index([facilityId, status])
+  @@index([facilityId, exceptionType])
+  @@index([claimId])
 }

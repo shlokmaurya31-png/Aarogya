@@ -18,6 +18,9 @@ export type Db = Tx | typeof prisma;
 // ── Entities that can carry an external registry identifier ──────────────────
 export const EXTERNAL_ENTITY_TYPES = [
   "PATIENT", "FACILITY", "STAFF", "ENCOUNTER", "ORGANIZATION", "DOCUMENT",
+  // Phase C5 — payer participant codes reuse this mapping table rather than
+  // getting an NhcxPayer model of their own.
+  "PAYER",
 ] as const;
 export type ExternalEntityType = (typeof EXTERNAL_ENTITY_TYPES)[number];
 
@@ -195,6 +198,14 @@ export async function assertEntityInFacility(db: Db, entityType: string, entityI
     case "DOCUMENT": {
       const row = await db.clinicalDocument.findUnique({ where: { id: entityId }, select: { facilityId: true } });
       if (!row || row.facilityId !== facilityId) throw new NotFoundError("Document not found in this facility.");
+      return;
+    }
+    case "PAYER": {
+      // Payer is a global record, so there is no facility column to compare.
+      // Tenant isolation still holds: the ExternalIdentifier row itself is
+      // facility-scoped, so one facility cannot read another's mapping.
+      const row = await db.payer.findUnique({ where: { id: entityId }, select: { id: true } });
+      if (!row) throw new NotFoundError("Payer not found.");
       return;
     }
     case "ORGANIZATION": {
