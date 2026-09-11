@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { HeartPulse, LogOut } from "lucide-react";
 import { ToastViewport } from "@/components/shared/ToastViewport";
+import { ThemeToggle } from "@/components/navigation/ThemeToggle";
 
 export function PatientShell({ children, displayName }: { children: React.ReactNode; displayName: string }) {
   const router = useRouter();
@@ -22,9 +23,12 @@ export function PatientShell({ children, displayName }: { children: React.ReactN
           <Link href="/patient" className="flex items-center gap-2 text-[14px] font-semibold">
             <HeartPulse size={17} className="text-cyan" /> {displayName}&apos;s Health Record
           </Link>
-          <button onClick={handleLogout} className="flex items-center gap-1.5 rounded-md border border-hairline px-3 py-1.5 text-[12px] text-text-secondary hover:border-red/30 hover:text-red">
-            <LogOut size={13} /> Sign out
-          </button>
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+            <button onClick={handleLogout} className="flex items-center gap-1.5 rounded-md border border-hairline px-3 py-1.5 text-[12px] text-text-secondary hover:border-red/30 hover:text-red">
+              <LogOut size={13} /> Sign out
+            </button>
+          </div>
         </div>
       </header>
       <main className="mx-auto max-w-3xl px-4 py-6">{children}</main>

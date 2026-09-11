@@ -8,6 +8,7 @@ import {
   Menu, X, LogOut, GraduationCap, Flame,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ThemeToggle } from "@/components/navigation/ThemeToggle";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 
@@ -87,6 +88,7 @@ export function ScholarShell({
         </nav>
 
         <div className="space-y-0.5 border-t border-hairline pt-3">
+          <ThemeToggle variant="sidebar" />
           <Link href="/student/profile" className="block rounded-md px-3 py-2 text-[12.5px] text-text-secondary transition hover:bg-black/[0.03] hover:text-text-primary">
             Profile & settings
           </Link>

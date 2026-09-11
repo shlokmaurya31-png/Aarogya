@@ -8,6 +8,7 @@ import {
   UserPlus, Siren, ArrowRightLeft, Pill, Microscope,
   ShieldCheck, BarChart3, Settings2, Boxes, Truck, HeartPulse, Scissors, Droplet, Wrench, Network, ShieldAlert} from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ThemeToggle } from "@/components/navigation/ThemeToggle";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 
@@ -205,6 +206,7 @@ export function HospitalShell({
             );
           })}
         </nav>
+        <ThemeToggle variant="sidebar" className="mt-1 border-t border-hairline pt-3" />
         <button onClick={handleLogout} className="flex items-center gap-2.5 rounded-md border-t border-hairline px-3 py-2.5 pt-3 text-left text-[12.5px] text-text-tertiary transition hover:text-red">
           <LogOut size={14} /> Sign out
         </button>

@@ -57,3 +57,6 @@ next-env.d.ts
 
 # Phase B gate: disposable PostgreSQL migration-replay harness
 /.pgreplay/
+
+# Local dev-server log
+/.pgreplay-dev.log

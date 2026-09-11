@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { GraduationCap, LayoutDashboard, LogOut, Settings, ShieldCheck, UserCog, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ThemeToggle } from "@/components/navigation/ThemeToggle";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useTranslation } from "@/hooks/useTranslation";
 
@@ -66,6 +67,7 @@ export function AdminSidebar({ pendingCount, role }: { pendingCount: number; rol
         >
           <Settings size={15} /> {t("admin.nav.settings")}
         </Link>
+        <ThemeToggle variant="sidebar" />
         <button
           onClick={() => {
             logout();

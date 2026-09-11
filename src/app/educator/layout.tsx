@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getCurrentUser } from "@/lib/auth/getCurrentUser";
 import { GraduationCap, LayoutGrid, FilePlus } from "lucide-react";
+import { ThemeToggle } from "@/components/navigation/ThemeToggle";
 
 export default async function EducatorLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser();
@@ -17,6 +18,7 @@ export default async function EducatorLayout({ children }: { children: React.Rea
             <GraduationCap size={17} className="text-cyan" /> Aarogya Academy — Educator
           </Link>
           <nav className="flex items-center gap-4 text-[12.5px] text-text-secondary">
+            <ThemeToggle />
             <Link href="/educator/cases" className="flex items-center gap-1.5 hover:text-cyan"><LayoutGrid size={13} /> Cases</Link>
             <Link href="/educator/cases/create" className="flex items-center gap-1.5 hover:text-cyan"><FilePlus size={13} /> Create case</Link>
           </nav>
