@@ -54,6 +54,11 @@ model User {
   id           String   @id @default(cuid())
   email        String   @unique
   passwordHash String
+  /// Bumped to invalidate every existing session for this user (logout-all,
+  /// password change, role change, admin revoke). Sessions are stateless HMAC
+  /// cookies, so this counter IS the revocation mechanism — a cookie whose
+  /// version does not match is refused. See src/lib/auth/session.ts.
+  tokenVersion Int      @default(0)
   role         Role
   displayName  String
   createdAt    DateTime @default(now())
@@ -6873,4 +6878,125 @@ model AbdmCallbackEvent {
   @@unique([facilityId, callbackKind, externalRequestId])
   @@index([facilityId, status])
   @@index([exchangeId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// PHASE C4 — Health data trust, privacy and exchange governance.
+//
+// Three additions only. Each was checked against the existing schema first:
+//
+//   BreakGlassAccess — nothing existing can represent a time-boxed, reasoned,
+//                      audited emergency override. AuditEvent records that
+//                      something happened; it cannot GRANT anything or expire.
+//
+//   PrivacyRequest   — nothing existing models a patient-initiated data
+//                      request with a review/decision workflow.
+//
+//   User.tokenVersion — the minimum needed for session revocation. Sessions are
+//                      stateless HMAC cookies with no server record, so without
+//                      this there is no way to invalidate one. A full session
+//                      table was deliberately NOT added: it grows unbounded and
+//                      is not needed for logout, credential change, role change
+//                      or admin revoke, which are the revocations that matter.
+//
+// Data classification deliberately adds NO column: ClinicalDocument.accessPolicy
+// already carries CLINICAL_STAFF | PATIENT_VISIBLE | RESTRICTED, and a second
+// sensitivity field would be a competing source of truth.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// A time-boxed, reasoned, audited emergency override of a SPECIFIC access
+/// policy for ONE patient.
+///
+/// Break-glass is not an admin bypass and is not a role. It never bypasses
+/// authentication, facility isolation, patient existence or audit — it only
+/// relaxes the policy that would otherwise refuse urgent clinical access, and
+/// only for as long as the window lasts.
+model BreakGlassAccess {
+  id         String @id @default(cuid())
+  facilityId String
+  patientId  String
+
+  encounterId String?
+
+  /// Derived from the authenticated session. NEVER accepted from a client.
+  actorUserId  String
+  actorStaffId String?
+
+  /// Free text, but length-enforced in the service. An empty or token reason
+  /// is the difference between an audit trail and a rubber stamp.
+  reason String
+
+  /// Declared clinical context, from a closed set (see breakGlass.ts).
+  emergencyContext String
+
+  /// ACTIVE | EXPIRED | REVOKED | COMPLETED
+  status String @default("ACTIVE")
+
+  activatedAt     DateTime  @default(now())
+  /// Hard ceiling enforced in the service. There is no indefinite break-glass.
+  expiresAt       DateTime
+  completedAt     DateTime?
+  revokedAt       DateTime?
+  revokedByUserId String?
+  revokedReason   String?
+
+  /// Ties every access made under this window back to the activation.
+  correlationId String
+
+  /// Count of authorization decisions that relied on this window, for the
+  /// abuse report. Incremented on use, never decremented.
+  useCount Int @default(0)
+
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([correlationId])
+  @@index([facilityId, status])
+  @@index([facilityId, patientId])
+  @@index([actorUserId])
+  @@index([expiresAt])
+}
+
+/// A patient-initiated data request with an explicit review workflow.
+///
+/// DELETION_REQUEST is a REQUEST, not an instruction: clinical records carry
+/// retention and legal obligations, so nothing here deletes a clinical record.
+/// The workflow ends in a recorded decision, and any resulting action is a
+/// separate, deliberate operation.
+model PrivacyRequest {
+  id         String @id @default(cuid())
+  facilityId String
+  patientId  String
+
+  /// ACCESS | CORRECTION | RESTRICTION | WITHDRAW_CONSENT | DELETION_REQUEST
+  requestType String
+
+  /// Who raised it: PATIENT | STAFF_ON_BEHALF | GUARDIAN
+  requesterType   String
+  requesterUserId String?
+
+  /// Optional narrowing, e.g. a data scope or a specific record reference.
+  scope  String?
+  reason String?
+
+  /// REQUESTED | UNDER_REVIEW | APPROVED | REJECTED | ACTIONED | CANCELLED
+  status String @default("REQUESTED")
+
+  reviewedByUserId String?
+  reviewedAt       DateTime?
+  decisionNote     String?
+  actionedAt       DateTime?
+  actionedByUserId String?
+
+  /// Set when a record is under legal hold and cannot be actioned.
+  legalHold       Boolean @default(false)
+  legalHoldReason String?
+
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([facilityId, status])
+  @@index([facilityId, patientId])
 }

@@ -65,8 +65,20 @@ function isRetryableConcurrencyError(err: unknown): boolean {
 export async function requireSession(): Promise<SessionPayload> {
   const session = await getSession();
   if (!session) throw new UnauthorizedError();
-  const user = await prisma.user.findUnique({ where: { id: session.userId }, select: { id: true, role: true } });
+  const user = await prisma.user.findUnique({
+    where: { id: session.userId },
+    select: { id: true, role: true, tokenVersion: true },
+  });
   if (!user) throw new UnauthorizedError();
+
+  // Phase C4 — revocation. Sessions are stateless HMAC cookies, so this
+  // comparison IS the revocation check: bumping User.tokenVersion
+  // invalidates every cookie previously issued to that user, making
+  // logout-all, password change, role change and administrative revoke take
+  // effect immediately instead of waiting out a 14-day expiry.
+  // A pre-C4 cookie has no `ver` and is read as 0, matching the column
+  // default, so existing sessions keep working until something bumps it.
+  if ((session.ver ?? 0) !== user.tokenVersion) throw new UnauthorizedError();
   // Defense in depth: re-derive role from the DB, not just the cookie payload.
   return { ...session, role: user.role };
 }
@@ -96,6 +108,15 @@ export async function withApiErrors<T>(fn: () => Promise<T>): Promise<NextRespon
     }
     if (err instanceof BadRequestError) {
       return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    // Phase C4 — a structured authorization denial. Carries its own status
+    // (403 / 404-shaped / 401 for step-up) and a decision code so a UI can
+    // offer the right next step, while the message stays uninformative about
+    // WHY — a cross-facility denial must be indistinguishable from a
+    // nonexistent record.
+    if (err && typeof err === "object" && (err as { name?: string }).name === "AuthorizationDeniedError") {
+      const denial = err as { status: number; message: string; decision: string };
+      return NextResponse.json({ error: denial.message, decision: denial.decision }, { status: denial.status });
     }
     if (err instanceof ConflictError) {
       return NextResponse.json({ error: err.message }, { status: 409 });

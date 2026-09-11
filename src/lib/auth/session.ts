@@ -18,6 +18,18 @@ export interface SessionPayload {
   userId: string;
   role: Role;
   exp: number;
+  /**
+   * Phase C4 — revocation. Sessions are stateless HMAC cookies with no
+   * server record, so this counter IS the revocation mechanism:
+   * requireSession compares it against User.tokenVersion and refuses a
+   * mismatch. Bumping the version invalidates every cookie ever issued to
+   * that user, which is what makes logout-all, password change, role change
+   * and admin revoke take effect without a session table that grows without
+   * bound. Optional so pre-C4 cookies still decode (treated as 0).
+   */
+  ver?: number;
+  /** Issued-at, feeding step-up auth. Absent means "cannot tell" = too old. */
+  iat?: number;
 }
 
 function getSecret(): string {
@@ -81,4 +93,17 @@ export async function getSession(): Promise<SessionPayload | null> {
   const token = store.get(COOKIE_NAME)?.value;
   if (!token) return null;
   return decode(token);
+}
+
+/**
+ * Age of the session's authentication, in milliseconds.
+ *
+ * Returns null when the cookie predates C4 and carries no `iat`. Callers MUST
+ * treat null as "too old" — the step-up check in the authorization engine does
+ * exactly that, because an unknown authentication age is not evidence of a
+ * recent one.
+ */
+export function sessionAuthAgeMs(session: SessionPayload, now = Date.now()): number | null {
+  if (typeof session.iat !== "number") return null;
+  return Math.max(0, now - session.iat);
 }

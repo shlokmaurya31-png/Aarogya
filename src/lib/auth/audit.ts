@@ -392,6 +392,22 @@ export type AuditEventType =
   | "hospital.interop.abdmProtocolStateChanged"
   | "hospital.interop.abdmCallbackApplied"
   | "hospital.interop.abdmSandboxTest"
+  // Phase C4 — trust layer. These are SECURITY events, kept in their own
+  // namespace so audit access can be permissioned separately from clinical
+  // audit: a clinician reading a chart should not thereby see who was denied
+  // access to whom.
+  | "security.authorization.allowed"
+  | "security.authorization.denied"
+  | "security.breakGlass.activated"
+  | "security.breakGlass.completed"
+  | "security.breakGlass.revoked"
+  | "security.session.revoked"
+  | "security.session.allRevoked"
+  | "security.stepUp.required"
+  | "security.privacy.requestCreated"
+  | "security.privacy.requestReviewed"
+  | "security.privacy.requestActioned"
+  | "security.audit.queried"
   | "hospital.quality.rcaReviewed"
   | "hospital.quality.capaCreated"
   | "hospital.quality.capaCompleted"

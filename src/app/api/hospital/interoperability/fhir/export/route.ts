@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError } from "@/lib/auth/rbac";
 import { exportPatientToFhir } from "@/lib/hospital/interoperability/fhir/export";
+import { buildAuthorizationActor } from "@/lib/auth/authorize/context";
+import { requireAuthorization } from "@/lib/auth/authorize/engine";
 
 /**
  * Phase C1 — controlled FHIR export.
@@ -21,6 +23,28 @@ export async function POST(req: NextRequest) {
     if (!Array.isArray(body?.scopes) || body.scopes.length === 0) {
       throw new BadRequestError("At least one data scope is required.");
     }
+
+    // ── Phase C4 ─────────────────────────────────────────────────────────
+    // Disclosure now goes through the central authorization engine BEFORE a
+    // single clinical record is read. The engine evaluates facility, RBAC,
+    // relationship, purpose and consent together; exportPatientToFhir still
+    // re-checks consent internally, which is defence in depth rather than
+    // duplication — this is the gate, that is the belt.
+    //
+    // Note the policy marks this action breakGlassAllowed:false. An emergency
+    // justifies reading a chart locally; it does not justify transmitting a
+    // record to a third party without the patient's agreement.
+    const actor = await buildAuthorizationActor(body?.facilityId);
+    await requireAuthorization({
+      actor,
+      action: "patient.export.fhir",
+      resource: { type: "PATIENT", id: body.patientId, facilityId, patientId: body.patientId },
+      purpose: body.purpose,
+      scopes: body.scopes,
+      consentId: body.consentId ?? null,
+      recipientIdentifier: body.recipientIdentifier ?? null,
+      correlationId: body.correlationId ?? null,
+    });
 
     const result = await exportPatientToFhir({
       facilityId,

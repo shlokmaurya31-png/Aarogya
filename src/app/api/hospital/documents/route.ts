@@ -3,6 +3,8 @@ import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { buildAuthorizationActor } from "@/lib/auth/authorize/context";
+import { authorizeAccess } from "@/lib/auth/authorize/engine";
 
 /** Document metadata foundation (brief §26) — metadata-only this phase, see docs/CLINICAL_CORE.md §8. */
 export async function GET(req: NextRequest) {
@@ -20,7 +22,37 @@ export async function GET(req: NextRequest) {
       where: { patientId, ...(includeSuperseded ? {} : { status: "CURRENT" }) },
       orderBy: { createdAt: "desc" },
     });
-    return { documents };
+
+    // ── Phase C4: RESTRICTED document enforcement ────────────────────────
+    //
+    // C1 recorded accessPolicy but never enforced it on read, so a RESTRICTED
+    // document was returned to any facility staff member holding patient:read.
+    // That is the gap this closes.
+    //
+    // ONE authorization evaluation decides it for the whole list: the policy
+    // turns on the ACTOR-to-PATIENT relationship, which is identical for every
+    // row here, so evaluating per document would be N identical queries for one
+    // answer.
+    const restricted = documents.filter((d) => d.accessPolicy === "RESTRICTED");
+    if (restricted.length === 0) return { documents, restrictedWithheld: 0 };
+
+    const actor = await buildAuthorizationActor(searchParams.get("facilityId") ?? undefined);
+    const decision = await authorizeAccess({
+      actor,
+      action: "document.read.restricted",
+      resource: { type: "DOCUMENT", facilityId, patientId, dataClass: "HIGHLY_SENSITIVE" },
+    });
+    if (decision.decision === "ALLOW") return { documents, restrictedWithheld: 0 };
+
+    // Withheld, not errored: the caller legitimately sees the unrestricted
+    // documents. The count is returned so the UI can say "2 restricted
+    // documents were withheld" rather than silently showing a shorter list —
+    // silently hiding clinical data is its own safety problem.
+    return {
+      documents: documents.filter((d) => d.accessPolicy !== "RESTRICTED"),
+      restrictedWithheld: restricted.length,
+      restrictedDecision: decision.decision,
+    };
   });
 }
 
