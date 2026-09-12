@@ -383,6 +383,16 @@ export const PERMISSIONS = [
   "interop:terminology:read",
   "interop:terminology:manage",
   "interop:connection:manage",
+
+  // Phase C6 — interoperability control plane. Deliberately few additions:
+  // configuration reuses interop:connection:manage. What is genuinely new is
+  // the CHECKER half of production enablement, which must be a separate
+  // permission or maker/checker collapses into one act, plus participant
+  // trust and operator-driven retry.
+  "interop:integration:approve",
+  "interop:participant:manage",
+  "interop:participant:verify",
+  "interop:exchange:retry",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -765,6 +775,13 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "interop:terminology:read",
     "interop:terminology:manage",
     "interop:connection:manage",
+    // Phase C6 — facility control plane. The facility admin configures and may
+    // retry, and manages its own participants. It deliberately does NOT hold
+    // interop:integration:approve: a facility cannot approve its own move to a
+    // live national environment.
+    "interop:participant:manage",
+    "interop:participant:verify",
+    "interop:exchange:retry",
     "hospital:command-center:view",
     "hospital:admin:manage",
     "patient:read",
@@ -1018,6 +1035,14 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "workforce:staff:read",
     "credential:read",
     "privilege:read",
+    // Phase C6 — the CHECKER half of production enablement, and nothing else
+    // from the control plane. AAROGYA_ADMIN can approve a facility's move to a
+    // live national environment; it still cannot configure that facility's
+    // integration, read its patients' clinical data, or disable it unilaterally
+    // outside the audited emergency path. It is an oversight role, not a
+    // clinical or operational superuser. See [[aarogya-phase-c4-trust-layer]].
+    "interop:integration:approve",
+    "interop:overview:view",
   ],
 };
 

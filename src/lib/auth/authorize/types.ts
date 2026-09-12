@@ -47,6 +47,13 @@ export const DATA_CLASSES = [
   "FINANCIAL",
   "IDENTITY",
   "SECURITY",
+  /**
+   * Phase C6 — system and integration configuration. Carries no patient data,
+   * which is why control-plane policies require a facility but neither a care
+   * relationship nor a consent. Kept distinct from SECURITY: that class guards
+   * credentials and sessions, this one guards operational wiring.
+   */
+  "OPERATIONAL",
 ] as const;
 export type DataClass = (typeof DATA_CLASSES)[number];
 

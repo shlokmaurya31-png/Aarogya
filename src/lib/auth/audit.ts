@@ -376,6 +376,27 @@ export type AuditEventType =
   | "hospital.interop.externalMappingConflict"
   | "hospital.interop.terminologyMapped"
   | "hospital.interop.connectionConfigured"
+  // Phase C6 — interoperability control plane. Configuration, enablement and
+  // production approval are separate event types because they are different
+  // acts carrying different authority: one wires an integration up, one
+  // switches it on, and one accepts the risk of a live national environment.
+  | "hospital.interop.integrationConfigured"
+  | "hospital.interop.integrationEnabled"
+  | "hospital.interop.integrationDisabled"
+  | "hospital.interop.emergencyShutdown"
+  | "hospital.interop.productionApproved"
+  | "hospital.interop.configurationRolledBack"
+  | "hospital.interop.certificateRegistered"
+  | "hospital.interop.certificateActivated"
+  | "hospital.interop.participantRegistered"
+  | "hospital.interop.participantVerified"
+  | "hospital.interop.participantTrustChanged"
+  | "hospital.interop.exchangeRetried"
+  | "hospital.interop.exchangeViewed"
+  // A dispatch that was REFUSED is the hardest thing to reconstruct after the
+  // fact, so the refusal itself is a first-class audited event.
+  | "hospital.interop.dispatchRefused"
+  | "hospital.interop.alertTransitioned"
   // Phase C2 — ABDM contract and sandbox readiness. Callback events are
   // separate from exchange events because a callback is an UNAUTHENTICATED
   // inbound arrival that may never correlate to anything we started.

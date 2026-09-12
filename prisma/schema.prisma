@@ -6825,12 +6825,248 @@ model InteropConnection {
   lastSyncedAt DateTime?
   lastError    String?
 
+  // ── Phase C6 — control-plane state ────────────────────────────────────────
+  // Readiness is DERIVED, not stored as a single truth: these columns record
+  // the individual pieces of EVIDENCE, and readiness.ts computes the state from
+  // them. Storing a readiness string alone would let it drift from reality, and
+  // the whole point of this phase is that a label can never outrun its evidence.
+
+  /// Protocol/spec version this connection is configured against, when known.
+  protocolVersion String?
+
+  /// Set only by a real handshake against that environment. Never by
+  /// configuration, and never by the presence of credentials.
+  sandboxVerifiedAt    DateTime?
+  productionVerifiedAt DateTime?
+
+  /// Maker/checker for going live. productionApprovedByUserId must differ from
+  /// the user who configured the connection; the service enforces that.
+  productionApprovedByUserId String?
+  productionApprovedAt       DateTime?
+  productionApprovalNote     String?
+
+  /// Kill switch. `enabled` is the switch itself; these record WHY and BY WHOM,
+  /// so a disabled integration is explainable rather than mysterious.
+  disabledAt       DateTime?
+  disabledByUserId String?
+  disabledReason   String?
+
+  /// Operational counters for the control-plane overview. Metadata only.
+  lastSuccessAt       DateTime?
+  lastFailureAt       DateTime?
+  lastFailureCategory String?
+  lastHealthCheckAt   DateTime?
+  lastHealthState     String?
+
+  /// Monotonic configuration revision. Distinct from `version`, which is the
+  /// optimistic-concurrency counter.
+  configRevision Int @default(1)
+
+  revisions    IntegrationConfigRevision[]
+  certificates IntegrationCertificate[]
+  alerts       IntegrationAlert[]
+
   version   Int      @default(1)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([facilityId, system])
   @@index([facilityId])
+}
+
+/// Phase C6 — an auditable, revertible snapshot of NON-SECRET integration
+/// configuration.
+///
+/// Every accepted configuration change writes one row. The snapshot is what
+/// makes rollback possible and what makes "who changed what, when" answerable
+/// without reading the audit log's free-form detail. It deliberately holds no
+/// credential: the connection itself stores only environment-variable NAMES,
+/// so a snapshot of it cannot contain a secret either.
+model IntegrationConfigRevision {
+  id           String            @id @default(cuid())
+  facilityId   String
+  connection   InteropConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  connectionId String
+
+  /// Monotonic per connection.
+  revision Int
+
+  /// CREATE | UPDATE | ROLLBACK | ENABLE | DISABLE | PRODUCTION_APPROVAL
+  changeKind String
+
+  /// Non-secret configuration as it stood AFTER this change.
+  snapshot Json
+
+  /// Field names that changed. Values are deliberately not recorded here beyond
+  /// the snapshot, and the snapshot itself is secret-free by construction.
+  changedFields String?
+
+  reason          String?
+  changedByUserId String
+  createdAt       DateTime @default(now())
+
+  @@unique([connectionId, revision])
+  @@index([facilityId, connectionId])
+}
+
+/// Phase C6 — certificate lifecycle metadata.
+///
+/// SAFE METADATA ONLY. This table never holds a private key, a certificate body
+/// or a passphrase: it holds where the material lives (an environment-variable
+/// name or secret-manager reference) plus the public descriptive fields needed
+/// to answer "is it valid, and when does it expire".
+model IntegrationCertificate {
+  id           String            @id @default(cuid())
+  facilityId   String
+  connection   InteropConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  connectionId String
+
+  /// SIGNING | TLS_CLIENT | ENCRYPTION
+  usage String
+
+  /// The live SLOT this certificate occupies: CURRENT | NEXT, or NULL once it
+  /// has been retired.
+  ///
+  /// Nullable on purpose. The unique key below is (connection, usage, role), and
+  /// both PostgreSQL and SQLite treat NULLs as distinct in a unique index — so
+  /// exactly one CURRENT and one NEXT can exist per usage while any number of
+  /// retired certificates accumulate as history. Modelling retirement as a third
+  /// non-null value would have made the SECOND rotation impossible.
+  role      String?   @default("CURRENT")
+  retiredAt DateTime?
+
+  /// NOT_CONFIGURED | VALID | EXPIRING | EXPIRED | INVALID
+  status String @default("NOT_CONFIGURED")
+
+  /// Reference to where the material lives. A path or env-var NAME, never bytes.
+  materialRef String?
+
+  // Public, non-sensitive descriptive fields, populated only when a real
+  // certificate was parsed.
+  subject     String?
+  issuer      String?
+  serial      String?
+  fingerprint String?
+  notBefore   DateTime?
+  notAfter    DateTime?
+
+  /// When a NEXT certificate is scheduled to become CURRENT. Rotation is
+  /// recorded, never performed against live infrastructure by this code.
+  activatesAt DateTime?
+
+  lastCheckedAt DateTime?
+  checkError    String?
+
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([connectionId, usage, role])
+  @@index([facilityId, status])
+  @@index([notAfter])
+}
+
+/// Phase C6 — external participant registry.
+///
+/// A participant is a counterparty we exchange with: an HIP, an HIU, a payer, an
+/// external lab or facility. Identity is NOT trust — `trustStatus` is separate
+/// from `externalId` on purpose, and an imported participant is never born
+/// verified.
+///
+/// Facility-scoped, so one facility's counterparty list is invisible to another.
+model ExternalParticipant {
+  id         String @id @default(cuid())
+  facilityId String
+
+  /// ABDM | NHCX | FHIR
+  system String
+  /// HIP | HIU | PAYER | PROVIDER | EXTERNAL_LAB | EXTERNAL_FACILITY
+  type   String
+
+  name             String
+  /// The counterparty's code in the external network (participant code, HIP id…).
+  externalId       String
+  /// Which identifier namespace externalId belongs to.
+  externalIdSystem String?
+
+  /// LOCAL | SANDBOX | PRODUCTION — a sandbox counterparty is not a production
+  /// counterparty, and the unique key below keeps them distinct rows.
+  environment String @default("SANDBOX")
+
+  /// ACTIVE | INACTIVE
+  status      String @default("ACTIVE")
+  /// UNVERIFIED | VERIFIED | SUSPENDED | REVOKED. Never set to VERIFIED by an
+  /// import; only by an explicit, audited operator action.
+  trustStatus String @default("UNVERIFIED")
+
+  verifiedAt       DateTime?
+  verifiedByUserId String?
+  verificationNote String?
+
+  suspendedAt     DateTime?
+  suspendedReason String?
+
+  /// Optional link to the canonical Payer, so an NHCX payer participant does not
+  /// become a second payer record.
+  payerId String?
+
+  lastSeenAt DateTime?
+
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Explicitly named: the generated name is 64 characters and PostgreSQL
+  // truncates identifiers at 63, which would leave the SQLite and PostgreSQL
+  // trees permanently drifted. Same defect class as the C5 submission-document
+  // index.
+  @@unique([facilityId, system, environment, externalId], map: "ExternalParticipant_facility_system_env_extid_key")
+  @@index([facilityId, system, trustStatus])
+  @@index([facilityId, type])
+}
+
+/// Phase C6 — persisted, operator-visible operational alert.
+///
+/// Deterministic and rule-based: raised by an explicit condition (certificate
+/// expiring, retries exhausted, repeated failures, configuration missing), never
+/// by anomaly detection or a model. The unique key collapses a repeating
+/// condition onto one open alert instead of flooding the operator.
+model IntegrationAlert {
+  id           String             @id @default(cuid())
+  facilityId   String
+  connection   InteropConnection? @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  connectionId String?
+
+  system String
+
+  /// CERTIFICATE_EXPIRING | CERTIFICATE_EXPIRED | CONFIGURATION_MISSING |
+  /// REPEATED_FAILURE | RETRY_EXHAUSTED | CALLBACK_REJECTED |
+  /// RECONCILIATION_MISMATCH | INTEGRATION_DISABLED | UNSAFE_ENVIRONMENT
+  alertType String
+  severity  String @default("WARNING") // INFO | WARNING | CRITICAL
+
+  /// Stable identity of the underlying condition, so re-detecting it updates the
+  /// open alert rather than creating a second one.
+  dedupeKey String
+
+  detail String
+
+  /// OPEN | ACKNOWLEDGED | RESOLVED
+  status               String    @default("OPEN")
+  occurrenceCount      Int       @default(1)
+  firstDetectedAt      DateTime  @default(now())
+  lastDetectedAt       DateTime  @default(now())
+  acknowledgedAt       DateTime?
+  acknowledgedByUserId String?
+  resolvedAt           DateTime?
+  resolutionNote       String?
+
+  version   Int      @default(1)
+  updatedAt DateTime @updatedAt
+
+  @@unique([facilityId, dedupeKey])
+  @@index([facilityId, status, severity])
+  @@index([facilityId, system])
 }
 
 /// Phase C2 — inbound ABDM callback ledger.

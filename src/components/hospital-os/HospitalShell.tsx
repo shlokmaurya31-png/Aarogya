@@ -6,7 +6,7 @@ import {
   LayoutGrid, BedDouble, ClipboardList, LogOut, Building2, Stethoscope,
   ClipboardCheck, FlaskConical, ScanLine, Receipt, DoorOpen,
   UserPlus, Siren, ArrowRightLeft, Pill, Microscope,
-  ShieldCheck, BarChart3, Settings2, Boxes, Truck, HeartPulse, Scissors, Droplet, Wrench, Network, ShieldAlert} from "lucide-react";
+  ShieldCheck, BarChart3, Settings2, Boxes, Truck, HeartPulse, Scissors, Droplet, Wrench, Network, ShieldAlert, Plug} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/navigation/ThemeToggle";
 import { StatusPill } from "@/components/ui/StatusPill";
@@ -87,6 +87,10 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     INVENTORY_GROUP,
     { href: "/hospital-os/operations", label: "Operations", icon: Wrench },
     { href: "/hospital-os/interoperability", label: "Interoperability", icon: Network },
+    // Phase C6 — the operational control plane over ABDM/FHIR/NHCX. Separate
+    // from Interoperability, which is the day-to-day identity/consent/exchange
+    // workspace; this one answers "is it on, is it healthy, what failed".
+    { href: "/hospital-os/integrations", label: "Integrations", icon: Plug },
     { href: "/hospital-os/security", label: "Trust & Security", icon: ShieldAlert },
     BILLING_GROUP_ADMIN,
   ],

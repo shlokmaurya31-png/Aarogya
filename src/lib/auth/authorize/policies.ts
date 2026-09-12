@@ -275,6 +275,84 @@ export const ACTION_POLICIES: Record<string, ActionPolicy> = {
     auditDecision: true,
     description: "Export financial records for a patient.",
   },
+
+  // ── Phase C6 — interoperability control plane ────────────────────────────
+  // These govern the CONFIGURATION of external connectivity, not clinical data,
+  // so their data class is OPERATIONAL and none of them requires patient
+  // consent. Every one sets breakGlassAllowed: false — an emergency is a reason
+  // to read a chart, never a reason to reconfigure a national gateway, enable a
+  // production integration, or silence an alert.
+  "integration.read": {
+    permission: "interop:overview:view",
+    dataClass: "OPERATIONAL",
+    requireFacility: true,
+    breakGlassAllowed: false,
+    description: "View integration status, readiness and exchange operations.",
+  },
+  "integration.configure": {
+    permission: "interop:connection:manage",
+    dataClass: "OPERATIONAL",
+    requireFacility: true,
+    breakGlassAllowed: false,
+    requireStepUp: true,
+    auditDecision: true,
+    description: "Change integration configuration for this facility.",
+  },
+  "integration.enable": {
+    permission: "interop:connection:manage",
+    dataClass: "OPERATIONAL",
+    requireFacility: true,
+    breakGlassAllowed: false,
+    requireStepUp: true,
+    auditDecision: true,
+    description: "Enable an integration. Production additionally requires approval.",
+  },
+  // Disabling is deliberately NOT step-up gated: it is the fail-safe direction,
+  // and an operator stopping external traffic during an incident must not be
+  // held up by a re-authentication prompt. It is still permissioned and audited.
+  "integration.disable": {
+    permission: "interop:connection:manage",
+    dataClass: "OPERATIONAL",
+    requireFacility: true,
+    breakGlassAllowed: false,
+    auditDecision: true,
+    description: "Disable an integration (kill switch). Fail-safe direction.",
+  },
+  "integration.approveProduction": {
+    permission: "interop:integration:approve",
+    dataClass: "OPERATIONAL",
+    requireFacility: true,
+    breakGlassAllowed: false,
+    requireStepUp: true,
+    auditDecision: true,
+    description: "Approve a facility's move to a live production environment. Checker half of maker/checker.",
+  },
+  "integration.participant.manage": {
+    permission: "interop:participant:manage",
+    dataClass: "OPERATIONAL",
+    requireFacility: true,
+    breakGlassAllowed: false,
+    auditDecision: true,
+    description: "Create or amend an external participant for this facility.",
+  },
+  "integration.participant.verify": {
+    permission: "interop:participant:verify",
+    dataClass: "OPERATIONAL",
+    requireFacility: true,
+    breakGlassAllowed: false,
+    requireStepUp: true,
+    auditDecision: true,
+    description: "Mark an external participant trusted, suspended or revoked.",
+  },
+  "integration.exchange.retry": {
+    permission: "interop:exchange:retry",
+    dataClass: "OPERATIONAL",
+    requireFacility: true,
+    breakGlassAllowed: false,
+    requireStepUp: true,
+    auditDecision: true,
+    description: "Manually retry a failed exchange.",
+  },
 };
 
 /** Default step-up freshness: re-authenticate if the session is older than this. */
