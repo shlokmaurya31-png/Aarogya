@@ -126,11 +126,21 @@ export async function requireActorMemberships(permission: Permission): Promise<A
   return loadActorMemberships(session.userId, session.role);
 }
 
-/** Is this facility one the identity may act in at all (ignoring lifecycle)? */
+/**
+ * Is this facility one the identity may act in at all (ignoring lifecycle)?
+ *
+ * A staff member's CLINICAL HOME facility (HospitalStaffProfile.facilityId) is
+ * always implicitly accessible — the membership layer only ADDS facilities, it
+ * never removes the one the staff profile itself establishes. This preserves
+ * the exact pre-D1 boundary (staff act in their own facility) and means a fresh
+ * migrate-then-seed deployment is never locked out waiting on a backfill.
+ * Explicit FacilityMembership rows grant ADDITIONAL facilities; an organization
+ * administrator reaches every facility under their org; platform reaches all.
+ */
 export function canAccessFacility(m: ActorMemberships, facilityId: string, organizationId: string): boolean {
   if (m.isPlatformAdmin) return true;
+  if (m.primaryFacilityId && facilityId === m.primaryFacilityId) return true;
   if (m.facilityMemberships.has(facilityId)) return true;
-  // An organization administrator reaches every facility under their org.
   if (m.adminOrgIds.has(organizationId)) return true;
   return false;
 }

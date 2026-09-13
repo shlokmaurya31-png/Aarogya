@@ -15,17 +15,24 @@
 -- The backfill at the end is deterministic and idempotent (ON CONFLICT DO
 -- NOTHING) and creates no ownership that did not already exist.
 
+-- CreateEnum — on PostgreSQL, Prisma enums are native enum TYPES (the SQLite
+-- tree uses TEXT, which is correct for SQLite). These must be created before
+-- the columns that use them.
+CREATE TYPE "OrganizationStatus" AS ENUM ('ACTIVE', 'SUSPENDED', 'DEACTIVATED');
+CREATE TYPE "FacilityStatus" AS ENUM ('PROVISIONING', 'ACTIVE', 'SUSPENDED', 'DEACTIVATED');
+CREATE TYPE "MembershipStatus" AS ENUM ('ACTIVE', 'SUSPENDED');
+
 -- AlterTable — Organization lifecycle.
 ALTER TABLE "Organization" ADD COLUMN     "slug" TEXT,
 ADD COLUMN     "legalName" TEXT,
-ADD COLUMN     "status" TEXT NOT NULL DEFAULT 'ACTIVE',
+ADD COLUMN     "status" "OrganizationStatus" NOT NULL DEFAULT 'ACTIVE',
 ADD COLUMN     "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 ADD COLUMN     "suspendedAt" TIMESTAMP(3),
 ADD COLUMN     "deactivatedAt" TIMESTAMP(3);
 
 -- AlterTable — Facility lifecycle.
 ALTER TABLE "Facility" ADD COLUMN     "slug" TEXT,
-ADD COLUMN     "status" TEXT NOT NULL DEFAULT 'ACTIVE',
+ADD COLUMN     "status" "FacilityStatus" NOT NULL DEFAULT 'ACTIVE',
 ADD COLUMN     "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 ADD COLUMN     "suspendedAt" TIMESTAMP(3),
 ADD COLUMN     "deactivatedAt" TIMESTAMP(3);
@@ -39,7 +46,7 @@ CREATE TABLE "OrganizationMembership" (
     "userId" TEXT NOT NULL,
     "organizationId" TEXT NOT NULL,
     "isAdmin" BOOLEAN NOT NULL DEFAULT false,
-    "status" TEXT NOT NULL DEFAULT 'ACTIVE',
+    "status" "MembershipStatus" NOT NULL DEFAULT 'ACTIVE',
     "createdByUserId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -53,7 +60,7 @@ CREATE TABLE "FacilityMembership" (
     "userId" TEXT NOT NULL,
     "facilityId" TEXT NOT NULL,
     "isAdmin" BOOLEAN NOT NULL DEFAULT false,
-    "status" TEXT NOT NULL DEFAULT 'ACTIVE',
+    "status" "MembershipStatus" NOT NULL DEFAULT 'ACTIVE',
     "createdByUserId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -145,7 +152,9 @@ SELECT
   hsp."userId",
   hsp."facilityId",
   (u."role" = 'HOSPITAL_ADMIN'),
-  'ACTIVE',
+  -- A text literal in a SELECT list is typed `text`, not `unknown`, so unlike a
+  -- VALUES literal it does not implicitly cast into the enum column — cast it.
+  'ACTIVE'::"MembershipStatus",
   NULL,
   CURRENT_TIMESTAMP,
   CURRENT_TIMESTAMP
@@ -159,7 +168,7 @@ SELECT DISTINCT
   hsp."userId",
   f."organizationId",
   false,
-  'ACTIVE',
+  'ACTIVE'::"MembershipStatus",
   NULL,
   CURRENT_TIMESTAMP,
   CURRENT_TIMESTAMP

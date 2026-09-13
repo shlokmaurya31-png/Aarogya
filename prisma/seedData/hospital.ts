@@ -228,7 +228,7 @@ export async function seedHospital(prisma: PrismaClient) {
   // A few beds in non-AVAILABLE states so the Command Center / alert engine has real conditions to surface.
   const password = await hashPassword("Hospital@123");
 
-  async function upsertStaffUser(email: string, displayName: string, role: Role, displayRole: string, deptName?: string) {
+  async function upsertStaffUser(email: string, displayName: string, role: Role, displayRole: string, deptName?: string, orgAdmin = false) {
     const user = await prisma.user.upsert({
       where: { email }, update: {},
       create: { email, displayName, role, passwordHash: password },
@@ -244,10 +244,26 @@ export async function seedHospital(prisma: PrismaClient) {
         status: "ACTIVE",
       },
     });
+    // Phase D1 — make the staff member's tenancy explicit in the membership
+    // model, mirroring the migration backfill so a fresh migrate-then-seed
+    // deployment matches a migrated one. A HOSPITAL_ADMIN is the facility
+    // administrator; `orgAdmin` additionally makes them an organization
+    // administrator (used for the demo hospital admin so the enterprise control
+    // plane is operable without a separate platform login).
+    await prisma.facilityMembership.upsert({
+      where: { userId_facilityId: { userId: user.id, facilityId: facility.id } },
+      update: {},
+      create: { userId: user.id, facilityId: facility.id, isAdmin: role === Role.HOSPITAL_ADMIN },
+    });
+    await prisma.organizationMembership.upsert({
+      where: { userId_organizationId: { userId: user.id, organizationId: org.id } },
+      update: {},
+      create: { userId: user.id, organizationId: org.id, isAdmin: orgAdmin },
+    });
     return user;
   }
 
-  const hospitalAdmin = await upsertStaffUser("admin@amc-demo.aarogya", "Aarogya Medical Centre Admin", Role.HOSPITAL_ADMIN, "Hospital Administrator");
+  const hospitalAdmin = await upsertStaffUser("admin@amc-demo.aarogya", "Aarogya Medical Centre Admin", Role.HOSPITAL_ADMIN, "Hospital Administrator", undefined, true);
 
   const doctorUsers = [];
   for (let i = 0; i < DOCTOR_NAMES.length; i++) {
