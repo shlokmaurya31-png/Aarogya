@@ -477,12 +477,37 @@ export type AuditEventType =
   | "hospital.workforce.credentialRevoked"
   | "hospital.workforce.privilegeGranted"
   | "hospital.workforce.privilegeSuspended"
-  | "hospital.workforce.privilegeRevoked";
+  | "hospital.workforce.privilegeRevoked"
+  // Phase D1 — enterprise tenancy control plane. Kept in an `enterprise.`
+  // namespace so tenant-administration audit is distinguishable from clinical
+  // and security audit. Recorded through this same synchronous AuditEvent
+  // mechanism (no new audit table), now optionally scoped by organizationId.
+  | "enterprise.organization.created"
+  | "enterprise.organization.updated"
+  | "enterprise.organization.suspended"
+  | "enterprise.organization.reactivated"
+  | "enterprise.organization.deactivated"
+  | "enterprise.facility.created"
+  | "enterprise.facility.updated"
+  | "enterprise.facility.suspended"
+  | "enterprise.facility.reactivated"
+  | "enterprise.facility.deactivated"
+  | "enterprise.facility.activated"
+  | "enterprise.membership.created"
+  | "enterprise.membership.removed"
+  | "enterprise.membership.scopeChanged"
+  | "enterprise.config.overridden"
+  | "enterprise.config.reset"
+  | "enterprise.provisioning.started"
+  | "enterprise.provisioning.completed"
+  | "enterprise.provisioning.failed";
 
 export interface AuditEventContext {
   facilityId?: string;
   patientId?: string;
   encounterId?: string;
+  /** Phase D1 — organization scope for enterprise/tenant events. */
+  organizationId?: string;
 }
 
 export async function recordAuditEvent(
@@ -499,6 +524,7 @@ export async function recordAuditEvent(
       facilityId: context?.facilityId,
       patientId: context?.patientId,
       encounterId: context?.encounterId,
+      organizationId: context?.organizationId,
     },
   });
 }

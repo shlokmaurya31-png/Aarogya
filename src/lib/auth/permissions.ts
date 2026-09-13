@@ -393,6 +393,23 @@ export const PERMISSIONS = [
   "interop:participant:manage",
   "interop:participant:verify",
   "interop:exchange:retry",
+
+  // Phase D1 — enterprise control plane. These are the COARSE gate ("may this
+  // role touch the enterprise control plane at all"); the FINE gate — which
+  // organization/facility, and whether as an administrator — is enforced by
+  // membership in src/lib/auth/tenantContext.ts (assertOrganizationAdmin /
+  // assertFacilityAdmin). A HOSPITAL_ADMIN who is only a facility administrator
+  // holds enterprise:organization:manage here yet is still refused organization
+  // administration by the membership check — deny by default holds.
+  // Creating/lifecycling organizations and provisioning new tenants is
+  // platform-only and gated separately (enterprise:platform:manage).
+  "enterprise:platform:manage",
+  "enterprise:organization:read",
+  "enterprise:organization:manage",
+  "enterprise:facility:manage",
+  "enterprise:membership:manage",
+  "enterprise:config:read",
+  "enterprise:config:manage",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -782,6 +799,18 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "interop:participant:manage",
     "interop:participant:verify",
     "interop:exchange:retry",
+    // Phase D1 — the facility administrator's enterprise scope. Coarse gate
+    // only: the membership check still limits a plain facility admin to their
+    // own facility/facilities and refuses organization administration unless
+    // they additionally hold an org-admin membership. It intentionally does NOT
+    // hold enterprise:platform:manage — a facility/org admin cannot create or
+    // deactivate organizations or provision new tenants.
+    "enterprise:organization:read",
+    "enterprise:organization:manage",
+    "enterprise:facility:manage",
+    "enterprise:membership:manage",
+    "enterprise:config:read",
+    "enterprise:config:manage",
     "hospital:command-center:view",
     "hospital:admin:manage",
     "patient:read",
@@ -1043,6 +1072,18 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     // clinical or operational superuser. See [[aarogya-phase-c4-trust-layer]].
     "interop:integration:approve",
     "interop:overview:view",
+    // Phase D1 — the platform administrator operates the enterprise control
+    // plane: create organizations, provision tenants, and administer any
+    // organization/facility for support and recovery. This is platform
+    // operation, NOT a clinical superuser grant — every C4 clinical check still
+    // applies on top (AAROGYA_ADMIN holds no broad clinical write permission).
+    "enterprise:platform:manage",
+    "enterprise:organization:read",
+    "enterprise:organization:manage",
+    "enterprise:facility:manage",
+    "enterprise:membership:manage",
+    "enterprise:config:read",
+    "enterprise:config:manage",
   ],
 };
 
