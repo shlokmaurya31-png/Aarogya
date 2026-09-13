@@ -7,6 +7,7 @@ import {
   assertFacilityAdmin,
   TenantAccessError,
 } from "@/lib/auth/tenantContext";
+import { enforceLimit } from "@/lib/commercial/limits";
 
 /**
  * Phase D1 — membership service.
@@ -49,13 +50,17 @@ export async function addOrganizationMembership(
   }
 
   try {
-    const created = await prisma.organizationMembership.create({
-      data: {
-        organizationId: input.organizationId,
-        userId: input.userId,
-        isAdmin: input.isAdmin,
-        createdByUserId: m.userId,
-      },
+    // Phase D2 — enforce the max_users limit race-safely. Only ORGANIZATION
+    // membership counts toward the user limit (a facility membership for an
+    // existing org member adds no new user).
+    const created = await enforceLimit({
+      organizationId: input.organizationId,
+      key: "max_users",
+      actorUserId: m.userId,
+      count: (tx) => tx.organizationMembership.count({ where: { organizationId: input.organizationId, status: "ACTIVE" } }),
+      create: (tx) => tx.organizationMembership.create({
+        data: { organizationId: input.organizationId, userId: input.userId, isAdmin: input.isAdmin, createdByUserId: m.userId },
+      }),
     });
     await recordAuditEvent(
       "enterprise.membership.created",

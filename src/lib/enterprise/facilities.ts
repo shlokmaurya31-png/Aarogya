@@ -8,6 +8,7 @@ import {
   TenantAccessError,
 } from "@/lib/auth/tenantContext";
 import { findFacilityTransition } from "./constants";
+import { requireEntitlement, enforceLimit } from "@/lib/commercial/limits";
 import type { FacilityStatus } from "@prisma/client";
 
 /**
@@ -37,8 +38,18 @@ export async function createFacility(
     if (existing) throw new BadRequestError("A facility with this slug already exists in this organization.");
   }
 
-  const facility = await prisma.facility.create({
-    data: { name, slug, city: input.city?.trim() || null, organizationId, status: "PROVISIONING" },
+  // Phase D2 — commercial gates, layered AFTER the D1 tenant-admin check:
+  //   (a) the organization must have the Hospital OS product entitlement, and
+  //   (b) creation must stay within the plan's max_facilities limit, enforced
+  //       race-safely (Serializable) so two concurrent creates cannot both pass
+  //       a limit of N when N-1 exist.
+  await requireEntitlement({ organizationId, key: "hospital_os" });
+  const facility = await enforceLimit({
+    organizationId,
+    key: "max_facilities",
+    actorUserId: m.userId,
+    count: (tx) => tx.facility.count({ where: { organizationId, status: { not: "DEACTIVATED" } } }),
+    create: (tx) => tx.facility.create({ data: { name, slug, city: input.city?.trim() || null, organizationId, status: "PROVISIONING" } }),
   });
   await recordAuditEvent(
     "enterprise.facility.created",

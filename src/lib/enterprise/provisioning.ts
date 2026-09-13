@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { BadRequestError, ForbiddenError } from "@/lib/auth/rbac";
 import type { ActorMemberships } from "@/lib/auth/tenantContext";
+import { ensureDefaultSubscription } from "@/lib/commercial/subscriptions";
 
 /**
  * Phase D1 — enterprise provisioning.
@@ -80,7 +81,12 @@ export async function provisionOrganization(m: ActorMemberships, input: Provisio
         });
       }
 
-      // 5. Activate.
+      // 5. Ensure a commercial state (default/grandfather subscription) so the
+      //    new tenant is immediately functional. No-op if already subscribed or
+      //    if the plan catalogue is not yet bootstrapped.
+      await ensureDefaultSubscription(tx, org.id);
+
+      // 6. Activate.
       const activated = await tx.facility.update({ where: { id: facility.id }, data: { status: "ACTIVE" } });
       return { organization: org, facility: activated };
     });

@@ -13,6 +13,7 @@ import { seedPhase2PatientFlow } from "./seedData/hospitalPhase2";
 import { seedPhase3Clinical } from "./seedData/hospitalPhase3";
 import { seedPhase5Billing } from "./seedData/hospitalPhase5";
 import { seedPhase6aInventory } from "./seedData/hospitalPhase6a";
+import { ensureCommercialBootstrap } from "../src/lib/commercial/bootstrap";
 
 const prisma = new PrismaClient();
 
@@ -201,6 +202,10 @@ async function main() {
   await seedPhase3Clinical(prisma);
   await seedPhase5Billing(prisma);
   await seedPhase6aInventory(prisma);
+  // Phase D2 — materialise the commercial registry (entitlement definitions,
+  // plans) and give every organization an explicit commercial state. Idempotent.
+  const boot = await ensureCommercialBootstrap(prisma);
+  console.log(`Commercial bootstrap: registry + plans ensured; ${boot.orgsBootstrapped} organization(s) placed on the default plan.`);
 }
 
 main()
