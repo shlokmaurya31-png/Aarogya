@@ -500,7 +500,27 @@ export type AuditEventType =
   | "enterprise.config.reset"
   | "enterprise.provisioning.started"
   | "enterprise.provisioning.completed"
-  | "enterprise.provisioning.failed";
+  | "enterprise.provisioning.failed"
+  // Phase D2 — SaaS commercial layer. Kept in a `commercial.` namespace, org-
+  // scoped where applicable, so commercial audit is distinct from clinical,
+  // security and tenant audit. Never carries payment credentials or secrets.
+  | "commercial.bootstrap.applied"
+  | "commercial.plan.created"
+  | "commercial.plan.updated"
+  | "commercial.plan.statusChanged"
+  | "commercial.entitlement.defined"
+  | "commercial.entitlement.updated"
+  | "commercial.planEntitlement.changed"
+  | "commercial.subscription.created"
+  | "commercial.subscription.transitioned"
+  | "commercial.subscription.planChanged"
+  | "commercial.subscription.trialStarted"
+  | "commercial.subscription.cancellationScheduled"
+  | "commercial.subscription.cancelled"
+  | "commercial.override.created"
+  | "commercial.override.updated"
+  | "commercial.override.removed"
+  | "commercial.limit.denied";
 
 export interface AuditEventContext {
   facilityId?: string;

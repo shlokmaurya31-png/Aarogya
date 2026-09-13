@@ -410,6 +410,15 @@ export const PERMISSIONS = [
   "enterprise:membership:manage",
   "enterprise:config:read",
   "enterprise:config:manage",
+
+  // Phase D2 — SaaS commercial layer. Plans, entitlement definitions,
+  // subscriptions, lifecycle transitions and overrides are all PLATFORM-managed
+  // (commercial:platform:manage) — an organization administrator can never
+  // upgrade their own plan or grant themselves an override. commercial:read lets
+  // an org/facility administrator VIEW their own commercial state and usage,
+  // tenant-scoped by D1 membership.
+  "commercial:platform:manage",
+  "commercial:read",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -811,6 +820,9 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "enterprise:membership:manage",
     "enterprise:config:read",
     "enterprise:config:manage",
+    // Phase D2 — a facility/org administrator may VIEW commercial state + usage,
+    // but never mutate it (no self-upgrade). Platform holds the manage grant.
+    "commercial:read",
     "hospital:command-center:view",
     "hospital:admin:manage",
     "patient:read",
@@ -1084,6 +1096,10 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "enterprise:membership:manage",
     "enterprise:config:read",
     "enterprise:config:manage",
+    // Phase D2 — the platform operates the commercial control plane: plans,
+    // entitlement definitions, subscriptions, lifecycle and overrides.
+    "commercial:platform:manage",
+    "commercial:read",
   ],
 };
 

@@ -546,6 +546,14 @@ model Organization {
   configValues OrgConfigValue[]
   auditEvents  AuditEvent[]
 
+  // Phase D2 — SaaS commercial layer. An organization has at most one current
+  // subscription (its commercial state) plus any organization-level entitlement
+  // overrides. This is the AAROGYA commercial domain and is entirely separate
+  // from the hospital revenue cycle (Charge/Invoice/Payer/Claim), which concerns
+  // patients and insurers, not the platform tenant.
+  subscription          OrganizationSubscription?
+  entitlementOverrides  OrganizationEntitlementOverride[]
+
   @@index([status])
 }
 
@@ -570,6 +578,9 @@ model Facility {
 
   memberships  FacilityMembership[]
   configValues FacilityConfigValue[]
+  // Phase D2 — facility-scoped entitlement overrides (e.g. enabling the ICU
+  // module for one facility beyond what the plan grants org-wide).
+  entitlementOverrides FacilityEntitlementOverride[]
 
   departments               Department[]
   wards                     Ward[]
@@ -772,6 +783,248 @@ model DepartmentConfigValue {
 
   @@unique([departmentId, key])
   @@index([departmentId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase D2 — SaaS commercial layer (plans, entitlements, subscriptions).
+//
+// This is the AAROGYA commercial domain: what an ORGANIZATION has purchased and
+// is allowed to use. It is entirely separate from the hospital revenue cycle
+// (Charge / Invoice / Payer / PayerPlan / Claim / Payment), which concerns
+// PATIENTS and INSURERS. Nothing here processes payments or stores payment
+// credentials — D2 is domain architecture with a provider BOUNDARY only.
+//
+// The layered decision remains:  authorization (C4) + tenancy (D1) + entitlement
+// (D2). Entitlement never replaces authorization, and authorization never
+// replaces entitlement.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Availability of a commercial offering. Retiring a plan never mutates the
+/// subscriptions already on it (they keep their snapshot); it only stops new
+/// subscriptions from choosing it.
+enum SubscriptionPlanStatus {
+  ACTIVE
+  DEPRECATED
+  RETIRED
+}
+
+/// Commercial state of an organization's subscription. Distinct from
+/// OrganizationStatus (D1 tenant lifecycle): a tenant can be ACTIVE while its
+/// subscription is PAST_DUE. See docs/enterprise/subscription-lifecycle.md.
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  GRACE
+  SUSPENDED
+  CANCELLED
+  EXPIRED
+}
+
+enum BillingInterval {
+  MONTHLY
+  QUARTERLY
+  YEARLY
+  /// A subscription with no recurring billing (e.g. the grandfather/dev default).
+  NONE
+}
+
+/// The shape of an entitlement value.
+///   BOOLEAN — a capability flag (advanced_pharmacy = true)
+///   LIMIT   — a numeric cap that is enforced against canonical usage
+///             (max_facilities = 5); `unlimited` represents no cap
+///   NUMBER  — a numeric configuration value that is not a usage cap
+enum EntitlementType {
+  BOOLEAN
+  LIMIT
+  NUMBER
+}
+
+/// Where an entitlement applies. ORGANIZATION entitlements are evaluated once
+/// for the whole tenant; FACILITY entitlements may additionally be overridden
+/// per facility.
+enum EntitlementScope {
+  ORGANIZATION
+  FACILITY
+}
+
+/// The controlled registry of capabilities/limits. Platform-managed; an
+/// organization administrator can never create these. Values live on plans and
+/// overrides, never here — this is the definition, including the safe default
+/// used when nothing else supplies a value.
+model EntitlementDefinition {
+  id          String          @id @default(cuid())
+  key         String          @unique // stable, e.g. "advanced_pharmacy", "max_facilities"
+  name        String
+  description String
+  type        EntitlementType
+  scope       EntitlementScope
+  /// Default when neither a plan snapshot nor an override supplies a value.
+  defaultBool    Boolean?
+  defaultNumber  Int?
+  /// LIMIT default of "no cap" is represented as unlimited=true (rather than a
+  /// magic number), keeping the semantics explicit.
+  defaultUnlimited Boolean @default(false)
+  active      Boolean @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  planEntitlements         PlanEntitlement[]
+  subscriptionEntitlements SubscriptionEntitlement[]
+  orgOverrides             OrganizationEntitlementOverride[]
+  facilityOverrides        FacilityEntitlementOverride[]
+
+  @@index([scope])
+}
+
+/// A commercial offering. Platform-controlled. `code` is the stable slug used in
+/// APIs; `version` increments when the plan's entitlement set is edited, so the
+/// history of a plan is understandable and existing subscribers keep the snapshot
+/// they subscribed under (see SubscriptionEntitlement).
+model SubscriptionPlan {
+  id              String                 @id @default(cuid())
+  code            String                 @unique
+  name            String
+  description     String?
+  status          SubscriptionPlanStatus @default(ACTIVE)
+  billingInterval BillingInterval        @default(MONTHLY)
+  /// Marks the internal grandfather/development default plan, so it is never
+  /// mistaken for a sold commercial contract.
+  isDefault       Boolean                @default(false)
+  version         Int                    @default(1)
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @default(now()) @updatedAt
+
+  entitlements  PlanEntitlement[]
+  subscriptions OrganizationSubscription[]
+
+  @@index([status])
+}
+
+/// The entitlement value a plan grants. Editing these is an audited platform
+/// action; existing subscribers are unaffected until explicitly re-synced,
+/// because subscriptions carry their own snapshot.
+model PlanEntitlement {
+  id            String                @id @default(cuid())
+  plan          SubscriptionPlan      @relation(fields: [planId], references: [id])
+  planId        String
+  entitlement   EntitlementDefinition @relation(fields: [entitlementId], references: [id])
+  entitlementId String
+  boolValue     Boolean?
+  numberValue   Int?
+  /// For LIMIT entitlements: true means "no cap".
+  unlimited     Boolean               @default(false)
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @default(now()) @updatedAt
+
+  @@unique([planId, entitlementId])
+  @@index([entitlementId])
+}
+
+/// An organization's single current commercial state. One row per organization
+/// (@@unique organizationId). Status transitions are controlled by the lifecycle
+/// service; no other code mutates `status`. Effective dates are server-set —
+/// never taken from client-supplied timestamps.
+model OrganizationSubscription {
+  id                 String             @id @default(cuid())
+  organization       Organization       @relation(fields: [organizationId], references: [id])
+  organizationId     String             @unique
+  plan               SubscriptionPlan   @relation(fields: [planId], references: [id])
+  planId             String
+  status             SubscriptionStatus @default(TRIAL)
+  billingInterval    BillingInterval    @default(MONTHLY)
+  /// True for the grandfather/dev bootstrap subscription (see bootstrap.ts).
+  isDefault          Boolean            @default(false)
+  trialStartedAt     DateTime?
+  trialEndsAt        DateTime?
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  gracePeriodEndsAt  DateTime?
+  /// CANCEL_AT_PERIOD_END semantics: the subscription stays usable until
+  /// currentPeriodEnd, then transitions to EXPIRED. Immediate cancellation sets
+  /// status=CANCELLED directly.
+  cancelAtPeriodEnd  Boolean            @default(false)
+  cancelledAt        DateTime?
+  suspendedAt        DateTime?
+  /// Opaque reference to a future billing provider's subscription object. No
+  /// provider is integrated in D2; this is the boundary only (never a secret).
+  externalRef        String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @default(now()) @updatedAt
+
+  entitlements SubscriptionEntitlement[]
+
+  @@index([status])
+  @@index([planId])
+}
+
+/// The plan's entitlements SNAPSHOTTED onto the subscription at subscribe /
+/// plan-change time. The evaluator reads this (plus overrides), so a later edit
+/// to the plan does not silently change what an existing subscriber gets. This
+/// is the "versioned/immutable plan entitlement snapshot" the plan-versioning
+/// requirement calls for, kept lean (one row per entitlement per subscription).
+model SubscriptionEntitlement {
+  id             String                   @id @default(cuid())
+  subscription   OrganizationSubscription @relation(fields: [subscriptionId], references: [id])
+  subscriptionId String
+  entitlement    EntitlementDefinition    @relation(fields: [entitlementId], references: [id])
+  entitlementId  String
+  boolValue      Boolean?
+  numberValue    Int?
+  unlimited      Boolean                  @default(false)
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @default(now()) @updatedAt
+
+  @@unique([subscriptionId, entitlementId])
+  @@index([entitlementId])
+}
+
+/// An organization-level commercial override (e.g. an enterprise contract raises
+/// max_facilities above the plan). Platform-authorized only; an organization
+/// admin can never grant themselves one. Expired overrides (expiresAt in the
+/// past) are ignored by the evaluator — expiry is derived, never trusted from a
+/// status column.
+model OrganizationEntitlementOverride {
+  id              String                @id @default(cuid())
+  organization    Organization          @relation(fields: [organizationId], references: [id])
+  organizationId  String
+  entitlement     EntitlementDefinition @relation(fields: [entitlementId], references: [id])
+  entitlementId   String
+  boolValue       Boolean?
+  numberValue     Int?
+  unlimited       Boolean               @default(false)
+  reason          String?
+  createdByUserId String?
+  expiresAt       DateTime?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @default(now()) @updatedAt
+
+  // Explicit short name: the generated name would be 64 chars, over
+  // PostgreSQL's 63-char identifier limit, and would silently truncate and
+  // drift the PG tree from the SQLite one.
+  @@unique([organizationId, entitlementId], map: "OrgEntitlementOverride_org_ent_key")
+  @@index([entitlementId])
+}
+
+/// A facility-level commercial override (e.g. enable the ICU module for one
+/// facility only). Applies to FACILITY-scoped entitlements.
+model FacilityEntitlementOverride {
+  id              String                @id @default(cuid())
+  facility        Facility              @relation(fields: [facilityId], references: [id])
+  facilityId      String
+  entitlement     EntitlementDefinition @relation(fields: [entitlementId], references: [id])
+  entitlementId   String
+  boolValue       Boolean?
+  numberValue     Int?
+  unlimited       Boolean               @default(false)
+  reason          String?
+  createdByUserId String?
+  expiresAt       DateTime?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @default(now()) @updatedAt
+
+  @@unique([facilityId, entitlementId])
+  @@index([entitlementId])
 }
 
 model Department {
