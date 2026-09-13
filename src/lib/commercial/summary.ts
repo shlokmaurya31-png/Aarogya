@@ -55,6 +55,10 @@ export async function getCommercialSummary(m: ActorMemberships, organizationId: 
   });
 
   return {
+    // Whether THIS caller may operate the commercial controls (platform only).
+    // Lets the UI hide platform-only actions from ordinary facility/org admins;
+    // the server still enforces it regardless of what the UI renders.
+    canManage: m.isPlatformAdmin,
     subscription: sub && {
       status: sub.status,
       planCode: sub.plan.code,

@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  LayoutGrid, BedDouble, ClipboardList, LogOut, Building2, Stethoscope,
+  LayoutGrid, BedDouble, ClipboardList, LogOut, Building2, CreditCard, Stethoscope,
   ClipboardCheck, FlaskConical, ScanLine, Receipt, DoorOpen,
   UserPlus, Siren, ArrowRightLeft, Pill, Microscope,
   ShieldCheck, BarChart3, Settings2, Boxes, Truck, HeartPulse, Scissors, Droplet, Wrench, Network, ShieldAlert, Plug,
@@ -97,6 +97,10 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     // Phase D1 — the enterprise control plane (organizations, facilities,
     // memberships, hierarchical configuration).
     { href: "/hospital-os/enterprise", label: "Enterprise", icon: Building2 },
+    // Phase D2 — the SaaS commercial control plane (plans/subscription/
+    // entitlements/usage). Distinct from BILLING_GROUP_ADMIN, which is the
+    // hospital patient revenue cycle.
+    { href: "/hospital-os/enterprise/billing", label: "Commercial", icon: CreditCard },
     BILLING_GROUP_ADMIN,
   ],
   AAROGYA_ADMIN: [
@@ -106,6 +110,7 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     { href: "/hospital-os/transfers", label: "Transfers", icon: ArrowRightLeft },
     { href: "/hospital-os/discharge", label: "Discharge", icon: DoorOpen },
     { href: "/hospital-os/enterprise", label: "Enterprise", icon: Building2 },
+    { href: "/hospital-os/enterprise/billing", label: "Commercial", icon: CreditCard },
     BILLING_GROUP_ADMIN,
   ],
   DOCTOR: [
