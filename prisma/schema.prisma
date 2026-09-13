@@ -76,6 +76,10 @@ model User {
   cohortMemberships    CohortMembership[]
   submissions          AssignmentSubmission[]
 
+  // Phase D1 — enterprise membership (organization + facility access grants).
+  organizationMemberships OrganizationMembership[]
+  facilityMemberships     FacilityMembership[]
+
   @@index([role])
 }
 
@@ -467,11 +471,21 @@ model AuditEvent {
   patient     Patient?  @relation(fields: [patientId], references: [id])
   encounterId String?
 
+  // Phase D1 — enterprise tenancy. Organization-scoped events (organization
+  // lifecycle, membership, provisioning, org-level configuration) frequently
+  // have no facility in play, so a dedicated column lets the enterprise audit
+  // trail be queried by organization without threading everything through the
+  // facility relation. Nullable for the same reason facilityId is: historical
+  // rows predate it and are never backfilled.
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
   @@index([type])
   @@index([userId])
   @@index([facilityId])
   @@index([patientId])
   @@index([encounterId])
+  @@index([organizationId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -481,20 +495,81 @@ model AuditEvent {
 // mock portal (untouched — see architecture doc §1.1).
 // ─────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────
+// Phase D1 — Enterprise tenancy lifecycle.
+//
+// Organization was skeletal before D1 (id + name). It now carries an explicit
+// lifecycle, so a tenant can be suspended or deactivated without its clinical
+// and financial data ever being deleted. Every transition is authorized and
+// audited (see src/lib/enterprise/organizations.ts). Licensing / subscription
+// / metering fields are deliberately absent — those are D2, not D1.
+// ─────────────────────────────────────────────────────────────────────────
+enum OrganizationStatus {
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+}
+
+enum FacilityStatus {
+  // A facility that has been created but is not yet open for operations.
+  PROVISIONING
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+}
+
+/// Membership status. Removal is a hard delete of the row (auditable via the
+/// membership.removed event); SUSPENDED is a soft, reversible disable that
+/// keeps the grant on record. A suspended membership grants nothing.
+enum MembershipStatus {
+  ACTIVE
+  SUSPENDED
+}
+
 model Organization {
-  id         String     @id @default(cuid())
-  name       String
-  createdAt  DateTime   @default(now())
-  facilities Facility[]
+  id            String             @id @default(cuid())
+  /// Stable, human-meaningful identifier used for provisioning idempotency and
+  /// admin URLs, distinct from the opaque cuid `id`. Nullable only so the
+  /// pre-D1 default organization could be backfilled without a table rebuild;
+  /// every organization created through provisioning has one.
+  slug          String?            @unique
+  name          String
+  legalName     String?
+  status        OrganizationStatus @default(ACTIVE)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @default(now()) @updatedAt
+  suspendedAt   DateTime?
+  deactivatedAt DateTime?
+
+  facilities   Facility[]
+  memberships  OrganizationMembership[]
+  configValues OrgConfigValue[]
+  auditEvents  AuditEvent[]
+
+  @@index([status])
 }
 
 model Facility {
   id             String       @id @default(cuid())
   name           String
   city           String?
+  /// Stable per-organization identifier (see Organization.slug). Nullable for
+  /// the same backfill reason.
+  slug           String?
   organization   Organization @relation(fields: [organizationId], references: [id])
   organizationId String
-  createdAt      DateTime     @default(now())
+  // Phase D1 — facility lifecycle. Independent of the organization's: an
+  // organization can be ACTIVE while one of its facilities is SUSPENDED. A
+  // non-ACTIVE facility (or one under a non-ACTIVE organization) refuses normal
+  // operations at the tenant-context boundary; clinical data is never deleted.
+  status        FacilityStatus @default(ACTIVE)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @default(now()) @updatedAt
+  suspendedAt   DateTime?
+  deactivatedAt DateTime?
+
+  memberships  FacilityMembership[]
+  configValues FacilityConfigValue[]
 
   departments               Department[]
   wards                     Ward[]
@@ -582,6 +657,121 @@ model Facility {
   goodsReceiptSequences  GoodsReceiptSequence[]
   medicationItemLinks    MedicationItemLink[]
   formularyEntries       FormularyEntry[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase D1 — Enterprise membership.
+//
+// Membership is modelled at the User (identity) level, not the
+// HospitalStaffProfile level, because a platform or organization
+// administrator legitimately has no clinical staff profile. A staff member's
+// clinical HOME facility still lives on HospitalStaffProfile.facilityId; these
+// tables are the ACCESS-GRANT layer that additionally makes multi-facility and
+// multi-level administration explicit.
+//
+// The invariants the schema enforces (application logic enforces the rest):
+//   - a user has at most one membership row per organization / per facility
+//     (the unique constraints below — this is what stops duplicate-membership
+//     races producing two rows)
+//   - `isAdmin` distinguishes an administrator from a standard member WITHIN a
+//     scope. It never crosses scopes: a facility admin is not an org admin, and
+//     neither is a platform admin.
+// ─────────────────────────────────────────────────────────────────────────
+model OrganizationMembership {
+  id             String           @id @default(cuid())
+  user           User             @relation(fields: [userId], references: [id])
+  userId         String
+  organization   Organization     @relation(fields: [organizationId], references: [id])
+  organizationId String
+  /// Organization administrator: may administer this organization and every
+  /// facility under it. A plain member (isAdmin=false) has organization
+  /// STANDING but no organization administration authority.
+  isAdmin        Boolean          @default(false)
+  status         MembershipStatus @default(ACTIVE)
+  createdByUserId String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @default(now()) @updatedAt
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@index([userId])
+}
+
+model FacilityMembership {
+  id         String           @id @default(cuid())
+  user       User             @relation(fields: [userId], references: [id])
+  userId     String
+  facility   Facility         @relation(fields: [facilityId], references: [id])
+  facilityId String
+  /// Facility administrator (the HOSPITAL_ADMIN scope). May administer THIS
+  /// facility only; never the parent organization.
+  isAdmin    Boolean          @default(false)
+  status     MembershipStatus @default(ACTIVE)
+  createdByUserId String?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @default(now()) @updatedAt
+
+  @@unique([userId, facilityId])
+  @@index([facilityId])
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase D1 — Hierarchical configuration foundation.
+//
+// A configuration value is resolved department → facility → organization →
+// hard-coded default (see src/lib/enterprise/configuration.ts). Only EXPLICIT
+// overrides are stored as rows; the absence of a row at a level means "inherit
+// from the level above". `resetToInherited` deletes the row, it does not write
+// a sentinel — so an inherited value is always distinguishable from an override
+// by the presence or absence of a row. Values are stored as strings (JSON for
+// structured values) to keep the foundation extensible without a column per
+// setting. This is deliberately NOT a generic settings engine (brief §13).
+// ─────────────────────────────────────────────────────────────────────────
+model OrgConfigValue {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+  key            String
+  value          String
+  updatedByUserId String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @default(now()) @updatedAt
+
+  @@unique([organizationId, key])
+  @@index([organizationId])
+}
+
+model FacilityConfigValue {
+  id         String   @id @default(cuid())
+  facility   Facility @relation(fields: [facilityId], references: [id])
+  facilityId String
+  key        String
+  value      String
+  updatedByUserId String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @default(now()) @updatedAt
+
+  @@unique([facilityId, key])
+  @@index([facilityId])
+}
+
+model DepartmentConfigValue {
+  id           String     @id @default(cuid())
+  department   Department @relation(fields: [departmentId], references: [id])
+  departmentId String
+  key          String
+  value        String
+  updatedByUserId String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @default(now()) @updatedAt
+
+  @@unique([departmentId, key])
+  @@index([departmentId])
 }
 
 model Department {
@@ -605,6 +795,7 @@ model Department {
   admissionRequests    AdmissionRequest[]
   nursingAssignments   NursingAssignment[]
   purchaseRequisitions PurchaseRequisition[]
+  configValues         DepartmentConfigValue[]
 
   @@unique([facilityId, name])
 }
