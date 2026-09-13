@@ -94,6 +94,9 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     // workspace; this one answers "is it on, is it healthy, what failed".
     { href: "/hospital-os/integrations", label: "Integrations", icon: Plug },
     { href: "/hospital-os/security", label: "Trust & Security", icon: ShieldAlert },
+    // Phase D1 — the enterprise control plane (organizations, facilities,
+    // memberships, hierarchical configuration).
+    { href: "/hospital-os/enterprise", label: "Enterprise", icon: Building2 },
     BILLING_GROUP_ADMIN,
   ],
   AAROGYA_ADMIN: [
@@ -102,6 +105,7 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     { href: "/hospital-os/admissions", label: "Admissions", icon: ClipboardList },
     { href: "/hospital-os/transfers", label: "Transfers", icon: ArrowRightLeft },
     { href: "/hospital-os/discharge", label: "Discharge", icon: DoorOpen },
+    { href: "/hospital-os/enterprise", label: "Enterprise", icon: Building2 },
     BILLING_GROUP_ADMIN,
   ],
   DOCTOR: [

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
-import { NotFoundError } from "./rbac";
+import { NotFoundError, requirePermission } from "./rbac";
+import type { Permission } from "./permissions";
 import type { Role } from "@prisma/client";
 
 /**
@@ -113,6 +114,16 @@ export async function loadActorMemberships(userId: string, role: Role): Promise<
   const primaryFacilityId = staff && staff.status === "ACTIVE" ? staff.facilityId : null;
 
   return { userId, role, isPlatformAdmin, orgMemberships, facilityMemberships, adminOrgIds, primaryFacilityId };
+}
+
+/**
+ * Route helper: check the coarse RBAC permission, then load the caller's
+ * memberships (the fine, tenant-scoped gate). Every enterprise route starts
+ * here, so identity + scope are always server-derived together.
+ */
+export async function requireActorMemberships(permission: Permission): Promise<ActorMemberships> {
+  const session = await requirePermission(permission);
+  return loadActorMemberships(session.userId, session.role);
 }
 
 /** Is this facility one the identity may act in at all (ignoring lifecycle)? */
