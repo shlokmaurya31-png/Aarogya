@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { requireSession } from "../rbac";
 import { sessionAuthAgeMs } from "../session";
+import { loadActorMemberships, canAccessFacility, TenantAccessError } from "../tenantContext";
 import type { AuthorizationActor } from "./types";
 
 /**
@@ -30,14 +31,24 @@ export async function buildAuthorizationActor(
   const authAgeMs = sessionAuthAgeMs(session);
 
   if (session.role === "AAROGYA_ADMIN") {
+    // Platform administration is explicitly cross-facility; the engine still
+    // applies every clinical check on top of it. The organization is derived
+    // for context but the platform admin is not lifecycle-gated (recovery).
+    let organizationId: string | null = null;
+    if (requestedFacilityId) {
+      const fac = await prisma.facility.findUnique({
+        where: { id: requestedFacilityId },
+        select: { organizationId: true },
+      });
+      organizationId = fac?.organizationId ?? null;
+    }
     return {
       userId: session.userId,
       role: session.role,
       staffId: null,
       staffStatus: null,
-      // Platform administration is explicitly cross-facility; the engine still
-      // applies every clinical check on top of it.
       facilityId: requestedFacilityId ?? null,
+      organizationId,
       authAgeMs,
     };
   }
@@ -47,13 +58,50 @@ export async function buildAuthorizationActor(
     select: { id: true, facilityId: true, status: true, departmentId: true },
   });
 
+  // Phase D1 — the effective facility. A requested facility is honoured ONLY
+  // when the identity has persisted membership in it (multi-facility access);
+  // otherwise the home facility is used, which leaves any cross-facility
+  // resource to be denied by the engine's facility-boundary check (CONFLICT).
+  // Whichever facility is effective, its tenant must be ACTIVE — a suspended
+  // organization or facility refuses normal operation here too, so the ten-odd
+  // engine-based routes are gated exactly as the requireFacilityStaff routes.
+  let effectiveFacilityId = staff?.facilityId ?? null;
+  let organizationId: string | null = null;
+
+  if (requestedFacilityId && requestedFacilityId !== staff?.facilityId) {
+    const m = await loadActorMemberships(session.userId, session.role);
+    const fac = await prisma.facility.findUnique({
+      where: { id: requestedFacilityId },
+      select: { id: true, organizationId: true },
+    });
+    if (fac && canAccessFacility(m, fac.id, fac.organizationId)) {
+      effectiveFacilityId = fac.id;
+      organizationId = fac.organizationId;
+    }
+  }
+
+  if (effectiveFacilityId) {
+    const fac = await prisma.facility.findUnique({
+      where: { id: effectiveFacilityId },
+      select: { organizationId: true, status: true, organization: { select: { status: true } } },
+    });
+    organizationId = fac?.organizationId ?? organizationId;
+    // The facility the actor is scoped to must belong to an ACTIVE tenant.
+    // (A suspended staff profile is separately handled by the engine's
+    // staff-status step; this gates the tenant, not the individual.)
+    if (fac) {
+      if (fac.organization.status !== "ACTIVE") throw new TenantAccessError("This organization is not active.");
+      if (fac.status !== "ACTIVE") throw new TenantAccessError("This facility is not active.");
+    }
+  }
+
   return {
     userId: session.userId,
     role: session.role,
     staffId: staff?.id ?? null,
     staffStatus: staff?.status ?? null,
-    // Derived from the staff profile. A requested facility is NOT honoured here.
-    facilityId: staff?.facilityId ?? null,
+    facilityId: effectiveFacilityId,
+    organizationId,
     departmentId: staff?.departmentId ?? null,
     authAgeMs,
   };

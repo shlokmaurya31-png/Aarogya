@@ -98,8 +98,18 @@ export interface AuthorizationActor {
   /** Null for AAROGYA_ADMIN and patient accounts. */
   staffId: string | null;
   staffStatus: string | null;
-  /** Derived from the staff profile, never from the request. */
+  /**
+   * Effective facility, derived from the staff profile or from a requested
+   * facility the identity has PERSISTED membership in — never from the request
+   * alone. See src/lib/auth/tenantContext.ts.
+   */
   facilityId: string | null;
+  /**
+   * Phase D1 — the organization that owns the effective facility. Derived
+   * server-side alongside facilityId. Lets a resource's tenant be checked at
+   * the organization level, not just the facility level.
+   */
+  organizationId?: string | null;
   departmentId?: string | null;
   /** Milliseconds since this session last authenticated, for step-up. */
   authAgeMs?: number | null;
