@@ -1,12 +1,14 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutGrid, BedDouble, ClipboardList, LogOut, Building2, Stethoscope,
   ClipboardCheck, FlaskConical, ScanLine, Receipt, DoorOpen,
   UserPlus, Siren, ArrowRightLeft, Pill, Microscope,
-  ShieldCheck, BarChart3, Settings2, Boxes, Truck, HeartPulse, Scissors, Droplet, Wrench, Network, ShieldAlert, Plug} from "lucide-react";
+  ShieldCheck, BarChart3, Settings2, Boxes, Truck, HeartPulse, Scissors, Droplet, Wrench, Network, ShieldAlert, Plug,
+  Menu, X, Search, Bell} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/navigation/ThemeToggle";
 import { StatusPill } from "@/components/ui/StatusPill";
@@ -152,6 +154,79 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
   ],
 };
 
+function NavList({ nav, pathname, onNavigate }: { nav: NavItem[]; pathname: string; onNavigate?: () => void }) {
+  const itemClass = (active: boolean) =>
+    cn(
+      "focus-ring relative flex items-center gap-2.5 rounded-control px-3 py-2 text-[13px] font-medium transition-colors duration-[130ms]",
+      active
+        ? "bg-brand-subtle text-brand before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-brand"
+        : "text-text-secondary hover:bg-fill-hover hover:text-text-primary"
+    );
+  return (
+    <nav className="flex-1 space-y-0.5 overflow-y-auto">
+      {nav.map((item) => {
+        // Nested group (Diagnostics): the parent is a section label, not a link,
+        // since its own href would duplicate the first child's destination.
+        if (item.children) {
+          return (
+            <div key={item.href} className="pt-2">
+              <div className="flex items-center gap-2 px-3 pb-1 type-label text-text-tertiary">
+                <item.icon size={12} /> {item.label}
+              </div>
+              {item.children.map((child) => {
+                const active = pathname === child.href;
+                return (
+                  <Link key={child.href} href={child.href} onClick={onNavigate} className={cn(itemClass(active), "ml-2.5 py-1.5 text-[12.5px]")}>
+                    <child.icon size={14} /> {child.label}
+                  </Link>
+                );
+              })}
+            </div>
+          );
+        }
+        const active = pathname === item.href;
+        return (
+          <Link key={item.href} href={item.href} onClick={onNavigate} className={itemClass(active)}>
+            <item.icon size={15} /> {item.label}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
+function SidebarContent({
+  nav, pathname, displayName, displayRole, facilityName, onNavigate, onLogout,
+}: {
+  nav: NavItem[]; pathname: string; displayName: string; displayRole: string;
+  facilityName: string; onNavigate?: () => void; onLogout: () => void;
+}) {
+  return (
+    <div className="flex h-full flex-col px-3 py-4">
+      <Link href="/hospital-os" onClick={onNavigate} className="focus-ring flex items-center gap-2 rounded-control px-2 py-1">
+        <span className="flex size-7 items-center justify-center rounded-md bg-brand-strong text-on-brand">
+          <Building2 size={16} />
+        </span>
+        <span className="type-heading text-text-primary">Hospital OS</span>
+      </Link>
+      <div className="mt-4 rounded-surface border border-hairline bg-fill-subtle px-3 py-2.5">
+        <p className="truncate text-[13px] font-medium text-text-primary">{displayName}</p>
+        <p className="mt-0.5 truncate text-[11px] text-text-tertiary">{facilityName}</p>
+        <div className="mt-2"><StatusPill label={displayRole} tone="brand" /></div>
+      </div>
+      <div className="mt-4 min-h-0 flex-1">
+        <NavList nav={nav} pathname={pathname} onNavigate={onNavigate} />
+      </div>
+      <div className="mt-2 space-y-0.5 border-t border-hairline pt-2">
+        <ThemeToggle variant="sidebar" />
+        <button onClick={onLogout} className="focus-ring flex w-full items-center gap-2.5 rounded-control px-3 py-2 text-left text-[12.5px] font-medium text-text-tertiary transition-colors hover:bg-danger/10 hover:text-danger">
+          <LogOut size={14} /> Sign out
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function HospitalShell({
   children, displayName, displayRole, facilityName, role,
 }: {
@@ -163,6 +238,7 @@ export function HospitalShell({
 }) {
   const pathname = usePathname();
   const router = useRouter();
+  const [mobileOpen, setMobileOpen] = useState(false);
   const nav = NAV_BY_ROLE[role] ?? [{ href: "/hospital-os", label: "Command Center", icon: LayoutGrid }];
 
   async function handleLogout() {
@@ -174,51 +250,54 @@ export function HospitalShell({
   return (
     <div className="flex min-h-screen bg-surface text-text-primary">
       <ToastViewport />
-      <aside className="sticky top-0 hidden h-screen w-[232px] shrink-0 flex-col border-r border-hairline bg-card px-4 py-5 lg:flex">
-        <Link href="/hospital-os" className="flex items-center gap-2 px-2 text-[14px] font-semibold tracking-tight">
-          <Building2 size={18} className="text-cyan" /> Hospital OS
-        </Link>
-        <div className="mt-5 rounded-lg border border-hairline bg-black/[0.02] px-3 py-3">
-          <p className="truncate text-[13px] font-medium">{displayName}</p>
-          <p className="mt-0.5 truncate text-[11px] text-text-tertiary">{facilityName}</p>
-          <div className="mt-2"><StatusPill label={displayRole} tone="cyan" className="rounded-md" /></div>
-        </div>
-        <nav className="mt-5 flex-1 space-y-0.5">
-          {nav.map((item) => {
-            // Nested group (Diagnostics — brief §19): the parent is a
-            // section label, not a link, since its own href would
-            // otherwise duplicate the first child's destination.
-            if (item.children) {
-              return (
-                <div key={item.href}>
-                  <div className="flex items-center gap-2.5 px-3 pt-2 text-[11px] font-medium uppercase tracking-wide text-text-tertiary">
-                    <item.icon size={13} /> {item.label}
-                  </div>
-                  {item.children.map((child) => {
-                    const active = pathname === child.href;
-                    return (
-                      <Link key={child.href} href={child.href} className={cn("ml-3 flex items-center gap-2.5 rounded-md px-3 py-1.5 text-[12.5px] transition", active ? "bg-cyan/10 text-cyan" : "text-text-secondary hover:bg-black/[0.03] hover:text-text-primary")}>
-                        <child.icon size={13} /> {child.label}
-                      </Link>
-                    );
-                  })}
-                </div>
-              );
-            }
-            const active = pathname === item.href;
-            return (
-              <Link key={item.href} href={item.href} className={cn("flex items-center gap-2.5 rounded-md px-3 py-2 text-[13px] transition", active ? "bg-cyan/10 text-cyan" : "text-text-secondary hover:bg-black/[0.03] hover:text-text-primary")}>
-                <item.icon size={15} /> {item.label}
-              </Link>
-            );
-          })}
-        </nav>
-        <ThemeToggle variant="sidebar" className="mt-1 border-t border-hairline pt-3" />
-        <button onClick={handleLogout} className="flex items-center gap-2.5 rounded-md border-t border-hairline px-3 py-2.5 pt-3 text-left text-[12.5px] text-text-tertiary transition hover:text-red">
-          <LogOut size={14} /> Sign out
-        </button>
+
+      {/* Desktop sidebar */}
+      <aside className="sticky top-0 hidden h-screen w-[240px] shrink-0 border-r border-hairline bg-card lg:block">
+        <SidebarContent nav={nav} pathname={pathname} displayName={displayName} displayRole={displayRole} facilityName={facilityName} onLogout={handleLogout} />
       </aside>
-      <main className="min-w-0 flex-1 px-4 pb-16 pt-6 sm:px-6 lg:px-8">{children}</main>
+
+      {/* Mobile drawer */}
+      {mobileOpen && (
+        <div className="fixed inset-0 z-50 lg:hidden">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-[fadeIn_150ms_ease-out]" onClick={() => setMobileOpen(false)} />
+          <aside className="absolute inset-y-0 left-0 w-[280px] max-w-[85vw] border-r border-hairline bg-card shadow-e3 animate-[slideInLeft_190ms_cubic-bezier(0.16,1,0.3,1)]">
+            <button onClick={() => setMobileOpen(false)} className="focus-ring absolute right-2 top-2 flex size-8 items-center justify-center rounded-control text-text-tertiary hover:bg-fill-hover">
+              <X size={16} />
+            </button>
+            <SidebarContent nav={nav} pathname={pathname} displayName={displayName} displayRole={displayRole} facilityName={facilityName} onNavigate={() => setMobileOpen(false)} onLogout={handleLogout} />
+          </aside>
+        </div>
+      )}
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        {/* Topbar */}
+        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-hairline bg-card/80 px-3 backdrop-blur-md sm:px-5">
+          <button onClick={() => setMobileOpen(true)} className="focus-ring flex size-9 items-center justify-center rounded-control text-text-secondary hover:bg-fill-hover lg:hidden" aria-label="Open navigation">
+            <Menu size={18} />
+          </button>
+          <div className="flex min-w-0 items-center gap-2">
+            <Building2 size={15} className="hidden shrink-0 text-brand sm:block" />
+            <span className="truncate text-[13px] font-medium text-text-primary">{facilityName}</span>
+          </div>
+          <div className="ml-auto flex items-center gap-1.5">
+            <button className="focus-ring hidden h-9 items-center gap-2 rounded-control border border-hairline bg-fill-subtle px-3 text-[12.5px] text-text-tertiary transition-colors hover:bg-fill-hover md:flex" aria-label="Search">
+              <Search size={14} /> <span>Search</span>
+              <kbd className="ml-2 rounded border border-hairline px-1 text-[10px] text-text-tertiary">⌘K</kbd>
+            </button>
+            <button className="focus-ring flex size-9 items-center justify-center rounded-control text-text-secondary hover:bg-fill-hover md:hidden" aria-label="Search">
+              <Search size={16} />
+            </button>
+            <button className="focus-ring relative flex size-9 items-center justify-center rounded-control text-text-secondary hover:bg-fill-hover" aria-label="Notifications">
+              <Bell size={16} />
+            </button>
+            <div className="ml-1 flex size-8 items-center justify-center rounded-full bg-brand-subtle text-[12px] font-semibold text-brand" title={displayName}>
+              {displayName.split(" ").map((w) => w[0]).slice(0, 2).join("")}
+            </div>
+          </div>
+        </header>
+
+        <main className="min-w-0 flex-1 px-4 pb-16 pt-5 sm:px-6 lg:px-8">{children}</main>
+      </div>
     </div>
   );
 }

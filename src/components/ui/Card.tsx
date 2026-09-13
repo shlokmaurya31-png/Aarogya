@@ -1,17 +1,19 @@
 import { cn } from "@/lib/utils";
-import type { HTMLAttributes } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 
 export function Card({
   className,
   children,
   raised = false,
+  padded = true,
   ...props
-}: HTMLAttributes<HTMLDivElement> & { raised?: boolean }) {
+}: HTMLAttributes<HTMLDivElement> & { raised?: boolean; padded?: boolean }) {
   return (
     <div
       className={cn(
-        "rounded-[20px] border border-hairline p-5",
-        raised ? "bg-card-raised" : "bg-card",
+        "rounded-surface border border-hairline",
+        raised ? "bg-card-raised shadow-e1" : "bg-card",
+        padded && "p-4",
         className
       )}
       {...props}
@@ -21,10 +23,30 @@ export function Card({
   );
 }
 
-export function CardLabel({ children, className }: { children: React.ReactNode; className?: string }) {
+export function CardHeader({
+  icon,
+  title,
+  action,
+  className,
+}: {
+  icon?: ReactNode;
+  title: ReactNode;
+  action?: ReactNode;
+  className?: string;
+}) {
   return (
-    <p className={cn("text-[11px] uppercase tracking-[0.14em] text-text-tertiary", className)}>
-      {children}
-    </p>
+    <div className={cn("flex items-center justify-between gap-3", className)}>
+      <div className="flex min-w-0 items-center gap-2">
+        {icon && <span className="text-brand [&>svg]:size-[15px]">{icon}</span>}
+        <CardLabel>{title}</CardLabel>
+      </div>
+      {action}
+    </div>
+  );
+}
+
+export function CardLabel({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <p className={cn("type-label truncate", className)}>{children}</p>
   );
 }

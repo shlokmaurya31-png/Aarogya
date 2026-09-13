@@ -22,6 +22,36 @@
   --red-dim: rgba(220, 38, 38, 0.12);
   --cyan-dim: rgba(14, 116, 144, 0.12);
 
+  /* ---- Aarogya semantic layer (additive; see /docs/design/design-system.md) ---- */
+  /* Brand: teal. `brand` is the adaptive accent (text/icon/border); `brand-strong`
+     is the constant solid fill that always takes white text via `on-brand`. */
+  --brand: #0e7490;
+  --brand-strong: #0e7490;
+  --brand-subtle: rgba(14, 116, 144, 0.12);
+  --on-brand: #ffffff;
+
+  /* Status roles. One hue, one meaning. success=green, warning=amber,
+     danger=red, info=blue, critical=life-safety red (stronger than danger). */
+  --success: var(--emerald);
+  --success-dim: var(--emerald-dim);
+  --warning: var(--amber);
+  --warning-dim: var(--amber-dim);
+  --danger: var(--red);
+  --danger-dim: var(--red-dim);
+  --info: #2563eb;
+  --info-dim: rgba(37, 99, 235, 0.12);
+  --critical: #b91c1c;
+  --critical-dim: rgba(185, 28, 28, 0.14);
+
+  /* Neutral fills that invert correctly in dark mode. Replaces the 284
+     `bg-black/[…]` overlays that vanish on dark surfaces. */
+  --fill-subtle: rgba(0, 0, 0, 0.03);
+  --fill-muted: rgba(0, 0, 0, 0.05);
+  --fill-hover: rgba(0, 0, 0, 0.045);
+  --fill-active: rgba(0, 0, 0, 0.07);
+
+  --focus: #0e7490;
+
   --glass-bg: rgba(255, 255, 255, 0.6);
   --glass-bg-strong: rgba(255, 255, 255, 0.78);
   --scrollbar-thumb: rgba(0, 0, 0, 0.14);
@@ -29,6 +59,12 @@
 
   --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  --duration-instant: 80ms;
+  --duration-fast: 130ms;
+  --duration-base: 190ms;
+  --duration-slow: 260ms;
 
   color-scheme: light;
 }
@@ -55,6 +91,29 @@
     --amber-dim: rgba(251, 191, 36, 0.14);
     --red-dim: rgba(248, 113, 113, 0.14);
     --cyan-dim: rgba(34, 211, 238, 0.14);
+
+    --brand: #22d3ee;
+    --brand-strong: #0e7490;
+    --brand-subtle: rgba(34, 211, 238, 0.14);
+    --on-brand: #ffffff;
+
+    --success: var(--emerald);
+    --success-dim: var(--emerald-dim);
+    --warning: var(--amber);
+    --warning-dim: var(--amber-dim);
+    --danger: var(--red);
+    --danger-dim: var(--red-dim);
+    --info: #60a5fa;
+    --info-dim: rgba(96, 165, 250, 0.16);
+    --critical: #fca5a5;
+    --critical-dim: rgba(248, 113, 113, 0.18);
+
+    --fill-subtle: rgba(255, 255, 255, 0.04);
+    --fill-muted: rgba(255, 255, 255, 0.06);
+    --fill-hover: rgba(255, 255, 255, 0.05);
+    --fill-active: rgba(255, 255, 255, 0.08);
+
+    --focus: #22d3ee;
 
     --glass-bg: rgba(23, 23, 27, 0.6);
     --glass-bg-strong: rgba(23, 23, 27, 0.78);
@@ -87,6 +146,29 @@
   --red-dim: rgba(248, 113, 113, 0.14);
   --cyan-dim: rgba(34, 211, 238, 0.14);
 
+  --brand: #22d3ee;
+  --brand-strong: #0e7490;
+  --brand-subtle: rgba(34, 211, 238, 0.14);
+  --on-brand: #ffffff;
+
+  --success: var(--emerald);
+  --success-dim: var(--emerald-dim);
+  --warning: var(--amber);
+  --warning-dim: var(--amber-dim);
+  --danger: var(--red);
+  --danger-dim: var(--red-dim);
+  --info: #60a5fa;
+  --info-dim: rgba(96, 165, 250, 0.16);
+  --critical: #fca5a5;
+  --critical-dim: rgba(248, 113, 113, 0.18);
+
+  --fill-subtle: rgba(255, 255, 255, 0.04);
+  --fill-muted: rgba(255, 255, 255, 0.06);
+  --fill-hover: rgba(255, 255, 255, 0.05);
+  --fill-active: rgba(255, 255, 255, 0.08);
+
+  --focus: #22d3ee;
+
   --glass-bg: rgba(23, 23, 27, 0.6);
   --glass-bg-strong: rgba(23, 23, 27, 0.78);
   --scrollbar-thumb: rgba(255, 255, 255, 0.16);
@@ -112,12 +194,45 @@
   --color-red: var(--red);
   --color-cyan: var(--cyan);
 
+  /* Aarogya semantic color utilities */
+  --color-brand: var(--brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-subtle: var(--brand-subtle);
+  --color-on-brand: var(--on-brand);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+  --color-critical: var(--critical);
+  --color-focus: var(--focus);
+  --color-fill-subtle: var(--fill-subtle);
+  --color-fill-muted: var(--fill-muted);
+  --color-fill-hover: var(--fill-hover);
+  --color-fill-active: var(--fill-active);
+
   --font-sans: var(--font-inter);
   --font-mono: var(--font-geist-mono);
 
-  --radius-card: 24px;
-  --radius-card-lg: 28px;
-  --radius-card-sm: 20px;
+  /* Card radius, retuned down from 24/28/20 — "huge rounded cards" was an
+     anti-pattern. No component uses the `rounded-card` utility today, so this
+     only sets the default for future/migrated usage. */
+  --radius-card: 16px;
+  --radius-card-lg: 20px;
+  --radius-card-sm: 12px;
+
+  /* Controlled radius scale (concentric-radius friendly) */
+  --radius-control: 8px;
+  --radius-field: 8px;
+  --radius-surface: 12px;
+  --radius-panel: 16px;
+
+  /* Elevation: shadows for depth, borders for structure */
+  --shadow-e1: 0 1px 2px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-e2: 0 2px 4px rgba(0, 0, 0, 0.04), 0 8px 16px -8px rgba(0, 0, 0, 0.12);
+  --shadow-e3: 0 4px 8px rgba(0, 0, 0, 0.06), 0 24px 48px -24px rgba(0, 0, 0, 0.16);
+
+  /* Motion tokens */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
 }
 
 body {
@@ -183,6 +298,71 @@ body {
   text-wrap: balance;
 }
 
+/* ---- Aarogya typography scale (semantic, role-named) ----
+   Line-height by role: headings ~1.1, body 1.5. Negative tracking on large
+   display type, positive on small caps. See /docs/design/design-system.md. */
+.type-display {
+  font-size: clamp(2rem, 1.4rem + 2.4vw, 3.25rem);
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  font-weight: 600;
+  text-wrap: balance;
+}
+.type-title {
+  font-size: 1.5rem;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  font-weight: 600;
+}
+.type-heading {
+  font-size: 1.125rem;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  font-weight: 600;
+}
+.type-subheading {
+  font-size: 0.9375rem;
+  line-height: 1.3;
+  font-weight: 600;
+}
+.type-body {
+  font-size: 0.875rem;
+  line-height: 1.55;
+  font-weight: 400;
+}
+.type-secondary {
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.type-label {
+  font-size: 0.6875rem;
+  line-height: 1.2;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--text-tertiary);
+}
+.type-metric {
+  font-size: 1.75rem;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+/* Clinical values must never reflow as they update. */
+.type-clinical {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* Standard focus ring — keyboard-visible, brand-colored, WCAG-friendly. */
+.focus-ring:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: inherit;
+}
+
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
@@ -195,6 +375,21 @@ body {
   100% {
     transform: translateX(100%);
   }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideInLeft {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* Film-grain noise for the landing page: pure SVG, no network request. */

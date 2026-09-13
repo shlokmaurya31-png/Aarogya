@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Building2 } from "lucide-react";
+import { Building2, ShieldCheck } from "lucide-react";
 import { Card } from "@/components/ui/Card";
+import { Button } from "@/components/ui/Button";
+import { Input, Field } from "@/components/ui/Input";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { useToastStore } from "@/store/useToastStore";
 
@@ -36,36 +38,67 @@ export default function HospitalOsLoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface px-4">
+    <div className="grid min-h-screen bg-surface lg:grid-cols-2">
       <ToastViewport />
-      <Card className="w-full max-w-sm rounded-[20px]">
-        <div className="flex items-center gap-2 text-[15px] font-semibold">
-          <Building2 size={18} className="text-cyan" /> Aarogya Hospital OS
+
+      {/* Brand panel (desktop) */}
+      <div className="relative hidden flex-col justify-between overflow-hidden bg-brand-strong p-10 text-on-brand lg:flex">
+        <div className="flex items-center gap-2.5">
+          <span className="flex size-9 items-center justify-center rounded-lg bg-white/15">
+            <Building2 size={20} />
+          </span>
+          <span className="text-[16px] font-semibold tracking-tight">Aarogya Hospital OS</span>
         </div>
-        <p className="mt-1 text-[12.5px] text-text-secondary">Aarogya Medical Centre</p>
-        <form onSubmit={handleSubmit} className="mt-5 space-y-3">
-          <div>
-            <label className="text-[11px] uppercase tracking-[0.1em] text-text-tertiary">Email</label>
-            <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required className="mt-1.5 w-full rounded-md border border-hairline bg-black/[0.02] px-3 py-2.5 text-[13px] outline-none focus:border-cyan/40" />
+        <div className="max-w-md">
+          <h1 className="text-[30px] font-semibold leading-tight tracking-tight text-balance">
+            The operating system for modern Indian healthcare.
+          </h1>
+          <p className="mt-3 text-[14px] leading-relaxed text-on-brand/80">
+            One platform for admissions, wards, diagnostics, pharmacy, billing and
+            interoperability — built for clinical speed and patient safety.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 text-[12.5px] text-on-brand/80">
+          <ShieldCheck size={15} /> ABDM-ready · consent-driven · audited
+        </div>
+      </div>
+
+      {/* Form */}
+      <div className="flex items-center justify-center px-4 py-10">
+        <div className="w-full max-w-sm">
+          <div className="mb-6 flex items-center gap-2 lg:hidden">
+            <span className="flex size-8 items-center justify-center rounded-lg bg-brand-strong text-on-brand">
+              <Building2 size={18} />
+            </span>
+            <span className="type-heading">Aarogya Hospital OS</span>
           </div>
-          <div>
-            <label className="text-[11px] uppercase tracking-[0.1em] text-text-tertiary">Password</label>
-            <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" required className="mt-1.5 w-full rounded-md border border-hairline bg-black/[0.02] px-3 py-2.5 text-[13px] outline-none focus:border-cyan/40" />
-          </div>
-          <button type="submit" disabled={loading} className="w-full rounded-md bg-cyan py-2.5 text-[13px] font-medium text-ink hover:brightness-110 disabled:opacity-60">
-            {loading ? "Signing in..." : "Sign in"}
-          </button>
-        </form>
-        {isDev && (
-          <div className="mt-5 rounded-md border border-hairline bg-black/[0.02] p-3 text-[11px] leading-relaxed text-text-tertiary">
-            <p className="font-medium text-text-secondary">Demo accounts (dev only, password Hospital@123)</p>
-            <p className="mt-1">admin@amc-demo.aarogya (Hospital Admin)</p>
-            <p>doctor1@amc-demo.aarogya (Doctor)</p>
-            <p>nurse1@amc-demo.aarogya (Nurse)</p>
-            <p>labtech@amc-demo.aarogya · radtech@amc-demo.aarogya · billing@amc-demo.aarogya</p>
-          </div>
-        )}
-      </Card>
+
+          <h2 className="type-title">Sign in</h2>
+          <p className="mt-1 type-secondary">Aarogya Medical Centre</p>
+
+          <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+            <Field label="Email" htmlFor="email">
+              <Input id="email" value={email} onChange={(e) => setEmail(e.target.value)} type="email" autoComplete="email" required placeholder="you@facility.org" />
+            </Field>
+            <Field label="Password" htmlFor="password">
+              <Input id="password" value={password} onChange={(e) => setPassword(e.target.value)} type="password" autoComplete="current-password" required placeholder="••••••••" />
+            </Field>
+            <Button type="submit" variant="primary" size="lg" loading={loading} className="w-full">
+              {loading ? "Signing in…" : "Sign in"}
+            </Button>
+          </form>
+
+          {isDev && (
+            <div className="mt-6 rounded-surface border border-hairline bg-fill-subtle p-3.5 text-[11px] leading-relaxed text-text-tertiary">
+              <p className="font-medium text-text-secondary">Demo accounts (dev only · password Hospital@123)</p>
+              <p className="mt-1.5">admin@amc-demo.aarogya <span className="text-text-tertiary/70">Hospital Admin</span></p>
+              <p>doctor1@amc-demo.aarogya <span className="text-text-tertiary/70">Doctor</span></p>
+              <p>nurse1@amc-demo.aarogya <span className="text-text-tertiary/70">Nurse</span></p>
+              <p className="mt-1">labtech@ · radtech@ · billing@amc-demo.aarogya</p>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

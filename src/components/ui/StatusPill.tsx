@@ -1,32 +1,71 @@
 import { cn } from "@/lib/utils";
 
+// Semantic tones are the target vocabulary. The color-named keys
+// (emerald/amber/red/cyan) are retained as backward-compatible aliases so
+// existing callers keep rendering while the codebase migrates to roles.
 const TONES = {
-  emerald: "text-emerald bg-emerald/10 border-emerald/20",
-  amber: "text-amber bg-amber/10 border-amber/20",
-  red: "text-red bg-red/10 border-red/20",
-  cyan: "text-cyan bg-cyan/10 border-cyan/20",
-  neutral: "text-text-secondary bg-black/[0.045] border-hairline",
+  // roles
+  neutral: "text-text-secondary bg-fill-muted border-hairline",
+  brand: "text-brand bg-brand/10 border-brand/20",
+  success: "text-success bg-success/12 border-success/25",
+  warning: "text-warning bg-warning/12 border-warning/25",
+  danger: "text-danger bg-danger/12 border-danger/25",
+  critical: "text-critical bg-critical/14 border-critical/30 font-semibold",
+  info: "text-info bg-info/12 border-info/25",
+  pending: "text-text-secondary bg-fill-muted border-hairline",
+  // legacy color aliases -> mapped to roles
+  emerald: "text-success bg-success/12 border-success/25",
+  amber: "text-warning bg-warning/12 border-warning/25",
+  red: "text-danger bg-danger/12 border-danger/25",
+  cyan: "text-brand bg-brand/10 border-brand/20",
 } as const;
+
+export type StatusTone = keyof typeof TONES;
 
 export function StatusPill({
   label,
   tone = "neutral",
+  dot = true,
   className,
 }: {
   label: string;
-  tone?: keyof typeof TONES;
+  tone?: StatusTone;
+  dot?: boolean;
   className?: string;
 }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium capitalize",
+        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-medium capitalize leading-5",
         TONES[tone],
         className
       )}
     >
-      <span className="h-1.5 w-1.5 rounded-full bg-current" />
+      {dot && <span className="size-1.5 rounded-full bg-current" />}
       {label}
+    </span>
+  );
+}
+
+// A flat badge (no dot, squarer) for counts and labels.
+export function Badge({
+  children,
+  tone = "neutral",
+  className,
+}: {
+  children: React.ReactNode;
+  tone?: StatusTone;
+  className?: string;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] font-medium tabular-nums",
+        TONES[tone],
+        className
+      )}
+    >
+      {children}
     </span>
   );
 }
