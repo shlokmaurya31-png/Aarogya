@@ -47,6 +47,7 @@ export function CommercialWorkspace() {
   const [orgId, setOrgId] = useState<string | null>(null);
   const [summary, setSummary] = useState<any>(null);
   const [billing, setBilling] = useState<any>(null);
+  const [recon, setRecon] = useState<any[] | null>(null);
   const [plans, setPlans] = useState<any[]>([]);
 
   useEffect(() => {
@@ -59,6 +60,8 @@ export function CommercialWorkspace() {
   const load = useCallback((id: string) => {
     api(`/api/hospital/enterprise/commercial/summary?organizationId=${id}`).then(({ ok, data }) => setSummary(ok ? data : null));
     api(`/api/hospital/enterprise/commercial/billing/summary?organizationId=${id}`).then(({ ok, data }) => setBilling(ok ? data : null));
+    // Reconciliation is platform-only; a 403 for ordinary admins simply hides it.
+    api(`/api/hospital/enterprise/commercial/billing/reconciliation`).then(({ ok, data }) => setRecon(ok ? (data.exceptions ?? []) : null));
   }, []);
   useEffect(() => { if (orgId) load(orgId); }, [orgId, load]);
 
@@ -196,6 +199,10 @@ export function CommercialWorkspace() {
                       <p>{billing.account.billingName} <span className="text-text-tertiary">· {billing.account.currency}</span></p>
                     </div>
                   )}
+                  <div>
+                    <p className="text-[11px] text-text-tertiary">Provider</p>
+                    <p>{billing.account?.providerKind ?? "NONE"}{billing.account?.providerLinked ? " · linked" : ""}</p>
+                  </div>
                 </div>
                 {canManage && (
                   <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-hairline pt-3">
@@ -205,6 +212,9 @@ export function CommercialWorkspace() {
                     </Button>
                     <Button size="sm" variant="secondary" onClick={() => act("Renew (invoice only)", "/api/hospital/enterprise/commercial/billing/renew", { method: "POST", body: JSON.stringify({ organizationId: orgId, providerKind: "NONE" }) })}>
                       Generate invoice
+                    </Button>
+                    <Button size="sm" variant="secondary" onClick={() => act("Dunning run", "/api/hospital/enterprise/commercial/billing/dunning", { method: "POST" })}>
+                      Run dunning
                     </Button>
                   </div>
                 )}
@@ -256,6 +266,29 @@ export function CommercialWorkspace() {
                       </div>
                     ))}
                   </div>
+                </Card>
+              )}
+
+              {/* Reconciliation — platform/admin only (null when the caller lacks access) */}
+              {recon !== null && (
+                <Card className="p-4">
+                  <div className="mb-3 flex items-center gap-2"><SlidersHorizontal size={15} className="text-brand" /><CardLabel>Reconciliation</CardLabel></div>
+                  {recon.length === 0 ? (
+                    <p className="text-[12px] text-text-tertiary">No unresolved exceptions — Aarogya and the provider agree.</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {recon.map((e: any) => (
+                        <div key={e.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-2 text-[13px]">
+                          <div className="flex items-center gap-2">
+                            <StatusPill label={e.severity ?? "MEDIUM"} tone={e.severity === "CRITICAL" || e.severity === "HIGH" ? "danger" : "warning"} dot={false} />
+                            <span>{e.kind}</span>
+                            <span className="text-[11px] text-text-tertiary">{e.description ?? e.entityType ?? ""}</span>
+                          </div>
+                          <span className="text-[11px] text-text-tertiary">{new Date(e.createdAt).toLocaleDateString()}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </Card>
               )}
             </>
