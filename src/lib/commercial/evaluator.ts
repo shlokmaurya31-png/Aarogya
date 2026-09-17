@@ -55,11 +55,15 @@ function notExpired(row: { expiresAt?: Date | null }, now: Date): boolean {
  * timestamps, never trusted from the status column alone.
  */
 export function deriveCommercialState(
-  sub: { status: SubscriptionStatus; trialEndsAt: Date | null; cancelAtPeriodEnd: boolean; currentPeriodEnd: Date | null } | null,
+  sub: { status: SubscriptionStatus; trialEndsAt: Date | null; cancelAtPeriodEnd: boolean; currentPeriodEnd: Date | null; gracePeriodEndsAt?: Date | null } | null,
   now: Date
 ): { status: SubscriptionStatus | "NONE"; active: boolean; reason?: string } {
   if (!sub) return { status: "NONE", active: false, reason: "NO_SUBSCRIPTION" };
   if (sub.status === "TRIAL" && sub.trialEndsAt && sub.trialEndsAt <= now) return { status: sub.status, active: false, reason: "TRIAL_ENDED" };
+  // A grace window is a fixed-length soft state; once its end passes it must lapse
+  // even before a transition flips the column (this codebase runs no cron — expiry
+  // is always derived from timestamps on read, as with trials and periods).
+  if (sub.status === "GRACE" && sub.gracePeriodEndsAt && sub.gracePeriodEndsAt <= now) return { status: sub.status, active: false, reason: "GRACE_ENDED" };
   if (sub.cancelAtPeriodEnd && sub.currentPeriodEnd && sub.currentPeriodEnd <= now) return { status: sub.status, active: false, reason: "PERIOD_ENDED" };
   const active = isCommercialActive(sub.status);
   return { status: sub.status, active, reason: active ? undefined : sub.status };
@@ -76,7 +80,7 @@ export async function evaluateEntitlement(
 
   const sub = await prisma.organizationSubscription.findUnique({
     where: { organizationId: args.organizationId },
-    select: { id: true, status: true, trialEndsAt: true, cancelAtPeriodEnd: true, currentPeriodEnd: true },
+    select: { id: true, status: true, trialEndsAt: true, cancelAtPeriodEnd: true, currentPeriodEnd: true, gracePeriodEndsAt: true },
   });
   const commercial = deriveCommercialState(sub, now);
 
@@ -86,8 +90,11 @@ export async function evaluateEntitlement(
 
   if (def) {
     if (spec.scope === "FACILITY" && args.facilityId) {
-      const fo = await prisma.facilityEntitlementOverride.findUnique({
-        where: { facilityId_entitlementId: { facilityId: args.facilityId, entitlementId: def.id } },
+      // Defense in depth: only a facility that actually belongs to the evaluated
+      // organization may contribute an override. Even if a caller passes a
+      // facilityId from another tenant, its override can never leak across orgs.
+      const fo = await prisma.facilityEntitlementOverride.findFirst({
+        where: { facilityId: args.facilityId, entitlementId: def.id, facility: { organizationId: args.organizationId } },
       });
       if (fo && notExpired(fo, now)) { chosen = fo; source = "FACILITY_OVERRIDE"; }
     }

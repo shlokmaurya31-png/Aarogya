@@ -178,6 +178,33 @@ async function run() {
     if (!(await hasEntitlement({ organizationId: ID.orgC, key: "hospital_os" }))) throw new Error("lost access on scheduled cancel");
   });
 
+  console.log("[D2.5 hardening — boundary & lifecycle edge cases]");
+  {
+    // Facility override must NOT leak across organizations. org B holds blood_bank
+    // via its plan snapshot; place a DISABLING facility override on a facility of
+    // org C and evaluate it for org B passing org C's facility id — if the foreign
+    // override leaked, org B would lose blood_bank. It must not.
+    await setFacilityOverride(mPlatform, ID.facC1, { key: "blood_bank", boolValue: false });
+    const stillHas = await hasEntitlement({ organizationId: ID.orgB, facilityId: ID.facC1, key: "blood_bank" });
+    if (stillHas) ok("facility override does not leak across organizations (foreign facilityId ignored)");
+    else bad("facility override cross-org leak", "org B evaluated org C's facility override");
+    await prisma.facilityEntitlementOverride.deleteMany({ where: { facilityId: ID.facC1, entitlement: { key: "blood_bank" } } });
+  }
+  // Cancel-at-period-end with no billing period (org B is on a trial → no period)
+  // must be refused rather than silently never taking effect.
+  await expectDeny("cancel-at-period-end refused when there is no billing period", () => cancelSubscription(mPlatform, ID.orgB, { immediate: false }), 400);
+  {
+    // A GRACE window past its end must lapse on read (no cron in this codebase).
+    await transitionSubscription(mPlatform, ID.orgA, "PAST_DUE");
+    await transitionSubscription(mPlatform, ID.orgA, "GRACE");
+    const openGrace = await hasEntitlement({ organizationId: ID.orgA, key: "hospital_os" });
+    await prisma.organizationSubscription.update({ where: { organizationId: ID.orgA }, data: { gracePeriodEndsAt: new Date(Date.now() - 86_400_000) } });
+    const lapsedGrace = await hasEntitlement({ organizationId: ID.orgA, key: "hospital_os" });
+    if (openGrace && !lapsedGrace) ok("grace keeps access while open, lapses once gracePeriodEndsAt passes");
+    else bad("grace lazy expiry", `open=${openGrace} lapsed=${lapsedGrace}`);
+    await transitionSubscription(mPlatform, ID.orgA, "ACTIVE");
+  }
+
   await concurrency(mPlatform);
 
   await cleanup();

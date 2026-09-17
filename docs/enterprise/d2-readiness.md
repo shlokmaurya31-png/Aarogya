@@ -30,9 +30,9 @@ payment provider connectivity was performed.
 | SQLite migration (applied) | clean, additive |
 | PostgreSQL migration (replay from zero) | clean; **zero schema drift** |
 | TypeScript / build | clean |
-| Unit tests (`vitest run`) | 830/830 (incl. 16 new commercial) |
-| D2 commercial gate — PostgreSQL 16 | **23/23** (security + semantics + 4 concurrency races) |
-| D2 commercial gate — SQLite | 19/19 (concurrency skipped by design) |
+| Unit tests (`vitest run`) | 832/832 (incl. 18 commercial) |
+| D2 commercial gate — PostgreSQL 16 | **26/26** (security + semantics + D2.5 edge cases + 4 concurrency races) |
+| D2 commercial gate — SQLite | 22/22 (concurrency skipped by design) |
 | Regression: D1 tenancy (PG) | 41/0 |
 | Regression: C4 trust-layer (PG) | 66/0 |
 | Regression: C6 control plane (PG, fresh seed) | 140/0 |
@@ -40,6 +40,20 @@ payment provider connectivity was performed.
 
 Reproduce the PG gate with `docs/PHASE_B_FINAL_INTEGRITY_GATE.md §7`, then
 `npx tsx scripts/verify-postgres-commercial-entitlements.ts`.
+
+### D2.5 hardening pass
+
+A targeted hardening pass closed three real edge cases (no schema change):
+
+- **Facility overrides can no longer leak across organizations.** The evaluator
+  now resolves a facility override only when the facility belongs to the evaluated
+  organization — defense in depth even if a caller passes a foreign `facilityId`.
+- **Cancel-at-period-end is refused when there is no billing period.** A
+  grandfather/`NONE`-interval or trial subscription carries no `currentPeriodEnd`,
+  so the flag would silently never fire; such a request now requires immediate
+  cancellation instead.
+- **A GRACE window lapses on read once `gracePeriodEndsAt` passes**, consistent
+  with the codebase's no-cron lazy-expiry model (as for trials and periods).
 
 ## Integration with C4 / D1
 

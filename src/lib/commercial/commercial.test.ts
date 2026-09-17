@@ -106,6 +106,14 @@ describe("deriveCommercialState (lazy expiry)", () => {
   it("suspended is inactive", () => {
     expect(deriveCommercialState({ status: "SUSPENDED", trialEndsAt: null, cancelAtPeriodEnd: false, currentPeriodEnd: null }, now).active).toBe(false);
   });
+  it("a grace window still open keeps access", () => {
+    expect(deriveCommercialState({ status: "GRACE", trialEndsAt: null, cancelAtPeriodEnd: false, currentPeriodEnd: null, gracePeriodEndsAt: future }, now).active).toBe(true);
+  });
+  it("a grace window past its end lapses even if the column still says GRACE", () => {
+    const r = deriveCommercialState({ status: "GRACE", trialEndsAt: null, cancelAtPeriodEnd: false, currentPeriodEnd: null, gracePeriodEndsAt: past }, now);
+    expect(r.active).toBe(false);
+    expect(r.reason).toBe("GRACE_ENDED");
+  });
 });
 
 describe("commercial permission grants — least privilege", () => {

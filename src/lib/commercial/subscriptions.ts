@@ -162,6 +162,12 @@ export async function cancelSubscription(m: ActorMemberships, organizationId: st
     return updated;
   }
   // Cancel at period end: keep the subscription usable until currentPeriodEnd.
+  // Without a period boundary (grandfather/NONE-interval or trial subscriptions
+  // carry no currentPeriodEnd) there is nothing for the lazy expiry to fire on, so
+  // the flag would silently never take effect — require immediate cancellation.
+  if (!sub.currentPeriodEnd) {
+    throw new BadRequestError("This subscription has no active billing period; cancel immediately instead.");
+  }
   const updated = await prisma.organizationSubscription.update({
     where: { organizationId },
     data: { cancelAtPeriodEnd: true, cancelledAt: now },
