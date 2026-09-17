@@ -3,49 +3,58 @@ import { createHash, randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { getProvider } from "./provider";
+import { recordPayment } from "./payments";
+import { refreshInvoicePaymentStatus } from "./invoices";
+import { applyPaidRenewal } from "@/lib/commercial/subscriptions";
+import { canTransitionAttempt } from "./paymentState";
 
 /**
- * Phase D3 — provider webhook ingestion.
+ * Phase D4 — productionized provider webhook ingestion.
  *
- * The pipeline is strict:
- *   verify signature -> normalize -> idempotency -> canonical event -> domain
- *   transition. NEVER webhook -> blind database update.
+ * Pipeline: raw request -> signature verification -> normalization -> idempotency
+ * -> trusted claim -> domain effect -> reconciliation if required. NEVER
+ * webhook -> blind database update, and never trusted before verification.
  *
- * - An unverified signature is REJECTED and never applied.
- * - Idempotent on (providerKind, externalEventId): the same event delivered N
- *   times (or concurrently) is processed at most once, via a guarded
- *   RECEIVED -> PROCESSED claim wrapped around the domain effect in one
- *   transaction, so a lost race simply no-ops.
- * - Ordering is NOT trusted: an event referencing an unknown payment raises a
- *   reconciliation exception instead of fabricating state.
- * - Only a payload HASH is stored, never the raw sensitive body or any secret.
+ * - Signature is checked over the exact raw body (constant-time compare in the
+ *   adapters). An unverified event is REJECTED and keyed by payload hash, never
+ *   its claimed id (so a spoofed same-id event cannot suppress a real one).
+ * - Idempotent on (providerKind, externalEventId) via a guarded
+ *   RECEIVED/VERIFIED -> PROCESSED claim wrapped around the effect in one
+ *   transaction: the same event delivered N times (or concurrently) applies once.
+ * - Ordering is NOT trusted. State transitions are guarded by the payment state
+ *   machine; a stale/duplicate event that would move canonical state backwards is
+ *   ignored and (where it signals a genuine divergence) routed to reconciliation.
+ * - For the async provider model (Razorpay), a verified `payment.captured` for a
+ *   known order records the canonical payment and advances renewal. An unknown
+ *   reference is reconciled, never fabricated.
+ * - Only a payload HASH + normalized fields are stored — never the raw body or any
+ *   secret.
  */
 
 function rawEnum(v: BillingProviderKind): Prisma.Sql {
-  if (v !== "NONE" && v !== "FAKE") throw new Error("Invalid provider kind.");
+  if (v !== "NONE" && v !== "FAKE" && v !== "RAZORPAY") throw new Error("Invalid provider kind.");
   return Prisma.raw(`'${v}'`);
 }
 
+const CAPTURE_EVENTS = new Set(["payment.captured", "payment.succeeded", "order.paid"]);
+const FAIL_EVENTS = new Set(["payment.failed"]);
+
 export interface IngestResult {
-  status: "PROCESSED" | "DUPLICATE" | "REJECTED" | "RECONCILE";
+  status: "PROCESSED" | "DUPLICATE" | "REJECTED" | "RECONCILE" | "IGNORED";
   detail?: string;
 }
 
-export async function ingestWebhook(input: { providerKind: BillingProviderKind; payload: string; signature: string }): Promise<IngestResult> {
+export async function ingestWebhook(input: { providerKind: BillingProviderKind; payload: string; signature: string; eventIdHint?: string }): Promise<IngestResult> {
   const provider = getProvider(input.providerKind);
   const payloadHash = createHash("sha256").update(input.payload).digest("hex");
 
-  // 1. Authenticity. A bad signature is recorded (for visibility) and rejected.
+  // 1. Authenticity.
   const verified = provider.verifyWebhook({ payload: input.payload, signature: input.signature });
   if (!verified) {
-    // A rejected event is recorded under a NON-authoritative key derived from the
-    // payload hash — NEVER the claimed externalEventId. Trusting the claimed id
-    // here would let an attacker pre-register (and thereby suppress) a real event
-    // by first sending a same-id event with a bad signature.
     const rejectedKey = `rejected:${payloadHash}`;
     await prisma.$executeRaw`
-      INSERT INTO "BillingWebhookEvent" (id, "providerKind", "externalEventId", "eventType", "payloadHash", "signatureVerified", status)
-      VALUES (${randomUUID()}, ${rawEnum(input.providerKind)}, ${rejectedKey}, ${"unknown"}, ${payloadHash}, ${false}, ${Prisma.raw("'REJECTED'")})
+      INSERT INTO "BillingWebhookEvent" (id, "providerKind", "externalEventId", "eventType", "payloadHash", "signatureVerified", status, "lastErrorCode")
+      VALUES (${randomUUID()}, ${rawEnum(input.providerKind)}, ${rejectedKey}, ${"unknown"}, ${payloadHash}, ${false}, ${Prisma.raw("'REJECTED'")}, ${"SIGNATURE_INVALID"})
       ON CONFLICT ("providerKind", "externalEventId") DO NOTHING
     `;
     await recordAuditEvent("commercial.billing.webhookRejected", null, { reason: "SIGNATURE_INVALID" });
@@ -53,17 +62,17 @@ export async function ingestWebhook(input: { providerKind: BillingProviderKind; 
   }
 
   // 2. Normalize.
-  const event = provider.parseWebhook(input.payload);
+  const event = provider.parseWebhook(input.payload, input.eventIdHint);
 
-  // 3. Idempotency anchor: materialise the event row once.
+  // 3. Idempotency anchor (verified).
   await prisma.$executeRaw`
-    INSERT INTO "BillingWebhookEvent" (id, "providerKind", "externalEventId", "eventType", "payloadHash", "signatureVerified", status)
-    VALUES (${randomUUID()}, ${rawEnum(input.providerKind)}, ${event.externalEventId}, ${event.eventType}, ${payloadHash}, ${true}, ${Prisma.raw("'VERIFIED'")})
+    INSERT INTO "BillingWebhookEvent" (id, "providerKind", "externalEventId", "eventType", "normalizedType", "providerResourceRef", "payloadHash", "signatureVerified", "verifiedAt", status)
+    VALUES (${randomUUID()}, ${rawEnum(input.providerKind)}, ${event.externalEventId}, ${event.eventType}, ${event.eventType}, ${event.providerResourceRef ?? event.providerPaymentRef ?? null}, ${payloadHash}, ${true}, ${new Date()}, ${Prisma.raw("'VERIFIED'")})
     ON CONFLICT ("providerKind", "externalEventId") DO NOTHING
   `;
   await recordAuditEvent("commercial.billing.webhookReceived", null, { eventType: event.eventType, externalEventId: event.externalEventId });
 
-  // 4 + 5. Claim + apply in one transaction. Exactly-once via the guarded claim.
+  // 4 + 5. Claim + apply, exactly once.
   return prisma.$transaction(async (tx) => {
     const claim = await tx.billingWebhookEvent.updateMany({
       where: { providerKind: input.providerKind, externalEventId: event.externalEventId, status: { in: ["RECEIVED", "VERIFIED"] } },
@@ -73,22 +82,92 @@ export async function ingestWebhook(input: { providerKind: BillingProviderKind; 
 
     let result: IngestResult = { status: "PROCESSED" };
 
-    // Domain transition — ordering is not trusted; unknown refs reconcile.
-    if (event.providerPaymentRef && (event.eventType === "payment.succeeded" || event.eventType === "payment.failed")) {
-      const payment = await tx.billingPayment.findFirst({ where: { providerPaymentRef: event.providerPaymentRef } });
-      if (!payment) {
-        // We do not fabricate a payment from a webhook. Flag for reconciliation.
-        await tx.billingReconciliationException.create({
-          data: { kind: "UNKNOWN_REFERENCE", providerKind: input.providerKind, providerRef: event.providerPaymentRef, detail: { eventType: event.eventType } },
-        });
-        result = { status: "RECONCILE", detail: "unknown provider payment reference" };
+    if (CAPTURE_EVENTS.has(event.eventType)) {
+      if (event.providerResourceRef) {
+        // Async model: locate the ATTEMPT by its request/order reference.
+        result = await applyCapture(tx, input.providerKind, event);
+      } else if (event.providerPaymentRef) {
+        // Synchronous-confirmation model (payment already recorded by our flow).
+        const payment = await tx.billingPayment.findFirst({ where: { providerPaymentRef: event.providerPaymentRef } });
+        if (!payment) {
+          await flag(tx, "UNKNOWN_REFERENCE", input.providerKind, event, "captured event for an unknown payment reference");
+          result = { status: "RECONCILE", detail: "unknown provider payment reference" };
+        }
       }
-      // If the payment IS known, our synchronous flow already recorded its state;
-      // the webhook is a confirmation and needs no blind mutation.
+    } else if (FAIL_EVENTS.has(event.eventType)) {
+      result = await applyFailure(tx, event);
+    } else {
+      result = { status: "IGNORED", detail: `no handler for ${event.eventType}` };
     }
 
-    await tx.billingWebhookEvent.update({ where: { providerKind_externalEventId: { providerKind: input.providerKind, externalEventId: event.externalEventId } }, data: { processingResult: result.status } });
+    await tx.billingWebhookEvent.update({
+      where: { providerKind_externalEventId: { providerKind: input.providerKind, externalEventId: event.externalEventId } },
+      data: { processingResult: result.status, lastErrorMessage: result.detail ?? null },
+    });
     await recordAuditEvent("commercial.billing.webhookProcessed", null, { eventType: event.eventType, externalEventId: event.externalEventId, result: result.status }, undefined, tx);
     return result;
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 20000, maxWait: 10000 });
+}
+
+/** Record a captured payment against the attempt's invoice, advancing renewal if applicable. */
+async function applyCapture(tx: Prisma.TransactionClient, providerKind: BillingProviderKind, event: { providerResourceRef?: string; providerPaymentRef?: string; amountMinor?: number }): Promise<IngestResult> {
+  const attempt = await tx.billingPaymentAttempt.findFirst({ where: { providerRequestRef: event.providerResourceRef } });
+  if (!attempt) {
+    await flag(tx, "UNKNOWN_REFERENCE", providerKind, event, "captured event for an unknown order/request reference");
+    return { status: "RECONCILE", detail: "unknown order reference" };
+  }
+  if (attempt.status === "SUCCEEDED") return { status: "DUPLICATE", detail: "attempt already succeeded" };
+  if (!canTransitionAttempt(attempt.status, "SUCCEEDED")) {
+    await flag(tx, "STATE_MISMATCH", providerKind, event, `capture cannot move attempt from ${attempt.status}`);
+    return { status: "RECONCILE", detail: "illegal attempt transition" };
+  }
+  // Amount cross-check — the server amount is authoritative; a mismatch reconciles.
+  if (event.amountMinor != null && event.amountMinor !== attempt.amountMinor) {
+    await flag(tx, "STATE_MISMATCH", providerKind, event, `captured amount ${event.amountMinor} != attempt ${attempt.amountMinor}`);
+    return { status: "RECONCILE", detail: "amount mismatch" };
+  }
+
+  await tx.billingPaymentAttempt.updateMany({
+    where: { id: attempt.id, status: { in: ["INITIATED", "PENDING"] } },
+    data: { status: "SUCCEEDED", providerPaymentRef: event.providerPaymentRef ?? null },
+  });
+  await recordPayment(tx, {
+    invoiceId: attempt.invoiceId, attemptId: attempt.id, amountMinor: attempt.amountMinor,
+    idempotencyKey: `whpay:${event.providerPaymentRef ?? event.providerResourceRef}`,
+    providerKind, providerPaymentRef: event.providerPaymentRef ?? null, method: "provider", createdByUserId: null,
+  });
+  await refreshInvoicePaymentStatus(tx, attempt.invoiceId);
+
+  // If this invoice is a renewal invoice now fully paid, advance the subscription.
+  const invoice = await tx.billingInvoice.findUniqueOrThrow({ where: { id: attempt.invoiceId } });
+  if (invoice.status === "PAID" && invoice.billingPeriodId && invoice.subscriptionId) {
+    const period = await tx.billingPeriod.findUnique({ where: { id: invoice.billingPeriodId } });
+    if (period) {
+      await applyPaidRenewal(tx, invoice.organizationId, { periodStart: period.periodStart, periodEnd: period.periodEnd });
+      await tx.billingPeriod.update({ where: { id: period.id }, data: { status: "INVOICED" } });
+    }
+  }
+  return { status: "PROCESSED" };
+}
+
+/** Mark the attempt failed. Dunning is handled separately (processBillingDunning). */
+async function applyFailure(tx: Prisma.TransactionClient, event: { providerResourceRef?: string; failureCode?: string }): Promise<IngestResult> {
+  if (!event.providerResourceRef) return { status: "IGNORED", detail: "failure event without order reference" };
+  const attempt = await tx.billingPaymentAttempt.findFirst({ where: { providerRequestRef: event.providerResourceRef } });
+  if (!attempt) return { status: "IGNORED", detail: "failure for unknown order" };
+  if (!canTransitionAttempt(attempt.status, "FAILED")) return { status: "DUPLICATE", detail: "attempt no longer pending" };
+  await tx.billingPaymentAttempt.updateMany({
+    where: { id: attempt.id, status: { in: ["INITIATED", "PENDING"] } },
+    data: { status: "FAILED", failureCode: event.failureCode ?? "failed", failureReason: event.failureCode ?? "failed" },
+  });
+  return { status: "PROCESSED", detail: "attempt marked failed" };
+}
+
+async function flag(tx: Prisma.TransactionClient, kind: "UNKNOWN_REFERENCE" | "STATE_MISMATCH", providerKind: BillingProviderKind, event: { providerResourceRef?: string; providerPaymentRef?: string }, description: string) {
+  await tx.billingReconciliationException.create({
+    data: {
+      kind, providerKind, severity: "HIGH", entityType: "webhook", description,
+      providerRef: event.providerResourceRef ?? event.providerPaymentRef ?? null,
+    },
+  });
 }

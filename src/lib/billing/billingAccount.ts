@@ -9,6 +9,7 @@ import {
   type ActorMemberships,
 } from "@/lib/auth/tenantContext";
 import { DEFAULT_BILLING_CURRENCY } from "./money";
+import { getProvider } from "./provider";
 
 type Tx = Prisma.TransactionClient | typeof prisma;
 
@@ -86,6 +87,48 @@ export async function updateBillingAccount(m: ActorMemberships, organizationId: 
   const updated = await prisma.organizationBillingAccount.update({ where: { id: account.id }, data });
   await recordAuditEvent("commercial.billing.accountUpdated", m.userId, { changed: Object.keys(data) }, { organizationId });
   return updated;
+}
+
+/**
+ * Platform-only: ensure a provider customer exists for the org's billing account
+ * and its opaque reference is stored. Safe under the classic distributed failure
+ * "provider create succeeds, local write fails":
+ *  - If a reference already exists, this is a no-op (idempotent).
+ *  - The provider customer is created first; the local write is a guarded
+ *    `WHERE providerCustomerRef IS NULL` update so concurrent syncs converge to
+ *    one mapping.
+ *  - If the local write fails after the provider create, a reconciliation
+ *    exception records the possibly-orphaned provider customer for follow-up
+ *    rather than pretending the operation was exactly-once.
+ */
+export async function syncProviderCustomer(m: ActorMemberships, organizationId: string, providerKind: "FAKE" | "RAZORPAY") {
+  if (!m.isPlatformAdmin) throw new NotFoundError();
+  const account = await prisma.organizationBillingAccount.findUnique({ where: { organizationId } });
+  if (!account) throw new NotFoundError();
+  if (account.providerCustomerRef) return account; // idempotent
+
+  const provider = getProvider(providerKind);
+  const { providerCustomerRef } = await provider.createCustomer({
+    organizationId, billingName: account.billingName, billingEmail: account.billingEmail,
+  });
+
+  try {
+    await prisma.organizationBillingAccount.updateMany({
+      where: { id: account.id, providerCustomerRef: null },
+      data: { providerKind, providerCustomerRef },
+    });
+  } catch (err) {
+    await prisma.billingReconciliationException.create({
+      data: {
+        kind: "UNKNOWN_REFERENCE", organizationId, providerKind, severity: "HIGH",
+        entityType: "billingAccount", entityId: account.id, providerRef: providerCustomerRef,
+        description: "Provider customer created but local mapping write failed; possibly orphaned.",
+      },
+    });
+    throw err;
+  }
+  await recordAuditEvent("commercial.billing.customerSynced", m.userId, { providerKind }, { organizationId });
+  return prisma.organizationBillingAccount.findUniqueOrThrow({ where: { id: account.id } });
 }
 
 /** Platform-only: attach an opaque provider customer reference (never a secret). */

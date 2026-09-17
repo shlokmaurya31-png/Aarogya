@@ -18,7 +18,11 @@ import { getProvider } from "./provider";
 
 const STUCK_ATTEMPT_MS = 60 * 60 * 1000; // 1 hour
 
-async function flag(kind: "STATE_MISMATCH" | "STUCK_PAYMENT" | "REFUND_MISMATCH" | "MISSING_PROVIDER_PAYMENT", opts: { organizationId?: string | null; providerKind?: "NONE" | "FAKE"; providerRef?: string | null; detail?: Record<string, unknown> }) {
+const SEVERITY: Record<string, string> = {
+  STATE_MISMATCH: "HIGH", REFUND_MISMATCH: "CRITICAL", MISSING_PROVIDER_PAYMENT: "HIGH", STUCK_PAYMENT: "MEDIUM",
+};
+
+async function flag(kind: "STATE_MISMATCH" | "STUCK_PAYMENT" | "REFUND_MISMATCH" | "MISSING_PROVIDER_PAYMENT", opts: { organizationId?: string | null; providerKind?: "NONE" | "FAKE" | "RAZORPAY"; providerRef?: string | null; entityType?: string; entityId?: string; detail?: Record<string, unknown> }) {
   // De-duplicate: one open exception per (kind, providerRef).
   const existing = await prisma.billingReconciliationException.findFirst({
     where: { kind, providerRef: opts.providerRef ?? null, resolved: false },
@@ -27,10 +31,11 @@ async function flag(kind: "STATE_MISMATCH" | "STUCK_PAYMENT" | "REFUND_MISMATCH"
   const row = await prisma.billingReconciliationException.create({
     data: {
       kind, organizationId: opts.organizationId ?? null, providerKind: opts.providerKind ?? "NONE",
+      severity: SEVERITY[kind] ?? "MEDIUM", entityType: opts.entityType, entityId: opts.entityId,
       providerRef: opts.providerRef ?? null, detail: opts.detail ? JSON.parse(JSON.stringify(opts.detail)) : undefined,
     },
   });
-  await recordAuditEvent("commercial.billing.reconciliationFlagged", null, { kind, providerRef: opts.providerRef ?? null }, { organizationId: opts.organizationId ?? undefined });
+  await recordAuditEvent("commercial.billing.reconciliationFlagged", null, { kind, severity: SEVERITY[kind] ?? "MEDIUM", providerRef: opts.providerRef ?? null }, { organizationId: opts.organizationId ?? undefined });
   return row;
 }
 
@@ -91,7 +96,7 @@ export async function resolveException(m: ActorMemberships, id: string) {
   requirePlatform(m);
   const ex = await prisma.billingReconciliationException.findUnique({ where: { id } });
   if (!ex) throw new NotFoundError();
-  const updated = await prisma.billingReconciliationException.update({ where: { id }, data: { resolved: true, resolvedAt: new Date() } });
+  const updated = await prisma.billingReconciliationException.update({ where: { id }, data: { resolved: true, resolvedAt: new Date(), resolvedByUserId: m.userId } });
   await recordAuditEvent("commercial.billing.reconciliationResolved", m.userId, { id, kind: ex.kind }, { organizationId: ex.organizationId ?? undefined });
   return updated;
 }
