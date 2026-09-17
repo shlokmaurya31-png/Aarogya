@@ -520,7 +520,32 @@ export type AuditEventType =
   | "commercial.override.created"
   | "commercial.override.updated"
   | "commercial.override.removed"
-  | "commercial.limit.denied";
+  | "commercial.limit.denied"
+  // Phase D3 — SaaS billing & payment infrastructure. Same `commercial.` audit
+  // namespace, org-scoped, never carrying card data, provider secrets, webhook
+  // secrets or tokens. Distinct from the hospital revenue cycle's `hospital.*`
+  // billing events (patients/insurers), which this never touches.
+  | "commercial.billing.bootstrapApplied"
+  | "commercial.billing.priceSet"
+  | "commercial.billing.accountUpdated"
+  | "commercial.billing.providerMapped"
+  | "commercial.billing.invoiceGenerated"
+  | "commercial.billing.invoiceLineAdded"
+  | "commercial.billing.invoiceFinalized"
+  | "commercial.billing.invoiceVoided"
+  | "commercial.billing.invoiceMarkedUncollectible"
+  | "commercial.billing.paymentAttemptCreated"
+  | "commercial.billing.paymentRecorded"
+  | "commercial.billing.paymentFailed"
+  | "commercial.billing.refundCreated"
+  | "commercial.billing.creditIssued"
+  | "commercial.billing.creditApplied"
+  | "commercial.billing.webhookReceived"
+  | "commercial.billing.webhookProcessed"
+  | "commercial.billing.webhookRejected"
+  | "commercial.billing.reconciliationFlagged"
+  | "commercial.billing.reconciliationResolved"
+  | "commercial.billing.subscriptionRenewed";
 
 export interface AuditEventContext {
   facilityId?: string;

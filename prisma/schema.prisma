@@ -554,6 +554,11 @@ model Organization {
   subscription          OrganizationSubscription?
   entitlementOverrides  OrganizationEntitlementOverride[]
 
+  // Phase D3 — SaaS billing (separate from the hospital revenue cycle).
+  billingAccount  OrganizationBillingAccount?
+  billingInvoices BillingInvoice[]
+  billingCredits  BillingCredit[]
+
   @@index([status])
 }
 
@@ -897,6 +902,8 @@ model SubscriptionPlan {
 
   entitlements  PlanEntitlement[]
   subscriptions OrganizationSubscription[]
+  // Phase D3 — authoritative pricing (effective-dated, versioned).
+  prices        PlanPrice[]
 
   @@index([status])
 }
@@ -953,6 +960,9 @@ model OrganizationSubscription {
   updatedAt          DateTime           @default(now()) @updatedAt
 
   entitlements SubscriptionEntitlement[]
+  // Phase D3 — billing periods + invoices generated for this subscription.
+  billingPeriods BillingPeriod[]
+  invoices       BillingInvoice[]
 
   @@index([status])
   @@index([planId])
@@ -1025,6 +1035,406 @@ model FacilityEntitlementOverride {
 
   @@unique([facilityId, entitlementId])
   @@index([entitlementId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase D3 — SaaS BILLING & PAYMENT INFRASTRUCTURE.
+//
+// The AAROGYA COMMERCIAL billing domain: how the platform charges an
+// organization for its subscription, records the money, and keeps its
+// commercial state consistent. ENTIRELY SEPARATE from the hospital revenue
+// cycle (BillingAccount/Invoice/Payment/Refund/Payer/Claim, near line 2340),
+// which bills PATIENTS and INSURERS — different actors, different money,
+// deliberately non-overlapping names (every SaaS model is `Billing*` /
+// `OrganizationBilling*` / `PlanPrice`). Aarogya owns the commercial truth; an
+// external payment provider only EXECUTES payment and maps back through opaque
+// references. Money is always an integer minor unit (paise for INR), never a
+// Float. No card numbers, provider secrets or credentials are ever stored here.
+// See docs/enterprise/saas-billing.md.
+// ─────────────────────────────────────────────────────────────────────────
+
+enum OrgBillingAccountStatus {
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+/// Which payment provider a record was executed through. NONE = Aarogya has no
+/// external provider configured (the current state of this codebase); FAKE = the
+/// deterministic in-repo test provider that the verification gate drives. Real
+/// providers are added here ONLY when actually integrated — never faked.
+enum BillingProviderKind {
+  NONE
+  FAKE
+}
+
+/// One canonical SaaS billing account per organization: the billing identity the
+/// platform invoices. Holds only safe identifiers — never a card, bank
+/// credential or provider secret. Currency is server-authoritative.
+model OrganizationBillingAccount {
+  id                  String                  @id @default(cuid())
+  organization        Organization            @relation(fields: [organizationId], references: [id])
+  organizationId      String                  @unique
+  billingName         String
+  billingEmail        String
+  billingAddress      String?
+  /// Server-set billing currency for the whole account. D3 supports a single
+  /// currency (INR); the column exists so more can be added later without an
+  /// invoice redesign. NEVER taken from a client request.
+  currency            String                  @default("INR")
+  /// GSTIN / tax identifier — a plain identifier only, never a credential.
+  taxId               String?
+  status              OrgBillingAccountStatus @default(ACTIVE)
+  /// Opaque provider customer reference (e.g. "cust_..."), never a secret.
+  providerKind        BillingProviderKind     @default(NONE)
+  providerCustomerRef String?
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @default(now()) @updatedAt
+
+  invoices BillingInvoice[]
+
+  @@index([status])
+}
+
+/// Authoritative price of a plan at a billing interval. Effective-dated and
+/// versioned: a price change is a NEW row (new version, its own effectiveFrom),
+/// never an edit — so an invoice raised under an old price stays understandable.
+/// The invoice snapshots the resolved amount, so historical invoices never move.
+model PlanPrice {
+  id              String           @id @default(cuid())
+  plan            SubscriptionPlan @relation(fields: [planId], references: [id])
+  planId          String
+  billingInterval BillingInterval
+  currency        String           @default("INR")
+  amountMinor     Int
+  /// Tax category label for the tax boundary (e.g. "GST_18"). Foundation only —
+  /// no tax engine is implemented in D3; the effective rate is resolved by the
+  /// tax module, which currently returns 0 unless a rate is explicitly seeded.
+  taxCode         String?
+  version         Int              @default(1)
+  active          Boolean          @default(true)
+  effectiveFrom   DateTime         @default(now())
+  effectiveTo     DateTime?
+  createdAt       DateTime         @default(now())
+
+  @@index([planId, billingInterval, active])
+}
+
+enum BillingPeriodStatus {
+  ACTIVE
+  INVOICED
+  CLOSED
+}
+
+/// An explicit billing period for a subscription. Renewal is idempotent on
+/// (subscriptionId, periodStart) — a repeated renewal for the same period start
+/// converges to one row, so no overlapping/duplicate active periods can exist.
+model BillingPeriod {
+  id              String              @id @default(cuid())
+  subscription    OrganizationSubscription @relation(fields: [subscriptionId], references: [id])
+  subscriptionId  String
+  organizationId  String
+  billingInterval BillingInterval
+  periodStart     DateTime
+  periodEnd       DateTime
+  status          BillingPeriodStatus @default(ACTIVE)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @default(now()) @updatedAt
+
+  invoice BillingInvoice?
+
+  @@unique([subscriptionId, periodStart])
+  @@index([organizationId])
+  @@index([status])
+}
+
+enum BillingInvoiceStatus {
+  DRAFT
+  OPEN
+  PARTIALLY_PAID
+  PAID
+  PAST_DUE
+  VOID
+  UNCOLLECTIBLE
+}
+
+/// Immutable-once-finalized SaaS invoice. DRAFT is mutable (lines added during
+/// generation); finalization (-> OPEN) assigns invoiceNumber atomically and
+/// freezes invoiceNumber + every amount + every line. Corrections after that are
+/// a credit/adjustment or a void+replacement, never an in-place edit. Amounts are
+/// always computed server-side; a client never supplies a total. Idempotent
+/// generation via idempotencyKey (and the 1:1 billingPeriod link).
+model BillingInvoice {
+  id                String                     @id @default(cuid())
+  invoiceNumber     String?                    @unique // null while DRAFT; assigned at finalize
+  organization      Organization               @relation(fields: [organizationId], references: [id])
+  organizationId    String
+  billingAccount    OrganizationBillingAccount @relation(fields: [billingAccountId], references: [id])
+  billingAccountId  String
+  subscription      OrganizationSubscription?  @relation(fields: [subscriptionId], references: [id])
+  subscriptionId    String?
+  billingPeriod     BillingPeriod?             @relation(fields: [billingPeriodId], references: [id])
+  billingPeriodId   String?                    @unique
+  status            BillingInvoiceStatus       @default(DRAFT)
+  currency          String                     @default("INR")
+  subtotalMinor     Int                        @default(0)
+  discountMinor     Int                        @default(0) // credits applied
+  taxMinor          Int                        @default(0)
+  totalMinor        Int                        @default(0) // frozen at finalize
+  amountPaidMinor   Int                        @default(0) // guarded running total, <= totalMinor
+  status_reason     String?
+  issuedAt          DateTime?
+  dueAt             DateTime?
+  finalizedAt       DateTime?
+  voidedAt          DateTime?
+  voidReason        String?
+  generatedByUserId String?
+  /// Idempotency anchor for invoice generation (server-generated, e.g. one per
+  /// billing period). A repeated generate with the same key returns the same row.
+  idempotencyKey    String?                    @unique
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @default(now()) @updatedAt
+
+  lines    BillingInvoiceLine[]
+  attempts BillingPaymentAttempt[]
+  payments BillingPayment[]
+  credits  BillingCredit[]
+
+  @@index([organizationId, status])
+  @@index([billingAccountId])
+}
+
+enum BillingInvoiceLineType {
+  SUBSCRIPTION
+  ADDITIONAL_FACILITY
+  ADDITIONAL_USER
+  ADJUSTMENT
+  CREDIT
+  TAX
+}
+
+/// A single charged line. Historically immutable once its invoice is finalized.
+model BillingInvoiceLine {
+  id              String                 @id @default(cuid())
+  invoice         BillingInvoice         @relation(fields: [invoiceId], references: [id])
+  invoiceId       String
+  type            BillingInvoiceLineType
+  description     String
+  quantity        Int                    @default(1)
+  unitAmountMinor Int
+  amountMinor     Int // quantity * unitAmountMinor (pre-tax); may be negative for CREDIT
+  taxCode         String?
+  taxRateBps      Int                    @default(0) // basis points; 1800 = 18%
+  taxAmountMinor  Int                    @default(0)
+  createdAt       DateTime               @default(now())
+
+  @@index([invoiceId])
+}
+
+/// Per-scope, per-fiscal-year atomic counter backing SaaS invoice numbering,
+/// CAS-based (same idiom as the hospital InvoiceSequence) so it is safe on both
+/// SQLite and PostgreSQL. Scope is a constant ("SAAS") so numbers are unique
+/// platform-wide, deterministic and audit-legible.
+model BillingInvoiceSequence {
+  id         String @id @default(cuid())
+  scope      String @default("SAAS")
+  fiscalYear Int
+  nextValue  Int    @default(1)
+
+  @@unique([scope, fiscalYear])
+}
+
+enum BillingPaymentAttemptStatus {
+  INITIATED
+  PENDING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+/// A payment ATTEMPT is distinct from a recorded PAYMENT: an attempt may fail or
+/// be abandoned; only a succeeded attempt yields a BillingPayment. Idempotent on
+/// idempotencyKey — 10 identical concurrent requests create exactly one attempt.
+model BillingPaymentAttempt {
+  id                String                      @id @default(cuid())
+  invoice           BillingInvoice              @relation(fields: [invoiceId], references: [id])
+  invoiceId         String
+  organizationId    String
+  amountMinor       Int
+  currency          String                      @default("INR")
+  status            BillingPaymentAttemptStatus @default(INITIATED)
+  idempotencyKey    String                      @unique
+  providerKind      BillingProviderKind         @default(NONE)
+  providerPaymentRef String?
+  failureReason     String?
+  createdByUserId   String?
+  createdAt         DateTime                    @default(now())
+  updatedAt         DateTime                    @default(now()) @updatedAt
+
+  payment BillingPayment?
+
+  @@index([invoiceId])
+  @@index([organizationId])
+}
+
+enum BillingPaymentStatus {
+  SUCCEEDED
+  REFUNDED
+  PARTIALLY_REFUNDED
+  VOID
+}
+
+/// A successful payment against a SaaS invoice. refundedMinor is a guarded
+/// running total maintained in the same transaction as each refund (CAS idiom);
+/// invariant refundedMinor <= amountMinor. Idempotent on idempotencyKey.
+model BillingPayment {
+  id                 String                 @id @default(cuid())
+  invoice            BillingInvoice         @relation(fields: [invoiceId], references: [id])
+  invoiceId          String
+  organizationId     String
+  attempt            BillingPaymentAttempt? @relation(fields: [attemptId], references: [id])
+  attemptId          String?                @unique
+  amountMinor        Int
+  refundedMinor      Int                    @default(0)
+  currency           String                 @default("INR")
+  status             BillingPaymentStatus   @default(SUCCEEDED)
+  method             String?
+  providerKind       BillingProviderKind    @default(NONE)
+  providerPaymentRef String?                @unique
+  idempotencyKey     String                 @unique
+  succeededAt        DateTime               @default(now())
+  createdByUserId    String?
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @default(now()) @updatedAt
+
+  refunds BillingRefund[]
+
+  @@index([invoiceId])
+  @@index([organizationId])
+}
+
+enum BillingRefundStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+/// A refund against a specific payment. Cannot exceed the payment's un-refunded
+/// balance (guarded UPDATE) and is idempotent on idempotencyKey. Platform-
+/// authorized; references the original payment and never mutates it in place.
+model BillingRefund {
+  id               String              @id @default(cuid())
+  payment          BillingPayment      @relation(fields: [paymentId], references: [id])
+  paymentId        String
+  organizationId   String
+  amountMinor      Int
+  reason           String
+  status           BillingRefundStatus @default(SUCCEEDED)
+  idempotencyKey   String              @unique
+  providerKind     BillingProviderKind @default(NONE)
+  providerRefundRef String?
+  createdByUserId  String?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @default(now()) @updatedAt
+
+  @@index([paymentId])
+  @@index([organizationId])
+}
+
+enum BillingCreditType {
+  PROMOTIONAL
+  MANUAL
+  CORRECTION
+  CONTRACT
+}
+
+enum BillingCreditStatus {
+  ACTIVE
+  APPLIED
+  VOID
+}
+
+/// A commercial credit granted to an organization (promo/manual/correction/
+/// contract). remainingMinor tracks the un-applied balance; applying to an
+/// invoice reduces it (guarded). Platform-authorized only — an organization
+/// admin can never credit their own account.
+model BillingCredit {
+  id              String              @id @default(cuid())
+  organization    Organization        @relation(fields: [organizationId], references: [id])
+  organizationId  String
+  invoice         BillingInvoice?     @relation(fields: [invoiceId], references: [id])
+  invoiceId       String?
+  amountMinor     Int
+  remainingMinor  Int
+  currency        String              @default("INR")
+  type            BillingCreditType
+  status          BillingCreditStatus @default(ACTIVE)
+  reason          String
+  createdByUserId String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @default(now()) @updatedAt
+
+  @@index([organizationId, status])
+  @@index([invoiceId])
+}
+
+enum BillingWebhookStatus {
+  RECEIVED
+  VERIFIED
+  PROCESSED
+  FAILED
+  REJECTED
+  IGNORED
+}
+
+/// A provider webhook delivery. Idempotent on (providerKind, externalEventId):
+/// the same event delivered N times processes at most once. Never stores raw
+/// sensitive payload — only a hash for tamper/replay detection. Signature
+/// verification state is recorded; an unverified event is REJECTED, never
+/// applied blindly to domain state.
+model BillingWebhookEvent {
+  id              String               @id @default(cuid())
+  providerKind    BillingProviderKind
+  externalEventId String
+  eventType       String
+  payloadHash     String
+  signatureVerified Boolean            @default(false)
+  status          BillingWebhookStatus @default(RECEIVED)
+  processingResult String?
+  retryCount      Int                  @default(0)
+  receivedAt      DateTime             @default(now())
+  processedAt     DateTime?
+
+  @@unique([providerKind, externalEventId])
+  @@index([status])
+}
+
+enum BillingReconciliationKind {
+  MISSING_PROVIDER_PAYMENT
+  DUPLICATE_EVENT
+  STATE_MISMATCH
+  UNKNOWN_REFERENCE
+  STUCK_PAYMENT
+  REFUND_MISMATCH
+}
+
+/// A detected reconciliation discrepancy between Aarogya and a provider. The
+/// foundation for "no silent financial divergence" — not a finance analytics
+/// engine. organizationId is a plain scalar (nullable) because some exceptions
+/// reference an unknown/foreign provider ref with no resolvable tenant.
+model BillingReconciliationException {
+  id             String                    @id @default(cuid())
+  organizationId String?
+  kind           BillingReconciliationKind
+  detail         Json?
+  providerKind   BillingProviderKind       @default(NONE)
+  providerRef    String?
+  resolved       Boolean                   @default(false)
+  createdAt      DateTime                  @default(now())
+  resolvedAt     DateTime?
+
+  @@index([resolved])
+  @@index([organizationId])
 }
 
 model Department {
