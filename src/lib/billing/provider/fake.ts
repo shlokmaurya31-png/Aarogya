@@ -55,13 +55,13 @@ export class FakeBillingProvider implements BillingProvider {
     return timingSafeEqual(a, b);
   }
 
-  parseWebhook(payload: string): NormalizedWebhookEvent {
+  parseWebhook(payload: string, eventIdHint?: string): NormalizedWebhookEvent {
     const obj = JSON.parse(payload) as {
       id?: string; type?: string; providerPaymentRef?: string; paymentStatus?: "succeeded" | "failed" | "pending";
     };
     if (!obj.id || !obj.type) throw new Error("Malformed webhook payload: missing id/type.");
     return {
-      externalEventId: obj.id,
+      externalEventId: eventIdHint || obj.id,
       eventType: obj.type,
       providerPaymentRef: obj.providerPaymentRef,
       paymentStatus: obj.paymentStatus,

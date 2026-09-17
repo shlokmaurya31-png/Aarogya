@@ -17,9 +17,13 @@ import type { BillingProviderKind } from "@prisma/client";
 export type ProviderPaymentStatus = "succeeded" | "failed" | "pending";
 
 export interface ProviderPaymentResult {
-  providerPaymentRef: string;
+  /** The resulting payment reference, once one exists (synchronous providers). */
+  providerPaymentRef?: string;
+  /** The request/order reference created to collect the payment (async providers). */
+  providerRequestRef?: string;
   status: ProviderPaymentStatus;
   failureReason?: string;
+  failureCode?: string;
 }
 
 export interface ProviderRefundResult {
@@ -31,11 +35,19 @@ export interface ProviderRefundResult {
 /** A provider webhook, already parsed into a normalized, provider-agnostic shape. */
 export interface NormalizedWebhookEvent {
   externalEventId: string;
+  /** Normalized, provider-agnostic event type (e.g. "payment.captured"). */
   eventType: string;
   /** Opaque provider payment reference the event concerns, if any. */
   providerPaymentRef?: string;
+  /** The request/order reference the event concerns (async providers), if any. */
+  providerResourceRef?: string;
   /** Normalized outcome for payment events. */
   paymentStatus?: ProviderPaymentStatus;
+  /** Amount in minor units, if the event carries one (for cross-check). */
+  amountMinor?: number;
+  /** Provider event creation time (unix seconds), for replay/ordering checks. */
+  createdAtUnix?: number;
+  failureCode?: string;
 }
 
 export interface BillingProvider {
@@ -57,6 +69,10 @@ export interface BillingProvider {
   /** Authenticity check — returns true only if the signature matches the payload. */
   verifyWebhook(input: { payload: string; signature: string }): boolean;
 
-  /** Parse a verified payload into the normalized shape. Throws on malformed input. */
-  parseWebhook(payload: string): NormalizedWebhookEvent;
+  /**
+   * Parse a verified payload into the normalized shape. `eventIdHint` carries a
+   * provider event id that lives in a header rather than the body (e.g. Razorpay's
+   * X-Razorpay-Event-Id). Throws on malformed input.
+   */
+  parseWebhook(payload: string, eventIdHint?: string): NormalizedWebhookEvent;
 }

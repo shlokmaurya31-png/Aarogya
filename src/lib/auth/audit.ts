@@ -545,7 +545,11 @@ export type AuditEventType =
   | "commercial.billing.webhookRejected"
   | "commercial.billing.reconciliationFlagged"
   | "commercial.billing.reconciliationResolved"
-  | "commercial.billing.subscriptionRenewed";
+  | "commercial.billing.subscriptionRenewed"
+  // Phase D4 — provider productionization.
+  | "commercial.billing.customerSynced"
+  | "commercial.billing.dunningRun"
+  | "commercial.billing.providerConfigured";
 
 export interface AuditEventContext {
   facilityId?: string;

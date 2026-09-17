@@ -1060,12 +1060,15 @@ enum OrgBillingAccountStatus {
 }
 
 /// Which payment provider a record was executed through. NONE = Aarogya has no
-/// external provider configured (the current state of this codebase); FAKE = the
-/// deterministic in-repo test provider that the verification gate drives. Real
-/// providers are added here ONLY when actually integrated — never faked.
+/// external provider configured; FAKE = the deterministic in-repo test provider
+/// the gate drives; RAZORPAY = the real Razorpay adapter (Phase D4) — its code
+/// follows the official API but live use requires credentials that are supplied
+/// only via the environment, never committed. Real providers are added here ONLY
+/// when the adapter is genuinely implemented — never faked.
 enum BillingProviderKind {
   NONE
   FAKE
+  RAZORPAY
 }
 
 /// One canonical SaaS billing account per organization: the billing identity the
@@ -1265,8 +1268,13 @@ model BillingPaymentAttempt {
   status            BillingPaymentAttemptStatus @default(INITIATED)
   idempotencyKey    String                      @unique
   providerKind      BillingProviderKind         @default(NONE)
+  /// Phase D4 — the provider REQUEST reference (e.g. a Razorpay order id) created
+  /// before the payment; distinct from providerPaymentRef (the resulting payment).
+  providerRequestRef String?
   providerPaymentRef String?
   failureReason     String?
+  /// Phase D4 — normalized failure classification (e.g. "card_declined").
+  failureCode       String?
   createdByUserId   String?
   createdAt         DateTime                    @default(now())
   updatedAt         DateTime                    @default(now()) @updatedAt
@@ -1403,6 +1411,14 @@ model BillingWebhookEvent {
   processingResult String?
   retryCount      Int                  @default(0)
   receivedAt      DateTime             @default(now())
+  /// Phase D4 — when the signature was verified, the normalized event type, the
+  /// provider resource the event concerns, and the last error classification for
+  /// operational triage. Additive; never stores the raw payload or any secret.
+  verifiedAt         DateTime?
+  normalizedType     String?
+  providerResourceRef String?
+  lastErrorCode      String?
+  lastErrorMessage   String?
   processedAt     DateTime?
 
   @@unique([providerKind, externalEventId])
@@ -1426,10 +1442,20 @@ model BillingReconciliationException {
   id             String                    @id @default(cuid())
   organizationId String?
   kind           BillingReconciliationKind
+  /// Phase D4 — triage metadata. severity is LOW/MEDIUM/HIGH/CRITICAL (stored as
+  /// text, not an enum, so it can evolve without a migration); entityType/entityId
+  /// pin the affected local record; description is human-readable; resolver +
+  /// resolvedAt attribute the resolution.
+  severity       String                    @default("MEDIUM")
+  entityType     String?
+  entityId       String?
+  description    String?
   detail         Json?
   providerKind   BillingProviderKind       @default(NONE)
   providerRef    String?
+  localRef       String?
   resolved       Boolean                   @default(false)
+  resolvedByUserId String?
   createdAt      DateTime                  @default(now())
   resolvedAt     DateTime?
 
