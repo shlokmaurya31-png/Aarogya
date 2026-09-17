@@ -176,6 +176,34 @@ export async function cancelSubscription(m: ActorMemberships, organizationId: st
   return updated;
 }
 
+/**
+ * Phase D3 service boundary — apply a SUCCESSFUL renewal payment to the
+ * subscription's commercial state. Advances the current period and, if the
+ * subscription was in a dunning state (PAST_DUE/GRACE), a successful payment cures
+ * it back to ACTIVE and clears the grace window. This is the ONE place billing is
+ * allowed to move the subscription period; D3 renewal calls it inside its
+ * transaction rather than mutating the OrganizationSubscription row directly.
+ */
+export async function applyPaidRenewal(
+  tx: DbClient,
+  organizationId: string,
+  period: { periodStart: Date; periodEnd: Date }
+): Promise<{ curedFrom: SubscriptionStatus | null }> {
+  const sub = await tx.organizationSubscription.findUnique({ where: { organizationId } });
+  if (!sub) throw new BadRequestError("Organization has no subscription.");
+  const cured = sub.status === "PAST_DUE" || sub.status === "GRACE";
+  await tx.organizationSubscription.update({
+    where: { organizationId },
+    data: {
+      currentPeriodStart: period.periodStart,
+      currentPeriodEnd: period.periodEnd,
+      status: cured ? "ACTIVE" : sub.status,
+      gracePeriodEndsAt: cured ? null : sub.gracePeriodEndsAt,
+    },
+  });
+  return { curedFrom: cured ? sub.status : null };
+}
+
 /** Read one organization's subscription with plan + snapshot (no auth here; callers gate). */
 export async function getSubscriptionRaw(organizationId: string) {
   return prisma.organizationSubscription.findUnique({
