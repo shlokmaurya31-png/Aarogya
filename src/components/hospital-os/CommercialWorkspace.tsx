@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { CreditCard, Package, Gauge, SlidersHorizontal, CheckCircle2, XCircle } from "lucide-react";
+import { CreditCard, Package, Gauge, SlidersHorizontal, CheckCircle2, XCircle, FileText, Receipt, RefreshCw } from "lucide-react";
 import { Card, CardLabel } from "@/components/ui/Card";
 import { StatusPill, type StatusTone } from "@/components/ui/StatusPill";
 import { Button } from "@/components/ui/Button";
@@ -17,6 +17,18 @@ import { ToastViewport } from "@/components/shared/ToastViewport";
  * platform-only management controls appear only when the backend says canManage.
  * There is no payment checkout and no fabricated billing data.
  */
+
+/** ₹ from integer minor units (paise). Display-only; the server owns all amounts. */
+function fmtMinor(minor?: number | null, currency = "INR"): string {
+  if (minor == null) return "—";
+  const symbol = currency === "INR" ? "₹" : `${currency} `;
+  return `${symbol}${(minor / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+const invoiceTone = (s?: string): StatusTone =>
+  s === "PAID" ? "success"
+    : s === "OPEN" || s === "PARTIALLY_PAID" ? "warning"
+      : s === "PAST_DUE" || s === "UNCOLLECTIBLE" ? "danger" : "neutral";
 
 const subTone = (s?: string): StatusTone =>
   s === "ACTIVE" || s === "TRIAL" ? "success"
@@ -34,6 +46,7 @@ export function CommercialWorkspace() {
   const [orgs, setOrgs] = useState<any[]>([]);
   const [orgId, setOrgId] = useState<string | null>(null);
   const [summary, setSummary] = useState<any>(null);
+  const [billing, setBilling] = useState<any>(null);
   const [plans, setPlans] = useState<any[]>([]);
 
   useEffect(() => {
@@ -45,6 +58,7 @@ export function CommercialWorkspace() {
 
   const load = useCallback((id: string) => {
     api(`/api/hospital/enterprise/commercial/summary?organizationId=${id}`).then(({ ok, data }) => setSummary(ok ? data : null));
+    api(`/api/hospital/enterprise/commercial/billing/summary?organizationId=${id}`).then(({ ok, data }) => setBilling(ok ? data : null));
   }, []);
   useEffect(() => { if (orgId) load(orgId); }, [orgId, load]);
 
@@ -153,6 +167,98 @@ export function CommercialWorkspace() {
                 ))}
               </div>
             </Card>
+          )}
+
+          {/* ── Phase D3 — SaaS billing (separate from patient revenue cycle) ── */}
+          {billing && (
+            <>
+              {/* Billing overview */}
+              <Card className="p-4">
+                <div className="mb-3 flex items-center gap-2"><Receipt size={15} className="text-brand" /><CardLabel>Billing</CardLabel></div>
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-[13px]">
+                  <div>
+                    <p className="text-[11px] text-text-tertiary">Recurring price</p>
+                    <p className="font-medium">
+                      {billing.pricing ? `${fmtMinor(billing.pricing.amountMinor, billing.pricing.currency)} / ${(billing.pricing.billingInterval ?? "").toLowerCase()}` : "Not billable"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] text-text-tertiary">Next billing</p>
+                    <p>{billing.nextBillingAt ? new Date(billing.nextBillingAt).toLocaleDateString() : "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] text-text-tertiary">Outstanding</p>
+                    <p className={billing.outstandingMinor > 0 ? "font-medium text-danger" : "font-medium"}>{fmtMinor(billing.outstandingMinor)}</p>
+                  </div>
+                  {billing.account && (
+                    <div>
+                      <p className="text-[11px] text-text-tertiary">Billing account</p>
+                      <p>{billing.account.billingName} <span className="text-text-tertiary">· {billing.account.currency}</span></p>
+                    </div>
+                  )}
+                </div>
+                {canManage && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-hairline pt-3">
+                    <span className="text-[11px] text-text-tertiary">Platform:</span>
+                    <Button size="sm" variant="secondary" onClick={() => act("Renew (test provider)", "/api/hospital/enterprise/commercial/billing/renew", { method: "POST", body: JSON.stringify({ organizationId: orgId, providerKind: "FAKE" }) })}>
+                      <RefreshCw size={13} /> Renew (test pay)
+                    </Button>
+                    <Button size="sm" variant="secondary" onClick={() => act("Renew (invoice only)", "/api/hospital/enterprise/commercial/billing/renew", { method: "POST", body: JSON.stringify({ organizationId: orgId, providerKind: "NONE" }) })}>
+                      Generate invoice
+                    </Button>
+                  </div>
+                )}
+                {!billing.account && <p className="mt-2 text-[12px] text-text-tertiary">No billing account yet.</p>}
+              </Card>
+
+              {/* Invoices */}
+              <Card className="p-4">
+                <div className="mb-3 flex items-center gap-2"><FileText size={15} className="text-brand" /><CardLabel>Invoices</CardLabel></div>
+                {billing.invoices.length === 0 ? (
+                  <p className="text-[12px] text-text-tertiary">No invoices yet — this organization has no billing history.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[520px] text-left text-[12.5px]">
+                      <thead>
+                        <tr className="text-[11px] uppercase tracking-[0.1em] text-text-tertiary">
+                          <th className="py-2 pr-3 font-medium">Invoice</th>
+                          <th className="py-2 pr-3 font-medium">Status</th>
+                          <th className="py-2 pr-3 font-medium">Total</th>
+                          <th className="py-2 pr-3 font-medium">Paid</th>
+                          <th className="py-2 pr-3 font-medium">Due date</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {billing.invoices.map((inv: any) => (
+                          <tr key={inv.id} className="border-t border-hairline">
+                            <td className="py-2 pr-3 font-medium">{inv.invoiceNumber ?? <span className="text-text-tertiary">draft</span>}</td>
+                            <td className="py-2 pr-3"><StatusPill label={inv.status} tone={invoiceTone(inv.status)} /></td>
+                            <td className="py-2 pr-3">{fmtMinor(inv.totalMinor, inv.currency)}</td>
+                            <td className="py-2 pr-3">{fmtMinor(inv.amountPaidMinor, inv.currency)}</td>
+                            <td className="py-2 pr-3 text-text-secondary">{inv.dueAt ? new Date(inv.dueAt).toLocaleDateString() : "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </Card>
+
+              {/* Credits */}
+              {billing.credits.length > 0 && (
+                <Card className="p-4">
+                  <div className="mb-3 flex items-center gap-2"><CreditCard size={15} className="text-brand" /><CardLabel>Credits</CardLabel></div>
+                  <div className="space-y-1.5">
+                    {billing.credits.map((c: any) => (
+                      <div key={c.id} className="flex items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-2 text-[13px]">
+                        <span>{c.type} · {c.reason}</span>
+                        <span className="text-text-secondary">{fmtMinor(c.remainingMinor)} of {fmtMinor(c.amountMinor)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              )}
+            </>
           )}
         </div>
       )}
