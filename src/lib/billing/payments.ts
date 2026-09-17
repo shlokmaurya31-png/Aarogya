@@ -23,7 +23,7 @@ type Tx = Prisma.TransactionClient;
  */
 
 function rawEnum(v: BillingProviderKind): Prisma.Sql {
-  if (v !== "NONE" && v !== "FAKE") throw new BadRequestError("Invalid provider kind.");
+  if (v !== "NONE" && v !== "FAKE" && v !== "RAZORPAY") throw new BadRequestError("Invalid provider kind.");
   return Prisma.raw(`'${v}'`);
 }
 

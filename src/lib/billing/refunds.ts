@@ -5,6 +5,7 @@ import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { type ActorMemberships } from "@/lib/auth/tenantContext";
 import { requirePlatform } from "./authz";
+import { getProvider } from "./provider";
 
 type Tx = Prisma.TransactionClient;
 
@@ -18,7 +19,7 @@ type Tx = Prisma.TransactionClient;
  */
 
 function rawEnum(v: BillingProviderKind): Prisma.Sql {
-  if (v !== "NONE" && v !== "FAKE") throw new BadRequestError("Invalid provider kind.");
+  if (v !== "NONE" && v !== "FAKE" && v !== "RAZORPAY") throw new BadRequestError("Invalid provider kind.");
   return Prisma.raw(`'${v}'`);
 }
 
@@ -61,11 +62,60 @@ export async function refundPaymentTx(tx: Tx, input: RefundInput) {
   return { refund, alreadyExisted: Number(rowsInserted) === 0 };
 }
 
-/** Platform-only route entry. */
+/** Platform-only route entry (domain-only; used for manual/out-of-band refunds). */
 export async function refundPayment(m: ActorMemberships, input: Omit<RefundInput, "createdByUserId">) {
   requirePlatform(m);
   return prisma.$transaction(
     (tx) => refundPaymentTx(tx, { ...input, createdByUserId: m.userId }),
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 20000, maxWait: 10000 }
   );
+}
+
+/**
+ * Platform-only: refund through the real provider (Phase D4).
+ *
+ * Distributed-failure discipline:
+ *  - If a refund with this idempotencyKey already exists, the provider is NOT
+ *    called again (no double refund).
+ *  - The ceiling is validated against the payment BEFORE calling the provider, so
+ *    we never issue a provider refund we cannot legally record.
+ *  - If the provider call throws (ambiguous outcome), or the local record fails
+ *    after a provider success, a REFUND_MISMATCH reconciliation exception is
+ *    raised rather than pretending the operation was exactly-once.
+ */
+export async function refundViaProvider(m: ActorMemberships, input: { paymentId: string; amountMinor: number; reason: string; idempotencyKey: string; providerKind: "FAKE" | "RAZORPAY" }) {
+  requirePlatform(m);
+  const existing = await prisma.billingRefund.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
+  if (existing) return existing; // idempotent — never re-call the provider
+
+  const payment = await prisma.billingPayment.findUnique({ where: { id: input.paymentId } });
+  if (!payment) throw new NotFoundError();
+  if (input.amountMinor <= 0) throw new BadRequestError("Refund amount must be positive.");
+  if (input.amountMinor > payment.amountMinor - payment.refundedMinor) throw new BadRequestError("Refund would exceed the payment's un-refunded balance.");
+  if (!payment.providerPaymentRef) throw new BadRequestError("Payment has no provider reference to refund against.");
+
+  let providerRefundRef: string | null = null;
+  try {
+    const res = await getProvider(input.providerKind).refundPayment({ providerPaymentRef: payment.providerPaymentRef, amountMinor: input.amountMinor, idempotencyKey: input.idempotencyKey });
+    if (res.status === "failed") throw new BadRequestError("Provider refused the refund.");
+    providerRefundRef = res.providerRefundRef;
+  } catch (err) {
+    await prisma.billingReconciliationException.create({
+      data: { kind: "REFUND_MISMATCH", organizationId: payment.organizationId, providerKind: input.providerKind, severity: "HIGH", entityType: "payment", entityId: payment.id, providerRef: payment.providerPaymentRef, description: "Provider refund outcome ambiguous or refused." },
+    });
+    throw err;
+  }
+
+  try {
+    const { refund } = await prisma.$transaction(
+      (tx) => refundPaymentTx(tx, { ...input, providerRefundRef, createdByUserId: m.userId }),
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 20000, maxWait: 10000 }
+    );
+    return refund;
+  } catch (err) {
+    await prisma.billingReconciliationException.create({
+      data: { kind: "REFUND_MISMATCH", organizationId: payment.organizationId, providerKind: input.providerKind, severity: "CRITICAL", entityType: "payment", entityId: payment.id, providerRef: providerRefundRef, description: "Provider refund succeeded but local record failed; reconcile." },
+    });
+    throw err;
+  }
 }
