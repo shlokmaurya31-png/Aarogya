@@ -772,6 +772,75 @@ model WorkflowTimer {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Phase D8 — configuration engine.
+//
+// A governed, versioned, tenant-aware configuration store that lets different
+// hospitals behave differently without forking the codebase. It is a SUPERSET of
+// the D1 OrgConfigValue/FacilityConfigValue/DepartmentConfigValue KV (which stays
+// intact for its simple keys): D8 adds a strict typed registry, scope inheritance
+// with provenance, effective-date scheduling, versioning + a publication boundary,
+// immutable change history, and effective-value snapshots for historical
+// explainability. Legal keys live in the in-code registry (src/lib/config/registry.ts);
+// arbitrary keys are refused. Status/type are TEXT (D5/D6 convention → zero enum
+// drift); tenant scope is a loose indexed reference enforced in the service layer
+// (consistent with D6/D7). C4 stays authoritative — configuration never grants
+// access. See docs/platform/configuration/.
+model ConfigurationOverride {
+  id              String    @id @default(cuid())
+  key             String
+  valueType       String // BOOLEAN | NUMBER | STRING | ENUM | DURATION | JSON
+  /// The scope level this value applies at.
+  scope           String // ORGANIZATION | FACILITY | DEPARTMENT
+  /// The concrete id of the scope target (organization/facility/department id).
+  scopeRef        String
+  /// Owning organization — always set, for tenant filtering + isolation.
+  organizationId  String
+  facilityId      String?
+  departmentId    String?
+  /// The value, stored as a string; parsed/validated per the registry spec.
+  value           String
+  status          String    @default("DRAFT") // DRAFT | PUBLISHED | RETIRED
+  version         Int       @default(0)
+  /// Effective window (half-open). effectiveUntil null = current/open-ended.
+  effectiveFrom   DateTime  @default(now())
+  effectiveUntil  DateTime?
+  reason          String?
+  createdByUserId String?
+  updatedByUserId String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([scope, scopeRef, key, version])
+  @@index([organizationId])
+  @@index([scope, scopeRef, key, status])
+  @@index([key, status])
+  @@index([status, effectiveFrom])
+}
+
+// Immutable audit-grade history of every configuration change (what the value was,
+// what it became, who changed it, and why). Distinct from AuditEvent: this is the
+// value-level ledger the config UI/explainer reads; AuditEvent records the act.
+model ConfigurationChange {
+  id             String   @id @default(cuid())
+  overrideId     String?
+  key            String
+  scope          String
+  scopeRef       String
+  organizationId String
+  action         String // SET | PUBLISH | RESET | RETIRE
+  oldValue       String?
+  newValue       String?
+  version        Int?
+  actorUserId    String?
+  reason         String?
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId])
+  @@index([scope, scopeRef, key])
+  @@index([createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Aarogya Hospital OS — tenancy, beds, staff
 // See docs/ENTERPRISE_HOSPITAL_ARCHITECTURE.md for the full design and for
 // why this lives under /hospital-os rather than the pre-existing /hospital
