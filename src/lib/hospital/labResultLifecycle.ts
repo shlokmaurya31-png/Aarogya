@@ -1,5 +1,7 @@
 import { Prisma, LabResultType } from "@prisma/client";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
+import { emitDomainEvent } from "@/lib/events/emit";
+import { facilityOrganizationId } from "@/lib/events/tenant";
 import { findApplicableReferenceRange, computeAbnormalFlag } from "./labCatalog";
 
 type Tx = Prisma.TransactionClient;
@@ -125,7 +127,20 @@ export async function verifyResult(tx: Tx, resultId: string, verifiedByStaffId: 
     data: { status: "VERIFIED", verifiedByStaffId, verifiedAt: new Date() },
   });
   if (updateResult.count !== 1) throw new ResultConcurrencyError("verified");
-  return tx.labResult.findUniqueOrThrow({ where: { id: resultId } });
+  const verified = await tx.labResult.findUniqueOrThrow({ where: { id: resultId } });
+  // Phase D6 — verification is the "released" moment: emit LabResultReleased in
+  // the same transaction. Tenant scope is derived from the order's encounter.
+  const order = await tx.labOrder.findUnique({ where: { id: verified.labOrderId }, select: { patientId: true, encounter: { select: { facilityId: true } } } });
+  if (order?.encounter?.facilityId) {
+    await emitDomainEvent(tx, {
+      type: "LabResultReleased",
+      aggregateId: resultId,
+      organizationId: await facilityOrganizationId(tx, order.encounter.facilityId),
+      facilityId: order.encounter.facilityId,
+      payload: { resultId, orderId: verified.labOrderId, patientId: order.patientId, critical: verified.isCritical },
+    });
+  }
+  return verified;
 }
 
 /**

@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/db";
 import { BedStatus, EncounterStatus } from "@prisma/client";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { emitDomainEvent } from "@/lib/events/emit";
+import { facilityOrganizationId } from "@/lib/events/tenant";
 import { isEncounterTransitionAllowed, InvalidEncounterTransitionError } from "./encounterStateMachine";
 import { createPricedChargeIfNotExists } from "./billing/chargeCapture";
 import { PriceNotFoundError } from "./billing/pricing";
@@ -86,6 +88,16 @@ export async function admitPatient(input: {
     });
 
     await tx.encounter.update({ where: { id: input.encounterId }, data: { status: EncounterStatus.ADMITTED } });
+
+    // Phase D6 — AdmissionCreated, emitted in the admission transaction.
+    await emitDomainEvent(tx, {
+      type: "AdmissionCreated",
+      aggregateId: created.id,
+      organizationId: await facilityOrganizationId(tx, bed.facilityId),
+      facilityId: bed.facilityId,
+      actorUserId: input.byUserId,
+      payload: { admissionId: created.id, encounterId: input.encounterId, patientId: encounter.patientId, bedId: input.bedId },
+    });
 
     return { admission: created, auditContext: { facilityId: bed.facilityId, patientId: encounter.patientId } };
   });

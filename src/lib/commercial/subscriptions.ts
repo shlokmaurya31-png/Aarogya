@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { Prisma, type SubscriptionStatus, type BillingInterval } from "@prisma/client";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { emitDomainEvent } from "@/lib/events/emit";
 import { BadRequestError, ForbiddenError } from "@/lib/auth/rbac";
 import type { ActorMemberships } from "@/lib/auth/tenantContext";
 import { canTransitionSubscription } from "./constants";
@@ -112,6 +113,17 @@ export async function assignPlan(m: ActorMemberships, input: AssignPlanInput) {
       },
     });
     await syncSubscriptionEntitlements(tx, s.id, plan.id);
+    // Phase D6 — a non-trial assignment activates paid commercial state. Emitted
+    // in-tx so SubscriptionActivated is durable iff the subscription committed.
+    if (status === "ACTIVE") {
+      await emitDomainEvent(tx, {
+        type: "SubscriptionActivated",
+        aggregateId: s.id,
+        organizationId: input.organizationId,
+        actorUserId: m.userId,
+        payload: { subscriptionId: s.id, planId: plan.id, billingInterval: plan.billingInterval },
+      });
+    }
     return s;
   });
 
@@ -154,9 +166,19 @@ export async function cancelSubscription(m: ActorMemberships, organizationId: st
   const now = new Date();
   if (opts.immediate) {
     if (!canTransitionSubscription(sub.status, "CANCELLED")) throw new BadRequestError(`Cannot cancel a ${sub.status} subscription.`);
-    const updated = await prisma.organizationSubscription.update({
-      where: { organizationId },
-      data: { status: "CANCELLED", cancelledAt: now, cancelAtPeriodEnd: false },
+    const updated = await prisma.$transaction(async (tx) => {
+      const u = await tx.organizationSubscription.update({
+        where: { organizationId },
+        data: { status: "CANCELLED", cancelledAt: now, cancelAtPeriodEnd: false },
+      });
+      await emitDomainEvent(tx, {
+        type: "SubscriptionCancelled",
+        aggregateId: sub.id,
+        organizationId,
+        actorUserId: m.userId,
+        payload: { subscriptionId: sub.id, immediate: true },
+      });
+      return u;
     });
     await recordAuditEvent("commercial.subscription.cancelled", m.userId, { immediate: true, reason: opts.reason ?? null }, { organizationId });
     return updated;
@@ -200,6 +222,13 @@ export async function applyPaidRenewal(
       status: cured ? "ACTIVE" : sub.status,
       gracePeriodEndsAt: cured ? null : sub.gracePeriodEndsAt,
     },
+  });
+  // Phase D6 — SubscriptionRenewed in the caller's renewal transaction.
+  await emitDomainEvent(tx, {
+    type: "SubscriptionRenewed",
+    aggregateId: sub.id,
+    organizationId,
+    payload: { subscriptionId: sub.id, periodStart: period.periodStart.toISOString(), periodEnd: period.periodEnd.toISOString() },
   });
   return { curedFrom: cured ? sub.status : null };
 }

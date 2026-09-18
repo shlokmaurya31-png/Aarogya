@@ -1,6 +1,7 @@
 import type { BillingReconciliationKind } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { emitDomainEvent } from "@/lib/events/emit";
 import { type ActorMemberships } from "@/lib/auth/tenantContext";
 import { requirePlatform } from "@/lib/billing/authz";
 import { resolveCurrentPrice } from "@/lib/billing/pricing";
@@ -20,11 +21,27 @@ async function createFinding(input: { kind: BillingReconciliationKind; organizat
   // the other hits the unique constraint (P2002) and is skipped — no duplicate.
   const findingKey = `LEAKAGE:${input.kind}:${input.entityId}`;
   try {
-    await prisma.billingReconciliationException.create({
-      data: {
-        source: "LEAKAGE", kind: input.kind, organizationId: input.organizationId, entityType: input.entityType,
-        entityId: input.entityId, severity: input.severity, description: input.description, status: "OPEN", localRef: input.entityId, findingKey,
-      },
+    // Create the finding and emit ReconciliationExceptionCreated in one transaction
+    // so the domain fact is durable iff the finding committed. A P2002 (dedupe hit)
+    // aborts the transaction and is caught below — no event, no finding.
+    await prisma.$transaction(async (tx) => {
+      const created = await tx.billingReconciliationException.create({
+        data: {
+          source: "LEAKAGE", kind: input.kind, organizationId: input.organizationId, entityType: input.entityType,
+          entityId: input.entityId, severity: input.severity, description: input.description, status: "OPEN", localRef: input.entityId, findingKey,
+        },
+      });
+      // ReconciliationExceptionCreated is organization-scoped; a finding with no
+      // organization (rare) is still recorded but emits no tenant-scoped event.
+      if (input.organizationId) {
+        await emitDomainEvent(tx, {
+          type: "ReconciliationExceptionCreated",
+          aggregateId: created.id,
+          organizationId: input.organizationId,
+          actorUserId: input.actorUserId,
+          payload: { exceptionId: created.id, kind: input.kind, severity: input.severity, source: "LEAKAGE" },
+        });
+      }
     });
   } catch (err) {
     if ((err as { code?: string }).code === "P2002") return { created: false };

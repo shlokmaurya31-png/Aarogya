@@ -1,6 +1,8 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError, ConflictError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { emitDomainEvent } from "@/lib/events/emit";
 import { assertOrganizationAccess, type ActorMemberships } from "@/lib/auth/tenantContext";
 import { requirePlatform } from "@/lib/billing/authz";
 
@@ -94,14 +96,29 @@ export async function transitionException(m: ActorMemberships, id: string, to: "
   if (!STATUS_TRANSITIONS[ex.status]?.includes(to)) throw new BadRequestError(`Cannot move exception from ${ex.status} to ${to}.`);
   const terminal = to === "RESOLVED" || to === "DISMISSED";
   if (terminal && !resolution?.trim()) throw new BadRequestError("A resolution note is required to resolve or dismiss.");
-  const res = await prisma.billingReconciliationException.updateMany({
-    where: { id, status: ex.status },
-    // Clearing findingKey on a terminal state frees the leakage dedupe slot so the
-    // same condition, if it persists, can be re-detected as a fresh finding.
-    data: { status: to, resolution: resolution ?? undefined, resolved: terminal, resolvedByUserId: terminal ? m.userId : undefined, resolvedAt: terminal ? new Date() : undefined, findingKey: terminal ? null : undefined },
-  });
-  if (res.count !== 1) throw new ConflictError("Exception changed concurrently.");
-  const evt = to === "ACKNOWLEDGED" ? "commercial.reconciliation.acknowledged" : to === "DISMISSED" ? "commercial.reconciliation.dismissed" : "commercial.leakage.findingUpdated";
-  await recordAuditEvent(evt, m.userId, { id, to }, { organizationId: ex.organizationId ?? undefined });
+  // The guarded updateMany (matches current status) plus the emitted domain event
+  // run in one transaction so ReconciliationExceptionResolved is durable iff the
+  // transition committed. The status guard still makes concurrent transitions
+  // race-safe: only one caller's updateMany matches, the other gets count 0.
+  await prisma.$transaction(async (tx) => {
+    const res = await tx.billingReconciliationException.updateMany({
+      where: { id, status: ex.status },
+      // Clearing findingKey on a terminal state frees the leakage dedupe slot so the
+      // same condition, if it persists, can be re-detected as a fresh finding.
+      data: { status: to, resolution: resolution ?? undefined, resolved: terminal, resolvedByUserId: terminal ? m.userId : undefined, resolvedAt: terminal ? new Date() : undefined, findingKey: terminal ? null : undefined },
+    });
+    if (res.count !== 1) throw new ConflictError("Exception changed concurrently.");
+    if (terminal && ex.organizationId) {
+      await emitDomainEvent(tx, {
+        type: "ReconciliationExceptionResolved",
+        aggregateId: id,
+        organizationId: ex.organizationId,
+        actorUserId: m.userId,
+        payload: { exceptionId: id, status: to },
+      });
+    }
+    const evt = to === "ACKNOWLEDGED" ? "commercial.reconciliation.acknowledged" : to === "DISMISSED" ? "commercial.reconciliation.dismissed" : "commercial.leakage.findingUpdated";
+    await recordAuditEvent(evt, m.userId, { id, to }, { organizationId: ex.organizationId ?? undefined }, tx);
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 20000, maxWait: 10000 });
   return prisma.billingReconciliationException.findUniqueOrThrow({ where: { id } });
 }

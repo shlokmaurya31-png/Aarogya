@@ -1,5 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
+import { emitDomainEvent } from "@/lib/events/emit";
+import { facilityOrganizationId } from "@/lib/events/tenant";
 
 type Tx = Prisma.TransactionClient;
 
@@ -78,7 +80,22 @@ export async function verifyReport(tx: Tx, reportId: string, verifiedByStaffId: 
     data: { status: "VERIFIED", verifiedByStaffId, verifiedAt: new Date() },
   });
   if (result.count !== 1) throw new ReportConcurrencyError("verified");
-  return tx.imagingReport.findUniqueOrThrow({ where: { id: reportId } });
+  const verified = await tx.imagingReport.findUniqueOrThrow({ where: { id: reportId } });
+  // Phase D6 — ImagingReportReleased on verification. Tenant scope from the study
+  // (a report with no linked study emits no tenant-scoped event).
+  if (verified.studyId) {
+    const study = await tx.imagingStudy.findUnique({ where: { id: verified.studyId }, select: { facilityId: true, patientId: true } });
+    if (study) {
+      await emitDomainEvent(tx, {
+        type: "ImagingReportReleased",
+        aggregateId: reportId,
+        organizationId: await facilityOrganizationId(tx, study.facilityId),
+        facilityId: study.facilityId,
+        payload: { reportId, studyId: verified.studyId, patientId: study.patientId, critical: verified.isCritical },
+      });
+    }
+  }
+  return verified;
 }
 
 /**

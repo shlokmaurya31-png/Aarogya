@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError, ConflictError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { emitDomainEvent } from "@/lib/events/emit";
 import { type ActorMemberships } from "@/lib/auth/tenantContext";
 import { requirePlatform } from "./authz";
 import { isInvoicePayable } from "./constants";
@@ -105,6 +106,16 @@ export async function recordPayment(tx: Tx, input: RecordPaymentInput) {
     if (Number(applied) !== 1) throw new BadRequestError("This payment would exceed the invoice total.");
     await refreshInvoicePaymentStatus(tx, input.invoiceId);
     await recordAuditEvent("commercial.billing.paymentRecorded", input.createdByUserId, { invoiceId: input.invoiceId, paymentId: payment.id, amountMinor: input.amountMinor }, { organizationId: invoice.organizationId }, tx);
+    // Phase D6 — emit the domain fact in the SAME transaction as the money move,
+    // so PaymentReceived is durable iff the payment committed. Only on first
+    // insert (money applied exactly once) — never on the idempotent no-op path.
+    await emitDomainEvent(tx, {
+      type: "PaymentReceived",
+      aggregateId: payment.id,
+      organizationId: invoice.organizationId,
+      actorUserId: input.createdByUserId,
+      payload: { paymentId: payment.id, invoiceId: input.invoiceId, amountMinor: input.amountMinor, currency: invoice.currency },
+    });
   }
   return { payment, alreadyExisted: Number(rowsInserted) === 0 };
 }

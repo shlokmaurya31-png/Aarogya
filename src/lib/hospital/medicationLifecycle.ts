@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/db";
 import { MedicationOrderStatus, MedicationAdministrationStatus, DispenseStatus } from "@prisma/client";
+import { emitDomainEvent } from "@/lib/events/emit";
+import { facilityOrganizationId } from "@/lib/events/tenant";
 import { checkMedicationSafety, writeSafetyWarnings, type SafetyFlag } from "./clinicalSafety";
 import { generateAdministrationSchedule } from "./medicationSchedule";
 import { createOrderEnvelope, closeOrderEnvelope } from "./orderEnvelope";
@@ -158,6 +160,16 @@ export async function createMedicationOrder(input: {
     }
 
     await tx.auditEvent.create({ data: { type: "hospital.medication.ordered", userId: input.byUserId, detail: { orderId: created.id, flags: flags.length, overridden: hasDanger } } });
+
+    // Phase D6 — MedicationOrdered, emitted in the ordering transaction.
+    await emitDomainEvent(tx, {
+      type: "MedicationOrdered",
+      aggregateId: created.id,
+      organizationId: await facilityOrganizationId(tx, input.facilityId),
+      facilityId: input.facilityId,
+      actorUserId: input.byUserId,
+      payload: { orderId: created.id, patientId: input.patientId, encounterId: input.encounterId },
+    });
 
     // Auto-submit to pharmacy — every order is reviewed by default (brief §16/§28's end-to-end flow).
     const submitted = await tx.medicationOrder.update({ where: { id: created.id }, data: { status: "PHARMACY_REVIEW" } });

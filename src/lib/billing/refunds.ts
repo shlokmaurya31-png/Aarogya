@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { emitDomainEvent } from "@/lib/events/emit";
 import { type ActorMemberships } from "@/lib/auth/tenantContext";
 import { requirePlatform } from "./authz";
 import { getProvider } from "./provider";
@@ -58,6 +59,13 @@ export async function refundPaymentTx(tx: Tx, input: RefundInput) {
     const status = after.refundedMinor >= after.amountMinor ? "REFUNDED" : after.refundedMinor > 0 ? "PARTIALLY_REFUNDED" : after.status;
     if (status !== after.status) await tx.billingPayment.update({ where: { id: input.paymentId }, data: { status } });
     await recordAuditEvent("commercial.billing.refundCreated", input.createdByUserId, { paymentId: input.paymentId, refundId: refund.id, amountMinor: input.amountMinor }, { organizationId: payment.organizationId }, tx);
+    await emitDomainEvent(tx, {
+      type: "RefundIssued",
+      aggregateId: refund.id,
+      organizationId: payment.organizationId,
+      actorUserId: input.createdByUserId,
+      payload: { refundId: refund.id, paymentId: input.paymentId, amountMinor: input.amountMinor, currency: payment.currency },
+    });
   }
   return { refund, alreadyExisted: Number(rowsInserted) === 0 };
 }

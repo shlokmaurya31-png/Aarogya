@@ -4,6 +4,8 @@ import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { emitDomainEvent } from "@/lib/events/emit";
+import { facilityOrganizationId } from "@/lib/events/tenant";
 import { createPatientWithUhid } from "@/lib/hospital/uhid";
 
 export async function GET(req: NextRequest) {
@@ -52,16 +54,29 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) return { error: "Invalid patient data.", issues: parsed.error.issues };
 
     const patient = await createPatientWithUhid(facilityId, (uhid) =>
-      prisma.patient.create({
-        data: {
-          uhid,
+      // Phase D6 — create the patient and emit PatientRegistered in one
+      // transaction so the domain fact is durable iff the patient row committed.
+      prisma.$transaction(async (tx) => {
+        const created = await tx.patient.create({
+          data: {
+            uhid,
+            facilityId,
+            fullName: parsed.data.fullName,
+            sex: parsed.data.sex,
+            ageYears: parsed.data.ageYears,
+            phone: parsed.data.phone,
+            bloodGroup: parsed.data.bloodGroup,
+          },
+        });
+        await emitDomainEvent(tx, {
+          type: "PatientRegistered",
+          aggregateId: created.id,
+          organizationId: await facilityOrganizationId(tx, facilityId),
           facilityId,
-          fullName: parsed.data.fullName,
-          sex: parsed.data.sex,
-          ageYears: parsed.data.ageYears,
-          phone: parsed.data.phone,
-          bloodGroup: parsed.data.bloodGroup,
-        },
+          actorUserId: session.userId,
+          payload: { patientId: created.id, uhid: created.uhid },
+        });
+        return created;
       })
     );
 

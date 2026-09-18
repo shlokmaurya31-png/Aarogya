@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError, ConflictError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { emitDomainEvent } from "@/lib/events/emit";
+import { facilityOrganizationId } from "@/lib/events/tenant";
 import {
   CONSENT_PURPOSES, CONSENT_SCOPES, CONSENT_RECIPIENT_TYPES, CONSENT_TRANSITIONS,
   assertOneOf, isTransitionAllowed, isConsentUsable, consentCoversAllScopes,
@@ -136,6 +138,14 @@ export async function grantConsent(input: {
         patientId: consent.patientId,
       },
     });
+    await emitDomainEvent(tx, {
+      type: "ConsentGranted",
+      aggregateId: consent.id,
+      organizationId: await facilityOrganizationId(tx, consent.facilityId),
+      facilityId: consent.facilityId,
+      actorUserId: input.byUserId,
+      payload: { consentId: consent.id, patientId: consent.patientId },
+    });
     return tx.interopConsent.findUniqueOrThrow({ where: { id: consent.id }, include: { scopes: true } });
   });
 }
@@ -176,6 +186,14 @@ export async function revokeConsent(input: {
         facilityId: consent.facilityId,
         patientId: consent.patientId,
       },
+    });
+    await emitDomainEvent(tx, {
+      type: "ConsentRevoked",
+      aggregateId: consent.id,
+      organizationId: await facilityOrganizationId(tx, consent.facilityId),
+      facilityId: consent.facilityId,
+      actorUserId: input.byUserId,
+      payload: { consentId: consent.id, patientId: consent.patientId },
     });
     return tx.interopConsent.findUniqueOrThrow({ where: { id: consent.id }, include: { scopes: true } });
   });

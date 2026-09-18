@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/db";
 import type { AppointmentType, AccessSource, RequestPriority } from "@prisma/client";
+import { emitDomainEvent } from "@/lib/events/emit";
+import { facilityOrganizationId } from "@/lib/events/tenant";
 
 export class SlotConflictError extends Error {
   constructor() {
@@ -145,6 +147,15 @@ export async function bookAppointment(input: {
     });
     await tx.auditEvent.create({
       data: { type: "hospital.appointment.created", userId: input.byUserId, detail: { appointmentId: appointment.id, doctorStaffId: input.doctorStaffId } },
+    });
+    // Phase D6 — AppointmentBooked, emitted in the same transaction as the create.
+    await emitDomainEvent(tx, {
+      type: "AppointmentBooked",
+      aggregateId: appointment.id,
+      organizationId: await facilityOrganizationId(tx, input.facilityId),
+      facilityId: input.facilityId,
+      actorUserId: input.byUserId,
+      payload: { appointmentId: appointment.id, patientId: input.patientId, doctorStaffId: input.doctorStaffId, scheduledStart: input.scheduledStart.toISOString() },
     });
     return appointment;
   });

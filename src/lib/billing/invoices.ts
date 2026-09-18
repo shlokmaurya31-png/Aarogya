@@ -2,6 +2,7 @@ import { Prisma, type BillingInterval, type BillingInvoiceLineType } from "@pris
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { emitDomainEvent } from "@/lib/events/emit";
 import { assertOrganizationAccess, type ActorMemberships } from "@/lib/auth/tenantContext";
 import { requirePlatform } from "./authz";
 import { getOrCreateBillingAccount } from "./billingAccount";
@@ -116,6 +117,13 @@ export async function generateInvoiceForPeriod(tx: Tx, input: GenerateInvoiceInp
     },
   });
   await recordAuditEvent("commercial.billing.invoiceGenerated", input.generatedByUserId, { invoiceId: invoice.id, totalMinor: invoice.totalMinor, planId: input.planId }, { organizationId: input.organizationId }, tx);
+  await emitDomainEvent(tx, {
+    type: "InvoiceCreated",
+    aggregateId: invoice.id,
+    organizationId: input.organizationId,
+    actorUserId: input.generatedByUserId,
+    payload: { invoiceId: invoice.id, totalMinor: invoice.totalMinor, currency: invoice.currency },
+  });
   return invoice;
 }
 
@@ -163,6 +171,13 @@ export async function finalizeInvoiceTx(tx: Tx, invoiceId: string, actorUserId: 
     data: { status, invoiceNumber: number, finalizedAt: now, issuedAt: now, dueAt },
   });
   await recordAuditEvent("commercial.billing.invoiceFinalized", actorUserId, { invoiceId, invoiceNumber: number, totalMinor: updated.totalMinor }, { organizationId: invoice.organizationId }, tx);
+  await emitDomainEvent(tx, {
+    type: "InvoiceFinalized",
+    aggregateId: invoiceId,
+    organizationId: invoice.organizationId,
+    actorUserId,
+    payload: { invoiceId, invoiceNumber: number, totalMinor: updated.totalMinor, currency: updated.currency },
+  });
   return updated;
 }
 
