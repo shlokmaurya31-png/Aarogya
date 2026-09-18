@@ -7,6 +7,7 @@ import { StatusPill, type StatusTone } from "@/components/ui/StatusPill";
 import { Button } from "@/components/ui/Button";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
+import { CommercialFinancePanel } from "./CommercialFinancePanel";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -83,6 +84,9 @@ export function CommercialWorkspace() {
         <h1 className="text-[17px] font-semibold">Commercial</h1>
         <span className="text-[12px] text-text-tertiary">Plan, subscription, entitlements & usage — the Aarogya SaaS layer (not patient billing)</span>
       </div>
+
+      {/* Phase D5 — platform-only finance/revenue-operations panel (self-hides for non-platform). */}
+      <CommercialFinancePanel />
 
       {orgs.length > 1 && (
         <div className="flex flex-wrap gap-2">
