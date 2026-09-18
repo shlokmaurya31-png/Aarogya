@@ -1,6 +1,14 @@
-# Event Architecture (Target Design — Not Implemented)
+# Event Architecture (Target Design)
 
-**Nothing in this document exists in code today.** Aarogya currently has
+> **Phase D6 update:** the transactional-outbox foundation described in §5 (outbox
+> pattern, closed event union, correlation/causation, idempotent consumers) is now
+> **implemented** — see `docs/platform/events/` and `src/lib/events/`. What remains
+> aspirational here is the *scope* (only a representative set of events is emitted so
+> far) and the explicitly-deferred parts (§2's notification/analytics consumers, §7's
+> "don't retrofit every route"). This document is kept as the original design
+> rationale; the D6 docs are authoritative for what exists.
+
+**Historical note (pre-D6):** Aarogya previously had
 no event bus, no message queue, no pub/sub layer. What exists is a
 **request-scoped write-then-audit** pattern: an API route mutates the
 database inside a transaction, then calls `recordAuditEvent()` to write a
