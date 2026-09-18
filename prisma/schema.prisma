@@ -489,6 +489,91 @@ model AuditEvent {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Phase D6 — transactional domain-event foundation.
+//
+// A DomainEvent answers "WHAT happened in the business domain" (PatientRegistered,
+// PaymentReceived), distinct from AuditEvent which answers "WHO did what". Events
+// are written to this OUTBOX in the SAME database transaction as the domain
+// mutation they describe, so an event can never be lost when the mutation commits
+// nor exist when it rolls back. A separate dispatcher later claims and delivers
+// them to registered consumers (at-least-once + idempotent consumers). This is a
+// durable in-monolith boundary — NOT an event bus, message broker, or event
+// sourcing. Canonical state stays in the domain tables; events are facts emitted
+// FROM state changes, never the source of truth. See docs/platform/events/.
+//
+// `status` and the delivery `status` are plain strings (not Prisma enums), matching
+// the D5 convention for lifecycle fields, so both migration trees use TEXT columns
+// and there is no native-enum drift. Allowed values are enforced by the state
+// machine in src/lib/events/. Immutable business fields (eventType, eventVersion,
+// aggregate*, organizationId, payload, occurredAt) are never rewritten after
+// insert; only operational fields (status, attemptCount, *At, last error) change.
+model DomainEventOutbox {
+  id               String                @id @default(cuid())
+  /// Globally-unique public event identifier (distinct from the row `id`).
+  eventId          String                @unique
+  eventType        String
+  eventVersion     Int
+  aggregateType    String
+  aggregateId      String
+  organizationId   String?
+  organization     Organization?         @relation(fields: [organizationId], references: [id])
+  facilityId       String?
+  /// The user whose action produced the event, if any (system events have none).
+  actorUserId      String?
+  /// Groups every event belonging to one business operation.
+  correlationId    String
+  /// The event/command that directly caused this one.
+  causationId      String?
+  payload          Json
+  /// Business-event time (when it happened in the domain).
+  occurredAt       DateTime
+  /// When the row was written (processing/clock separation from occurredAt).
+  recordedAt       DateTime              @default(now())
+  status           String                @default("PENDING") // PENDING | PROCESSING | PROCESSED | RETRY | DEAD_LETTER
+  attemptCount     Int                   @default(0)
+  maxAttempts      Int                   @default(8)
+  /// Per-claim token; a dispatcher owns an event only while its token matches.
+  claimToken       String?
+  nextAttemptAt    DateTime?
+  lastAttemptAt    DateTime?
+  processedAt      DateTime?
+  lastErrorCode    String?
+  lastErrorMessage String?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  deliveries       DomainEventDelivery[]
+
+  @@index([status, nextAttemptAt])
+  @@index([eventType])
+  @@index([aggregateType, aggregateId])
+  @@index([organizationId])
+  @@index([correlationId])
+  @@index([occurredAt])
+  @@index([processedAt])
+}
+
+// One row per (event, consumer): the idempotency + delivery ledger. Unique on
+// (eventId, consumerName) guarantees one event is applied by one consumer at most
+// once effectively (at-least-once delivery + idempotent consumer = one effect).
+model DomainEventDelivery {
+  id            String            @id @default(cuid())
+  eventId       String
+  event         DomainEventOutbox @relation(fields: [eventId], references: [eventId], onDelete: Cascade)
+  consumerName  String
+  status        String            @default("PENDING") // PENDING | PROCESSED | FAILED | DEAD_LETTER
+  attemptCount  Int               @default(0)
+  processedAt   DateTime?
+  lastErrorCode String?
+  lastError     String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@unique([eventId, consumerName])
+  @@index([consumerName, status])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Aarogya Hospital OS — tenancy, beds, staff
 // See docs/ENTERPRISE_HOSPITAL_ARCHITECTURE.md for the full design and for
 // why this lives under /hospital-os rather than the pre-existing /hospital
@@ -551,40 +636,42 @@ model Organization {
   // overrides. This is the AAROGYA commercial domain and is entirely separate
   // from the hospital revenue cycle (Charge/Invoice/Payer/Claim), which concerns
   // patients and insurers, not the platform tenant.
-  subscription          OrganizationSubscription?
-  entitlementOverrides  OrganizationEntitlementOverride[]
+  subscription         OrganizationSubscription?
+  entitlementOverrides OrganizationEntitlementOverride[]
 
   // Phase D3 — SaaS billing (separate from the hospital revenue cycle).
-  billingAccount  OrganizationBillingAccount?
-  billingInvoices BillingInvoice[]
-  billingCredits  BillingCredit[]
+  billingAccount       OrganizationBillingAccount?
+  billingInvoices      BillingInvoice[]
+  billingCredits       BillingCredit[]
   // Phase D5 — collections activity notes.
   collectionActivities CollectionActivity[]
+  // Phase D6 — transactional domain-event outbox rows scoped to this org.
+  domainEvents         DomainEventOutbox[]
 
   @@index([status])
 }
 
 model Facility {
-  id             String       @id @default(cuid())
+  id             String         @id @default(cuid())
   name           String
   city           String?
   /// Stable per-organization identifier (see Organization.slug). Nullable for
   /// the same backfill reason.
   slug           String?
-  organization   Organization @relation(fields: [organizationId], references: [id])
+  organization   Organization   @relation(fields: [organizationId], references: [id])
   organizationId String
   // Phase D1 — facility lifecycle. Independent of the organization's: an
   // organization can be ACTIVE while one of its facilities is SUSPENDED. A
   // non-ACTIVE facility (or one under a non-ACTIVE organization) refuses normal
   // operations at the tenant-context boundary; clinical data is never deleted.
-  status        FacilityStatus @default(ACTIVE)
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @default(now()) @updatedAt
-  suspendedAt   DateTime?
-  deactivatedAt DateTime?
+  status         FacilityStatus @default(ACTIVE)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @default(now()) @updatedAt
+  suspendedAt    DateTime?
+  deactivatedAt  DateTime?
 
-  memberships  FacilityMembership[]
-  configValues FacilityConfigValue[]
+  memberships          FacilityMembership[]
+  configValues         FacilityConfigValue[]
   // Phase D2 — facility-scoped entitlement overrides (e.g. enabling the ICU
   // module for one facility beyond what the plan grants org-wide).
   entitlementOverrides FacilityEntitlementOverride[]
@@ -700,19 +787,19 @@ model Facility {
 //     neither is a platform admin.
 // ─────────────────────────────────────────────────────────────────────────
 model OrganizationMembership {
-  id             String           @id @default(cuid())
-  user           User             @relation(fields: [userId], references: [id])
-  userId         String
-  organization   Organization     @relation(fields: [organizationId], references: [id])
-  organizationId String
+  id              String           @id @default(cuid())
+  user            User             @relation(fields: [userId], references: [id])
+  userId          String
+  organization    Organization     @relation(fields: [organizationId], references: [id])
+  organizationId  String
   /// Organization administrator: may administer this organization and every
   /// facility under it. A plain member (isAdmin=false) has organization
   /// STANDING but no organization administration authority.
-  isAdmin        Boolean          @default(false)
-  status         MembershipStatus @default(ACTIVE)
+  isAdmin         Boolean          @default(false)
+  status          MembershipStatus @default(ACTIVE)
   createdByUserId String?
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @default(now()) @updatedAt
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @default(now()) @updatedAt
 
   @@unique([userId, organizationId])
   @@index([organizationId])
@@ -720,18 +807,18 @@ model OrganizationMembership {
 }
 
 model FacilityMembership {
-  id         String           @id @default(cuid())
-  user       User             @relation(fields: [userId], references: [id])
-  userId     String
-  facility   Facility         @relation(fields: [facilityId], references: [id])
-  facilityId String
+  id              String           @id @default(cuid())
+  user            User             @relation(fields: [userId], references: [id])
+  userId          String
+  facility        Facility         @relation(fields: [facilityId], references: [id])
+  facilityId      String
   /// Facility administrator (the HOSPITAL_ADMIN scope). May administer THIS
   /// facility only; never the parent organization.
-  isAdmin    Boolean          @default(false)
-  status     MembershipStatus @default(ACTIVE)
+  isAdmin         Boolean          @default(false)
+  status          MembershipStatus @default(ACTIVE)
   createdByUserId String?
-  createdAt  DateTime         @default(now())
-  updatedAt  DateTime         @default(now()) @updatedAt
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @default(now()) @updatedAt
 
   @@unique([userId, facilityId])
   @@index([facilityId])
@@ -751,42 +838,42 @@ model FacilityMembership {
 // setting. This is deliberately NOT a generic settings engine (brief §13).
 // ─────────────────────────────────────────────────────────────────────────
 model OrgConfigValue {
-  id             String       @id @default(cuid())
-  organization   Organization @relation(fields: [organizationId], references: [id])
-  organizationId String
-  key            String
-  value          String
+  id              String       @id @default(cuid())
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  organizationId  String
+  key             String
+  value           String
   updatedByUserId String?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @default(now()) @updatedAt
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @default(now()) @updatedAt
 
   @@unique([organizationId, key])
   @@index([organizationId])
 }
 
 model FacilityConfigValue {
-  id         String   @id @default(cuid())
-  facility   Facility @relation(fields: [facilityId], references: [id])
-  facilityId String
-  key        String
-  value      String
+  id              String   @id @default(cuid())
+  facility        Facility @relation(fields: [facilityId], references: [id])
+  facilityId      String
+  key             String
+  value           String
   updatedByUserId String?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @default(now()) @updatedAt
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @default(now()) @updatedAt
 
   @@unique([facilityId, key])
   @@index([facilityId])
 }
 
 model DepartmentConfigValue {
-  id           String     @id @default(cuid())
-  department   Department @relation(fields: [departmentId], references: [id])
-  departmentId String
-  key          String
-  value        String
+  id              String     @id @default(cuid())
+  department      Department @relation(fields: [departmentId], references: [id])
+  departmentId    String
+  key             String
+  value           String
   updatedByUserId String?
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @default(now()) @updatedAt
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @default(now()) @updatedAt
 
   @@unique([departmentId, key])
   @@index([departmentId])
@@ -860,21 +947,21 @@ enum EntitlementScope {
 /// overrides, never here — this is the definition, including the safe default
 /// used when nothing else supplies a value.
 model EntitlementDefinition {
-  id          String          @id @default(cuid())
-  key         String          @unique // stable, e.g. "advanced_pharmacy", "max_facilities"
-  name        String
-  description String
-  type        EntitlementType
-  scope       EntitlementScope
+  id               String           @id @default(cuid())
+  key              String           @unique // stable, e.g. "advanced_pharmacy", "max_facilities"
+  name             String
+  description      String
+  type             EntitlementType
+  scope            EntitlementScope
   /// Default when neither a plan snapshot nor an override supplies a value.
-  defaultBool    Boolean?
-  defaultNumber  Int?
+  defaultBool      Boolean?
+  defaultNumber    Int?
   /// LIMIT default of "no cap" is represented as unlimited=true (rather than a
   /// magic number), keeping the semantics explicit.
-  defaultUnlimited Boolean @default(false)
-  active      Boolean @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @default(now()) @updatedAt
+  defaultUnlimited Boolean          @default(false)
+  active           Boolean          @default(true)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @default(now()) @updatedAt
 
   planEntitlements         PlanEntitlement[]
   subscriptionEntitlements SubscriptionEntitlement[]
@@ -961,7 +1048,7 @@ model OrganizationSubscription {
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @default(now()) @updatedAt
 
-  entitlements SubscriptionEntitlement[]
+  entitlements   SubscriptionEntitlement[]
   // Phase D3 — billing periods + invoices generated for this subscription.
   billingPeriods BillingPeriod[]
   invoices       BillingInvoice[]
@@ -1135,16 +1222,16 @@ enum BillingPeriodStatus {
 /// (subscriptionId, periodStart) — a repeated renewal for the same period start
 /// converges to one row, so no overlapping/duplicate active periods can exist.
 model BillingPeriod {
-  id              String              @id @default(cuid())
+  id              String                   @id @default(cuid())
   subscription    OrganizationSubscription @relation(fields: [subscriptionId], references: [id])
   subscriptionId  String
   organizationId  String
   billingInterval BillingInterval
   periodStart     DateTime
   periodEnd       DateTime
-  status          BillingPeriodStatus @default(ACTIVE)
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @default(now()) @updatedAt
+  status          BillingPeriodStatus      @default(ACTIVE)
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @default(now()) @updatedAt
 
   invoice BillingInvoice?
 
@@ -1264,25 +1351,25 @@ enum BillingPaymentAttemptStatus {
 /// be abandoned; only a succeeded attempt yields a BillingPayment. Idempotent on
 /// idempotencyKey — 10 identical concurrent requests create exactly one attempt.
 model BillingPaymentAttempt {
-  id                String                      @id @default(cuid())
-  invoice           BillingInvoice              @relation(fields: [invoiceId], references: [id])
-  invoiceId         String
-  organizationId    String
-  amountMinor       Int
-  currency          String                      @default("INR")
-  status            BillingPaymentAttemptStatus @default(INITIATED)
-  idempotencyKey    String                      @unique
-  providerKind      BillingProviderKind         @default(NONE)
+  id                 String                      @id @default(cuid())
+  invoice            BillingInvoice              @relation(fields: [invoiceId], references: [id])
+  invoiceId          String
+  organizationId     String
+  amountMinor        Int
+  currency           String                      @default("INR")
+  status             BillingPaymentAttemptStatus @default(INITIATED)
+  idempotencyKey     String                      @unique
+  providerKind       BillingProviderKind         @default(NONE)
   /// Phase D4 — the provider REQUEST reference (e.g. a Razorpay order id) created
   /// before the payment; distinct from providerPaymentRef (the resulting payment).
   providerRequestRef String?
   providerPaymentRef String?
-  failureReason     String?
+  failureReason      String?
   /// Phase D4 — normalized failure classification (e.g. "card_declined").
-  failureCode       String?
-  createdByUserId   String?
-  createdAt         DateTime                    @default(now())
-  updatedAt         DateTime                    @default(now()) @updatedAt
+  failureCode        String?
+  createdByUserId    String?
+  createdAt          DateTime                    @default(now())
+  updatedAt          DateTime                    @default(now()) @updatedAt
 
   payment BillingPayment?
 
@@ -1338,19 +1425,19 @@ enum BillingRefundStatus {
 /// balance (guarded UPDATE) and is idempotent on idempotencyKey. Platform-
 /// authorized; references the original payment and never mutates it in place.
 model BillingRefund {
-  id               String              @id @default(cuid())
-  payment          BillingPayment      @relation(fields: [paymentId], references: [id])
-  paymentId        String
-  organizationId   String
-  amountMinor      Int
-  reason           String
-  status           BillingRefundStatus @default(SUCCEEDED)
-  idempotencyKey   String              @unique
-  providerKind     BillingProviderKind @default(NONE)
+  id                String              @id @default(cuid())
+  payment           BillingPayment      @relation(fields: [paymentId], references: [id])
+  paymentId         String
+  organizationId    String
+  amountMinor       Int
+  reason            String
+  status            BillingRefundStatus @default(SUCCEEDED)
+  idempotencyKey    String              @unique
+  providerKind      BillingProviderKind @default(NONE)
   providerRefundRef String?
-  createdByUserId  String?
-  createdAt        DateTime            @default(now())
-  updatedAt        DateTime            @default(now()) @updatedAt
+  createdByUserId   String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @default(now()) @updatedAt
 
   @@index([paymentId])
   @@index([organizationId])
@@ -1408,25 +1495,25 @@ enum BillingWebhookStatus {
 /// verification state is recorded; an unverified event is REJECTED, never
 /// applied blindly to domain state.
 model BillingWebhookEvent {
-  id              String               @id @default(cuid())
-  providerKind    BillingProviderKind
-  externalEventId String
-  eventType       String
-  payloadHash     String
-  signatureVerified Boolean            @default(false)
-  status          BillingWebhookStatus @default(RECEIVED)
-  processingResult String?
-  retryCount      Int                  @default(0)
-  receivedAt      DateTime             @default(now())
+  id                  String               @id @default(cuid())
+  providerKind        BillingProviderKind
+  externalEventId     String
+  eventType           String
+  payloadHash         String
+  signatureVerified   Boolean              @default(false)
+  status              BillingWebhookStatus @default(RECEIVED)
+  processingResult    String?
+  retryCount          Int                  @default(0)
+  receivedAt          DateTime             @default(now())
   /// Phase D4 — when the signature was verified, the normalized event type, the
   /// provider resource the event concerns, and the last error classification for
   /// operational triage. Additive; never stores the raw payload or any secret.
-  verifiedAt         DateTime?
-  normalizedType     String?
+  verifiedAt          DateTime?
+  normalizedType      String?
   providerResourceRef String?
-  lastErrorCode      String?
-  lastErrorMessage   String?
-  processedAt     DateTime?
+  lastErrorCode       String?
+  lastErrorMessage    String?
+  processedAt         DateTime?
 
   @@unique([providerKind, externalEventId])
   @@index([status])
@@ -1451,40 +1538,40 @@ enum BillingReconciliationKind {
 /// engine. organizationId is a plain scalar (nullable) because some exceptions
 /// reference an unknown/foreign provider ref with no resolvable tenant.
 model BillingReconciliationException {
-  id             String                    @id @default(cuid())
-  organizationId String?
-  kind           BillingReconciliationKind
+  id               String                    @id @default(cuid())
+  organizationId   String?
+  kind             BillingReconciliationKind
   /// Phase D4 — triage metadata. severity is LOW/MEDIUM/HIGH/CRITICAL (stored as
   /// text, not an enum, so it can evolve without a migration); entityType/entityId
   /// pin the affected local record; description is human-readable; resolver +
   /// resolvedAt attribute the resolution.
-  severity       String                    @default("MEDIUM")
-  entityType     String?
-  entityId       String?
-  description    String?
-  detail         Json?
-  providerKind   BillingProviderKind       @default(NONE)
-  providerRef    String?
-  localRef       String?
-  resolved       Boolean                   @default(false)
+  severity         String                    @default("MEDIUM")
+  entityType       String?
+  entityId         String?
+  description      String?
+  detail           Json?
+  providerKind     BillingProviderKind       @default(NONE)
+  providerRef      String?
+  localRef         String?
+  resolved         Boolean                   @default(false)
   resolvedByUserId String?
-  createdAt      DateTime                  @default(now())
-  resolvedAt     DateTime?
+  createdAt        DateTime                  @default(now())
+  resolvedAt       DateTime?
   /// Phase D5 — operational triage. status is OPEN/ACKNOWLEDGED/RESOLVED/DISMISSED
   /// (text, evolvable); `resolved` stays as the fast boolean and is kept in sync
   /// (true for RESOLVED/DISMISSED). `source` distinguishes a provider RECONCILIATION
   /// exception from a D5 LEAKAGE finding. assignedToUserId / resolution attribute
   /// the operational handling; canonical money is never changed by a resolution.
-  status         String                    @default("OPEN")
-  source         String                    @default("RECONCILIATION")
+  status           String                    @default("OPEN")
+  source           String                    @default("RECONCILIATION")
   assignedToUserId String?
-  resolution     String?
+  resolution       String?
   /// Phase D5 — race-safe leakage de-duplication. Set to source:kind:entityId
   /// while a LEAKAGE finding is OPEN, and cleared (null) on resolution so the same
   /// condition can be re-detected later. The unique index makes concurrent
   /// detection runs create at most one open finding per condition. Null for
   /// provider RECONCILIATION exceptions (multiple nulls are allowed).
-  findingKey     String?                   @unique
+  findingKey       String?                   @unique
 
   @@index([resolved])
   @@index([organizationId])
@@ -1520,8 +1607,8 @@ model Department {
   staff                HospitalStaffProfile[]
   encounters           Encounter[]
   memberships          DepartmentMembership[]
-  referralsFrom        Referral[]             @relation("ReferralFromDept")
-  referralsTo          Referral[]             @relation("ReferralToDept")
+  referralsFrom        Referral[]              @relation("ReferralFromDept")
+  referralsTo          Referral[]              @relation("ReferralToDept")
   tasks                Task[]
   appointments         Appointment[]
   scheduleBlocks       DoctorScheduleBlock[]
