@@ -564,7 +564,19 @@ export type AuditEventType =
   // answers "what happened", and mirroring every event into audit would conflate
   // the two. Kept in a `platform.` namespace for platform-only operations.
   | "platform.event.replayed"
-  | "platform.event.deadLetterRetried";
+  | "platform.event.deadLetterRetried"
+  // Phase D7 — workflow engine. Only workflow ADMINISTRATIVE operations are
+  // audited (who did what): create/version/publish/retire a definition, and
+  // cancel/retry/recover an instance. Normal workflow EXECUTION progress lives in
+  // the durable WorkflowInstance/Step state, never mirrored into audit — the same
+  // DomainEvent-vs-AuditEvent separation D6 established.
+  | "workflow.definition.created"
+  | "workflow.version.created"
+  | "workflow.published"
+  | "workflow.retired"
+  | "workflow.instance.cancelled"
+  | "workflow.instance.retried"
+  | "workflow.instance.recovered";
 
 export interface AuditEventContext {
   facilityId?: string;
