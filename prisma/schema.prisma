@@ -574,6 +574,204 @@ model DomainEventDelivery {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Phase D7 — workflow engine. In-monolith orchestration on top of the D6
+// transactional-event foundation: a versioned, validated workflow DEFINITION
+// reacts to a committed domain event, evaluates safe declarative conditions, and
+// drives durable execution (steps, tasks, timers, SLAs, escalations) through an
+// allow-listed action registry. It ORCHESTRATES existing domain services; it never
+// owns canonical clinical/financial state, and never gains clinical authority.
+//
+// All status/category fields are plain Strings (not Prisma enums) — the D5/D6
+// convention — so both migration trees use TEXT and there is no native-enum drift;
+// allowed values are enforced by state machines in src/lib/workflows/. Tenant scope
+// (organizationId/facilityId) is a loose indexed reference (no FK) matching this
+// operational layer; isolation is enforced in the service layer, never from client
+// input. See docs/platform/workflows/.
+model WorkflowDefinition {
+  id                  String   @id @default(cuid())
+  /// Null = platform/global template; otherwise the owning organization.
+  organizationId      String?
+  facilityId          String?
+  /// Stable machine key (never a display name). Unique within a tenant scope.
+  key                 String
+  name                String
+  description         String?
+  /// Denormalized from the active published version for indexed trigger matching.
+  triggerEventType    String
+  triggerEventVersion Int
+  status              String   @default("ACTIVE") // ACTIVE | INACTIVE
+  /// The single currently-published version, if any.
+  currentVersionId    String?
+  createdByUserId     String?
+  updatedByUserId     String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  versions  WorkflowVersion[]
+  instances WorkflowInstance[]
+
+  @@unique([organizationId, key])
+  @@index([triggerEventType, status])
+  @@index([organizationId])
+  @@index([status])
+}
+
+// An immutable, validated workflow definition payload. A PUBLISHED version is never
+// mutated in place — changes create a new version. Historical instances keep
+// referencing the version that created them.
+model WorkflowVersion {
+  id                   String             @id @default(cuid())
+  workflowDefinitionId String
+  definition           WorkflowDefinition @relation(fields: [workflowDefinitionId], references: [id], onDelete: Cascade)
+  version              Int
+  status               String             @default("DRAFT") // DRAFT | PUBLISHED | RETIRED
+  /// The full validated workflow configuration (trigger, condition, steps).
+  config               Json
+  publishedAt          DateTime?
+  retiredAt            DateTime?
+  createdByUserId      String?
+  createdAt            DateTime           @default(now())
+
+  instances WorkflowInstance[]
+
+  @@unique([workflowDefinitionId, version])
+  @@index([status])
+}
+
+// One durable execution of a workflow version, created by a triggering event.
+model WorkflowInstance {
+  id                   String             @id @default(cuid())
+  workflowDefinitionId String
+  definition           WorkflowDefinition @relation(fields: [workflowDefinitionId], references: [id])
+  workflowVersionId    String
+  workflowVersion      WorkflowVersion    @relation(fields: [workflowVersionId], references: [id])
+  /// The D6 event that triggered this instance.
+  triggerEventId       String
+  /// Idempotency: `${definitionId}:${eventId}` for single-instance triggers, so a
+  /// duplicate event delivery cannot create a second instance.
+  idempotencyKey       String             @unique
+  organizationId       String?
+  facilityId           String?
+  aggregateType        String
+  aggregateId          String
+  status               String             @default("RUNNABLE") // RUNNABLE | RUNNING | WAITING | COMPLETED | FAILED | CANCELLED
+  correlationId        String
+  causationId          String?
+  /// Loop-prevention: how deep this instance sits in an event→workflow→event chain.
+  depth                Int                @default(0)
+  claimToken           String?
+  attemptCount         Int                @default(0)
+  failureCategory      String?
+  failureMessage       String?
+  cancelledByUserId    String?
+  cancelReason         String?
+  startedAt            DateTime?
+  completedAt          DateTime?
+  cancelledAt          DateTime?
+  failedAt             DateTime?
+  lastAttemptAt        DateTime?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  steps  WorkflowStep[]
+  tasks  WorkflowTask[]
+  timers WorkflowTimer[]
+
+  @@index([status])
+  @@index([organizationId])
+  @@index([triggerEventId])
+  @@index([correlationId])
+  @@index([workflowDefinitionId])
+  @@index([aggregateType, aggregateId])
+}
+
+// One durable execution step (a node of the bounded linear pipeline).
+model WorkflowStep {
+  id                 String           @id @default(cuid())
+  workflowInstanceId String
+  instance           WorkflowInstance @relation(fields: [workflowInstanceId], references: [id], onDelete: Cascade)
+  nodeKey            String
+  stepIndex          Int
+  stepType           String // CONDITION | ACTION | TASK | TIMER
+  status             String           @default("PENDING") // PENDING | RUNNING | WAITING | COMPLETED | SKIPPED | FAILED
+  attemptCount       Int              @default(0)
+  maxAttempts        Int              @default(5)
+  availableAt        DateTime?
+  claimToken         String?
+  startedAt          DateTime?
+  completedAt        DateTime?
+  failureCategory    String?
+  failureMessage     String?
+  /// Safe reference to what this step produced (e.g. a task/timer id).
+  resultRef          String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@unique([workflowInstanceId, stepIndex])
+  @@index([workflowInstanceId, status])
+  @@index([status, availableAt])
+}
+
+// An orchestration to-do created by a workflow. Distinct from the clinical `Task`
+// (which requires a staff creator + facility and is clinically coupled): a workflow
+// task is system-created, may be org-scoped, and carries NO clinical authority.
+model WorkflowTask {
+  id                 String           @id @default(cuid())
+  workflowInstanceId String
+  instance           WorkflowInstance @relation(fields: [workflowInstanceId], references: [id], onDelete: Cascade)
+  workflowStepId     String?
+  organizationId     String?
+  facilityId         String?
+  patientId          String?
+  encounterId        String?
+  taskType           String
+  title              String
+  description        String?
+  priority           String           @default("ROUTINE") // ROUTINE | URGENT | STAT
+  status             String           @default("OPEN") // OPEN | IN_PROGRESS | COMPLETED | CANCELLED | EXPIRED
+  assignedRole       String?
+  assignedUserId     String?
+  dueAt              DateTime?
+  completedByUserId  String?
+  completedAt        DateTime?
+  cancelledAt        DateTime?
+  /// Idempotency: a step creating a task twice yields one task.
+  idempotencyKey     String           @unique
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@index([organizationId, status])
+  @@index([status, dueAt])
+  @@index([workflowInstanceId])
+}
+
+// A durable timer (delay / SLA breach / escalation). Fired by a bounded, guarded
+// claim so it is correct under concurrent workers and process restarts, with no
+// continuously-running daemon required.
+model WorkflowTimer {
+  id                 String           @id @default(cuid())
+  workflowInstanceId String
+  instance           WorkflowInstance @relation(fields: [workflowInstanceId], references: [id], onDelete: Cascade)
+  workflowStepId     String?
+  kind               String // DELAY | SLA
+  availableAt        DateTime
+  status             String           @default("PENDING") // PENDING | CLAIMED | COMPLETED | CANCELLED
+  claimToken         String?
+  claimedAt          DateTime?
+  completedAt        DateTime?
+  attemptCount       Int              @default(0)
+  /// Small escalation metadata only (never PHI/secrets).
+  payload            Json?
+  /// Idempotency for the effect a fired timer produces.
+  idempotencyKey     String           @unique
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@index([status, availableAt])
+  @@index([workflowInstanceId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Aarogya Hospital OS — tenancy, beds, staff
 // See docs/ENTERPRISE_HOSPITAL_ARCHITECTURE.md for the full design and for
 // why this lives under /hospital-os rather than the pre-existing /hospital
