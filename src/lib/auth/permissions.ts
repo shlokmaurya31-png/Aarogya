@@ -426,6 +426,15 @@ export const PERMISSIONS = [
   // stream. A tenant reads only its OWN events, gated by commercial:read + D1
   // membership, not by this permission.
   "platform:events:operate",
+
+  // Phase D7 — workflow engine. `workflow:read` lets an org/hospital admin VIEW
+  // workflow definitions/instances within their permitted tenant scope (D1
+  // membership still applies). `workflow:manage` (author/publish/retire) and
+  // `workflow:operate` (cancel/retry/recover instances, run engine ticks) are
+  // PLATFORM-only — an org admin can never publish a workflow or drive execution.
+  "workflow:read",
+  "workflow:manage",
+  "workflow:operate",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -830,6 +839,10 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     // Phase D2 — a facility/org administrator may VIEW commercial state + usage,
     // but never mutate it (no self-upgrade). Platform holds the manage grant.
     "commercial:read",
+    // Phase D7 — an org/hospital admin may VIEW workflows/instances in their own
+    // scope (D1 membership still applies), but never author/publish or operate
+    // execution (those are platform-only).
+    "workflow:read",
     "hospital:command-center:view",
     "hospital:admin:manage",
     "patient:read",
@@ -1110,6 +1123,10 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     // Phase D6 — the platform operates the domain-event stream: inspect metrics,
     // dead letters, and perform controlled replay / dead-letter retry.
     "platform:events:operate",
+    // Phase D7 — the platform authors, publishes and operates workflows.
+    "workflow:read",
+    "workflow:manage",
+    "workflow:operate",
   ],
 };
 
