@@ -558,6 +558,8 @@ model Organization {
   billingAccount  OrganizationBillingAccount?
   billingInvoices BillingInvoice[]
   billingCredits  BillingCredit[]
+  // Phase D5 — collections activity notes.
+  collectionActivities CollectionActivity[]
 
   @@index([status])
 }
@@ -1205,6 +1207,9 @@ model BillingInvoice {
 
   @@index([organizationId, status])
   @@index([billingAccountId])
+  // Phase D5 — aging/overdue and period revenue aggregation read paths.
+  @@index([dueAt])
+  @@index([finalizedAt])
 }
 
 enum BillingInvoiceLineType {
@@ -1319,6 +1324,8 @@ model BillingPayment {
 
   @@index([invoiceId])
   @@index([organizationId])
+  // Phase D5 — collected-in-period aggregation and failure/success analytics.
+  @@index([status, succeededAt])
 }
 
 enum BillingRefundStatus {
@@ -1432,6 +1439,11 @@ enum BillingReconciliationKind {
   UNKNOWN_REFERENCE
   STUCK_PAYMENT
   REFUND_MISMATCH
+  // Phase D5 — deterministic revenue-leakage signals (findings, not auto-corrections).
+  MISSING_INVOICE
+  DUPLICATE_RENEWAL
+  ORPHAN_PAYMENT
+  COMMERCIAL_STATE_MISMATCH
 }
 
 /// A detected reconciliation discrepancy between Aarogya and a provider. The
@@ -1458,9 +1470,42 @@ model BillingReconciliationException {
   resolvedByUserId String?
   createdAt      DateTime                  @default(now())
   resolvedAt     DateTime?
+  /// Phase D5 — operational triage. status is OPEN/ACKNOWLEDGED/RESOLVED/DISMISSED
+  /// (text, evolvable); `resolved` stays as the fast boolean and is kept in sync
+  /// (true for RESOLVED/DISMISSED). `source` distinguishes a provider RECONCILIATION
+  /// exception from a D5 LEAKAGE finding. assignedToUserId / resolution attribute
+  /// the operational handling; canonical money is never changed by a resolution.
+  status         String                    @default("OPEN")
+  source         String                    @default("RECONCILIATION")
+  assignedToUserId String?
+  resolution     String?
+  /// Phase D5 — race-safe leakage de-duplication. Set to source:kind:entityId
+  /// while a LEAKAGE finding is OPEN, and cleared (null) on resolution so the same
+  /// condition can be re-detected later. The unique index makes concurrent
+  /// detection runs create at most one open finding per condition. Null for
+  /// provider RECONCILIATION exceptions (multiple nulls are allowed).
+  findingKey     String?                   @unique
 
   @@index([resolved])
   @@index([organizationId])
+  @@index([status])
+  @@index([severity])
+}
+
+/// Phase D5 — a manual collections activity note against an organization. This is
+/// an explicit operational record; it NEVER mutates canonical invoice/payment
+/// state. Legitimate financial adjustments still go through the authorized
+/// credit/adjustment mechanism, not here.
+model CollectionActivity {
+  id              String       @id @default(cuid())
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  organizationId  String
+  type            String // NOTE | CONTACT | PROMISE_TO_PAY | ESCALATION
+  note            String
+  createdByUserId String?
+  createdAt       DateTime     @default(now())
+
+  @@index([organizationId, createdAt])
 }
 
 model Department {

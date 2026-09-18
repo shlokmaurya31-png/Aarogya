@@ -549,7 +549,15 @@ export type AuditEventType =
   // Phase D4 — provider productionization.
   | "commercial.billing.customerSynced"
   | "commercial.billing.dunningRun"
-  | "commercial.billing.providerConfigured";
+  | "commercial.billing.providerConfigured"
+  // Phase D5 — commercial intelligence / revenue operations.
+  | "commercial.collection.activityRecorded"
+  | "commercial.leakage.findingCreated"
+  | "commercial.leakage.findingUpdated"
+  | "commercial.reconciliation.assigned"
+  | "commercial.reconciliation.acknowledged"
+  | "commercial.reconciliation.dismissed"
+  | "commercial.report.generated";
 
 export interface AuditEventContext {
   facilityId?: string;
