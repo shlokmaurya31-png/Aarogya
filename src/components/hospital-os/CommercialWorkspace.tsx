@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { CommercialFinancePanel } from "./CommercialFinancePanel";
+import { EventOperationsPanel } from "./EventOperationsPanel";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -87,6 +88,9 @@ export function CommercialWorkspace() {
 
       {/* Phase D5 — platform-only finance/revenue-operations panel (self-hides for non-platform). */}
       <CommercialFinancePanel />
+
+      {/* Phase D6 — platform-only domain-event operations panel (self-hides for non-platform). */}
+      <EventOperationsPanel />
 
       {orgs.length > 1 && (
         <div className="flex flex-wrap gap-2">

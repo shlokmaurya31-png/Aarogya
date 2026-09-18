@@ -557,7 +557,14 @@ export type AuditEventType =
   | "commercial.reconciliation.assigned"
   | "commercial.reconciliation.acknowledged"
   | "commercial.reconciliation.dismissed"
-  | "commercial.report.generated";
+  | "commercial.report.generated"
+  // Phase D6 — domain-event operations. Only operator INTERVENTIONS are audited
+  // (replay, dead-letter retry): normal event creation and dispatch are NOT
+  // audited automatically — an AuditEvent answers "who did what", a DomainEvent
+  // answers "what happened", and mirroring every event into audit would conflate
+  // the two. Kept in a `platform.` namespace for platform-only operations.
+  | "platform.event.replayed"
+  | "platform.event.deadLetterRetried";
 
 export interface AuditEventContext {
   facilityId?: string;
