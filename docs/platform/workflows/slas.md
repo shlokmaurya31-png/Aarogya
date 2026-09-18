@@ -39,3 +39,5 @@ concurrent ticks → one escalation).
 Workflow SLAs are distinct from the existing clinical `SlaPolicy`/`hospital/sla.ts`
 operational thresholds. The workflow engine does not read or write those; it carries
 its own definition-driven durations.
+
+> **Phase D8 update:** workflow SLA durations are now configurable per hospital/facility/department via the D8 configuration engine (`workflow.{key}.sla`), resolved at instance execution and snapshotted on the SLA timer for historical explainability. See `docs/platform/configuration/workflows.md`.
