@@ -435,6 +435,18 @@ export const PERMISSIONS = [
   "workflow:read",
   "workflow:manage",
   "workflow:operate",
+
+  // Phase D8 — configuration engine. `configuration:read` views effective config +
+  // provenance within a permitted scope; `configuration:manage` edits DRAFT
+  // overrides; `configuration:publish` makes a draft live; `configuration:reset`
+  // removes an override so it inherits; `configuration:operate` is platform-only
+  // engine operation (cache, platform-only keys). Scope is always enforced by D1
+  // membership at the service layer, and platform-only keys stay platform-only.
+  "configuration:read",
+  "configuration:manage",
+  "configuration:publish",
+  "configuration:reset",
+  "configuration:operate",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -843,6 +855,13 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     // scope (D1 membership still applies), but never author/publish or operate
     // execution (those are platform-only).
     "workflow:read",
+    // Phase D8 — an org/hospital admin configures the scopes they administer
+    // (read/manage/publish/reset), enforced by D1 membership + platform-only keys
+    // remaining platform-only. configuration:operate stays platform-only.
+    "configuration:read",
+    "configuration:manage",
+    "configuration:publish",
+    "configuration:reset",
     "hospital:command-center:view",
     "hospital:admin:manage",
     "patient:read",
@@ -1127,6 +1146,12 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "workflow:read",
     "workflow:manage",
     "workflow:operate",
+    // Phase D8 — the platform operates the configuration engine across all scopes.
+    "configuration:read",
+    "configuration:manage",
+    "configuration:publish",
+    "configuration:reset",
+    "configuration:operate",
   ],
 };
 

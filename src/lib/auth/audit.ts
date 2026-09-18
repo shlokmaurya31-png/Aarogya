@@ -576,7 +576,15 @@ export type AuditEventType =
   | "workflow.retired"
   | "workflow.instance.cancelled"
   | "workflow.instance.retried"
-  | "workflow.instance.recovered";
+  | "workflow.instance.recovered"
+  // Phase D8 — configuration engine. Configuration ADMINISTRATIVE acts are audited
+  // (who changed what config at which scope). Effective-value LOOKUPS are never
+  // audited. Value-level detail (old/new) lives in ConfigurationChange; AuditEvent
+  // records the act. Kept in a `configuration.` namespace.
+  | "configuration.set"
+  | "configuration.published"
+  | "configuration.reset"
+  | "configuration.retired";
 
 export interface AuditEventContext {
   facilityId?: string;
