@@ -419,6 +419,13 @@ export const PERMISSIONS = [
   // tenant-scoped by D1 membership.
   "commercial:platform:manage",
   "commercial:read",
+
+  // Phase D6 — domain-event operations. Inspecting the cross-tenant event stream,
+  // dead letters, metrics and (above all) REPLAY are PLATFORM-only: an
+  // organization administrator can never replay events or read another tenant's
+  // stream. A tenant reads only its OWN events, gated by commercial:read + D1
+  // membership, not by this permission.
+  "platform:events:operate",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -1100,6 +1107,9 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     // entitlement definitions, subscriptions, lifecycle and overrides.
     "commercial:platform:manage",
     "commercial:read",
+    // Phase D6 — the platform operates the domain-event stream: inspect metrics,
+    // dead letters, and perform controlled replay / dead-letter retry.
+    "platform:events:operate",
   ],
 };
 
