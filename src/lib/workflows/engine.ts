@@ -6,6 +6,7 @@ import { evaluateCondition } from "./conditions";
 import type { WorkflowConfig, StepConfig } from "./definition";
 import { createWorkflowTask } from "./tasks";
 import { createTimerTx } from "./timers";
+import { resolveEffectiveInternal, isKnownConfigKey } from "@/lib/config";
 import {
   LIMITS, classifyWorkflowError, isRetryable, safeMessage,
   type WorkflowContext, type FailureCategory,
@@ -103,6 +104,8 @@ export async function runInstance(instanceId: string, opts?: { now?: Date }): Pr
   if (!inst) return;
   const version = await prisma.workflowVersion.findUniqueOrThrow({ where: { id: inst.workflowVersionId } });
   const cfg = version.config as unknown as WorkflowConfig;
+  const def = await prisma.workflowDefinition.findUnique({ where: { id: inst.workflowDefinitionId }, select: { key: true } });
+  const defKey = def?.key ?? "";
   const evt = await prisma.domainEventOutbox.findUnique({ where: { eventId: inst.triggerEventId }, select: { payload: true, actorUserId: true } });
   const ctx = instanceContext(inst, (evt?.payload as Record<string, unknown> | undefined) ?? {}, evt?.actorUserId ?? null, cfg);
 
@@ -121,7 +124,7 @@ export async function runInstance(instanceId: string, opts?: { now?: Date }): Pr
 
     const stepCfg = cfg.steps[step.stepIndex];
     try {
-      const outcome = await executeStep(inst, step, stepCfg, ctx, token, now);
+      const outcome = await executeStep(inst, step, stepCfg, ctx, token, now, defKey);
       if (outcome === "WAIT") return; // TIMER step: instance parked WAITING
       if (outcome === "STOP_COMPLETE") {
         await prisma.workflowStep.updateMany({ where: { workflowInstanceId: instanceId, status: "PENDING", stepIndex: { gt: step.stepIndex } }, data: { status: "SKIPPED" } });
@@ -144,6 +147,7 @@ async function executeStep(
   ctx: WorkflowContext,
   token: string,
   now: Date,
+  defKey: string,
 ): Promise<StepOutcome> {
   const markCompleted = (resultRef?: string | null) =>
     prisma.workflowStep.updateMany({ where: { id: step.id, status: { in: ["PENDING", "RUNNING"] } }, data: { status: "COMPLETED", completedAt: now, startedAt: now, resultRef: resultRef ?? null } });
@@ -157,19 +161,35 @@ async function executeStep(
   if (stepCfg.type === "TASK") {
     const patientId = typeof ctx.payload.patientId === "string" ? ctx.payload.patientId : null;
     const encounterId = typeof ctx.payload.encounterId === "string" ? ctx.payload.encounterId : null;
+    // Phase D8 integration — resolve the effective SLA through the configuration
+    // engine (hospital/facility override wins), falling back to the workflow
+    // version's own SLA as the SYSTEM default. The resolved value + provenance is
+    // SNAPSHOTTED onto the SLA timer so a later config change never retroactively
+    // moves this in-flight deadline. D7 still owns timer creation/execution.
+    let slaSeconds = stepCfg.sla?.dueAfterSeconds ?? null;
+    let slaSource = "WORKFLOW_VERSION";
+    let slaVersion: number | null = null;
+    if (stepCfg.sla && inst.organizationId) {
+      const cfgKey = `workflow.${defKey}.sla`;
+      if (isKnownConfigKey(cfgKey)) {
+        const eff = await resolveEffectiveInternal({ key: cfgKey, organizationId: inst.organizationId, facilityId: inst.facilityId, atTime: now, fallbackRaw: String(stepCfg.sla.dueAfterSeconds) });
+        if (typeof eff.value === "number" && eff.value > 0) { slaSeconds = eff.value; slaSource = eff.source; slaVersion = eff.version; }
+      }
+    }
     await prisma.$transaction(async (tx) => {
       const task = await createWorkflowTask(tx, {
         workflowInstanceId: inst.id, workflowStepId: step.id, organizationId: inst.organizationId, facilityId: inst.facilityId,
         patientId, encounterId, taskType: stepCfg.taskType, title: stepCfg.title, description: stepCfg.description ?? null,
         priority: stepCfg.priority, assignedRole: stepCfg.assignedRole ?? null,
-        dueAt: stepCfg.dueAfterSeconds ? new Date(now.getTime() + stepCfg.dueAfterSeconds * 1000) : (stepCfg.sla ? new Date(now.getTime() + stepCfg.sla.dueAfterSeconds * 1000) : null),
+        dueAt: stepCfg.dueAfterSeconds ? new Date(now.getTime() + stepCfg.dueAfterSeconds * 1000) : (slaSeconds ? new Date(now.getTime() + slaSeconds * 1000) : null),
         idempotencyKey: `${step.id}:task`,
       });
-      if (stepCfg.sla) {
+      if (stepCfg.sla && slaSeconds) {
         await createTimerTx(tx, {
           workflowInstanceId: inst.id, workflowStepId: step.id, kind: "SLA",
-          availableAt: new Date(now.getTime() + stepCfg.sla.dueAfterSeconds * 1000),
-          payload: { taskId: task.id, escalation: stepCfg.sla.escalation } as unknown as import("@prisma/client").Prisma.InputJsonValue,
+          availableAt: new Date(now.getTime() + slaSeconds * 1000),
+          // Snapshot: escalation policy + the effective SLA seconds and where it came from.
+          payload: { taskId: task.id, escalation: stepCfg.sla.escalation, slaSeconds, slaSource, slaVersion } as unknown as import("@prisma/client").Prisma.InputJsonValue,
           idempotencyKey: `${step.id}:sla`,
         });
       }

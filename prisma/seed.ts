@@ -16,6 +16,7 @@ import { seedPhase6aInventory } from "./seedData/hospitalPhase6a";
 import { ensureCommercialBootstrap } from "../src/lib/commercial/bootstrap";
 import { ensureBillingBootstrap } from "../src/lib/billing/bootstrap";
 import { ensureWorkflowSeed } from "../src/lib/workflows/seed";
+import { ensureConfigSeed } from "../src/lib/config/seed";
 
 const prisma = new PrismaClient();
 
@@ -217,6 +218,12 @@ async function main() {
   if (admin) {
     const wf = await ensureWorkflowSeed(admin.id);
     console.log(`Workflow seed: ${wf.created} canonical workflow(s) published.`);
+    // Phase D8 — a demo org-level configuration override (idempotent).
+    const firstOrg = await prisma.organization.findFirst({ select: { id: true }, orderBy: { createdAt: "asc" } });
+    if (firstOrg) {
+      const cfg = await ensureConfigSeed(admin.id, firstOrg.id);
+      console.log(`Configuration seed: ${cfg.created} demo override(s) published.`);
+    }
   }
 }
 

@@ -10,6 +10,7 @@ import { ToastViewport } from "@/components/shared/ToastViewport";
 import { CommercialFinancePanel } from "./CommercialFinancePanel";
 import { EventOperationsPanel } from "./EventOperationsPanel";
 import { WorkflowOperationsPanel } from "./WorkflowOperationsPanel";
+import { ConfigurationPanel } from "./ConfigurationPanel";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -95,6 +96,9 @@ export function CommercialWorkspace() {
 
       {/* Phase D7 — platform-only workflow operations panel (self-hides for non-platform). */}
       <WorkflowOperationsPanel />
+
+      {/* Phase D8 — configuration engine admin panel (scoped to the caller's org). */}
+      <ConfigurationPanel organizationId={orgId} />
 
       {orgs.length > 1 && (
         <div className="flex flex-wrap gap-2">
