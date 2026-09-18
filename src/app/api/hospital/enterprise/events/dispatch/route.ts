@@ -2,6 +2,9 @@ import { NextRequest } from "next/server";
 import { withApiErrors } from "@/lib/auth/rbac";
 import { requireActorMemberships } from "@/lib/auth/tenantContext";
 import { dispatchPendingDomainEvents } from "@/lib/events";
+// Phase D7 — ensure the workflow-engine consumer is registered before dispatch so
+// committed events drive workflows. Side-effect import (workflows → events only).
+import "@/lib/workflows/register";
 
 /**
  * POST: platform-only operational trigger to dispatch pending events. Bounded by

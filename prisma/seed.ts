@@ -15,6 +15,7 @@ import { seedPhase5Billing } from "./seedData/hospitalPhase5";
 import { seedPhase6aInventory } from "./seedData/hospitalPhase6a";
 import { ensureCommercialBootstrap } from "../src/lib/commercial/bootstrap";
 import { ensureBillingBootstrap } from "../src/lib/billing/bootstrap";
+import { ensureWorkflowSeed } from "../src/lib/workflows/seed";
 
 const prisma = new PrismaClient();
 
@@ -211,6 +212,12 @@ async function main() {
   // account. Idempotent; never fabricates invoices or payment history.
   const bboot = await ensureBillingBootstrap(prisma);
   console.log(`Billing bootstrap: ${bboot.pricesCreated} plan price(s) ensured; ${bboot.accountsCreated} billing account(s) created.`);
+  // Phase D7 — publish the canonical global workflow templates. Idempotent.
+  const admin = await prisma.user.findUnique({ where: { email: "admin@demo.aarogya" }, select: { id: true } });
+  if (admin) {
+    const wf = await ensureWorkflowSeed(admin.id);
+    console.log(`Workflow seed: ${wf.created} canonical workflow(s) published.`);
+  }
 }
 
 main()

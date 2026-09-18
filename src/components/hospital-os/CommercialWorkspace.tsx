@@ -9,6 +9,7 @@ import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { CommercialFinancePanel } from "./CommercialFinancePanel";
 import { EventOperationsPanel } from "./EventOperationsPanel";
+import { WorkflowOperationsPanel } from "./WorkflowOperationsPanel";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -91,6 +92,9 @@ export function CommercialWorkspace() {
 
       {/* Phase D6 — platform-only domain-event operations panel (self-hides for non-platform). */}
       <EventOperationsPanel />
+
+      {/* Phase D7 — platform-only workflow operations panel (self-hides for non-platform). */}
+      <WorkflowOperationsPanel />
 
       {orgs.length > 1 && (
         <div className="flex flex-wrap gap-2">
