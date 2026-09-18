@@ -7,6 +7,11 @@
 > far) and the explicitly-deferred parts (§2's notification/analytics consumers, §7's
 > "don't retrofit every route"). This document is kept as the original design
 > rationale; the D6 docs are authoritative for what exists.
+>
+> **Phase D7 update:** the first real cross-module consumer now exists — the D7
+> **workflow engine** registers a `workflow-engine` D6 consumer and orchestrates
+> tasks/timers/SLAs/escalations from committed events. See
+> `docs/platform/workflows/`.
 
 **Historical note (pre-D6):** Aarogya previously had
 no event bus, no message queue, no pub/sub layer. What exists is a
