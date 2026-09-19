@@ -122,6 +122,13 @@ const TEMPLATES: { pattern: RegExp; spec: KeySpec }[] = [
   { pattern: new RegExp(`^form\\.${slug}\\.definition$`), spec: json(formSchema, { description: "A strict declarative form definition (fields/labels/types/validation)." }) },
   { pattern: new RegExp(`^department\\.${slug}\\.param$`), spec: number({ description: "A bounded department-level operational parameter." }) },
   { pattern: new RegExp(`^role\\.${slug}\\.responsible$`), spec: str({ scopes: ALL, maxLen: 80, description: "The responsible role mapping for a workflow/queue/escalation (final authorization stays with C4)." }) },
+  // Phase D10 — Command Center interpretation thresholds. These configure only how a
+  // metric's STATUS (WATCH/WARNING/CRITICAL) is interpreted per hospital; they never
+  // change the canonical computed number. Units depend on the metric (percent, seconds,
+  // or count) and are documented in docs/COMMAND_CENTER_METRICS.md.
+  // Metric keys are camelCase, so this family allows mixed-case slugs.
+  { pattern: /^commandCenter\.[A-Za-z0-9][A-Za-z0-9_.-]{0,80}\.warning$/, spec: number({ max: 1_000_000_000, description: "Command Center WARNING threshold for a metric (percent/seconds/count per metric)." }) },
+  { pattern: /^commandCenter\.[A-Za-z0-9][A-Za-z0-9_.-]{0,80}\.critical$/, spec: number({ max: 1_000_000_000, description: "Command Center CRITICAL threshold for a metric (percent/seconds/count per metric)." }) },
 ];
 
 /** Resolve a key to its spec, or undefined if the key is not in the registry. */
