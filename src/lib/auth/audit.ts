@@ -584,7 +584,17 @@ export type AuditEventType =
   | "configuration.set"
   | "configuration.published"
   | "configuration.reset"
-  | "configuration.retired";
+  | "configuration.retired"
+  // Phase D9 — workflow builder (authoring). Administrative authoring acts are
+  // audited; publication reuses the D7 `workflow.published` event. Draft edits,
+  // imports/exports, template copies and simulations are recorded; canvas
+  // interactions and effective lookups are not.
+  | "workflow.builder.draftSaved"
+  | "workflow.builder.draftDeleted"
+  | "workflow.builder.imported"
+  | "workflow.builder.exported"
+  | "workflow.builder.templateCopied"
+  | "workflow.builder.simulated";
 
 export interface AuditEventContext {
   facilityId?: string;
