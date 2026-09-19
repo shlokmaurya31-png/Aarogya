@@ -841,6 +841,41 @@ model ConfigurationChange {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Phase D9 — workflow builder.
+//
+// The ONLY durable builder-specific state: an in-progress, possibly-incomplete
+// visual authoring document (a superset of the canonical D7 WorkflowConfig plus
+// canvas/layout metadata). Incomplete drafts live HERE so D7's strict
+// WorkflowVersion.config store is never polluted with invalid definitions.
+// Publishing compiles this document → canonical config → D7 createDefinition/
+// createVersion → publishVersion (D7 remains authoritative for executable
+// definitions; D8 governs configuration). No D7 workflow table is duplicated.
+// Tenant scope is a loose indexed reference enforced in the service layer; the
+// document JSON is bounded and secret/PHI-guarded on write. See
+// docs/platform/workflow-builder/.
+model WorkflowBuilderDraft {
+  id                   String   @id @default(cuid())
+  organizationId       String?
+  facilityId           String?
+  /// The D7 definition this draft edits, if any (null for a brand-new workflow).
+  workflowDefinitionId String?
+  /// Stable machine key the draft will publish under.
+  key                  String
+  name                 String
+  /// The builder document (lenient superset of the canonical config + layout).
+  document             Json
+  status               String   @default("DRAFT") // DRAFT (builder-only lifecycle)
+  createdByUserId      String?
+  updatedByUserId      String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([workflowDefinitionId])
+  @@index([organizationId, key])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Aarogya Hospital OS — tenancy, beds, staff
 // See docs/ENTERPRISE_HOSPITAL_ARCHITECTURE.md for the full design and for
 // why this lives under /hospital-os rather than the pre-existing /hospital
