@@ -42,7 +42,13 @@ type StepOutcome = "CONTINUE" | "WAIT" | "STOP_COMPLETE";
 /** Called by the D6 workflow consumer for each delivered event. */
 export async function startWorkflowsForEvent(envelope: DomainEventEnvelope): Promise<{ started: string[] }> {
   const defs = await prisma.workflowDefinition.findMany({
-    where: { status: "ACTIVE", currentVersionId: { not: null }, triggerEventType: envelope.eventType, triggerEventVersion: envelope.eventVersion },
+    where: {
+      status: "ACTIVE", currentVersionId: { not: null },
+      triggerEventType: envelope.eventType, triggerEventVersion: envelope.eventVersion,
+      // Global templates (organizationId null) apply to every tenant; an org-scoped
+      // workflow (D9 authoring) triggers ONLY for its own organization's events.
+      OR: [{ organizationId: null }, { organizationId: envelope.organizationId }],
+    },
   });
   const started: string[] = [];
   const ctx = envelopeContext(envelope);

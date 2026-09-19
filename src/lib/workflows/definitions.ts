@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError, ConflictError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { type ActorMemberships } from "@/lib/auth/tenantContext";
-import { requireWorkflowPlatform, assertCanReadWorkflowScope } from "./authz";
+import { assertCanAuthorWorkflow, assertCanReadWorkflowScope } from "./authz";
 import { validateWorkflowConfig } from "./validator";
 
 /**
@@ -26,7 +26,7 @@ export interface CreateDefinitionInput {
 }
 
 export async function createDefinition(m: ActorMemberships, input: CreateDefinitionInput) {
-  requireWorkflowPlatform(m);
+  assertCanAuthorWorkflow(m, input.organizationId ?? null);
   const cfg = validateWorkflowConfig(input.config);
   const organizationId = input.organizationId ?? null;
   if (organizationId) {
@@ -54,10 +54,10 @@ export async function createDefinition(m: ActorMemberships, input: CreateDefinit
 
 /** Create a new DRAFT version of an existing definition. */
 export async function createVersion(m: ActorMemberships, definitionId: string, config: unknown) {
-  requireWorkflowPlatform(m);
   const cfg = validateWorkflowConfig(config);
   const def = await prisma.workflowDefinition.findUnique({ where: { id: definitionId }, select: { id: true, organizationId: true } });
   if (!def) throw new NotFoundError();
+  assertCanAuthorWorkflow(m, def.organizationId);
   const latest = await prisma.workflowVersion.findFirst({ where: { workflowDefinitionId: definitionId }, orderBy: { version: "desc" }, select: { version: true } });
   const nextVersion = (latest?.version ?? 0) + 1;
   const version = await prisma.$transaction(async (tx) => {
@@ -74,13 +74,15 @@ export async function createVersion(m: ActorMemberships, definitionId: string, c
  * the definition's denormalized trigger + currentVersionId are updated atomically.
  */
 export async function publishVersion(m: ActorMemberships, definitionId: string, versionId: string) {
-  requireWorkflowPlatform(m);
+  // Authorize by the definition's scope FIRST (before touching the versionId), so an
+  // unauthorized caller is denied regardless of whether the versionId is valid.
+  const def = await prisma.workflowDefinition.findUnique({ where: { id: definitionId }, select: { organizationId: true } });
+  if (!def) throw new NotFoundError();
+  assertCanAuthorWorkflow(m, def.organizationId);
   const version = await prisma.workflowVersion.findUnique({ where: { id: versionId } });
   if (!version || version.workflowDefinitionId !== definitionId) throw new NotFoundError();
   if (version.status !== "DRAFT") throw new BadRequestError(`Only a DRAFT version can be published (is ${version.status}).`);
   const cfg = validateWorkflowConfig(version.config); // re-validate immutable payload before it becomes active
-
-  const def = await prisma.workflowDefinition.findUniqueOrThrow({ where: { id: definitionId }, select: { organizationId: true } });
   await prisma.$transaction(async (tx) => {
     const promoted = await tx.workflowVersion.updateMany({ where: { id: versionId, status: "DRAFT" }, data: { status: "PUBLISHED", publishedAt: new Date() } });
     if (promoted.count !== 1) throw new ConflictError("Version was published concurrently.");
@@ -93,9 +95,9 @@ export async function publishVersion(m: ActorMemberships, definitionId: string, 
 
 /** Retire the whole definition: no new instances will be triggered from it. */
 export async function retireDefinition(m: ActorMemberships, definitionId: string) {
-  requireWorkflowPlatform(m);
   const def = await prisma.workflowDefinition.findUnique({ where: { id: definitionId }, select: { id: true, organizationId: true } });
   if (!def) throw new NotFoundError();
+  assertCanAuthorWorkflow(m, def.organizationId);
   await prisma.$transaction(async (tx) => {
     await tx.workflowDefinition.update({ where: { id: definitionId }, data: { status: "INACTIVE", currentVersionId: null, updatedByUserId: m.userId } });
     await tx.workflowVersion.updateMany({ where: { workflowDefinitionId: definitionId, status: "PUBLISHED" }, data: { status: "RETIRED", retiredAt: new Date() } });

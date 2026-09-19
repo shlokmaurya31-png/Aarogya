@@ -852,9 +852,12 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     // but never mutate it (no self-upgrade). Platform holds the manage grant.
     "commercial:read",
     // Phase D7 — an org/hospital admin may VIEW workflows/instances in their own
-    // scope (D1 membership still applies), but never author/publish or operate
-    // execution (those are platform-only).
+    // scope (D1 membership still applies). Phase D9 lets them AUTHOR/publish
+    // workflows for their OWN organization via the Workflow Builder — the service
+    // (assertCanAuthorWorkflow) still confines them to org-scoped workflows and keeps
+    // global templates + execution operation (workflow:operate) platform-only.
     "workflow:read",
+    "workflow:manage",
     // Phase D8 — an org/hospital admin configures the scopes they administer
     // (read/manage/publish/reset), enforced by D1 membership + platform-only keys
     // remaining platform-only. configuration:operate stays platform-only.
