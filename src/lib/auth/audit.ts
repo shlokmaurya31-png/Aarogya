@@ -59,6 +59,11 @@ export type AuditEventType =
   | "hospital.referral.created"
   | "hospital.referral.updated"
   | "patient.account.registered"
+  // Phase D11 — Patient Experience: family/caregiver delegated access lifecycle.
+  | "patient.delegation.invited"
+  | "patient.delegation.accepted"
+  | "patient.delegation.revoked"
+  | "patient.payment.initiated"
   // Phase 2 — Patient Flow / ADT. Named to match the brief §59 event
   // catalog; recorded through the same synchronous AuditEvent mechanism
   // (docs/EVENT_ARCHITECTURE.md — no new event bus this phase either).

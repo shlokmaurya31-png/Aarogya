@@ -81,6 +81,13 @@ export const PERMISSIONS = [
   "patient:merge",
   "patient:duplicate:review",
   "patient:self:read",
+  // Phase D11 — Patient Experience. The patient's own self-service action gate
+  // (book/cancel an appointment, grant/revoke consent, initiate a payment,
+  // invite/revoke a family delegate). Deliberately distinct from patient:self:read
+  // so a read-only surface can never mutate, and NEVER granted to staff roles —
+  // it authorizes actions ONLY over the caller's own (or delegated) record, with
+  // the actual patient/scope boundary enforced in src/lib/patient/context.ts.
+  "patient:self:manage",
 
   // Phase 2 — Patient Flow + Access + OPD + Emergency + ADT (brief §57).
   "patient:checkin",
@@ -466,7 +473,7 @@ export const OPERATIONAL_ONLY_ACTIONS = [
 ] as const;
 
 const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
-  PATIENT: ["patient:self:read"],
+  PATIENT: ["patient:self:read", "patient:self:manage"],
   DOCTOR: [
     // Phase C1 — a treating clinician sees interoperability state for their
     // patients and can initiate a referral/second-opinion transfer, but cannot
