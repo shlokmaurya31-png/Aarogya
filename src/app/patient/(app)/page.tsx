@@ -1,5 +1,5 @@
-import { PatientRecordView } from "@/components/patient-portal/PatientRecordView";
+import { PatientHome } from "@/components/patient-portal/PatientHome";
 
 export default function PatientHomePage() {
-  return <PatientRecordView />;
+  return <PatientHome />;
 }
