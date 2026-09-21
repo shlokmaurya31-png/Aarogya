@@ -5,18 +5,37 @@ import { motion } from "framer-motion";
 import { ArrowRight } from "lucide-react";
 import { MagneticButton } from "./MagneticButton";
 
-const COLUMNS = [
+type FooterLink = { label: string; href?: string };
+
+const COLUMNS: { title: string; links: FooterLink[] }[] = [
   {
     title: "Platform",
-    links: ["Patients", "Doctors", "Hospitals", "Labs", "Insurers"],
+    links: [
+      { label: "Patients", href: "/patient/login" },
+      { label: "Doctors", href: "/login" },
+      { label: "Hospitals", href: "/login" },
+      { label: "Labs", href: "/login" },
+      { label: "Insurers", href: "/login" },
+    ],
   },
   {
     title: "Standards",
-    links: ["ABDM", "ABHA", "DPDP Act 2023", "FHIR R4", "SNOMED CT"],
+    links: [
+      { label: "ABDM", href: "/standards/abdm" },
+      { label: "ABHA", href: "/standards/abha" },
+      { label: "DPDP Act 2023", href: "/standards/dpdp" },
+      { label: "FHIR R4", href: "/standards/fhir" },
+      { label: "SNOMED CT", href: "/standards/snomed" },
+    ],
   },
   {
     title: "Company",
-    links: ["About", "Careers", "Press", "Contact"],
+    links: [
+      { label: "About", href: "/company/about" },
+      { label: "Careers", href: "/company/careers" },
+      { label: "Press", href: "/company/press" },
+      { label: "Contact", href: "/company/contact" },
+    ],
   },
 ];
 
@@ -67,10 +86,17 @@ export function Footer() {
             </p>
             <ul className="mt-4 space-y-2.5">
               {col.links.map((l) => (
-                <li key={l}>
-                  <span className="cursor-pointer text-[13px] text-text-secondary transition-colors hover:text-text-primary">
-                    {l}
-                  </span>
+                <li key={l.label}>
+                  {l.href ? (
+                    <Link
+                      href={l.href}
+                      className="text-[13px] text-text-secondary transition-colors hover:text-text-primary"
+                    >
+                      {l.label}
+                    </Link>
+                  ) : (
+                    <span className="text-[13px] text-text-secondary">{l.label}</span>
+                  )}
                 </li>
               ))}
             </ul>
