@@ -172,7 +172,7 @@ function NavList({ nav, pathname, onNavigate }: { nav: NavItem[]; pathname: stri
         : "text-text-secondary hover:bg-fill-hover hover:text-text-primary"
     );
   return (
-    <nav className="flex-1 space-y-0.5 overflow-y-auto">
+    <nav className="mt-4 min-h-0 flex-1 space-y-0.5 overflow-y-auto">
       {nav.map((item) => {
         // Nested group (Diagnostics): the parent is a section label, not a link,
         // since its own href would duplicate the first child's destination.
@@ -223,10 +223,8 @@ function SidebarContent({
         <p className="mt-0.5 truncate text-[11px] text-text-tertiary">{facilityName}</p>
         <div className="mt-2"><StatusPill label={displayRole} tone="brand" /></div>
       </div>
-      <div className="mt-4 min-h-0 flex-1">
-        <NavList nav={nav} pathname={pathname} onNavigate={onNavigate} />
-      </div>
-      <div className="mt-2 space-y-0.5 border-t border-hairline pt-2">
+      <NavList nav={nav} pathname={pathname} onNavigate={onNavigate} />
+      <div className="mt-2 shrink-0 space-y-0.5 border-t border-hairline pt-2">
         <ThemeToggle variant="sidebar" />
         <button onClick={onLogout} className="focus-ring flex w-full items-center gap-2.5 rounded-control px-3 py-2 text-left text-[12.5px] font-medium text-text-tertiary transition-colors hover:bg-danger/10 hover:text-danger">
           <LogOut size={14} /> Sign out
