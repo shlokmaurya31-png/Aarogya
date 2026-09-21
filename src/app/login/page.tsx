@@ -11,6 +11,8 @@ import { usePatientStore } from "@/store/usePatientStore";
 import { useUiStore } from "@/store/useUiStore";
 import { useToastStore } from "@/store/useToastStore";
 import { useTranslation } from "@/hooks/useTranslation";
+import type { Role as AccountRole } from "@prisma/client";
+import { resolveLoginDestination } from "@/lib/auth/roleDestination";
 
 type Role = "patient" | "doctor" | "lab" | "hospital";
 type Mode = "signin" | "signup";
@@ -68,7 +70,6 @@ export default function LoginPage() {
   const signInPatient = useAuthStore((s) => s.signInPatient);
   const signInDoctor = useAuthStore((s) => s.signInDoctor);
   const signInLab = useAuthStore((s) => s.signInLab);
-  const signInHospital = useAuthStore((s) => s.signInHospital);
   const signUpPatient = useAuthStore((s) => s.signUpPatient);
   const signUpDoctor = useAuthStore((s) => s.signUpDoctor);
   const signUpLab = useAuthStore((s) => s.signUpLab);
@@ -125,17 +126,41 @@ export default function LoginPage() {
     router.push("/dashboard");
   }
 
-  function handleSignIn(e: React.FormEvent) {
+  async function handleSignIn(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+
+    // Hospital sign-in is wired to the REAL auth backend and drops the user
+    // straight into Hospital OS — no bounce to a second login. The server
+    // returns the account's role; routing is by that role, never a client
+    // guess, and Hospital OS still re-verifies authorization on its own.
+    if (role === "hospital") {
+      try {
+        const res = await fetch("/api/scholar-auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setError(data.error ?? "Sign-in failed.");
+          return;
+        }
+        push(t("login.toast.welcomeBackHospital"), "emerald");
+        router.push(resolveLoginDestination(data.role as AccountRole));
+        router.refresh();
+      } catch {
+        setError("Sign-in failed. Please try again.");
+      }
+      return;
+    }
+
     const result =
       role === "patient"
         ? signInPatient(email, password)
         : role === "doctor"
           ? signInDoctor(email, password)
-          : role === "lab"
-            ? signInLab(email, password)
-            : signInHospital(email, password);
+          : signInLab(email, password);
     if (!result.ok) {
       setError(result.error);
       return;
@@ -145,9 +170,7 @@ export default function LoginPage() {
         ? t("login.toast.welcomeBackDoctor")
         : role === "lab"
           ? t("login.toast.welcomeBackLab")
-          : role === "hospital"
-            ? t("login.toast.welcomeBackHospital")
-            : t("login.toast.welcomeBackPatient"),
+          : t("login.toast.welcomeBackPatient"),
       "emerald"
     );
     enter(role);
