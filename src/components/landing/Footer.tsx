@@ -11,11 +11,11 @@ const COLUMNS: { title: string; links: FooterLink[] }[] = [
   {
     title: "Platform",
     links: [
-      { label: "Patients", href: "/patient/login" },
-      { label: "Doctors", href: "/login" },
-      { label: "Hospitals", href: "/login" },
-      { label: "Labs", href: "/login" },
-      { label: "Insurers", href: "/login" },
+      { label: "Patients" },
+      { label: "Doctors" },
+      { label: "Hospitals" },
+      { label: "Labs" },
+      { label: "Insurers" },
     ],
   },
   {
@@ -95,7 +95,9 @@ export function Footer() {
                       {l.label}
                     </Link>
                   ) : (
-                    <span className="text-[13px] text-text-secondary">{l.label}</span>
+                    <span className="cursor-pointer text-[13px] text-text-secondary transition-colors hover:text-text-primary">
+                      {l.label}
+                    </span>
                   )}
                 </li>
               ))}
