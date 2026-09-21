@@ -11,11 +11,11 @@ const COLUMNS: { title: string; links: FooterLink[] }[] = [
   {
     title: "Platform",
     links: [
-      { label: "Patients" },
-      { label: "Doctors" },
-      { label: "Hospitals" },
-      { label: "Labs" },
-      { label: "Insurers" },
+      { label: "Patients", href: "/platform/patients" },
+      { label: "Doctors", href: "/platform/doctors" },
+      { label: "Hospitals", href: "/platform/hospitals" },
+      { label: "Labs", href: "/platform/labs" },
+      { label: "Insurers", href: "/platform/insurers" },
     ],
   },
   {
