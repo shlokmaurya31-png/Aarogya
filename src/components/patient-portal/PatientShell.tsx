@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  HeartPulse, LogOut, Home, CalendarDays, FileText, Pill, Receipt,
-  ShieldCheck, Users, User as UserIcon, ClipboardList, ListChecks,
+  LogOut, Home, CalendarDays, FileText, Pill, Receipt,
+  ShieldCheck, Users, User as UserIcon, ClipboardList, ListChecks, KeyRound,
 } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { ThemeToggle } from "@/components/navigation/ThemeToggle";
+import { AiAssistantProvider, AiCommandBar } from "@/components/ai/PortalAssistant";
 
 /**
  * Phase D11 — the patient experience shell. A simple, single navigation model
@@ -18,6 +20,7 @@ const NAV = [
   { href: "/patient", label: "Home", icon: Home },
   { href: "/patient/appointments", label: "Appointments", icon: CalendarDays },
   { href: "/patient/queue", label: "Queue", icon: ListChecks },
+  { href: "/patient/share", label: "Share access", icon: KeyRound },
   { href: "/patient/records", label: "Records", icon: ClipboardList },
   { href: "/patient/reports", label: "Reports", icon: FileText },
   { href: "/patient/medications", label: "Medicines", icon: Pill },
@@ -41,14 +44,19 @@ export function PatientShell({ children, displayName }: { children: React.ReactN
   const isActive = (href: string) => (href === "/patient" ? pathname === "/patient" : pathname.startsWith(href));
 
   return (
+    <AiAssistantProvider role="PATIENT" displayName={displayName}>
     <div className="min-h-screen bg-surface text-text-primary">
       <ToastViewport />
       <header className="sticky top-0 z-40 border-b border-hairline bg-card px-4 py-3.5">
-        <div className="mx-auto flex max-w-5xl items-center justify-between">
-          <Link href="/patient" className="flex items-center gap-2 text-[14px] font-semibold">
-            <HeartPulse size={17} className="text-cyan" /> Aarogya
+        <div className="mx-auto flex max-w-5xl items-center justify-between gap-2">
+          <Link href="/patient" className="flex shrink-0 items-center gap-2 text-[14px] font-semibold">
+            <span className="flex size-6 items-center justify-center rounded-md bg-gradient-to-br from-cyan to-brand-strong text-on-brand">
+              <Sparkles size={13} />
+            </span>
+            Aarogya AI
           </Link>
-          <div className="flex items-center gap-2">
+          <AiCommandBar className="mx-auto max-w-xs flex-1 justify-start" />
+          <div className="flex shrink-0 items-center gap-2">
             <span className="hidden text-[12px] text-text-secondary sm:inline">{displayName}</span>
             <ThemeToggle />
             <button onClick={handleLogout} className="flex items-center gap-1.5 rounded-md border border-hairline px-3 py-1.5 text-[12px] text-text-secondary hover:border-red/30 hover:text-red">
@@ -92,5 +100,6 @@ export function PatientShell({ children, displayName }: { children: React.ReactN
         })}
       </nav>
     </div>
+    </AiAssistantProvider>
   );
 }

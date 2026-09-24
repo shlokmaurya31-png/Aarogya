@@ -1,8 +1,10 @@
 import type { Metadata, Viewport } from "next";
 import Script from "next/script";
-import { Geist_Mono, Inter } from "next/font/google";
+import { Geist_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import { PwaRegister } from "@/components/shared/PwaRegister";
 import { ThemeInit } from "@/components/shared/ThemeInit";
+import { GlassFilter } from "@/components/ui/liquid-glass-button";
 import "./globals.css";
 
 const THEME_INIT_SCRIPT = `(function() {
@@ -20,9 +22,17 @@ const THEME_INIT_SCRIPT = `(function() {
   } catch (e) {}
 })();`;
 
-const inter = Inter({
-  variable: "--font-inter",
-  subsets: ["latin"],
+// Finlandica Text — the product's primary typeface, self-hosted (no external
+// CDN) from the variable webfonts. One file covers the full 100–900 weight
+// range, with a matching italic. Exposed as --font-finlandica and wired to
+// --font-sans in globals.css so all `font-sans` text picks it up.
+const finlandica = localFont({
+  src: [
+    { path: "./fonts/FinlandicaText-Variable.woff2", weight: "100 900", style: "normal" },
+    { path: "./fonts/FinlandicaText-Italic-Variable.woff2", weight: "100 900", style: "italic" },
+  ],
+  variable: "--font-finlandica",
+  display: "swap",
 });
 
 const geistMono = Geist_Mono({
@@ -53,9 +63,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${geistMono.variable} h-full`} suppressHydrationWarning>
+    <html lang="en" className={`${finlandica.variable} ${geistMono.variable} h-full`} suppressHydrationWarning>
       <body className="min-h-full flex flex-col font-sans antialiased" suppressHydrationWarning>
         <Script id="theme-init" strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+        {/* One global instance of the liquid-glass SVG filter (#container-glass),
+            referenced by every Button's backdrop-filter — avoids duplicating the
+            filter per button. */}
+        <GlassFilter />
         {children}
         <PwaRegister />
         <ThemeInit />

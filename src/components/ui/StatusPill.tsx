@@ -7,6 +7,12 @@ const TONES = {
   // roles
   neutral: "text-text-secondary bg-fill-muted border-hairline",
   brand: "text-brand bg-brand/10 border-brand/20",
+  // Care-teal accent pill (active/interactive labels).
+  accent: "text-accent-strong bg-accent/12 border-accent/25",
+  // Coral highlight pill (notifications, callout badges). Uses the deepened
+  // cta-text so the label stays readable on the light coral tint.
+  coral: "text-cta-text bg-cta/14 border-cta/30",
+  cta: "text-cta-text bg-cta/14 border-cta/30",
   success: "text-success bg-success/12 border-success/25",
   warning: "text-warning bg-warning/12 border-warning/25",
   danger: "text-danger bg-danger/12 border-danger/25",

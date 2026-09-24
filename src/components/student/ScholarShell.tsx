@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/navigation/ThemeToggle";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { ToastViewport } from "@/components/shared/ToastViewport";
+import { AiAssistantProvider, AiCommandBar } from "@/components/ai/PortalAssistant";
 
 const NAV = [
   { href: "/student/dashboard", label: "Overview", icon: LayoutGrid },
@@ -45,14 +46,22 @@ export function ScholarShell({
   }
 
   return (
+    <AiAssistantProvider role="STUDENT" displayName={displayName} pageLabel={currentRotation}>
     <div className="flex min-h-screen bg-surface text-text-primary">
       <ToastViewport />
 
       {/* Desktop sidebar */}
-      <aside className="sticky top-0 hidden h-screen w-[248px] shrink-0 flex-col border-r border-hairline bg-card px-4 py-5 lg:flex">
+      <aside className="nav-surface sticky top-0 hidden h-screen w-[248px] shrink-0 flex-col border-r border-hairline px-4 py-5 lg:flex">
         <Link href="/student/dashboard" className="flex items-center gap-2 px-2 text-[14px] font-semibold tracking-tight">
-          <GraduationCap size={18} className="text-cyan" /> Aarogya Scholar
+          <span className="flex size-6 items-center justify-center rounded-md bg-gradient-to-br from-cyan to-brand-strong text-on-brand">
+            <GraduationCap size={13} />
+          </span>
+          <span className="flex flex-col leading-none">
+            Aarogya AI
+            <span className="mt-0.5 text-[10px] font-medium uppercase tracking-wide text-text-tertiary">Scholar</span>
+          </span>
         </Link>
+        <div className="mt-4"><AiCommandBar className="w-full justify-start" /></div>
 
         <div className="mt-5 rounded-lg border border-hairline bg-black/[0.02] px-3 py-3">
           <p className="truncate text-[13px] font-medium">{displayName}</p>
@@ -103,9 +112,10 @@ export function ScholarShell({
 
       {/* Mobile top bar */}
       <div className="fixed inset-x-0 top-0 z-40 flex items-center justify-between border-b border-hairline bg-card px-4 py-3 lg:hidden">
-        <Link href="/student/dashboard" className="flex items-center gap-2 text-[13.5px] font-semibold">
-          <GraduationCap size={16} className="text-cyan" /> Aarogya Scholar
+        <Link href="/student/dashboard" className="flex shrink-0 items-center gap-2 text-[13.5px] font-semibold">
+          <GraduationCap size={16} className="text-cyan" /> Aarogya AI
         </Link>
+        <AiCommandBar className="mx-2 flex-1 justify-start" />
         <button onClick={() => setMobileOpen((v) => !v)} aria-label="Menu">
           {mobileOpen ? <X size={18} /> : <Menu size={18} />}
         </button>
@@ -135,5 +145,6 @@ export function ScholarShell({
 
       <main className="min-w-0 flex-1 px-4 pb-16 pt-[64px] sm:px-6 lg:px-8 lg:pt-8">{children}</main>
     </div>
+    </AiAssistantProvider>
   );
 }

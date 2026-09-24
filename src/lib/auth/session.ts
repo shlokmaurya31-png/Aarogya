@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
 import type { Role } from "@prisma/client";
+import { prisma } from "@/lib/db";
 
 /**
  * Aarogya Scholar sessions are an httpOnly, HMAC-signed cookie — not a JWT
@@ -71,7 +72,20 @@ function decode(token: string): SessionPayload | null {
 }
 
 export async function createSession(userId: string, role: Role) {
-  const session: SessionPayload = { userId, role, exp: Date.now() + SESSION_TTL_MS };
+  // Embed the caller's CURRENT tokenVersion so the cookie matches
+  // requireSession's revocation check. Without this the cookie carries no
+  // `ver` (read as 0) and any user whose tokenVersion was ever bumped — by a
+  // password change, role change, or admin revoke — could never log back in,
+  // since login kept minting ver-less cookies. `iat` feeds step-up auth.
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { tokenVersion: true } });
+  const now = Date.now();
+  const session: SessionPayload = {
+    userId,
+    role,
+    exp: now + SESSION_TTL_MS,
+    ver: user?.tokenVersion ?? 0,
+    iat: now,
+  };
   const store = await cookies();
   store.set(COOKIE_NAME, encode(session), {
     httpOnly: true,

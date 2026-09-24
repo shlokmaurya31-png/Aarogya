@@ -64,6 +64,10 @@ export type AuditEventType =
   | "patient.delegation.accepted"
   | "patient.delegation.revoked"
   | "patient.payment.initiated"
+  // Bedside patient-access session ("give your code to the doctor").
+  | "patient.access.codeIssued"
+  | "patient.access.redeemed"
+  | "patient.access.ended"
   // Phase 2 — Patient Flow / ADT. Named to match the brief §59 event
   // catalog; recorded through the same synchronous AuditEvent mechanism
   // (docs/EVENT_ARCHITECTURE.md — no new event bus this phase either).

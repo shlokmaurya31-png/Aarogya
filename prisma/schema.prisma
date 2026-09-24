@@ -8980,3 +8980,54 @@ model PatientDelegationScope {
   @@unique([delegationId, scope])
   @@index([delegationId])
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Bedside patient-access session ("give your code to the doctor").
+//
+// A patient issues a short one-time code from their portal; a doctor redeems
+// it on the doctor page to open the patient's full history for that visit, then
+// ends the session when done. The session row IS the shared workflow record —
+// it links patient + doctor with start/end timestamps, and each transition is
+// mirrored into AuditEvent for both parties. Consent = the code, so history
+// access here is gated by an ACTIVE session, independent of facility scoping.
+//
+// Additive: scalar patientId/doctorUserId (no relations) so no existing model
+// changes. Only the code HASH is stored, never the plaintext.
+// ─────────────────────────────────────────────────────────────────────────
+model PatientAccessSession {
+  id String @id @default(cuid())
+
+  patientId       String
+  createdByUserId String? // the patient's own user, for audit correlation
+
+  codeHash String @unique // sha256 of the shared code; plaintext never stored
+
+  // PENDING (code issued) -> ACTIVE (doctor redeemed) -> ENDED | EXPIRED | CANCELLED
+  status String @default("PENDING")
+
+  purpose String?
+
+  // Redeeming clinician (null until ACTIVE).
+  doctorUserId  String?
+  doctorStaffId String?
+  doctorName    String?
+  facilityId    String?
+
+  expiresAt  DateTime // the code is only redeemable before this (PENDING window)
+  // Once ACTIVE, the consult auto-logs-off at this time unless the doctor
+  // "continues" the session. Default 15 min (typical India OPD consult), each
+  // continue extends it; on expiry the patient must issue a fresh code.
+  activeExpiresAt DateTime?
+  extensionCount  Int       @default(0)
+  redeemedAt DateTime?
+  endedAt    DateTime?
+  endedBy    String? // "DOCTOR" | "PATIENT" | "SYSTEM"
+
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([patientId, status])
+  @@index([doctorUserId, status])
+  @@index([status, expiresAt])
+}

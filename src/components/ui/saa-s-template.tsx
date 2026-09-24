@@ -132,10 +132,8 @@ const Hero = React.memo(() => {
       }}
     >
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
-
         .saa-s-template, .saa-s-template * {
-          font-family: 'Poppins', sans-serif;
+          font-family: var(--font-sans);
         }
 
         @keyframes fadeIn {

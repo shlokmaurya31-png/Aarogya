@@ -4,11 +4,12 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { LogOut, Search, Settings } from "lucide-react";
+import { LogOut, Search, Settings, KeyRound } from "lucide-react";
 import { patient, doctorProfile } from "@/lib/mock-data";
 import { useUiStore } from "@/store/useUiStore";
 import { useAuthStore } from "@/store/useAuthStore";
 import { usePatientStore } from "@/store/usePatientStore";
+import { useToastStore } from "@/store/useToastStore";
 import { useTranslation } from "@/hooks/useTranslation";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { ThemeToggle } from "./ThemeToggle";
@@ -77,6 +78,11 @@ export function TopBar() {
   const logout = useAuthStore((s) => s.logout);
   const patientProfile = usePatientStore((s) => s.profile);
   const { t } = useTranslation();
+
+  // The patient consent session shown in the doctor context strip — ending it
+  // logs the PATIENT off (closes their record), NOT the doctor out of the app.
+  const [patientSessionActive, setPatientSessionActive] = useState(true);
+  const pushToast = useToastStore((s) => s.push);
 
   const isDoctor = mode === "doctor";
   const tabs = isDoctor ? DOCTOR_TABS : PATIENT_TABS;
@@ -214,10 +220,39 @@ export function TopBar() {
             {authUser?.verificationStatus === "pending" && (
               <StatusPill label={t("common.verificationPending")} tone="amber" />
             )}
-            <span className="ml-auto hidden items-center gap-1.5 text-text-tertiary sm:flex">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald" />
-              {t("topbar.consentActive")}
-            </span>
+            {/* Patient consent session — log out closes the PATIENT record,
+                keeping the doctor signed in. */}
+            {patientSessionActive ? (
+              <div className="ml-auto flex items-center gap-2">
+                <span className="hidden items-center gap-1.5 text-text-tertiary sm:flex">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald" />
+                  {t("topbar.consentActive")}
+                </span>
+                <button
+                  onClick={() => {
+                    setPatientSessionActive(false);
+                    pushToast("Patient logged off. Their record is now closed.", "emerald");
+                  }}
+                  title="Log this patient off and close their record"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-cta/40 px-2.5 py-1 text-[11px] font-medium text-cta-text transition hover:bg-cta/10"
+                >
+                  <LogOut size={12} /> Log out patient
+                </button>
+              </div>
+            ) : (
+              <div className="ml-auto flex items-center gap-2">
+                <span className="hidden items-center gap-1.5 text-text-tertiary sm:flex">
+                  <span className="h-1.5 w-1.5 rounded-full bg-text-tertiary" />
+                  Patient logged off
+                </span>
+                <button
+                  onClick={() => router.push("/patient-login")}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-accent/40 px-2.5 py-1 text-[11px] font-medium text-brand transition hover:bg-accent/10"
+                >
+                  <KeyRound size={12} /> Start new session
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

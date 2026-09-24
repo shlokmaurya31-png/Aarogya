@@ -2,7 +2,7 @@ import { cn } from "@/lib/utils";
 import type { InputHTMLAttributes, SelectHTMLAttributes, TextareaHTMLAttributes, ReactNode } from "react";
 
 const fieldBase =
-  "w-full rounded-field border border-hairline bg-fill-subtle text-text-primary outline-none transition-[border-color,box-shadow] duration-[130ms] placeholder:text-text-tertiary focus:border-brand focus:ring-2 focus:ring-brand/25 disabled:opacity-55";
+  "w-full rounded-field border border-hairline bg-fill-subtle text-text-primary outline-none transition-[border-color,box-shadow] duration-[130ms] placeholder:text-text-tertiary focus:border-accent focus:ring-2 focus:ring-accent/30 disabled:opacity-55";
 
 // 16px on mobile stops iOS zoom, 13px on larger screens for density.
 const fieldSize = "px-3 py-2.5 text-[16px] sm:text-[13px]";

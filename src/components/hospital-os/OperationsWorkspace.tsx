@@ -75,13 +75,14 @@ export function OperationsWorkspace() {
   };
 
   function rowLabel(t: Tab, r: any): string {
-    if (t === "housekeeping") return `${r.requestType} · ${r.bedId ? "bed " + r.bedId.slice(-6) : r.areaLabel ?? "area"}`;
-    if (t === "dietary") return `${r.mealPeriod} · patient ${r.patientId.slice(-6)}`;
-    if (t === "transport") return `${r.transportType} · patient ${r.patientId.slice(-6)}`;
+    const tail = (v: unknown) => (typeof v === "string" ? v.slice(-6) : "");
+    if (t === "housekeeping") return `${r.requestType} · ${r.bedId ? "bed " + tail(r.bedId) : r.areaLabel ?? "area"}`;
+    if (t === "dietary") return `${r.mealPeriod} · patient ${tail(r.patientId)}`;
+    if (t === "transport") return `${r.transportType} · patient ${tail(r.patientId)}`;
     if (t === "ambulance") return `${r.origin} → ${r.destination}`;
     if (t === "maintenance") return `${r.issueType} · ${r.description?.slice(0, 40) ?? ""}`;
     if (t === "biomedical") return `${r.assetTag} · ${r.category}${r.locationLabel ? " · " + r.locationLabel : ""}`;
-    if (t === "infection") return `${r.incidentType}${r.isolationRequired ? " · ISOLATION" : ""}${r.wardId ? " · ward " + r.wardId.slice(-6) : ""}`;
+    if (t === "infection") return `${r.incidentType}${r.isolationRequired ? " · ISOLATION" : ""}${r.wardId ? " · ward " + tail(r.wardId) : ""}`;
     return r.id;
   }
 

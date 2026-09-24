@@ -1,37 +1,68 @@
 @import "tailwindcss";
 
 :root {
-  --ink: #ffffff;
-  --surface: #f6f6f8;
-  --card: #ffffff;
-  --card-raised: #f7f7f9;
-  --hairline: rgba(0, 0, 0, 0.08);
-  --hairline-strong: rgba(0, 0, 0, 0.14);
+  /* ─── Brand palette primitives (rebrand) ───
+     deep-teal  = dominant/structural, dark surfaces, headers, sidebars
+     care-teal  = action accent: primary buttons, active state, focus rings, icons
+     coral      = CTA / notifications / badges / highlight
+     warm-white = light surfaces */
+  --deep-teal: #195a5f;
+  --care-teal: #12b8b0;
+  --coral: #d97f6c;
+  --warm-white: #f3ede6;
 
-  --text-primary: rgba(10, 10, 10, 0.92);
-  --text-secondary: rgba(10, 10, 10, 0.58);
-  --text-tertiary: rgba(10, 10, 10, 0.38);
+  --ink: #ffffff;
+  --surface: var(--warm-white);
+  --card: #fbf7f1;
+  --card-raised: #ffffff;
+  --hairline: rgba(25, 90, 95, 0.12);
+  --hairline-strong: rgba(25, 90, 95, 0.22);
+
+  /* Warm near-black text (deep-teal tinted) for contrast on warm-white. */
+  --text-primary: rgba(16, 42, 45, 0.94);
+  --text-secondary: rgba(16, 42, 45, 0.60);
+  --text-tertiary: rgba(16, 42, 45, 0.40);
 
   --emerald: #15803d;
   --amber: #b45309;
   --red: #dc2626;
-  --cyan: #0e7490;
+  /* Legacy accent token -> deep teal so `bg-cyan text-ink` (white) and
+     `text-cyan` (foreground) both keep AA contrast on warm-white. */
+  --cyan: #195a5f;
 
   --emerald-dim: rgba(21, 128, 61, 0.12);
   --amber-dim: rgba(180, 83, 9, 0.12);
   --red-dim: rgba(220, 38, 38, 0.12);
-  --cyan-dim: rgba(14, 116, 144, 0.12);
+  --cyan-dim: rgba(25, 90, 95, 0.12);
 
   /* ---- Aarogya semantic layer (additive; see /docs/design/design-system.md) ---- */
-  /* Brand: teal. `brand` is the adaptive accent (text/icon/border); `brand-strong`
-     is the constant solid fill that always takes white text via `on-brand`. */
-  --brand: #0e7490;
-  --brand-strong: #0e7490;
-  --brand-subtle: rgba(14, 116, 144, 0.12);
+  /* Brand = deep teal: structural/foreground. `brand-strong` is the solid fill
+     that always takes white text (`on-brand`). `brand-subtle` is a care-teal
+     tint so active/selected states glow in the accent color. */
+  --brand: #195a5f;
+  --brand-strong: #195a5f;
+  --brand-subtle: rgba(18, 184, 176, 0.14);
   --on-brand: #ffffff;
 
+  /* Accent = care teal: interactive fills (primary buttons), rings, highlights.
+     `on-accent` is a very dark teal so text/icons on the light accent pass AA. */
+  --accent: #12b8b0;
+  --accent-strong: #0e9b94;
+  --accent-subtle: rgba(18, 184, 176, 0.14);
+  --on-accent: #06302e;
+
+  /* CTA / highlight = coral. `on-cta` dark for AA; `cta-text` is a deepened
+     coral that stays readable as a label on light tinted backgrounds. */
+  --cta: #d97f6c;
+  --cta-strong: #c96a56;
+  --cta-subtle: rgba(217, 127, 108, 0.16);
+  --cta-text: #a84a38;
+  --on-cta: #3a140c;
+  --coral-dim: rgba(217, 127, 108, 0.16);
+
   /* Status roles. One hue, one meaning. success=green, warning=amber,
-     danger=red, info=blue, critical=life-safety red (stronger than danger). */
+     danger=red, info=blue, critical=life-safety red (stronger than danger).
+     Kept semantic (not remapped to coral) so clinical safety cues stay stable. */
   --success: var(--emerald);
   --success-dim: var(--emerald-dim);
   --warning: var(--amber);
@@ -43,19 +74,19 @@
   --critical: #b91c1c;
   --critical-dim: rgba(185, 28, 28, 0.14);
 
-  /* Neutral fills that invert correctly in dark mode. Replaces the 284
-     `bg-black/[…]` overlays that vanish on dark surfaces. */
-  --fill-subtle: rgba(0, 0, 0, 0.03);
-  --fill-muted: rgba(0, 0, 0, 0.05);
-  --fill-hover: rgba(0, 0, 0, 0.045);
-  --fill-active: rgba(0, 0, 0, 0.07);
+  /* Neutral fills that invert correctly in dark mode; hover/active are
+     care-teal-tinted so interactive surfaces echo the accent. */
+  --fill-subtle: rgba(25, 90, 95, 0.04);
+  --fill-muted: rgba(25, 90, 95, 0.06);
+  --fill-hover: rgba(18, 184, 176, 0.08);
+  --fill-active: rgba(18, 184, 176, 0.12);
 
-  --focus: #0e7490;
+  --focus: #12b8b0;
 
-  --glass-bg: rgba(255, 255, 255, 0.6);
-  --glass-bg-strong: rgba(255, 255, 255, 0.78);
-  --scrollbar-thumb: rgba(0, 0, 0, 0.14);
-  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.22);
+  --glass-bg: rgba(251, 247, 241, 0.6);
+  --glass-bg-strong: rgba(251, 247, 241, 0.8);
+  --scrollbar-thumb: rgba(25, 90, 95, 0.2);
+  --scrollbar-thumb-hover: rgba(25, 90, 95, 0.32);
 
   --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
@@ -71,31 +102,44 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --ink: #0a0a0c;
-    --surface: #111114;
-    --card: #17171b;
-    --card-raised: #1e1e23;
-    --hairline: rgba(255, 255, 255, 0.09);
-    --hairline-strong: rgba(255, 255, 255, 0.16);
+    /* Deep teal IS the dark surface family (palette role: "dark mode surfaces"). */
+    --ink: #0c2b2e;
+    --surface: #0c2b2e;
+    --card: #123f43;
+    --card-raised: #17565b;
+    --hairline: rgba(243, 237, 230, 0.1);
+    --hairline-strong: rgba(243, 237, 230, 0.18);
 
-    --text-primary: rgba(255, 255, 255, 0.92);
-    --text-secondary: rgba(255, 255, 255, 0.62);
-    --text-tertiary: rgba(255, 255, 255, 0.42);
+    --text-primary: rgba(243, 237, 230, 0.94);
+    --text-secondary: rgba(243, 237, 230, 0.64);
+    --text-tertiary: rgba(243, 237, 230, 0.44);
 
     --emerald: #34d399;
     --amber: #fbbf24;
     --red: #f87171;
-    --cyan: #22d3ee;
+    --cyan: #2fd4cc;
 
     --emerald-dim: rgba(52, 211, 153, 0.14);
     --amber-dim: rgba(251, 191, 36, 0.14);
     --red-dim: rgba(248, 113, 113, 0.14);
-    --cyan-dim: rgba(34, 211, 238, 0.14);
+    --cyan-dim: rgba(47, 212, 204, 0.16);
 
-    --brand: #22d3ee;
-    --brand-strong: #0e7490;
-    --brand-subtle: rgba(34, 211, 238, 0.14);
+    --brand: #5fd6ce;
+    --brand-strong: #195a5f;
+    --brand-subtle: rgba(47, 212, 204, 0.16);
     --on-brand: #ffffff;
+
+    --accent: #2fd4cc;
+    --accent-strong: #12b8b0;
+    --accent-subtle: rgba(47, 212, 204, 0.16);
+    --on-accent: #06302e;
+
+    --cta: #e4917e;
+    --cta-strong: #d97f6c;
+    --cta-subtle: rgba(228, 145, 126, 0.18);
+    --cta-text: #f0a896;
+    --on-cta: #3a140c;
+    --coral-dim: rgba(228, 145, 126, 0.18);
 
     --success: var(--emerald);
     --success-dim: var(--emerald-dim);
@@ -108,48 +152,60 @@
     --critical: #fca5a5;
     --critical-dim: rgba(248, 113, 113, 0.18);
 
-    --fill-subtle: rgba(255, 255, 255, 0.04);
-    --fill-muted: rgba(255, 255, 255, 0.06);
-    --fill-hover: rgba(255, 255, 255, 0.05);
-    --fill-active: rgba(255, 255, 255, 0.08);
+    --fill-subtle: rgba(243, 237, 230, 0.05);
+    --fill-muted: rgba(243, 237, 230, 0.07);
+    --fill-hover: rgba(47, 212, 204, 0.1);
+    --fill-active: rgba(47, 212, 204, 0.16);
 
-    --focus: #22d3ee;
+    --focus: #2fd4cc;
 
-    --glass-bg: rgba(23, 23, 27, 0.6);
-    --glass-bg-strong: rgba(23, 23, 27, 0.78);
-    --scrollbar-thumb: rgba(255, 255, 255, 0.16);
-    --scrollbar-thumb-hover: rgba(255, 255, 255, 0.26);
+    --glass-bg: rgba(12, 43, 46, 0.6);
+    --glass-bg-strong: rgba(12, 43, 46, 0.8);
+    --scrollbar-thumb: rgba(243, 237, 230, 0.16);
+    --scrollbar-thumb-hover: rgba(243, 237, 230, 0.26);
 
     color-scheme: dark;
   }
 }
 
 :root[data-theme="dark"] {
-  --ink: #0a0a0c;
-  --surface: #111114;
-  --card: #17171b;
-  --card-raised: #1e1e23;
-  --hairline: rgba(255, 255, 255, 0.09);
-  --hairline-strong: rgba(255, 255, 255, 0.16);
+  --ink: #0c2b2e;
+  --surface: #0c2b2e;
+  --card: #123f43;
+  --card-raised: #17565b;
+  --hairline: rgba(243, 237, 230, 0.1);
+  --hairline-strong: rgba(243, 237, 230, 0.18);
 
-  --text-primary: rgba(255, 255, 255, 0.92);
-  --text-secondary: rgba(255, 255, 255, 0.62);
-  --text-tertiary: rgba(255, 255, 255, 0.42);
+  --text-primary: rgba(243, 237, 230, 0.94);
+  --text-secondary: rgba(243, 237, 230, 0.64);
+  --text-tertiary: rgba(243, 237, 230, 0.44);
 
   --emerald: #34d399;
   --amber: #fbbf24;
   --red: #f87171;
-  --cyan: #22d3ee;
+  --cyan: #2fd4cc;
 
   --emerald-dim: rgba(52, 211, 153, 0.14);
   --amber-dim: rgba(251, 191, 36, 0.14);
   --red-dim: rgba(248, 113, 113, 0.14);
-  --cyan-dim: rgba(34, 211, 238, 0.14);
+  --cyan-dim: rgba(47, 212, 204, 0.16);
 
-  --brand: #22d3ee;
-  --brand-strong: #0e7490;
-  --brand-subtle: rgba(34, 211, 238, 0.14);
+  --brand: #5fd6ce;
+  --brand-strong: #195a5f;
+  --brand-subtle: rgba(47, 212, 204, 0.16);
   --on-brand: #ffffff;
+
+  --accent: #2fd4cc;
+  --accent-strong: #12b8b0;
+  --accent-subtle: rgba(47, 212, 204, 0.16);
+  --on-accent: #06302e;
+
+  --cta: #e4917e;
+  --cta-strong: #d97f6c;
+  --cta-subtle: rgba(228, 145, 126, 0.18);
+  --cta-text: #f0a896;
+  --on-cta: #3a140c;
+  --coral-dim: rgba(228, 145, 126, 0.18);
 
   --success: var(--emerald);
   --success-dim: var(--emerald-dim);
@@ -162,17 +218,17 @@
   --critical: #fca5a5;
   --critical-dim: rgba(248, 113, 113, 0.18);
 
-  --fill-subtle: rgba(255, 255, 255, 0.04);
-  --fill-muted: rgba(255, 255, 255, 0.06);
-  --fill-hover: rgba(255, 255, 255, 0.05);
-  --fill-active: rgba(255, 255, 255, 0.08);
+  --fill-subtle: rgba(243, 237, 230, 0.05);
+  --fill-muted: rgba(243, 237, 230, 0.07);
+  --fill-hover: rgba(47, 212, 204, 0.1);
+  --fill-active: rgba(47, 212, 204, 0.16);
 
-  --focus: #22d3ee;
+  --focus: #2fd4cc;
 
-  --glass-bg: rgba(23, 23, 27, 0.6);
-  --glass-bg-strong: rgba(23, 23, 27, 0.78);
-  --scrollbar-thumb: rgba(255, 255, 255, 0.16);
-  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.26);
+  --glass-bg: rgba(12, 43, 46, 0.6);
+  --glass-bg-strong: rgba(12, 43, 46, 0.8);
+  --scrollbar-thumb: rgba(243, 237, 230, 0.16);
+  --scrollbar-thumb-hover: rgba(243, 237, 230, 0.26);
 
   color-scheme: dark;
 }
@@ -199,6 +255,32 @@
   --color-brand-strong: var(--brand-strong);
   --color-brand-subtle: var(--brand-subtle);
   --color-on-brand: var(--on-brand);
+  /* Accent (care teal) + CTA (coral) roles */
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-subtle: var(--accent-subtle);
+  --color-on-accent: var(--on-accent);
+  --color-cta: var(--cta);
+  --color-cta-strong: var(--cta-strong);
+  --color-cta-subtle: var(--cta-subtle);
+  --color-cta-text: var(--cta-text);
+  --color-on-cta: var(--on-cta);
+  --color-coral: var(--cta);
+
+  /* shadcn-compatible aliases so imported shadcn/ui components (e.g.
+     liquid-glass-button) resolve against the Aarogya brand palette. */
+  --color-primary: var(--brand-strong);
+  --color-primary-foreground: var(--on-brand);
+  --color-secondary: var(--accent);
+  --color-secondary-foreground: var(--on-accent);
+  --color-destructive: var(--danger);
+  --color-muted: var(--fill-muted);
+  --color-accent-foreground: var(--text-primary);
+  --color-ring: var(--focus);
+  --color-input: var(--hairline);
+  --color-background: var(--card);
+  --color-border: var(--hairline);
+
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-danger: var(--danger);
@@ -210,7 +292,7 @@
   --color-fill-hover: var(--fill-hover);
   --color-fill-active: var(--fill-active);
 
-  --font-sans: var(--font-inter);
+  --font-sans: var(--font-finlandica), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono);
 
   /* Card radius, retuned down from 24/28/20 — "huge rounded cards" was an
@@ -236,7 +318,7 @@
 }
 
 body {
-  background: var(--ink);
+  background: var(--surface);
   color: var(--text-primary);
   font-feature-settings: "tnum" 1, "cv11" 1;
 }
@@ -246,8 +328,8 @@ body {
 }
 
 ::selection {
-  background: var(--emerald-dim);
-  color: var(--emerald);
+  background: var(--accent-subtle);
+  color: var(--accent-strong);
 }
 
 /* scrollbar */
@@ -288,6 +370,29 @@ body {
   box-shadow:
     0 1px 2px rgba(0, 0, 0, 0.04),
     0 24px 48px -24px rgba(0, 0, 0, 0.14);
+}
+
+/* Deep-teal navigation surface (palette role: "Sidebar background").
+   Locally re-declares the surface/text/fill tokens to the dark family so every
+   token-based child (text-text-primary, bg-fill-hover, text-brand, hairlines…)
+   adapts to light-on-teal automatically — accessible in both app themes. */
+.nav-surface {
+  --card: #16565b;
+  --card-raised: #1c666b;
+  --surface: var(--deep-teal);
+  --text-primary: rgba(243, 237, 230, 0.95);
+  --text-secondary: rgba(243, 237, 230, 0.66);
+  --text-tertiary: rgba(243, 237, 230, 0.46);
+  --hairline: rgba(243, 237, 230, 0.12);
+  --hairline-strong: rgba(243, 237, 230, 0.2);
+  --fill-subtle: rgba(243, 237, 230, 0.05);
+  --fill-muted: rgba(243, 237, 230, 0.07);
+  --fill-hover: rgba(47, 212, 204, 0.12);
+  --fill-active: rgba(47, 212, 204, 0.18);
+  --brand: #5fd6ce;
+  --brand-subtle: rgba(47, 212, 204, 0.18);
+  background: var(--deep-teal);
+  color: var(--text-primary);
 }
 
 .glow-emerald {
@@ -405,8 +510,8 @@ body {
 /* Faint perspective grid that fades toward the horizon. */
 .holo-grid {
   background-image:
-    linear-gradient(rgba(14, 116, 144, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(14, 116, 144, 0.08) 1px, transparent 1px);
+    linear-gradient(rgba(18, 184, 176, 0.09) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(18, 184, 176, 0.09) 1px, transparent 1px);
   background-size: 56px 56px;
   mask-image: radial-gradient(ellipse 70% 60% at 50% 45%, black 0%, transparent 100%);
   -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 45%, black 0%, transparent 100%);

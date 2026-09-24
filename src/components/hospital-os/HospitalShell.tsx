@@ -8,11 +8,12 @@ import {
   ClipboardCheck, FlaskConical, ScanLine, Receipt, DoorOpen,
   UserPlus, Siren, ArrowRightLeft, Pill, Microscope,
   ShieldCheck, BarChart3, Settings2, Boxes, Truck, HeartPulse, Scissors, Droplet, Wrench, Network, ShieldAlert, Plug,
-  Menu, X, Search, Bell} from "lucide-react";
+  Menu, X, Bell, Sparkles} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/navigation/ThemeToggle";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { ToastViewport } from "@/components/shared/ToastViewport";
+import { AiAssistantProvider, AiCommandBar } from "@/components/ai/PortalAssistant";
 
 // Phase 4 Milestone D (brief §19) — `children` is additive/optional so
 // every existing flat nav entry keeps working unchanged; only the new
@@ -71,6 +72,10 @@ const INVENTORY_GROUP: NavItem = {
     { href: "/hospital-os/inventory/procurement", label: "Procurement", icon: Truck },
   ],
 };
+
+// AI is the head of the OS — prepended to every role's nav (additive; the
+// existing per-role entries below are untouched). Points at the AI Cockpit.
+const AI_HOME: NavItem = { href: "/hospital-os/ai", label: "Aarogya AI", icon: Sparkles };
 
 const NAV_BY_ROLE: Record<string, NavItem[]> = {
   HOSPITAL_ADMIN: [
@@ -212,11 +217,14 @@ function SidebarContent({
 }) {
   return (
     <div className="flex h-full flex-col px-3 py-4">
-      <Link href="/hospital-os" onClick={onNavigate} className="focus-ring flex items-center gap-2 rounded-control px-2 py-1">
-        <span className="flex size-7 items-center justify-center rounded-md bg-brand-strong text-on-brand">
-          <Building2 size={16} />
+      <Link href="/hospital-os/ai" onClick={onNavigate} className="focus-ring flex items-center gap-2 rounded-control px-2 py-1">
+        <span className="flex size-7 items-center justify-center rounded-md bg-gradient-to-br from-cyan to-brand-strong text-on-brand">
+          <Sparkles size={16} />
         </span>
-        <span className="type-heading text-text-primary">Hospital OS</span>
+        <span className="flex flex-col leading-none">
+          <span className="type-heading text-text-primary">Aarogya AI</span>
+          <span className="mt-0.5 text-[10px] font-medium uppercase tracking-wide text-text-tertiary">Hospital OS</span>
+        </span>
       </Link>
       <div className="mt-4 rounded-surface border border-hairline bg-fill-subtle px-3 py-2.5">
         <p className="truncate text-[13px] font-medium text-text-primary">{displayName}</p>
@@ -246,7 +254,8 @@ export function HospitalShell({
   const pathname = usePathname();
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const nav = NAV_BY_ROLE[role] ?? [{ href: "/hospital-os", label: "Command Center", icon: LayoutGrid }];
+  const baseNav = NAV_BY_ROLE[role] ?? [{ href: "/hospital-os", label: "Command Center", icon: LayoutGrid }];
+  const nav = [AI_HOME, ...baseNav];
 
   async function handleLogout() {
     await fetch("/api/scholar-auth/logout", { method: "POST" });
@@ -255,11 +264,12 @@ export function HospitalShell({
   }
 
   return (
+    <AiAssistantProvider role={role} displayName={displayName} pageLabel={facilityName}>
     <div className="flex min-h-screen bg-surface text-text-primary">
       <ToastViewport />
 
       {/* Desktop sidebar */}
-      <aside className="sticky top-0 hidden h-screen w-[240px] shrink-0 border-r border-hairline bg-card lg:block">
+      <aside className="nav-surface sticky top-0 hidden h-screen w-[240px] shrink-0 border-r border-hairline lg:block">
         <SidebarContent nav={nav} pathname={pathname} displayName={displayName} displayRole={displayRole} facilityName={facilityName} onLogout={handleLogout} />
       </aside>
 
@@ -267,7 +277,7 @@ export function HospitalShell({
       {mobileOpen && (
         <div className="fixed inset-0 z-50 lg:hidden">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-[fadeIn_150ms_ease-out]" onClick={() => setMobileOpen(false)} />
-          <aside className="absolute inset-y-0 left-0 w-[280px] max-w-[85vw] border-r border-hairline bg-card shadow-e3 animate-[slideInLeft_190ms_cubic-bezier(0.16,1,0.3,1)]">
+          <aside className="nav-surface absolute inset-y-0 left-0 w-[280px] max-w-[85vw] border-r border-hairline shadow-e3 animate-[slideInLeft_190ms_cubic-bezier(0.16,1,0.3,1)]">
             <button onClick={() => setMobileOpen(false)} className="focus-ring absolute right-2 top-2 flex size-8 items-center justify-center rounded-control text-text-tertiary hover:bg-fill-hover">
               <X size={16} />
             </button>
@@ -287,13 +297,7 @@ export function HospitalShell({
             <span className="truncate text-[13px] font-medium text-text-primary">{facilityName}</span>
           </div>
           <div className="ml-auto flex items-center gap-1.5">
-            <button className="focus-ring hidden h-9 items-center gap-2 rounded-control border border-hairline bg-fill-subtle px-3 text-[12.5px] text-text-tertiary transition-colors hover:bg-fill-hover md:flex" aria-label="Search">
-              <Search size={14} /> <span>Search</span>
-              <kbd className="ml-2 rounded border border-hairline px-1 text-[10px] text-text-tertiary">⌘K</kbd>
-            </button>
-            <button className="focus-ring flex size-9 items-center justify-center rounded-control text-text-secondary hover:bg-fill-hover md:hidden" aria-label="Search">
-              <Search size={16} />
-            </button>
+            <AiCommandBar />
             <button className="focus-ring relative flex size-9 items-center justify-center rounded-control text-text-secondary hover:bg-fill-hover" aria-label="Notifications">
               <Bell size={16} />
             </button>
@@ -306,5 +310,6 @@ export function HospitalShell({
         <main className="min-w-0 flex-1 px-4 pb-16 pt-5 sm:px-6 lg:px-8">{children}</main>
       </div>
     </div>
+    </AiAssistantProvider>
   );
 }
