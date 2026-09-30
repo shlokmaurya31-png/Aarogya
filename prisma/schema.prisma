@@ -1002,6 +1002,7 @@ model Facility {
   transferRequests          TransferRequest[]
   slaPolicies               SlaPolicy[]
   notifications             Notification[]
+  generatedDocuments        GeneratedDocument[]
   orders                    Order[]
   carePlans                 CarePlan[]
   handoffs                  ClinicalHandoff[]
@@ -9080,4 +9081,37 @@ model Notification {
   @@index([recipientStaffId, readAt])
   @@index([recipientStaffId, createdAt])
   @@index([patientId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 1.2 — Generated documents (PDFs) + public authenticity verification.
+//
+// Every server-rendered PDF (prescription, summary, report, invoice,
+// certificate, etc.) is recorded here with the storage reference of the bytes,
+// their sha256, and an unguessable public verifyToken. The QR on the document
+// links to /verify/<verifyToken>, which confirms authenticity + issue date +
+// facility ONLY — never any PHI. Facility-scoped; type is TEXT enforced in code
+// (DocumentType in src/lib/documents/templates.ts), per the D5–E1 convention.
+model GeneratedDocument {
+  id                 String   @id @default(cuid())
+  facility           Facility @relation(fields: [facilityId], references: [id])
+  facilityId         String
+  type               String
+  title              String
+  documentNumber     String
+  storageRef         String
+  sha256             String
+  verifyToken        String   @unique
+  // Printed author identity + the staff user who generated it.
+  issuedByUserId     String?
+  issuedByName       String?
+  authorRegistration String?
+  // Optional patient anchor for scoping/audit (plain string, no relation,
+  // matching the Notification convention). Never exposed by /verify.
+  patientId          String?
+  isDraft            Boolean  @default(false)
+  createdAt          DateTime @default(now())
+
+  @@index([facilityId, type])
+  @@index([facilityId, patientId])
 }

@@ -59,3 +59,59 @@ token resolution, and default adapter selection.
   work); the PHI-read audit belongs at issuance, added per consumer.
 
 **Gate.** `npm test` 941 passing (+19), `npm run build` green, lint clean for new files.
+
+---
+
+## Phase 1.2 — PDF document generation + authenticity verification
+
+**Built.** Server-side PDF generation (pure-JS `pdf-lib`, no headless browser),
+plus a public QR-based authenticity check.
+
+- `src/lib/documents/pdf/primitives.ts` — A4 geometry, wrapped text, key/value
+  rows, tables, embedded QR (`qrcode`), diagonal DRAFT watermark, "Page N of M"
+  footers.
+- `src/lib/documents/pdf/layout.ts` — a data-only `DocumentSpec` (letterhead,
+  title, meta, typed sections, verify URL) rendered to PDF bytes. Keeping it
+  data-only makes templates testable without pdf-lib.
+- `src/lib/documents/templates.ts` — all 12 document types as compact, pure
+  builders: prescription, OPD summary, discharge summary, lab report, radiology
+  report, tax invoice/receipt (GST, HSN/SAC), refund note, claim packet,
+  certificate (fitness/medical/sick-leave), referral letter, death certificate
+  (Form 4/4A), birth record. Money is always MINOR units, formatted as `Rs.`
+  (the standard PDF fonts are WinAnsi and cannot encode the ₹ glyph without
+  embedding a full Unicode font).
+- `src/lib/documents/service.ts` — `generateAndStoreDocument`: render → store in
+  the `generated-pdf` bucket (Phase 1.1) → `GeneratedDocument` row with sha256 +
+  unguessable `verifyToken` → `recordAuditEvent("hospital.document.created")` →
+  return a signed download URL.
+- `src/lib/documents/verify.ts` + `/verify/[token]` public page — confirms
+  authenticity showing ONLY non-PHI facts (title, facility, document no., issue
+  date, draft flag). `toPublicVerification` is pure and asserted to leak no PHI.
+
+**Model + migrations.** New `GeneratedDocument` model (facility-scoped, `type`
+TEXT enforced in code) with paired migrations in `prisma/migrations` and
+`prisma/migrations-postgres-baseline` (`20260930090000_phase_1_2_generated_documents`).
+Applied to dev.db via `prisma migrate deploy`.
+
+**Tests.** `src/lib/documents/documents.test.ts` — 24 tests: type guard, INR
+formatting, a spec built + rendered for every one of the 12 templates, invoice
+subtotal+tax math, %PDF header, multi-page pagination, public-projection PHI
+safety, and service helpers (doc numbers, token uniqueness, verify URL).
+
+**Entitlements added.** None (foundation; feature surfaces gate themselves).
+
+**Env vars added.** `APP_BASE_URL` (absolute base for scannable QR verify links;
+defaults to `http://localhost:3000`).
+
+**Dependencies added.** `pdf-lib`, `qrcode`, `@types/qrcode` (dev).
+
+**Deferred (with reason).**
+- Replacing the mock `/prescriptions/[id]` page — its DB-backed source (a real
+  prescription assembled from the doctor Rx flow) is built in Phase 2; the PDF
+  template + service are ready to back it then. Not faked against mock data now.
+- Facility letterhead logo image + address from the D8 config engine: the
+  service already accepts a `Letterhead`; the config-key wiring lands with the
+  Phase 8 configuration UI. Author name/registration and facility name flow
+  through today.
+
+**Gate.** `npm test` 965 passing (+24), `npm run build` green, lint clean for new files.
