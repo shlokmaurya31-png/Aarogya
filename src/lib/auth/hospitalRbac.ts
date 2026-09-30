@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { requirePermission, ForbiddenError, UnauthorizedError } from "./rbac";
+import { requirePermission, requireSession, ForbiddenError, UnauthorizedError } from "./rbac";
 import { resolveFacilityForStaff } from "./tenantContext";
 import type { Permission } from "./permissions";
 import type { HospitalStaffProfile } from "@prisma/client";
@@ -78,4 +78,32 @@ export async function requireFacilityStaff(
     facilityAdmin: resolved.facilityAdmin,
     orgAdmin: resolved.orgAdmin,
   };
+}
+
+/**
+ * Phase E1 — ownership-scoped staff resolution for self-owned resources
+ * (the Notification Center, and future personal "My Work" surfaces).
+ *
+ * Notifications are not gated by an action Permission: a staff member may
+ * only ever read/mutate their OWN rows, so authorization is expressed as
+ * resource ownership (recipientStaffId === the caller's staff id), enforced
+ * server-side by every query in the notifications service. This helper loads
+ * the caller's ACTIVE HospitalStaffProfile from the DB (never from the
+ * client) and returns it alongside the session.
+ *
+ * A caller with no staff profile (e.g. AAROGYA_ADMIN, or a Scholar-only
+ * account) is authenticated but simply owns no hospital notifications —
+ * callers should treat `staff === null` as "empty stream", not an error, so
+ * this never leaks another tenant's data.
+ */
+export interface StaffSelfContext {
+  session: Awaited<ReturnType<typeof requireSession>>;
+  staff: HospitalStaffProfile | null;
+}
+
+export async function requireHospitalStaffSelf(): Promise<StaffSelfContext> {
+  const session = await requireSession();
+  const staff = await prisma.hospitalStaffProfile.findUnique({ where: { userId: session.userId } });
+  if (staff && staff.status !== "ACTIVE") throw new ForbiddenError("notification:self" as Permission);
+  return { session, staff };
 }

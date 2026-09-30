@@ -8,12 +8,13 @@ import {
   ClipboardCheck, FlaskConical, ScanLine, Receipt, DoorOpen,
   UserPlus, Siren, ArrowRightLeft, Pill, Microscope,
   ShieldCheck, BarChart3, Settings2, Boxes, Truck, HeartPulse, Scissors, Droplet, Wrench, Network, ShieldAlert, Plug,
-  Menu, X, Bell, Sparkles} from "lucide-react";
+  Menu, X, Sparkles} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/navigation/ThemeToggle";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { AiAssistantProvider, AiCommandBar } from "@/components/ai/PortalAssistant";
+import { NotificationBell } from "@/components/hospital-os/NotificationBell";
 
 // Phase 4 Milestone D (brief §19) — `children` is additive/optional so
 // every existing flat nav entry keeps working unchanged; only the new
@@ -298,9 +299,7 @@ export function HospitalShell({
           </div>
           <div className="ml-auto flex items-center gap-1.5">
             <AiCommandBar />
-            <button className="focus-ring relative flex size-9 items-center justify-center rounded-control text-text-secondary hover:bg-fill-hover" aria-label="Notifications">
-              <Bell size={16} />
-            </button>
+            <NotificationBell />
             <div className="ml-1 flex size-8 items-center justify-center rounded-full bg-brand-subtle text-[12px] font-semibold text-brand" title={displayName}>
               {displayName.split(" ").map((w) => w[0]).slice(0, 2).join("")}
             </div>

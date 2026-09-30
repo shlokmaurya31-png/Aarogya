@@ -1001,6 +1001,7 @@ model Facility {
   admissionRequests         AdmissionRequest[]
   transferRequests          TransferRequest[]
   slaPolicies               SlaPolicy[]
+  notifications             Notification[]
   orders                    Order[]
   carePlans                 CarePlan[]
   handoffs                  ClinicalHandoff[]
@@ -2074,6 +2075,7 @@ model HospitalStaffProfile {
   tasksCreated               Task[]                     @relation("TaskCreatedBy")
   tasksOwned                 Task[]                     @relation("TaskOwner")
   tasksCompleted             Task[]                     @relation("TaskCompletedBy")
+  notificationsReceived      Notification[]             @relation("NotificationRecipient")
   documentsAuthored          ClinicalDocument[]         @relation("DocumentAuthor")
   documentsUploaded          ClinicalDocument[]         @relation("DocumentUploadedBy")
   consentsRecorded           Consent[]
@@ -9030,4 +9032,52 @@ model PatientAccessSession {
   @@index([patientId, status])
   @@index([doctorUserId, status])
   @@index([status, expiresAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase E1 — Hospital Notification Center (additive foundation).
+//
+// A single, tenant-scoped, per-recipient notification stream. Purely
+// additive: no existing table or column is touched. This is the delivery
+// layer the roadmap deliberately stopped before (see D6 event outbox / D7
+// workflow escalation, which are the upstream producers). Services create
+// notifications; a staff member only ever reads/mutates their OWN rows
+// (ownership-scoped authorization, enforced server-side by recipientStaffId).
+//
+// Status/priority/category are TEXT with values enforced in code, matching
+// the D5–D9 convention. patientId/encounterId are plain nullable strings
+// (like Task.encounterId) so this model needs no back-relation on Patient.
+model Notification {
+  id               String    @id @default(cuid())
+  facility         Facility  @relation(fields: [facilityId], references: [id])
+  facilityId       String
+  recipient        HospitalStaffProfile @relation("NotificationRecipient", fields: [recipientStaffId], references: [id])
+  recipientStaffId String
+  // Taxonomy — free-text codes enforced in code, e.g.
+  // "CRITICAL_RESULT" | "TASK_ASSIGNED" | "APPROVAL_REQUEST" | "SLA_BREACH" | ...
+  type       String
+  category   String  @default("OPERATIONAL") // CLINICAL | OPERATIONAL | ADMINISTRATIVE | SYSTEM
+  priority   String  @default("ROUTINE")     // ROUTINE | URGENT | CRITICAL
+  title      String
+  body       String?
+  // Optional deep-link into the app (e.g. "/hospital-os/diagnostics") so a
+  // notification can carry the user straight to the actionable surface.
+  linkHref   String?
+  // Optional canonical-graph anchors (plain strings, no relation) so a
+  // notification can be filtered by patient/encounter without new joins.
+  patientId   String?
+  encounterId String?
+  // Free-form provenance, e.g. the source order/result id that produced it.
+  sourceType String?
+  sourceId   String?
+  // Who/what raised it. Nullable: system-generated notifications have no staff author.
+  createdByStaffId String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([recipientStaffId])
+  @@index([facilityId])
+  @@index([recipientStaffId, readAt])
+  @@index([recipientStaffId, createdAt])
+  @@index([patientId])
 }
