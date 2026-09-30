@@ -88,7 +88,7 @@ export async function GET(req: NextRequest) {
     const now = Date.now();
     const ageMinutes = (t: Date | null | undefined) => (t ? Math.round((now - t.getTime()) / 60000) : null);
 
-    const items: UnifiedItem[] = [
+    const rawItems: UnifiedItem[] = [
       ...pendingCollection.map((s) => ({ id: `specimen-${s.id}`, diagnosticType: "LAB" as const, sourceOrderId: s.labOrder.id, title: s.labOrder.testName, patientId: s.labOrder.patient.id, patientName: s.labOrder.patient.fullName, uhid: s.labOrder.patient.uhid, priority: s.labOrder.priority, status: mapToDiagnosticStatus({ domain: "LAB", orderStatus: "ORDERED" }), ageMinutes: ageMinutes(s.createdAt), isCritical: false })),
       // Rejected specimens awaiting recollection (brief §5 parity with the
       // dedicated Lab worklist's 7 buckets) — diagnostically equivalent to
@@ -107,6 +107,24 @@ export async function GET(req: NextRequest) {
       ...imagingPendingVerification.map((r) => ({ id: `imgreport-${r.id}`, diagnosticType: "RADIOLOGY" as const, sourceOrderId: r.imagingOrder.id, title: r.imagingOrder.studyDescription, patientId: r.imagingOrder.patient.id, patientName: r.imagingOrder.patient.fullName, uhid: r.imagingOrder.patient.uhid, priority: r.imagingOrder.priority, status: mapToDiagnosticStatus({ domain: "RADIOLOGY", orderStatus: "REPORTED", resultStatus: "ENTERED" }), ageMinutes: ageMinutes(r.reportedAt), isCritical: r.isCritical })),
       ...imagingCritical.map((r) => ({ id: `imgreport-${r.id}`, diagnosticType: "RADIOLOGY" as const, sourceOrderId: r.imagingOrder.id, title: r.imagingOrder.studyDescription, patientId: r.imagingOrder.patient.id, patientName: r.imagingOrder.patient.fullName, uhid: r.imagingOrder.patient.uhid, priority: r.imagingOrder.priority, status: "CRITICAL" as const, ageMinutes: ageMinutes(r.reportedAt), isCritical: true })),
     ];
+
+    // A result that is both critical-and-unacknowledged AND still pending
+    // verification matches BOTH the pending-verification bucket and the
+    // critical bucket above, producing two rows with the same id
+    // (labresult-<id> / imgreport-<id>). Collapse them by id — that both
+    // removes the duplicate React key and stops double-counting below —
+    // keeping the CRITICAL presentation since it is the more urgent state.
+    const items: UnifiedItem[] = Array.from(
+      rawItems
+        .reduce((byId, item) => {
+          const existing = byId.get(item.id);
+          if (!existing || (item.status === "CRITICAL" && existing.status !== "CRITICAL")) {
+            byId.set(item.id, item);
+          }
+          return byId;
+        }, new Map<string, UnifiedItem>())
+        .values()
+    );
 
     const criticalItems: CriticalItem[] = [
       ...labCritical.map((r) => ({
