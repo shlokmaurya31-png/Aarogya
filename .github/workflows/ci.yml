@@ -1,0 +1,72 @@
+name: CI
+
+# Automates the integrity discipline Aarogya already enforces by hand every
+# phase: the unit suite must stay green and the production build must compile
+# and type-check on every change. Lint runs too, but is advisory for now (see
+# the `lint` job) because of pre-existing debt in older *.test.ts files.
+#
+# NOT covered here: the ~40 scripts/verify-postgres-*.ts integrity gates. Each
+# needs a freshly migrated + seeded Postgres and is non-idempotent, with no
+# aggregate runner yet — that belongs in a dedicated workflow with a postgres
+# service container, added once an ordered runner exists.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A newer push to the same branch/PR cancels the older in-flight run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    name: Test & Build
+    runs-on: ubuntu-latest
+    # Env mirrors .env so prisma generate / next build (which prerenders some
+    # routes) never hard-fail on a missing boot variable. All values are
+    # local-dev dummies; no secret is referenced.
+    env:
+      DATABASE_URL: "file:./dev.db"
+      AUTH_SECRET: "ci-dummy-secret-not-used-for-anything-real-000000"
+      CLINICAL_DATA_MODE: synthetic
+      AI_PROVIDER: mock
+      ABDM_ENVIRONMENT: DISABLED
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit tests (vitest)
+        run: npm test
+
+      - name: Production build (prisma generate + next build)
+        run: npm run build
+
+  lint:
+    name: Lint (advisory)
+    runs-on: ubuntu-latest
+    # Advisory: does not gate merges yet. Existing lint errors live in older
+    # test files; once cleared, drop continue-on-error to make this blocking.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: ESLint
+        run: npm run lint
