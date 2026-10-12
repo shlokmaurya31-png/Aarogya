@@ -19,16 +19,20 @@ export default function PatientSharePage() {
   const [working, setWorking] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const refresh = useCallback(async () => {
-    const res = await fetch("/api/patient/access-session");
-    const data = await res.json();
-    setSession(data.session ?? null);
-    setLoading(false);
-    // The one-time code is meaningless once the session is no longer live.
-    if (!data.session || (data.session.status !== "PENDING" && data.session.status !== "ACTIVE")) {
-      setCode(null);
-    }
-  }, []);
+  const refresh = useCallback(
+    () =>
+      fetch("/api/patient/access-session")
+        .then((res) => res.json())
+        .then((data) => {
+          setSession(data.session ?? null);
+          setLoading(false);
+          // The one-time code is meaningless once the session is no longer live.
+          if (!data.session || (data.session.status !== "PENDING" && data.session.status !== "ACTIVE")) {
+            setCode(null);
+          }
+        }),
+    []
+  );
 
   useEffect(() => {
     refresh();

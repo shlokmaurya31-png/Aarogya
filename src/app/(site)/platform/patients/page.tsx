@@ -29,7 +29,7 @@ export default function PatientsPage() {
       <Section title="Everything in one place" lead="What you can do the moment you sign in.">
         <CardGrid>
           <Card title="Appointments">Book, reschedule or cancel visits, and see exactly where you are in the queue.</Card>
-          <Card title="Reports & prescriptions">View lab and imaging reports the moment they're released, and your prescriptions and medicines — always the latest.</Card>
+          <Card title="Reports & prescriptions">View lab and imaging reports the moment they&rsquo;re released, and your prescriptions and medicines — always the latest.</Card>
           <Card title="Bills & insurance">See what you owe (calculated by the hospital, never guessed), your coverage and your claim status.</Card>
           <Card title="Consent & family">Grant or revoke who can access your record, and give a parent, spouse or caregiver bounded, revocable access.</Card>
         </CardGrid>
@@ -39,9 +39,9 @@ export default function PatientsPage() {
         <BulletList
           items={[
             <><strong>You own your record.</strong> Nothing is shared without your explicit, revocable consent.</>,
-            <><strong>You see only what's yours.</strong> Records are released to you when your clinician finalizes them — never a half-finished draft.</>,
+            <><strong>You see only what&rsquo;s yours.</strong> Records are released to you when your clinician finalizes them — never a half-finished draft.</>,
             <><strong>Family access, on your terms.</strong> Invite someone you trust to see specific parts of your record, with an expiry, and revoke it any time.</>,
-            <><strong>Honest about the rest.</strong> Where something isn't ready yet — online payment, a national health-ID link — Aarogya tells you plainly instead of pretending.</>,
+            <><strong>Honest about the rest.</strong> Where something isn&rsquo;t ready yet — online payment, a national health-ID link — Aarogya tells you plainly instead of pretending.</>,
           ]}
         />
       </Section>

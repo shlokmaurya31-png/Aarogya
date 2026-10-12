@@ -38,9 +38,9 @@ export default function DoctorsPage() {
       <Section title="Designed for how clinicians actually work">
         <BulletList
           items={[
-            <><strong>Your patients, first.</strong> A focused worklist gets you to the people you're caring for, not a maze of menus.</>,
+            <><strong>Your patients, first.</strong> A focused worklist gets you to the people you&rsquo;re caring for, not a maze of menus.</>,
             <><strong>Coded, not just typed.</strong> A terminology layer keeps clinical meaning machine-readable (FHIR R4, SNOMED CT) so the record adds up over time.</>,
-            <><strong>Authorized and audited.</strong> Access follows role and consent, and sensitive actions are audited — protection you don't have to think about.</>,
+            <><strong>Authorized and audited.</strong> Access follows role and consent, and sensitive actions are audited — protection you don&rsquo;t have to think about.</>,
           ]}
         />
       </Section>
@@ -48,7 +48,7 @@ export default function DoctorsPage() {
       <Section title="Part of a real hospital system">
         <Prose>
           <p>
-            The clinician experience isn't a standalone app — it's one view onto Aarogya&rsquo;s Hospital
+            The clinician experience isn&rsquo;t a standalone app — it&rsquo;s one view onto Aarogya&rsquo;s Hospital
             Operating System, so an order you place flows to pharmacy, a result flows back to you, and the
             command centre sees the whole picture. Doctor and hospital staff accounts are provisioned by your
             organization&rsquo;s administrator.

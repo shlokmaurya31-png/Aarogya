@@ -306,17 +306,20 @@ const ShineEffect = ({ isPressed }: { isPressed: boolean }) => {
   );
 };
 
+// Touch capability never changes for a page, so there is nothing to subscribe to.
+const subscribeNoop = () => () => {};
+
 export const MetalButton = React.forwardRef<
   HTMLButtonElement,
   MetalButtonProps
 >(({ children, className, variant = "default", ...props }, ref) => {
   const [isPressed, setIsPressed] = React.useState(false);
   const [isHovered, setIsHovered] = React.useState(false);
-  const [isTouchDevice, setIsTouchDevice] = React.useState(false);
-
-  React.useEffect(() => {
-    setIsTouchDevice("ontouchstart" in window || navigator.maxTouchPoints > 0);
-  }, []);
+  const isTouchDevice = React.useSyncExternalStore(
+    subscribeNoop,
+    () => "ontouchstart" in window || navigator.maxTouchPoints > 0,
+    () => false,
+  );
 
   const buttonText = children || "Button";
   const variants = metalButtonVariants(

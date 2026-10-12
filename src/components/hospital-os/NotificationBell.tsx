@@ -50,20 +50,25 @@ export function NotificationBell() {
   const [loading, setLoading] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
-  const refresh = useCallback(async (withList: boolean) => {
-    try {
-      if (withList) setLoading(true);
-      const res = await fetch(`/api/hospital/notifications?limit=10`, { cache: "no-store" });
-      if (!res.ok) return;
-      const data = await res.json();
-      setUnread(data.unreadCount ?? 0);
-      if (withList) setItems(data.items ?? []);
-    } catch {
-      /* silent — the badge simply won't update this cycle */
-    } finally {
-      if (withList) setLoading(false);
-    }
-  }, []);
+  // State updates happen in promise callbacks, never synchronously, so this is
+  // safe to call from an effect.
+  const refresh = useCallback(
+    (withList: boolean) =>
+      fetch(`/api/hospital/notifications?limit=10`, { cache: "no-store" })
+        .then(async (res) => {
+          if (!res.ok) return;
+          const data = await res.json();
+          setUnread(data.unreadCount ?? 0);
+          if (withList) setItems(data.items ?? []);
+        })
+        .catch(() => {
+          /* silent — the badge simply won't update this cycle */
+        })
+        .finally(() => {
+          if (withList) setLoading(false);
+        }),
+    []
+  );
 
   // Poll the unread count every 30s (badge only — cheap).
   useEffect(() => {
@@ -73,9 +78,13 @@ export function NotificationBell() {
   }, [refresh]);
 
   // When the panel opens, load the full recent list.
-  useEffect(() => {
-    if (open) refresh(true);
-  }, [open, refresh]);
+  function toggleOpen() {
+    if (!open) {
+      setLoading(true);
+      refresh(true);
+    }
+    setOpen(!open);
+  }
 
   // Close on outside click.
   useEffect(() => {
@@ -111,7 +120,7 @@ export function NotificationBell() {
   return (
     <div ref={rootRef} className="relative">
       <button
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggleOpen}
         className="focus-ring relative flex size-9 items-center justify-center rounded-control text-text-secondary hover:bg-fill-hover"
         aria-label={`Notifications${unread > 0 ? ` (${unread} unread)` : ""}`}
         aria-expanded={open}

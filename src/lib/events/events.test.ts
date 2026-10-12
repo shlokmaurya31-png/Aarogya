@@ -16,8 +16,8 @@ import { classifyEventError, PermanentEventError, RetryableEventError } from "./
  */
 
 function capture() {
-  const rows: any[] = [];
-  const client = { domainEventOutbox: { create: async ({ data }: any) => { rows.push(data); return data; } } } as any;
+  const rows: Record<string, unknown>[] = [];
+  const client = { domainEventOutbox: { create: async ({ data }: { data: Record<string, unknown> }) => { rows.push(data); return data; } } } as unknown as Parameters<typeof emitDomainEvent>[0];
   return { client, rows };
 }
 
@@ -49,12 +49,12 @@ describe("emit validation", () => {
   });
   it("rejects a payload that violates the schema", async () => {
     const { client } = capture();
-    await expect(emitDomainEvent(client, { type: "PaymentReceived", aggregateId: "a", organizationId: "o", payload: { paymentId: "p", invoiceId: "i", amountMinor: "not-a-number", currency: "INR" } as any }))
+    await expect(emitDomainEvent(client, { type: "PaymentReceived", aggregateId: "a", organizationId: "o", payload: { paymentId: "p", invoiceId: "i", amountMinor: "not-a-number", currency: "INR" } }))
       .rejects.toMatchObject({ code: "SCHEMA_INVALID" });
   });
   it("rejects unknown extra payload keys (strict schema)", async () => {
     const { client } = capture();
-    await expect(emitDomainEvent(client, { type: "PatientRegistered", aggregateId: "a", organizationId: "o", facilityId: "f", payload: { patientId: "p", extra: "leak" } as any }))
+    await expect(emitDomainEvent(client, { type: "PatientRegistered", aggregateId: "a", organizationId: "o", facilityId: "f", payload: { patientId: "p", extra: "leak" } }))
       .rejects.toMatchObject({ code: "SCHEMA_INVALID" });
   });
   it("rejects an organization/facility-scoped event with no tenant", async () => {

@@ -119,11 +119,15 @@ export function TopBar() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // Clear the query each time search opens (adjusted during render, not in an effect).
+  const [prevSearchOpen, setPrevSearchOpen] = useState(searchOpen);
+  if (searchOpen !== prevSearchOpen) {
+    setPrevSearchOpen(searchOpen);
+    if (searchOpen) setQuery("");
+  }
+
   useEffect(() => {
-    if (searchOpen) {
-      setQuery("");
-      requestAnimationFrame(() => inputRef.current?.focus());
-    }
+    if (searchOpen) requestAnimationFrame(() => inputRef.current?.focus());
   }, [searchOpen]);
 
   const results = query.trim()

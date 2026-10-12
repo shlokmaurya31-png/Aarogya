@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 /**
@@ -21,6 +21,28 @@ const CLINICIAN_ROLES = new Set([
   "LAB_TECHNICIAN", "RADIOLOGY_TECH", "PHARMACIST", "BILLING_STAFF", "FRONT_DESK",
 ]);
 
+// Deterministic pseudo-random (mulberry32) so the blob layout is pure and
+// identical on server and client — Math.random() here caused hydration drift.
+function seededRandom(seed: number) {
+  return () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const BLOBS_DATA = (() => {
+  const rand = seededRandom(20260712);
+  return Array.from({ length: 6 }).map(() => ({
+    size: rand() * 200 + 150,
+    left: rand() * 80 + 10,
+    top: rand() * 80 + 10,
+    animationDelay: rand() * -20,
+    animationDuration: rand() * 15 + 15,
+  }));
+})();
+
 export const NeuralAccessLogin: React.FC<{ authed?: boolean; displayName?: string }> = ({ authed = false, displayName }) => {
   const router = useRouter();
   const [stage, setStage] = useState<"auth" | "code">(authed ? "code" : "auth");
@@ -35,17 +57,6 @@ export const NeuralAccessLogin: React.FC<{ authed?: boolean; displayName?: strin
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const blobsData = useMemo(
-    () =>
-      Array.from({ length: 6 }).map(() => ({
-        size: Math.random() * 200 + 150,
-        left: Math.random() * 80 + 10,
-        top: Math.random() * 80 + 10,
-        animationDelay: Math.random() * -20,
-        animationDuration: Math.random() * 15 + 15,
-      })),
-    []
-  );
   const blobRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   useEffect(() => {
@@ -209,7 +220,7 @@ export const NeuralAccessLogin: React.FC<{ authed?: boolean; displayName?: strin
       </svg>
 
       <div className="stage">
-        {blobsData.map((data, index) => (
+        {BLOBS_DATA.map((data, index) => (
           <div
             key={index}
             ref={(el) => { blobRefs.current[index] = el; }}
@@ -241,7 +252,7 @@ export const NeuralAccessLogin: React.FC<{ authed?: boolean; displayName?: strin
               <input type="password" value={password} onChange={(e) => { setError(null); setPassword(e.target.value); }} placeholder="••••••••" autoComplete="current-password" required />
               <div className="input-glow" />
             </div>
-            {error && <p className="error-line">// {error}</p>}
+            {error && <p className="error-line">{"// "}{error}</p>}
             <div className="submit-wrap">
               <div className="mercury-drop" />
               <button type="submit" className="btn-base" disabled={loading}>{loading ? "Authenticating…" : "Authenticate"}</button>
@@ -249,13 +260,13 @@ export const NeuralAccessLogin: React.FC<{ authed?: boolean; displayName?: strin
           </form>
         ) : (
           <form autoComplete="off" onSubmit={handleCode}>
-            {who && <p className="who-line">// SIGNED IN AS {who.toUpperCase()}</p>}
+            {who && <p className="who-line">{"// SIGNED IN AS "}{who.toUpperCase()}</p>}
             <div className="form-group">
               <label>Patient Access Code</label>
               <input className="code-input" type="text" value={code} onChange={(e) => { setError(null); setCode(e.target.value.toUpperCase()); }} placeholder="ABCD-EF23" maxLength={9} required autoFocus />
               <div className="input-glow" />
             </div>
-            {error && <p className="error-line">// {error}</p>}
+            {error && <p className="error-line">{"// "}{error}</p>}
             <div className="submit-wrap">
               <div className="mercury-drop" />
               <button type="submit" className="btn-base" disabled={loading}>{loading ? "Establishing…" : "Initialize Stream"}</button>

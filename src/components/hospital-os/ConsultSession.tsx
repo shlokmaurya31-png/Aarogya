@@ -87,9 +87,8 @@ export function ConsultSession({ sessionId }: { sessionId: string }) {
   }, []);
 
   const remainingMs = expiresAt != null ? expiresAt - nowTs : null;
-  useEffect(() => {
-    if (remainingMs != null && remainingMs <= 0 && !ended && !expired) setExpired(true);
-  }, [remainingMs, ended, expired]);
+  // Either the server said so (410 / failed extend) or the local countdown ran out.
+  const isExpired = expired || (remainingMs != null && remainingMs <= 0 && !ended);
 
   async function continueSession() {
     setExtending(true);
@@ -144,7 +143,7 @@ export function ConsultSession({ sessionId }: { sessionId: string }) {
     );
   }
 
-  if (expired) {
+  if (isExpired) {
     return (
       <div className="mx-auto max-w-lg rounded-2xl border border-hairline bg-card p-8 text-center">
         <Clock className="mx-auto text-amber" />

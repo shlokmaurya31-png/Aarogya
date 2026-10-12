@@ -49,7 +49,7 @@ export default function AboutPage() {
             consent and family access, with the patient authorising every action that belongs to them.
           </Card>
           <Card title="Interoperability">
-            A consent-driven boundary to India's digital health ecosystem — ABDM, FHIR R4, SNOMED CT — so a
+            A consent-driven boundary to India&rsquo;s digital health ecosystem — ABDM, FHIR R4, SNOMED CT — so a
             record can travel without ever being copied into a second source of truth.
           </Card>
           <Card title="Commercial platform">

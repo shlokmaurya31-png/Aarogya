@@ -44,19 +44,27 @@ export function NotificationsView() {
   const [unread, setUnread] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
+  // State updates happen in promise callbacks, never synchronously, so this is
+  // safe to call from an effect. Callers set `loading` themselves.
+  const load = useCallback(
+    () =>
+      fetch(`/api/hospital/notifications?filter=${filter}&limit=100`, { cache: "no-store" })
+        .then(async (res) => {
+          if (res.ok) {
+            const data = await res.json();
+            setItems(data.items ?? []);
+            setUnread(data.unreadCount ?? 0);
+          }
+        })
+        .finally(() => setLoading(false)),
+    [filter]
+  );
+
+  function changeFilter(next: "all" | "unread") {
+    if (next === filter) return;
     setLoading(true);
-    try {
-      const res = await fetch(`/api/hospital/notifications?filter=${filter}&limit=100`, { cache: "no-store" });
-      if (res.ok) {
-        const data = await res.json();
-        setItems(data.items ?? []);
-        setUnread(data.unreadCount ?? 0);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [filter]);
+    setFilter(next);
+  }
 
   useEffect(() => {
     load();
@@ -72,7 +80,10 @@ export function NotificationsView() {
     setItems((prev) => prev.map((n) => (n.readAt ? n : { ...n, readAt: new Date().toISOString() })));
     setUnread(0);
     await fetch(`/api/hospital/notifications/read-all`, { method: "POST" }).catch(() => {});
-    if (filter === "unread") load();
+    if (filter === "unread") {
+      setLoading(true);
+      load();
+    }
   }, [filter, load]);
 
   const onOpen = useCallback(
@@ -108,7 +119,7 @@ export function NotificationsView() {
         {(["all", "unread"] as const).map((f) => (
           <button
             key={f}
-            onClick={() => setFilter(f)}
+            onClick={() => changeFilter(f)}
             className={cn(
               "focus-ring rounded-control px-3 py-1.5 text-[12.5px] font-medium capitalize",
               filter === f ? "bg-brand text-white" : "border border-hairline text-text-secondary hover:bg-fill-hover"

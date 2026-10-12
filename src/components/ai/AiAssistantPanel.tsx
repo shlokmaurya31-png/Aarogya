@@ -89,6 +89,10 @@ function nextId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function pickRandom<T>(items: readonly T[]): T {
+  return items[Math.floor(Math.random() * items.length)];
+}
+
 function guessReportKind(filename: string): ReportKind {
   const lower = filename.toLowerCase();
   if (/scan|mri|ct|x-?ray|radiology/.test(lower)) return "radiology";
@@ -135,10 +139,14 @@ export function AiAssistantPanel({ onClose }: { onClose?: () => void } = {}) {
     { id: nextId(), role: "ai", text: CONTENT[mode].message },
   ]);
 
-  useEffect(() => {
+  // Reset the conversation when switching patient/doctor mode (adjusted during
+  // render rather than in an effect, to avoid a cascading re-render).
+  const [messagesMode, setMessagesMode] = useState(mode);
+  if (messagesMode !== mode) {
+    setMessagesMode(mode);
     setMessages([{ id: nextId(), role: "ai", text: CONTENT[mode].message }]);
     setValue("");
-  }, [mode]);
+  }
 
   useEffect(() => {
     return () => recognitionRef.current?.stop();
@@ -182,8 +190,7 @@ export function AiAssistantPanel({ onClose }: { onClose?: () => void } = {}) {
         m.map((msg) => (msg.id === loadingId ? { id: loadingId, role: "ai", text: data.text } : msg))
       );
     } catch {
-      const replies = ACKS[mode];
-      const fallback = replies[Math.floor(Math.random() * replies.length)];
+      const fallback = pickRandom(ACKS[mode]);
       setMessages((m) =>
         m.map((msg) => (msg.id === loadingId ? { id: loadingId, role: "ai", text: fallback } : msg))
       );

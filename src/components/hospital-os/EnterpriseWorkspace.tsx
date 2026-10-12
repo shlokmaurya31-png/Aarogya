@@ -42,29 +42,37 @@ export function EnterpriseWorkspace() {
   const [detail, setDetail] = useState<any>(null);
   const [members, setMembers] = useState<any[]>([]);
   const [config, setConfig] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
+  // Which org the detail panes currently hold; loading is derived from it so no
+  // state is set synchronously when an effect kicks off a load.
+  const [loadedId, setLoadedId] = useState<string | null>(null);
+  const loading = selectedId !== null && loadedId !== selectedId;
 
-  const loadOrgs = useCallback(async () => {
-    const { ok, data } = await api("/api/hospital/enterprise/organizations");
-    if (ok) {
-      setOrgs(data.organizations ?? []);
-      setSelectedId((prev) => prev ?? data.organizations?.[0]?.id ?? null);
-    }
-  }, []);
+  const loadOrgs = useCallback(
+    () =>
+      api("/api/hospital/enterprise/organizations").then(({ ok, data }) => {
+        if (ok) {
+          setOrgs(data.organizations ?? []);
+          setSelectedId((prev) => prev ?? data.organizations?.[0]?.id ?? null);
+        }
+      }),
+    []
+  );
   useEffect(() => { loadOrgs(); }, [loadOrgs]);
 
-  const loadDetail = useCallback(async (orgId: string) => {
-    setLoading(true);
-    const [d, mem, cfg] = await Promise.all([
-      api(`/api/hospital/enterprise/organizations/${orgId}`),
-      api(`/api/hospital/enterprise/organizations/${orgId}/members`),
-      api(`/api/hospital/enterprise/config?organizationId=${orgId}`),
-    ]);
-    setDetail(d.ok ? d.data.organization : null);
-    setMembers(mem.ok ? mem.data.members ?? [] : []);
-    setConfig(cfg.ok ? cfg.data.config ?? [] : []);
-    setLoading(false);
-  }, []);
+  const loadDetail = useCallback(
+    (orgId: string) =>
+      Promise.all([
+        api(`/api/hospital/enterprise/organizations/${orgId}`),
+        api(`/api/hospital/enterprise/organizations/${orgId}/members`),
+        api(`/api/hospital/enterprise/config?organizationId=${orgId}`),
+      ]).then(([d, mem, cfg]) => {
+        setDetail(d.ok ? d.data.organization : null);
+        setMembers(mem.ok ? mem.data.members ?? [] : []);
+        setConfig(cfg.ok ? cfg.data.config ?? [] : []);
+        setLoadedId(orgId);
+      }),
+    []
+  );
   useEffect(() => { if (selectedId) loadDetail(selectedId); }, [selectedId, loadDetail]);
 
   async function act(label: string, url: string, init: RequestInit) {
