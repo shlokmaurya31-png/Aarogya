@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
+import { enforceLicensure } from "@/lib/hospital/workforce/licensure";
 import { withApiErrors, BadRequestError } from "@/lib/auth/rbac";
 import { dispenseFromPharmacy } from "@/lib/hospital/pharmacy";
 
@@ -8,6 +9,7 @@ export async function POST(req: NextRequest) {
   return withApiErrors(async () => {
     const body = await req.json().catch(() => null);
     const { session, facilityId, staff } = await requireFacilityStaff("pharmacy:dispense", body?.facilityId);
+    await enforceLicensure({ staff, facilityId }, "dispense");
     if (!staff) throw new BadRequestError("Dispensing requires a pharmacist staff account.");
     if (!body?.medicationOrderId || !body?.dispensingLocationId || !Array.isArray(body?.allocations) || body.allocations.length === 0) {
       throw new BadRequestError("medicationOrderId, dispensingLocationId, and a non-empty allocations[] are required.");

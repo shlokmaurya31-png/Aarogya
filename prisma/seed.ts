@@ -17,6 +17,7 @@ import { ensureCommercialBootstrap } from "../src/lib/commercial/bootstrap";
 import { ensureBillingBootstrap } from "../src/lib/billing/bootstrap";
 import { ensureWorkflowSeed } from "../src/lib/workflows/seed";
 import { ensureConfigSeed } from "../src/lib/config/seed";
+import { seedDemoLicensure } from "./seedData/licensure";
 
 const prisma = new PrismaClient();
 
@@ -205,6 +206,7 @@ async function main() {
   await seedPhase3Clinical(prisma);
   await seedPhase5Billing(prisma);
   await seedPhase6aInventory(prisma);
+  await seedDemoLicensure(prisma);
   // Phase D2 — materialise the commercial registry (entitlement definitions,
   // plans) and give every organization an explicit commercial state. Idempotent.
   const boot = await ensureCommercialBootstrap(prisma);
