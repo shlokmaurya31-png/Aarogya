@@ -14,13 +14,16 @@
 // edit an applied migration; add a new one.
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
   provider          = "postgresql"
   url               = env("DATABASE_URL")
   shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+  // pgvector, for RAG embeddings (no vector columns yet). See ADR 0001.
+  extensions        = [vector]
 }
 
 // ─────────────────────────────────────────────────────────────────────────

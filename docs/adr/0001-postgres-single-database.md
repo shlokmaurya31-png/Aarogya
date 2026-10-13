@@ -74,3 +74,20 @@ production.
 - Docs written before this date describe the old paired-migration convention.
   They are left as historical record. `docs/FEATURE_BUILDOUT_LOG.md` notes the
   cut-over.
+
+## Note: pgvector (2026-10-13)
+
+The `vector` extension is enabled now, ahead of RAG (week 4), so adding
+embedding columns later needs no infrastructure change. It uses Prisma's
+`postgresqlExtensions` preview feature (`extensions = [vector]` on the
+datasource), which works on Prisma 6.19.x. Prisma therefore tracks the
+extension, and the drift check covers it. The migration
+`20261013205801_enable_pgvector` is a single idempotent
+`CREATE EXTENSION IF NOT EXISTS "vector";`. No vector columns or models exist
+yet.
+
+It runs on the local `pgvector/pgvector:pg16` image and in CI. Supabase ships
+`vector` as an allowed extension. On Supabase, let `prisma migrate deploy`
+create it rather than enabling it from the dashboard first. The dashboard
+installs into the `extensions` schema, while the migration installs into
+`public`, which is what the schema declares.
