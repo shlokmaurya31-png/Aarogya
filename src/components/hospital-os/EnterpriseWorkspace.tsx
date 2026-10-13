@@ -8,7 +8,15 @@ import { Button } from "@/components/ui/Button";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { ApiResult } from "@/lib/types/api";
+import type { listOrganizationsForActor, getOrganizationForActor } from "@/lib/enterprise/organizations";
+import type { listOrganizationMembers } from "@/lib/enterprise/memberships";
+import type { resolveAllConfig } from "@/lib/enterprise/configuration";
+
+type OrgSummary = ApiResult<typeof listOrganizationsForActor>[number];
+type OrgDetail = NonNullable<ApiResult<typeof getOrganizationForActor>>;
+type Member = ApiResult<typeof listOrganizationMembers>[number];
+type ConfigEntry = ApiResult<typeof resolveAllConfig>[number];
 
 /**
  * Phase D1 — enterprise control plane.
@@ -37,11 +45,11 @@ async function api(url: string, init?: RequestInit) {
 
 export function EnterpriseWorkspace() {
   const push = useToastStore((s) => s.push);
-  const [orgs, setOrgs] = useState<any[]>([]);
+  const [orgs, setOrgs] = useState<OrgSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [detail, setDetail] = useState<any>(null);
-  const [members, setMembers] = useState<any[]>([]);
-  const [config, setConfig] = useState<any[]>([]);
+  const [detail, setDetail] = useState<OrgDetail | null>(null);
+  const [members, setMembers] = useState<Member[]>([]);
+  const [config, setConfig] = useState<ConfigEntry[]>([]);
   // Which org the detail panes currently hold; loading is derived from it so no
   // state is set synchronously when an effect kicks off a load.
   const [loadedId, setLoadedId] = useState<string | null>(null);
@@ -142,7 +150,7 @@ export function EnterpriseWorkspace() {
   );
 }
 
-function OrganizationPanel({ org, onTransition }: { org: any; onTransition: (to: string) => void }) {
+function OrganizationPanel({ org, onTransition }: { org: OrgDetail; onTransition: (to: string) => void }) {
   return (
     <Card className="p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -169,7 +177,7 @@ function OrganizationPanel({ org, onTransition }: { org: any; onTransition: (to:
   );
 }
 
-function FacilitiesPanel({ org, onAction }: { org: any; onAction: (l: string, u: string, i: RequestInit) => Promise<boolean> }) {
+function FacilitiesPanel({ org, onAction }: { org: OrgDetail; onAction: (l: string, u: string, i: RequestInit) => Promise<boolean> }) {
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const facilities = org.facilities ?? [];
@@ -177,7 +185,7 @@ function FacilitiesPanel({ org, onAction }: { org: any; onAction: (l: string, u:
     <Card className="p-4">
       <div className="mb-3 flex items-center gap-2"><Hospital size={15} className="text-brand" /><CardLabel>Facilities</CardLabel></div>
       <div className="space-y-2">
-        {facilities.map((f: any) => (
+        {facilities.map((f) => (
           <div key={f.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-2">
             <div className="flex items-center gap-2 text-[13px]">
               <span>{f.name}</span>
@@ -217,7 +225,7 @@ function FacilitiesPanel({ org, onAction }: { org: any; onAction: (l: string, u:
   );
 }
 
-function MembersPanel({ orgId, members, onAction }: { orgId: string; members: any[]; onAction: (l: string, u: string, i: RequestInit) => Promise<boolean> }) {
+function MembersPanel({ orgId, members, onAction }: { orgId: string; members: Member[]; onAction: (l: string, u: string, i: RequestInit) => Promise<boolean> }) {
   const [userId, setUserId] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
   return (
@@ -254,7 +262,7 @@ function MembersPanel({ orgId, members, onAction }: { orgId: string; members: an
   );
 }
 
-function ConfigPanel({ orgId, config, onAction }: { orgId: string; config: any[]; onAction: (l: string, u: string, i: RequestInit) => Promise<boolean> }) {
+function ConfigPanel({ orgId, config, onAction }: { orgId: string; config: ConfigEntry[]; onAction: (l: string, u: string, i: RequestInit) => Promise<boolean> }) {
   const [edits, setEdits] = useState<Record<string, string>>({});
   return (
     <Card className="p-4">

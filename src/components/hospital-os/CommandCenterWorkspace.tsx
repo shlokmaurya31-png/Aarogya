@@ -6,7 +6,10 @@ import { Card } from "@/components/ui/Card";
 import { StatusPill, type StatusTone } from "@/components/ui/StatusPill";
 import { Button } from "@/components/ui/Button";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { ApiResult } from "@/lib/types/api";
+import type { getCommandCenterOverview } from "@/lib/hospital-os/command-center";
+
+type Overview = ApiResult<typeof getCommandCenterOverview>;
 
 /**
  * Phase D10 — Hospital Command Center 2.0. An operational control surface: every metric
@@ -32,7 +35,7 @@ const WINDOWS = [
 ];
 
 export function CommandCenterWorkspace() {
-  const [overview, setOverview] = useState<any>(null);
+  const [overview, setOverview] = useState<Overview | null>(null);
   const [window, setWindow] = useState("24h");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,11 +70,11 @@ export function CommandCenterWorkspace() {
       {error && <Card className="p-3 text-[13px] text-danger">{error}</Card>}
 
       {/* Attention queue */}
-      {overview?.attention?.length > 0 && (
+      {overview && overview.attention.length > 0 && (
         <Card className="p-3">
           <div className="mb-2 flex items-center gap-2 text-[12px] font-medium text-text-secondary"><AlertTriangle size={14} className="text-warning" /> Operational attention</div>
           <div className="space-y-1">
-            {overview.attention.map((a: any) => (
+            {overview.attention.map((a) => (
               <div key={a.key} className="flex flex-wrap items-center gap-2 rounded-lg border border-hairline p-2 text-[12px]">
                 <StatusPill tone={sevTone(a.severity)} dot={false} label={a.severity} />
                 <span className="font-medium">{a.title}</span>
@@ -85,7 +88,7 @@ export function CommandCenterWorkspace() {
 
       {/* Section grid */}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {overview?.sections?.map((s: any) => {
+        {overview?.sections?.map((s) => {
           const open = expanded[s.key];
           return (
             <Card key={s.key} className="p-3">
@@ -100,7 +103,7 @@ export function CommandCenterWorkspace() {
               ) : (
                 <>
                   <div className="mt-2 grid grid-cols-2 gap-2">
-                    {s.metrics.slice(0, 4).map((m: any) => (
+                    {s.metrics.slice(0, 4).map((m) => (
                       <div key={m.key} className="rounded-lg border border-hairline p-2">
                         <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-text-tertiary">{m.label}</div>
                         <div className="mt-0.5 flex items-center gap-1">
@@ -116,7 +119,7 @@ export function CommandCenterWorkspace() {
                   </button>
                   {open && (
                     <div className="mt-1 space-y-0.5">
-                      {s.drivers.filter((d: any) => d.kind !== "UNAVAILABLE").map((d: any, i: number) => (
+                      {s.drivers.filter((d) => d.kind !== "UNAVAILABLE").map((d, i) => (
                         <div key={i} className="flex items-center gap-2 text-[11px]">
                           <span className={d.kind === "DIRECT" ? "text-text-secondary" : "text-text-tertiary"}>{d.kind === "DIRECT" ? "•" : "◦"}</span>
                           <span className="text-text-secondary">{d.label}</span>
@@ -124,7 +127,7 @@ export function CommandCenterWorkspace() {
                           {d.drillDown && <a href={d.drillDown} target="_blank" rel="noreferrer" className="text-brand hover:underline">↗</a>}
                         </div>
                       ))}
-                      {s.drivers.filter((d: any) => d.kind === "UNAVAILABLE").map((d: any, i: number) => (
+                      {s.drivers.filter((d) => d.kind === "UNAVAILABLE").map((d, i) => (
                         <div key={`u${i}`} className="text-[11px] text-text-tertiary italic">{d.label}: {d.value}</div>
                       ))}
                       {s.drillDown && <a href={s.drillDown} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[11px] text-brand hover:underline">Open drill-down →</a>}
@@ -137,7 +140,7 @@ export function CommandCenterWorkspace() {
         })}
       </div>
 
-      {overview?.restrictedSections?.length > 0 && (
+      {overview && overview.restrictedSections.length > 0 && (
         <div className="text-[11px] text-text-tertiary">Restricted (insufficient permission): {overview.restrictedSections.join(", ")}</div>
       )}
     </div>

@@ -25,7 +25,7 @@ import { loadActorMemberships, type ActorMemberships } from "../src/lib/auth/ten
 import { assignPlan, transitionSubscription, cancelSubscription } from "../src/lib/commercial/subscriptions";
 import { setOrganizationOverride, removeOrganizationOverride, setFacilityOverride } from "../src/lib/commercial/overrides";
 import { setPlanEntitlement } from "../src/lib/commercial/plans";
-import { hasEntitlement, resolveLimit, evaluateEntitlement } from "../src/lib/commercial/evaluator";
+import { hasEntitlement, resolveLimit } from "../src/lib/commercial/evaluator";
 import { getCommercialSummary } from "../src/lib/commercial/summary";
 import { createFacility } from "../src/lib/enterprise/facilities";
 import { addOrganizationMembership } from "../src/lib/enterprise/memberships";
@@ -93,8 +93,8 @@ async function run() {
 
   const mPlatform = await load(ID.uPlatform, "AAROGYA_ADMIN");
   const mAdminA = await load(ID.uAdminA, "HOSPITAL_ADMIN");
-  const mAdminB = await load(ID.uAdminB, "HOSPITAL_ADMIN");
-  const mAdminC = await load(ID.uAdminC, "HOSPITAL_ADMIN");
+  await load(ID.uAdminB, "HOSPITAL_ADMIN");
+  await load(ID.uAdminC, "HOSPITAL_ADMIN");
   const mFacAdminA1 = await load(ID.uFacAdminA1, "HOSPITAL_ADMIN");
   const mOutsider = await load(ID.uOutsider, "DOCTOR");
 

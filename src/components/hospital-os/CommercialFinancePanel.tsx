@@ -7,7 +7,16 @@ import { StatusPill, type StatusTone } from "@/components/ui/StatusPill";
 import { Button } from "@/components/ui/Button";
 import { useToastStore } from "@/store/useToastStore";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { ApiResult } from "@/lib/types/api";
+import type { getProviderHealth } from "@/lib/commercial/analytics/providerHealth";
+import type { getRevenueOverview } from "@/lib/commercial/analytics/revenueOps";
+import type { listCollections } from "@/lib/commercial/analytics/collections";
+import type { getReconciliationDashboard } from "@/lib/commercial/analytics/reconciliationIntel";
+
+type ProviderHealth = ApiResult<typeof getProviderHealth>;
+type RevenueOverview = ApiResult<typeof getRevenueOverview>;
+type Collection = ApiResult<typeof listCollections>[number];
+type ReconciliationDashboard = ApiResult<typeof getReconciliationDashboard>;
 
 /**
  * Phase D5 — platform-only commercial operations panel. Renders NOTHING for
@@ -30,10 +39,10 @@ const collTone = (s: string): StatusTone =>
 
 export function CommercialFinancePanel() {
   const push = useToastStore((s) => s.push);
-  const [overview, setOverview] = useState<any>(null);
-  const [collections, setCollections] = useState<any[] | null>(null);
-  const [recon, setRecon] = useState<any>(null);
-  const [health, setHealth] = useState<any>(null);
+  const [overview, setOverview] = useState<RevenueOverview | null>(null);
+  const [collections, setCollections] = useState<Collection[] | null>(null);
+  const [recon, setRecon] = useState<ReconciliationDashboard | null>(null);
+  const [health, setHealth] = useState<ProviderHealth | null>(null);
   const [visible, setVisible] = useState(false);
 
   const load = useCallback(() => {
@@ -135,7 +144,7 @@ export function CommercialFinancePanel() {
         <Card className="p-4">
           <div className="mb-3 flex items-center gap-2"><ServerCog size={15} className="text-brand" /><CardLabel>Provider health</CardLabel></div>
           <div className="space-y-1.5">
-            {health.providers.map((p: any) => (
+            {health.providers.map((p) => (
               <div key={p.provider} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-2 text-[13px]">
                 <div className="flex items-center gap-2">
                   <span className="font-medium">{p.provider}</span>

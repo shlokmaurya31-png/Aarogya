@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
+import { enforceLicensure } from "@/lib/hospital/workforce/licensure";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { dispenseMedication, InvalidMedicationOrderTransitionError } from "@/lib/hospital/medicationLifecycle";
 
@@ -10,6 +11,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const { id } = await params;
     const body = await req.json().catch(() => null);
     const { session, facilityId, staff } = await requireFacilityStaff("medication:dispense", body?.facilityId);
+    await enforceLicensure({ staff, facilityId }, "dispense");
     if (!staff) throw new BadRequestError("Dispensing must be performed by a staff account.");
 
     const order = await prisma.medicationOrder.findUnique({ where: { id }, include: { encounter: true } });

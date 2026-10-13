@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
+import { enforceLicensure } from "@/lib/hospital/workforce/licensure";
 import { withApiErrors, NotFoundError, BadRequestError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { isImagingOrderTransitionAllowed, InvalidImagingOrderTransitionError } from "@/lib/hospital/diagnosticsLifecycle";
@@ -19,6 +20,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const { id } = await params;
     const body = await req.json().catch(() => null);
     const { session, facilityId, staff } = await requireFacilityStaff("imaging:report:enter", body?.facilityId);
+    await enforceLicensure({ staff, facilityId }, "imagingReportFinalize");
     if (!staff) throw new BadRequestError("Reports must be entered by a staff account.");
 
     const order = await prisma.imagingOrder.findUnique({ where: { id }, include: { encounter: true } });

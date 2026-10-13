@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Card, SectionTitle, Empty, Unavailable, usePatientData, formatDate } from "@/components/patient-portal/ui";
 
 interface Profile {
@@ -33,7 +34,10 @@ export default function ProfilePage() {
 
   return (
     <div className="space-y-5">
-      <h1 className="text-[18px] font-semibold">Profile</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-[18px] font-semibold">Profile</h1>
+        <Link href="/account/password" className="text-[12.5px] text-cyan hover:underline">Change password</Link>
+      </div>
       <Card>
         <SectionTitle>Your details</SectionTitle>
         <dl className="grid grid-cols-2 gap-y-2 text-[13px]">

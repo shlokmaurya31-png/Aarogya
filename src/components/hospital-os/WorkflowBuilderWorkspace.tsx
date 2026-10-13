@@ -8,7 +8,28 @@ import { Button } from "@/components/ui/Button";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { useToastStore } from "@/store/useToastStore";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { ApiResult } from "@/lib/types/api";
+import type { builderMetadata, listDrafts, listTemplates } from "@/lib/workflow-builder";
+import type { ValidationReport } from "@/lib/workflow-builder/compile";
+import type { SimulationResult } from "@/lib/workflow-builder/simulate";
+import type { StepConfig } from "@/lib/workflows/definition";
+import type { listOrganizationsForActor } from "@/lib/enterprise/organizations";
+
+type Meta = ApiResult<typeof builderMetadata>;
+type OrgSummary = ApiResult<typeof listOrganizationsForActor>[number];
+type DraftSummary = ApiResult<typeof listDrafts>[number];
+type Template = ApiResult<typeof listTemplates>[number];
+
+// Drafts are deliberately lenient (an incomplete step or rule is saveable; the
+// server compiler is the strict gate), so the editor works on loose versions of
+// the canonical D7 shapes rather than the validated ones.
+interface DraftLeaf { field?: string; operator?: string; value?: string | number | boolean | null }
+type DraftCondition = { all?: DraftLeaf[]; any?: DraftLeaf[] } | DraftLeaf;
+type StepFields<T extends StepConfig["type"]> = Partial<Omit<Extract<StepConfig, { type: T }>, "type" | "key" | "condition">>;
+type Step = { type: StepConfig["type"]; key: string; condition?: DraftCondition }
+  & StepFields<"TASK"> & StepFields<"TIMER"> & StepFields<"CONDITION"> & StepFields<"ACTION">;
+type StepPatch = Partial<Omit<Step, "type" | "key">>;
+interface Trigger { eventType: string; eventVersion: number; condition?: DraftCondition }
 
 /**
  * Phase D9 — visual Workflow Builder. An accessible, structured authoring workspace
@@ -24,29 +45,28 @@ async function api(url: string, init?: RequestInit) {
   return { ok: res.ok, data };
 }
 
-type Step = any;
 const uid = () => Math.random().toString(36).slice(2, 8);
 
 const priorityTone = (p: string): StatusTone => (p === "STAT" ? "danger" : p === "URGENT" ? "warning" : "neutral");
 
 export function WorkflowBuilderWorkspace() {
   const push = useToastStore((s) => s.push);
-  const [meta, setMeta] = useState<any>(null);
-  const [orgs, setOrgs] = useState<any[]>([]);
+  const [meta, setMeta] = useState<Meta | null>(null);
+  const [orgs, setOrgs] = useState<OrgSummary[]>([]);
   const [orgId, setOrgId] = useState<string>("");
   const [visible, setVisible] = useState<boolean | null>(null);
 
   const [draftId, setDraftId] = useState<string | null>(null);
   const [name, setName] = useState("New workflow");
   const [key, setKey] = useState("");
-  const [trigger, setTrigger] = useState<any>(null); // { eventType, eventVersion, condition? }
+  const [trigger, setTrigger] = useState<Trigger | null>(null);
   const [steps, setSteps] = useState<Step[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  const [report, setReport] = useState<any>(null);
-  const [sim, setSim] = useState<any>(null);
+  const [report, setReport] = useState<ValidationReport | null>(null);
+  const [sim, setSim] = useState<SimulationResult | null>(null);
   const [simPayload, setSimPayload] = useState('{ "critical": true }');
-  const [drafts, setDrafts] = useState<any[]>([]);
-  const [templates, setTemplates] = useState<any[]>([]);
+  const [drafts, setDrafts] = useState<DraftSummary[]>([]);
+  const [templates, setTemplates] = useState<Template[]>([]);
 
   useEffect(() => {
     api("/api/hospital/enterprise/workflow-builder/metadata").then(({ ok, data }) => {
@@ -79,19 +99,19 @@ export function WorkflowBuilderWorkspace() {
   if (visible === false) return <div className="p-6 text-[13px] text-text-tertiary">You do not have access to the Workflow Builder.</div>;
   if (!meta) return <div className="p-6 text-[13px] text-text-tertiary">Loading builder…</div>;
 
-  function addStep(type: string) {
+  function addStep(type: Step["type"]) {
     const k = `${type.toLowerCase()}_${uid()}`;
-    const base: any = { type, key: k };
+    const base: Step = { type, key: k };
     if (type === "TASK") Object.assign(base, { taskType: "TASK", title: "New task", priority: "ROUTINE" });
     if (type === "TIMER") Object.assign(base, { dueAfterSeconds: 3600 });
     if (type === "CONDITION") Object.assign(base, { condition: { all: [{ field: "payload.critical", operator: "equals", value: true }] } });
-    if (type === "ACTION") Object.assign(base, { action: { name: meta.actions[0] ?? "UPDATE_WORKFLOW_STATE", params: {} } });
+    if (type === "ACTION") Object.assign(base, { action: { name: meta!.actions[0] ?? "UPDATE_WORKFLOW_STATE", params: {} } });
     setSteps((s) => [...s, base]);
     setSelected(k);
   }
   const move = (i: number, d: number) => setSteps((s) => { const n = [...s]; const j = i + d; if (j < 0 || j >= n.length) return s; [n[i], n[j]] = [n[j], n[i]]; return n; });
   const del = (k: string) => setSteps((s) => s.filter((x) => x.key !== k));
-  const patchStep = (k: string, patch: any) => setSteps((s) => s.map((x) => (x.key === k ? { ...x, ...patch } : x)));
+  const patchStep = (k: string, patch: StepPatch) => setSteps((s) => s.map((x) => (x.key === k ? { ...x, ...patch } : x)));
 
   async function loadTemplate(id: string) {
     const { ok, data } = await api(`/api/hospital/enterprise/workflow-builder/templates/${id}`);
@@ -115,14 +135,14 @@ export function WorkflowBuilderWorkspace() {
   }
   async function publish() {
     if (!draftId) { await save(); }
-    const id = draftId ?? (await api(`/api/hospital/enterprise/workflow-builder/drafts?organizationId=${orgId}`)).data?.drafts?.find((x: any) => x.key === key)?.id;
+    const id = draftId ?? (await api(`/api/hospital/enterprise/workflow-builder/drafts?organizationId=${orgId}`)).data?.drafts?.find((x: DraftSummary) => x.key === key)?.id;
     if (!id) return push("Save the draft before publishing", "red");
     const { ok, data } = await api(`/api/hospital/enterprise/workflow-builder/drafts/${id}/publish`, { method: "POST", body: "{}" });
     push(ok ? `Published "${data.definition?.key}" (D7 can now execute it)` : (data.error ?? "Publish failed"), ok ? "emerald" : "red");
     if (ok) loadDrafts();
   }
   async function simulate() {
-    let payload: any = {};
+    let payload: unknown = {};
     try { payload = JSON.parse(simPayload); } catch { return push("Simulation payload is not valid JSON", "red"); }
     const { ok, data } = await api("/api/hospital/enterprise/workflow-builder/simulate", { method: "POST", body: JSON.stringify({ document: documentObj, key, organizationId: orgId, payload }) });
     if (ok) setSim(data); else push(data.error ?? "Simulation failed", "red");
@@ -159,7 +179,7 @@ export function WorkflowBuilderWorkspace() {
           <Card className="p-3">
             <div className="mb-2 text-[12px] font-medium text-text-secondary">Add node</div>
             <div className="flex flex-col gap-1">
-              {meta.stepTypes.map((t: string) => (
+              {meta.stepTypes.map((t) => (
                 <Button key={t} size="sm" variant="ghost" onClick={() => addStep(t)}><Plus size={13} /> {t}</Button>
               ))}
             </div>
@@ -188,9 +208,9 @@ export function WorkflowBuilderWorkspace() {
               onChange={(e) => { const [t, v] = e.target.value.split("@"); setTrigger(v ? { eventType: t, eventVersion: Number(v), ...(trigger?.condition ? { condition: trigger.condition } : {}) } : null); }}
               className="mt-1 w-full rounded-lg border border-hairline bg-surface px-2 py-1 text-[13px]">
               <option value="">Select an event…</option>
-              {meta.triggers.map((t: any) => <option key={`${t.eventType}@${t.eventVersion}`} value={`${t.eventType}@${t.eventVersion}`}>{t.eventType}@{t.eventVersion}</option>)}
+              {meta.triggers.map((t) => <option key={`${t.eventType}@${t.eventVersion}`} value={`${t.eventType}@${t.eventVersion}`}>{t.eventType}@{t.eventVersion}</option>)}
             </select>
-            {trigger && <ConditionEditor label="IF (trigger condition, optional)" meta={meta} value={trigger.condition ?? null} onChange={(c: any) => setTrigger({ ...trigger, ...(c ? { condition: c } : {}) })} clearable onClear={() => { const { condition, ...rest } = trigger; void condition; setTrigger(rest); }} />}
+            {trigger && <ConditionEditor label="IF (trigger condition, optional)" meta={meta} value={trigger.condition ?? null} onChange={(c) => setTrigger({ ...trigger, ...(c ? { condition: c } : {}) })} clearable onClear={() => { const { condition, ...rest } = trigger; void condition; setTrigger(rest); }} />}
           </Card>
 
           <div className="text-center text-[11px] text-text-tertiary">THEN ↓</div>
@@ -220,20 +240,20 @@ export function WorkflowBuilderWorkspace() {
           <Card className="p-3">
             <div className="mb-2 text-[12px] font-medium text-text-secondary">Properties</div>
             {!selectedStep ? <div className="text-[11px] text-text-tertiary">Select a node to edit.</div> : (
-              <StepProperties meta={meta} step={selectedStep} onChange={(patch: any) => patchStep(selectedStep.key, patch)} />
+              <StepProperties meta={meta} step={selectedStep} onChange={(patch) => patchStep(selectedStep.key, patch)} />
             )}
           </Card>
 
           <Card className="p-3">
             <div className="mb-2 flex items-center gap-2 text-[12px] font-medium text-text-secondary"><CheckCircle2 size={14} /> Validation</div>
-            {report?.sections?.map((sec: any, i: number) => (
+            {report?.sections?.map((sec, i) => (
               <div key={i} className="flex items-start gap-2 text-[12px]">
                 <span className={sec.ok ? "text-success" : "text-danger"}>{sec.ok ? "✓" : "✗"}</span>
                 <span className="text-text-secondary">{sec.label}:</span>
                 <span className="text-text-tertiary">{sec.detail}</span>
               </div>
             ))}
-            {report?.errors?.map((e: string, i: number) => <div key={i} className="text-[12px] text-danger">✗ {e}</div>)}
+            {report?.errors?.map((e, i) => <div key={i} className="text-[12px] text-danger">✗ {e}</div>)}
           </Card>
 
           <Card className="p-3">
@@ -244,7 +264,7 @@ export function WorkflowBuilderWorkspace() {
             {sim && (
               <div className="mt-2 space-y-1 text-[11px]">
                 <StatusPill tone={sim.triggerMatched ? "success" : "warning"} dot={false} label={sim.triggerMatched ? "Trigger matched" : "Trigger not matched"} />
-                {sim.steps.map((st: any, i: number) => (
+                {sim.steps.map((st, i) => (
                   <div key={i} className={st.outcome === "WOULD_EXECUTE" ? "text-text-secondary" : "text-text-tertiary"}>
                     {st.outcome === "WOULD_EXECUTE" ? "✓" : "•"} {st.type} {st.key}: {st.detail}
                   </div>
@@ -259,11 +279,15 @@ export function WorkflowBuilderWorkspace() {
   );
 }
 
-function ConditionEditor({ label, meta, value, onChange, clearable, onClear }: any) {
-  const group = value && (value.all || value.any) ? value : { all: value ? [value] : [] };
+function ConditionEditor({ label, meta, value, onChange, clearable, onClear }: {
+  label: string; meta: Meta; value: DraftCondition | null | undefined; onChange: (c: DraftCondition) => void;
+  clearable?: boolean; onClear?: () => void;
+}) {
+  const group: { all?: DraftLeaf[]; any?: DraftLeaf[] } =
+    value && ("all" in value || "any" in value) ? value : { all: value ? [value as DraftLeaf] : [] };
   const combinator = group.all ? "all" : "any";
-  const leaves: any[] = group[combinator] ?? [];
-  const setLeaves = (next: any[]) => onChange({ [combinator]: next });
+  const leaves: DraftLeaf[] = group[combinator] ?? [];
+  const setLeaves = (next: DraftLeaf[]) => onChange({ [combinator]: next });
   return (
     <div className="mt-2 rounded-lg border border-hairline p-2">
       <div className="mb-1 flex items-center gap-2 text-[11px] text-text-tertiary">
@@ -277,7 +301,7 @@ function ConditionEditor({ label, meta, value, onChange, clearable, onClear }: a
         <div key={i} className="mb-1 flex flex-wrap gap-1">
           <input aria-label="Field" value={leaf.field ?? ""} onChange={(e) => setLeaves(leaves.map((l, j) => (j === i ? { ...l, field: e.target.value } : l)))} placeholder="payload.field" className="w-[130px] rounded border border-hairline bg-surface px-1 py-0.5 text-[11px]" />
           <select aria-label="Operator" value={leaf.operator ?? "equals"} onChange={(e) => setLeaves(leaves.map((l, j) => (j === i ? { ...l, operator: e.target.value } : l)))} className="rounded border border-hairline bg-surface px-1 text-[11px]">
-            {meta.operators.map((op: string) => <option key={op} value={op}>{op}</option>)}
+            {meta.operators.map((op) => <option key={op} value={op}>{op}</option>)}
           </select>
           <input aria-label="Value" value={String(leaf.value ?? "")} onChange={(e) => { const v = e.target.value; const parsed = v === "true" ? true : v === "false" ? false : /^-?\d+$/.test(v) ? Number(v) : v; setLeaves(leaves.map((l, j) => (j === i ? { ...l, value: parsed } : l))); }} placeholder="value" className="w-[90px] rounded border border-hairline bg-surface px-1 py-0.5 text-[11px]" />
           <button aria-label="Remove rule" onClick={() => setLeaves(leaves.filter((_, j) => j !== i))} className="text-danger">×</button>
@@ -292,24 +316,24 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   return <label className="mb-2 block text-[11px] text-text-tertiary">{label}{children}</label>;
 }
 
-function StepProperties({ meta, step, onChange }: any) {
+function StepProperties({ meta, step, onChange }: { meta: Meta; step: Step; onChange: (patch: StepPatch) => void }) {
   const inp = "mt-0.5 w-full rounded border border-hairline bg-surface px-2 py-1 text-[12px]";
   if (step.type === "TASK") return (
     <div>
       <Field label="Title"><input className={inp} value={step.title ?? ""} onChange={(e) => onChange({ title: e.target.value })} /></Field>
       <Field label="Task type"><input className={inp} value={step.taskType ?? ""} onChange={(e) => onChange({ taskType: e.target.value })} /></Field>
-      <Field label="Priority"><select className={inp} value={step.priority ?? "ROUTINE"} onChange={(e) => onChange({ priority: e.target.value })}>{meta.priorities.map((p: string) => <option key={p}>{p}</option>)}</select></Field>
+      <Field label="Priority"><select className={inp} value={step.priority ?? "ROUTINE"} onChange={(e) => onChange({ priority: e.target.value as Step["priority"] })}>{meta.priorities.map((p) => <option key={p}>{p}</option>)}</select></Field>
       <Field label="Assigned role"><input className={inp} value={step.assignedRole ?? ""} onChange={(e) => onChange({ assignedRole: e.target.value || undefined })} /></Field>
       <label className="flex items-center gap-2 text-[12px]">
         <input type="checkbox" checked={!!step.sla} onChange={(e) => onChange({ sla: e.target.checked ? { dueAfterSeconds: 900, escalation: { taskType: "ESCALATION", title: "SLA breached", priority: "STAT" } } : undefined })} /> SLA + escalation
       </label>
-      {step.sla && <Field label="SLA seconds"><input type="number" className={inp} value={step.sla.dueAfterSeconds} onChange={(e) => onChange({ sla: { ...step.sla, dueAfterSeconds: Number(e.target.value) } })} /></Field>}
+      {step.sla && <Field label="SLA seconds"><input type="number" className={inp} value={step.sla.dueAfterSeconds} onChange={(e) => step.sla && onChange({ sla: { ...step.sla, dueAfterSeconds: Number(e.target.value) } })} /></Field>}
     </div>
   );
   if (step.type === "TIMER") return <Field label="Delay seconds"><input type="number" className={inp} value={step.dueAfterSeconds} onChange={(e) => onChange({ dueAfterSeconds: Number(e.target.value) })} /></Field>;
   if (step.type === "ACTION") return (
-    <Field label="Action"><select className={inp} value={step.action?.name} onChange={(e) => onChange({ action: { name: e.target.value, params: {} } })}>{meta.actions.map((a: string) => <option key={a}>{a}</option>)}</select></Field>
+    <Field label="Action"><select className={inp} value={step.action?.name} onChange={(e) => onChange({ action: { name: e.target.value as NonNullable<Step["action"]>["name"], params: {} } })}>{meta.actions.map((a) => <option key={a}>{a}</option>)}</select></Field>
   );
-  if (step.type === "CONDITION") return <ConditionEditor label="Condition" meta={meta} value={step.condition} onChange={(c: any) => onChange({ condition: c })} />;
+  if (step.type === "CONDITION") return <ConditionEditor label="Condition" meta={meta} value={step.condition} onChange={(c) => onChange({ condition: c })} />;
   return null;
 }

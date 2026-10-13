@@ -7,7 +7,12 @@ import { StatusPill, type StatusTone } from "@/components/ui/StatusPill";
 import { Button } from "@/components/ui/Button";
 import { useToastStore } from "@/store/useToastStore";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { ApiResult } from "@/lib/types/api";
+import type { listRegistry, listOverrides, resolveConfig } from "@/lib/config";
+
+type Registry = ApiResult<typeof listRegistry>;
+type ConfigOverride = ApiResult<typeof listOverrides>[number];
+type EffectiveConfig = ApiResult<typeof resolveConfig>;
 
 /**
  * Phase D8 — configuration engine admin panel. Scoped to the caller's organization
@@ -28,11 +33,11 @@ const sourceTone = (s: string): StatusTone =>
 
 export function ConfigurationPanel({ organizationId }: { organizationId: string | null }) {
   const push = useToastStore((s) => s.push);
-  const [registry, setRegistry] = useState<any>(null);
-  const [overrides, setOverrides] = useState<any[] | null>(null);
+  const [registry, setRegistry] = useState<Registry | null>(null);
+  const [overrides, setOverrides] = useState<ConfigOverride[] | null>(null);
   const [key, setKey] = useState("sla.critical_result_ack");
   const [value, setValue] = useState("");
-  const [effective, setEffective] = useState<any>(null);
+  const [effective, setEffective] = useState<EffectiveConfig | null>(null);
   const [visible, setVisible] = useState(false);
 
   const load = useCallback(() => {
@@ -51,7 +56,7 @@ export function ConfigurationPanel({ organizationId }: { organizationId: string 
     if (ok) setEffective(data); else { setEffective(null); push(data.error ?? "Lookup failed.", "red"); }
   }, [organizationId, key, push]);
 
-  async function op(label: string, path: string, body: any) {
+  async function op(label: string, path: string, body: Record<string, unknown>) {
     const { ok, data } = await api(`/api/hospital/enterprise/configuration/${path}`, { method: "POST", body: JSON.stringify(body) });
     push(ok ? `${label} ok` : (data.error ?? `${label} failed.`), ok ? "emerald" : "red");
     if (ok) { load(); explain(); }
@@ -89,7 +94,7 @@ export function ConfigurationPanel({ organizationId }: { organizationId: string 
               <StatusPill tone={sourceTone(effective.source)} dot={false} label={`${effective.source}${effective.version ? " v" + effective.version : ""}`} />
             </div>
             <div className="mt-1 flex flex-wrap gap-1 text-[11px] text-text-tertiary">
-              {(effective.chain ?? []).map((c: any, i: number) => (
+              {(effective.chain ?? []).map((c, i) => (
                 <span key={i} className={c.present ? "text-text-secondary" : "opacity-50"}>
                   {c.source}: {c.present ? (c.raw ?? "set") : "—"}{i < effective.chain.length - 1 ? " ›" : ""}
                 </span>
@@ -105,7 +110,7 @@ export function ConfigurationPanel({ organizationId }: { organizationId: string 
           <div className="text-[12px] text-text-tertiary">No overrides yet — all keys use their inherited / system default.</div>
         ) : (
           <div className="space-y-1">
-            {overrides.map((o: any) => (
+            {overrides.map((o) => (
               <div key={o.id} className="flex items-center gap-2 rounded-lg border border-hairline p-2 text-[12px]">
                 <StatusPill tone={o.status === "PUBLISHED" ? "success" : o.status === "DRAFT" ? "warning" : "neutral"} dot={false} label={o.status} />
                 <span className="truncate font-medium">{o.key}</span>

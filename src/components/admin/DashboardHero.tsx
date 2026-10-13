@@ -41,6 +41,7 @@ export function DashboardHero({ user, pendingCount }: { user: AuthUser; pendingC
             {t("admin.hero.cta")} <ArrowRight size={14} />
           </Link>
         </div>
+        {/* eslint-disable-next-line @next/next/no-img-element -- decorative remote image on the retired admin console */}
         <img
           src="https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?auto=format&fit=crop&w=480&q=80"
           alt=""

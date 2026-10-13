@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
+import { enforceLicensure } from "@/lib/hospital/workforce/licensure";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { createMedicationOrder } from "@/lib/hospital/medicationLifecycle";
 
@@ -45,6 +46,7 @@ export async function POST(req: NextRequest) {
   return withApiErrors(async () => {
     const body = await req.json().catch(() => null);
     const { session, facilityId, staff } = await requireFacilityStaff("clinical:order:medication", body?.facilityId);
+    await enforceLicensure({ staff, facilityId }, "prescribe");
     if (!staff) throw new BadRequestError("Medication orders must be placed by a staff account.");
 
     const { encounterId, patientId, drugName, genericName, dose, route, frequency, durationDays, overrideReason } = body ?? {};

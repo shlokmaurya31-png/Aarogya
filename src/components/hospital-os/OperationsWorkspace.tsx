@@ -7,7 +7,24 @@ import { StatusPill } from "@/components/ui/StatusPill";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { ApiResult } from "@/lib/types/api";
+import type { getOperationsCommandCenter } from "@/lib/hospital/operations/commandCenter";
+
+type CommandCenter = ApiResult<typeof getOperationsCommandCenter>;
+
+/**
+ * One queue row. Each tab lists a different operations record; this is the
+ * union of the fields the queue view reads, all optional except id/status.
+ */
+interface OperationsRow {
+  id: string;
+  status: string;
+  requestType?: string; bedId?: string | null; areaLabel?: string | null;
+  mealPeriod?: string; patientId?: string | null; transportType?: string;
+  origin?: string; destination?: string; issueType?: string; description?: string | null;
+  assetTag?: string; category?: string; locationLabel?: string | null; calibrationStatus?: string | null;
+  incidentType?: string; isolationRequired?: boolean; wardId?: string | null;
+}
 type Tab = "overview" | "housekeeping" | "dietary" | "transport" | "ambulance" | "maintenance" | "biomedical" | "infection";
 
 function Metric({ label, value, tone = "neutral" }: { label: string; value: number; tone?: "red" | "amber" | "cyan" | "neutral" | "emerald" }) {
@@ -36,8 +53,8 @@ const tone = (s: string): "emerald" | "amber" | "red" | "cyan" | "neutral" =>
 export function OperationsWorkspace() {
   const push = useToastStore((s) => s.push);
   const [tab, setTab] = useState<Tab>("overview");
-  const [cc, setCc] = useState<any>(null);
-  const [rows, setRows] = useState<any[] | null>(null);
+  const [cc, setCc] = useState<CommandCenter | null>(null);
+  const [rows, setRows] = useState<OperationsRow[] | null>(null);
 
   const loadCc = useCallback(() => { fetch("/api/hospital/operations/command-center").then((r) => r.json()).then((d) => setCc(d.commandCenter ?? null)); }, []);
   useEffect(loadCc, [loadCc]);
@@ -65,7 +82,7 @@ export function OperationsWorkspace() {
     maintenance: { REPORTED: "ASSIGNED", TRIAGED: "ASSIGNED", ASSIGNED: "IN_PROGRESS", IN_PROGRESS: "RESOLVED", RESOLVED: "VERIFIED", VERIFIED: "CLOSED" },
     infection: { REPORTED: "UNDER_REVIEW", UNDER_REVIEW: "INVESTIGATION", INVESTIGATION: "ACTION_REQUIRED", ACTION_REQUIRED: "RESOLVED", RESOLVED: "CLOSED" },
   };
-  const STATUS_URL: Record<string, (r: any) => string> = {
+  const STATUS_URL: Record<string, (r: OperationsRow) => string> = {
     housekeeping: (r) => `/api/hospital/operations/housekeeping/${r.id}/status`,
     dietary: (r) => `/api/hospital/operations/meals/${r.id}/status`,
     transport: (r) => `/api/hospital/operations/transport/${r.id}/status`,
@@ -74,7 +91,7 @@ export function OperationsWorkspace() {
     infection: (r) => `/api/hospital/operations/infection/${r.id}/status`,
   };
 
-  function rowLabel(t: Tab, r: any): string {
+  function rowLabel(t: Tab, r: OperationsRow): string {
     const tail = (v: unknown) => (typeof v === "string" ? v.slice(-6) : "");
     if (t === "housekeeping") return `${r.requestType} · ${r.bedId ? "bed " + tail(r.bedId) : r.areaLabel ?? "area"}`;
     if (t === "dietary") return `${r.mealPeriod} · patient ${tail(r.patientId)}`;
@@ -122,7 +139,7 @@ export function OperationsWorkspace() {
           <div className="mt-2 space-y-1.5">
             {!rows && <div className="h-24 animate-pulse rounded-xl bg-black/[0.04]" />}
             {rows && rows.length === 0 && <p className="text-[13px] text-text-tertiary">No records.</p>}
-            {rows?.map((r: any) => {
+            {rows?.map((r) => {
               const nextMap = NEXT[tab] ?? {};
               const next = nextMap[r.status];
               return (

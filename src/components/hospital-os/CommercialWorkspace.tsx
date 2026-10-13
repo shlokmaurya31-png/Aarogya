@@ -12,7 +12,18 @@ import { EventOperationsPanel } from "./EventOperationsPanel";
 import { WorkflowOperationsPanel } from "./WorkflowOperationsPanel";
 import { ConfigurationPanel } from "./ConfigurationPanel";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { ApiResult } from "@/lib/types/api";
+import type { listOrganizationsForActor } from "@/lib/enterprise/organizations";
+import type { listPlans } from "@/lib/commercial/plans";
+import type { getCommercialSummary } from "@/lib/commercial/summary";
+import type { getBillingSummary } from "@/lib/billing/summary";
+import type { listReconciliationExceptions } from "@/lib/billing/reconciliation";
+
+type OrgSummary = ApiResult<typeof listOrganizationsForActor>[number];
+type Plan = ApiResult<typeof listPlans>[number];
+type CommercialSummary = ApiResult<typeof getCommercialSummary>;
+type BillingSummary = ApiResult<typeof getBillingSummary>;
+type ReconciliationException = ApiResult<typeof listReconciliationExceptions>[number];
 
 /**
  * Phase D2 — commercial control plane (plans, subscription, entitlements, usage,
@@ -47,12 +58,12 @@ async function api(url: string, init?: RequestInit) {
 
 export function CommercialWorkspace() {
   const push = useToastStore((s) => s.push);
-  const [orgs, setOrgs] = useState<any[]>([]);
+  const [orgs, setOrgs] = useState<OrgSummary[]>([]);
   const [orgId, setOrgId] = useState<string | null>(null);
-  const [summary, setSummary] = useState<any>(null);
-  const [billing, setBilling] = useState<any>(null);
-  const [recon, setRecon] = useState<any[] | null>(null);
-  const [plans, setPlans] = useState<any[]>([]);
+  const [summary, setSummary] = useState<CommercialSummary | null>(null);
+  const [billing, setBilling] = useState<BillingSummary | null>(null);
+  const [recon, setRecon] = useState<ReconciliationException[] | null>(null);
+  const [plans, setPlans] = useState<Plan[]>([]);
 
   useEffect(() => {
     api("/api/hospital/enterprise/organizations").then(({ ok, data }) => {
@@ -153,7 +164,7 @@ export function CommercialWorkspace() {
           <Card className="p-4">
             <div className="mb-3 flex items-center gap-2"><Gauge size={15} className="text-brand" /><CardLabel>Entitlements & usage</CardLabel></div>
             <div className="space-y-1.5">
-              {summary.entitlements.map((e: any) => (
+              {summary.entitlements.map((e) => (
                 <div key={e.key} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-2 text-[13px]">
                   <div className="flex items-center gap-2">
                     {e.type === "BOOLEAN"
@@ -178,7 +189,7 @@ export function CommercialWorkspace() {
             <Card className="p-4">
               <div className="mb-3 flex items-center gap-2"><SlidersHorizontal size={15} className="text-brand" /><CardLabel>Organization overrides</CardLabel></div>
               <div className="space-y-1.5">
-                {summary.overrides.map((o: any) => (
+                {summary.overrides.map((o) => (
                   <div key={o.key} className="flex items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-2 text-[13px]">
                     <span>{o.name}</span>
                     <span className="text-text-secondary">{o.unlimited ? "unlimited" : o.numberValue ?? String(o.boolValue)}{o.expiresAt ? ` · expires ${new Date(o.expiresAt).toLocaleDateString()}` : ""}</span>
@@ -255,7 +266,7 @@ export function CommercialWorkspace() {
                         </tr>
                       </thead>
                       <tbody>
-                        {billing.invoices.map((inv: any) => (
+                        {billing.invoices.map((inv) => (
                           <tr key={inv.id} className="border-t border-hairline">
                             <td className="py-2 pr-3 font-medium">{inv.invoiceNumber ?? <span className="text-text-tertiary">draft</span>}</td>
                             <td className="py-2 pr-3"><StatusPill label={inv.status} tone={invoiceTone(inv.status)} /></td>
@@ -275,7 +286,7 @@ export function CommercialWorkspace() {
                 <Card className="p-4">
                   <div className="mb-3 flex items-center gap-2"><CreditCard size={15} className="text-brand" /><CardLabel>Credits</CardLabel></div>
                   <div className="space-y-1.5">
-                    {billing.credits.map((c: any) => (
+                    {billing.credits.map((c) => (
                       <div key={c.id} className="flex items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-2 text-[13px]">
                         <span>{c.type} · {c.reason}</span>
                         <span className="text-text-secondary">{fmtMinor(c.remainingMinor)} of {fmtMinor(c.amountMinor)}</span>
@@ -293,7 +304,7 @@ export function CommercialWorkspace() {
                     <p className="text-[12px] text-text-tertiary">No unresolved exceptions — Aarogya and the provider agree.</p>
                   ) : (
                     <div className="space-y-1.5">
-                      {recon.map((e: any) => (
+                      {recon.map((e) => (
                         <div key={e.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-2 text-[13px]">
                           <div className="flex items-center gap-2">
                             <StatusPill label={e.severity ?? "MEDIUM"} tone={e.severity === "CRITICAL" || e.severity === "HIGH" ? "danger" : "warning"} dot={false} />

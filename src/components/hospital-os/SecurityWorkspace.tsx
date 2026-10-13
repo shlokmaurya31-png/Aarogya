@@ -7,7 +7,22 @@ import { StatusPill } from "@/components/ui/StatusPill";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { ApiResult, Serialized } from "@/lib/types/api";
+import type { listBreakGlass, breakGlassAbuseReport, EMERGENCY_CONTEXTS } from "@/lib/auth/authorize/breakGlass";
+import type { listPrivacyRequests, PRIVACY_REQUEST_TYPES, describeRetention } from "@/lib/auth/authorize/privacy";
+
+/** GET /api/hospital/security/break-glass */
+interface BreakGlassView {
+  windows: ApiResult<typeof listBreakGlass>;
+  report: ApiResult<typeof breakGlassAbuseReport>;
+  emergencyContexts: Serialized<typeof EMERGENCY_CONTEXTS>;
+}
+/** GET /api/hospital/security/privacy-requests */
+interface PrivacyView {
+  requests: ApiResult<typeof listPrivacyRequests>;
+  requestTypes: Serialized<typeof PRIVACY_REQUEST_TYPES>;
+  retention: Serialized<ReturnType<typeof describeRetention>>;
+}
 
 /**
  * Phase C4 — Hospital OS trust and security workspace.
@@ -48,8 +63,8 @@ function Metric({ label, value, tone: t = "neutral" }: { label: string; value: n
 export function SecurityWorkspace() {
   const push = useToastStore((s) => s.push);
   const [tab, setTab] = useState<Tab>("overview");
-  const [breakGlass, setBreakGlass] = useState<any>(null);
-  const [privacy, setPrivacy] = useState<any>(null);
+  const [breakGlass, setBreakGlass] = useState<BreakGlassView | null>(null);
+  const [privacy, setPrivacy] = useState<PrivacyView | null>(null);
 
   const loadBreakGlass = useCallback(() => {
     fetch("/api/hospital/security/break-glass")
@@ -115,7 +130,7 @@ export function SecurityWorkspace() {
               <p className="mt-3 text-xs text-text-tertiary">No emergency access has been activated.</p>
             )}
             <div className="mt-3 space-y-2">
-              {(breakGlass?.windows ?? []).map((w: any) => (
+              {(breakGlass?.windows ?? []).map((w) => (
                 <div key={w.id} className="flex flex-wrap items-start justify-between gap-2 rounded-xl border border-hairline px-3 py-2">
                   <div className="min-w-0 flex-1">
                     <p className="text-sm text-text-primary">{w.emergencyContext}</p>
@@ -155,7 +170,7 @@ export function SecurityWorkspace() {
             {(report?.repeatedPatients ?? []).length > 0 && (
               <div className="mt-3">
                 <p className="text-[11px] text-amber">Patients accessed under emergency access more than once:</p>
-                {report.repeatedPatients.map((p: any) => (
+                {(report?.repeatedPatients ?? []).map((p) => (
                   <p key={p.patientId} className="text-[10px] text-text-tertiary">{p.patientId} · {p.count}×</p>
                 ))}
               </div>
@@ -171,7 +186,7 @@ export function SecurityWorkspace() {
             <p className="mt-3 text-xs text-text-tertiary">No privacy requests have been raised.</p>
           )}
           <div className="mt-3 space-y-2">
-            {(privacy?.requests ?? []).map((r: any) => (
+            {(privacy?.requests ?? []).map((r) => (
               <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-2">
                 <div className="min-w-0">
                   <p className="text-sm text-text-primary">{r.requestType}</p>

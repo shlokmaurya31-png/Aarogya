@@ -7,15 +7,11 @@ import { StatusPill } from "@/components/ui/StatusPill";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-interface Workspace {
-  id: string; facilityId: string; patientId: string; status: string; chiefComplaint: string | null; triageLevel: number | null; registeredAt: string;
-  patient: { fullName: string; uhid: string; sex: string; ageYears: number | null };
-  attendingStaff: { user: { displayName: string } } | null;
-  triageAssessments: any[]; edReassessments: any[]; edResuscitations: any[]; edDisposition: any | null;
-  locations: any[]; vitals: any[]; notes: any[]; labOrders: any[]; imagingOrders: any[]; medicationOrders: any[];
-  handoffs: any[]; nursingAssignments: any[]; bloodRequests: any[];
-}
+import type { ApiResult } from "@/lib/types/api";
+import type { getEdWorkspace, buildEdTimeline } from "@/lib/hospital/emergency";
+
+type Workspace = NonNullable<ApiResult<typeof getEdWorkspace>>;
+type TimelineEntry = ApiResult<typeof buildEdTimeline>[number];
 
 const STATUS_TONE: Record<string, "emerald" | "amber" | "red" | "cyan" | "neutral"> = {
   REGISTERED: "neutral", TRIAGED: "amber", IN_CONSULTATION: "cyan", INVESTIGATING: "cyan", ADMITTED: "emerald", DISCHARGED: "neutral", CLOSED: "neutral", CANCELLED: "red",
@@ -26,7 +22,7 @@ export function EdPatientWorkspace({ encounterId }: { encounterId: string }) {
   const push = useToastStore((s) => s.push);
   const [w, setW] = useState<Workspace | null>(null);
   const [tab, setTab] = useState<"overview" | "triage" | "vitals" | "diagnostics" | "reassess" | "timeline" | "disposition">("overview");
-  const [timeline, setTimeline] = useState<any[] | null>(null);
+  const [timeline, setTimeline] = useState<TimelineEntry[] | null>(null);
   const [findings, setFindings] = useState(""); const [escalate, setEscalate] = useState(false);
   const [dispType, setDispType] = useState("DISCHARGE"); const [dispReason, setDispReason] = useState(""); const [dispBed, setDispBed] = useState("");
   const [area, setArea] = useState("");
@@ -135,7 +131,7 @@ export function EdPatientWorkspace({ encounterId }: { encounterId: string }) {
         <Card className="rounded-[20px]"><CardLabel>Vitals (canonical)</CardLabel>
           <div className="mt-2 space-y-1">
             {w.vitals.length === 0 && <p className="text-[13px] text-text-tertiary">No vitals recorded. Record via the canonical vitals/flowsheet surface.</p>}
-            {w.vitals.map((v) => <p key={v.id} className="text-[11.5px] text-text-tertiary">{new Date(v.recordedAt).toLocaleString()} — HR {v.heartRate ?? "—"} · BP {v.systolic ?? "—"}/{v.diastolic ?? "—"} · SpO2 {v.spo2 ?? "—"} · T {v.temperature ?? "—"}</p>)}
+            {w.vitals.map((v) => <p key={v.id} className="text-[11.5px] text-text-tertiary">{new Date(v.recordedAt).toLocaleString()} — HR {v.hr ?? "—"} · BP {v.sbp ?? "—"}/{v.dbp ?? "—"} · SpO2 {v.spo2 ?? "—"} · T {v.tempC ?? "—"}</p>)}
           </div>
         </Card>
       )}
@@ -144,7 +140,7 @@ export function EdPatientWorkspace({ encounterId }: { encounterId: string }) {
         <div className="grid gap-3 md:grid-cols-2">
           <Card className="rounded-[20px]"><CardLabel>Lab orders</CardLabel>
             <div className="mt-2 space-y-1">{w.labOrders.length === 0 && <p className="text-[12.5px] text-text-tertiary">None.</p>}
-              {w.labOrders.map((o) => <p key={o.id} className="text-[12px]">{o.testName ?? o.panelName ?? "Lab"} · <span className="text-text-tertiary">{o.status}</span></p>)}
+              {w.labOrders.map((o) => <p key={o.id} className="text-[12px]">{o.testName ?? "Lab"} · <span className="text-text-tertiary">{o.status}</span></p>)}
             </div>
           </Card>
           <Card className="rounded-[20px]"><CardLabel>Imaging orders</CardLabel>

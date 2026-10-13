@@ -7,7 +7,12 @@ import { StatusPill, type StatusTone } from "@/components/ui/StatusPill";
 import { Button } from "@/components/ui/Button";
 import { useToastStore } from "@/store/useToastStore";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { ApiResult } from "@/lib/types/api";
+import type { getWorkflowMetrics, listDefinitions, listInstances } from "@/lib/workflows";
+
+type WorkflowMetrics = ApiResult<typeof getWorkflowMetrics>;
+type WorkflowDefinition = ApiResult<typeof listDefinitions>[number];
+type WorkflowInstance = ApiResult<typeof listInstances>[number];
 
 /**
  * Phase D7 — platform-only Workflow Operations panel. Renders NOTHING for
@@ -30,9 +35,9 @@ const ms = (n: number) => (n < 1000 ? `${n}ms` : n < 60_000 ? `${(n / 1000).toFi
 
 export function WorkflowOperationsPanel() {
   const push = useToastStore((s) => s.push);
-  const [metrics, setMetrics] = useState<any>(null);
-  const [defs, setDefs] = useState<any[] | null>(null);
-  const [instances, setInstances] = useState<any[] | null>(null);
+  const [metrics, setMetrics] = useState<WorkflowMetrics | null>(null);
+  const [defs, setDefs] = useState<WorkflowDefinition[] | null>(null);
+  const [instances, setInstances] = useState<WorkflowInstance[] | null>(null);
   const [visible, setVisible] = useState(false);
 
   const load = useCallback(() => {
@@ -97,7 +102,7 @@ export function WorkflowOperationsPanel() {
         <Card className="p-3">
           <div className="mb-2 text-[12px] font-medium text-text-secondary">Definitions</div>
           <div className="flex flex-wrap gap-2">
-            {defs.map((d: any) => (
+            {defs.map((d) => (
               <StatusPill key={d.id} tone={d.status === "ACTIVE" ? "success" : "neutral"} dot={false} label={`${d.key} · ${d.triggerEventType}@${d.triggerEventVersion}`} />
             ))}
           </div>
@@ -110,7 +115,7 @@ export function WorkflowOperationsPanel() {
           <div className="text-[12px] text-text-tertiary">No workflow instances yet.</div>
         ) : (
           <div className="space-y-2">
-            {instances.map((i: any) => (
+            {instances.map((i) => (
               <div key={i.id} className="flex items-center gap-2 rounded-lg border border-hairline p-2">
                 <StatusPill tone={instTone(i.status)} dot={false} label={i.status} />
                 <span className="truncate text-[12px] text-text-secondary">{i.definition?.key ?? i.workflowDefinitionId}</span>

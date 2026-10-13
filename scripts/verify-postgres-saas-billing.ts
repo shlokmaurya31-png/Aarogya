@@ -110,7 +110,7 @@ async function run() {
 
   const mPlatform = await load(ID.uPlatform, "AAROGYA_ADMIN");
   const mAdminA = await load(ID.uAdminA, "HOSPITAL_ADMIN");
-  const mAdminB = await load(ID.uAdminB, "HOSPITAL_ADMIN");
+  await load(ID.uAdminB, "HOSPITAL_ADMIN");
   const mOutsider = await load(ID.uOutsider, "DOCTOR");
 
   await assignPlan(mPlatform, { organizationId: ID.orgA, planCode: "professional" });

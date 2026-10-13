@@ -7,7 +7,11 @@ import { StatusPill, type StatusTone } from "@/components/ui/StatusPill";
 import { Button } from "@/components/ui/Button";
 import { useToastStore } from "@/store/useToastStore";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { ApiResult } from "@/lib/types/api";
+import type { getEventMetrics, listDeadLetters } from "@/lib/events";
+
+type EventMetrics = ApiResult<typeof getEventMetrics>;
+type DeadLetter = ApiResult<typeof listDeadLetters>[number];
 
 /**
  * Phase D6 — platform-only Event Operations panel. Renders NOTHING for non-platform
@@ -30,8 +34,8 @@ const ms = (n: number) => (n < 1000 ? `${n}ms` : n < 60_000 ? `${(n / 1000).toFi
 
 export function EventOperationsPanel() {
   const push = useToastStore((s) => s.push);
-  const [metrics, setMetrics] = useState<any>(null);
-  const [deadLetters, setDeadLetters] = useState<any[] | null>(null);
+  const [metrics, setMetrics] = useState<EventMetrics | null>(null);
+  const [deadLetters, setDeadLetters] = useState<DeadLetter[] | null>(null);
   const [visible, setVisible] = useState(false);
 
   const load = useCallback(() => {
@@ -106,7 +110,7 @@ export function EventOperationsPanel() {
           <div className="text-[12px] text-text-tertiary">No dead-lettered events.</div>
         ) : (
           <div className="space-y-2">
-            {deadLetters.map((e: any) => (
+            {deadLetters.map((e) => (
               <div key={e.eventId} className="flex items-center gap-2 rounded-lg border border-hairline p-2">
                 <StatusPill tone={statusTone(e.status)} dot={false} label={`${e.eventType}@${e.eventVersion}`} />
                 <span className="truncate text-[12px] text-text-tertiary">{e.lastErrorCode}: {e.lastErrorMessage}</span>

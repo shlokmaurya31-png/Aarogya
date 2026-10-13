@@ -10,7 +10,32 @@ import { StatusPill } from "@/components/ui/StatusPill";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { ApiResult } from "@/lib/types/api";
+import type { listIntegrations, describeIntegration } from "@/lib/hospital/interoperability/controlPlane/registry";
+import type { ReadinessAssessment } from "@/lib/hospital/interoperability/controlPlane/readiness";
+import type { collectMetrics } from "@/lib/hospital/interoperability/controlPlane/operations";
+import type { listAlerts } from "@/lib/hospital/interoperability/controlPlane/alerts";
+import type { listCertificates } from "@/lib/hospital/interoperability/controlPlane/certificates";
+import type { listRevisions } from "@/lib/hospital/interoperability/controlPlane/configuration";
+import type { listParticipants } from "@/lib/hospital/interoperability/controlPlane/participants";
+import type { listUnifiedExchanges, listUnifiedCallbacks } from "@/lib/hospital/interoperability/controlPlane/exchanges";
+
+// GET /api/hospital/integrations (overview, and ?system= detail), assembled in the route.
+interface ControlPlaneOverview {
+  integrations: ApiResult<typeof listIntegrations>;
+  metrics: ApiResult<typeof collectMetrics>;
+  alerts: ApiResult<typeof listAlerts>;
+  certificates: ApiResult<typeof listCertificates>;
+}
+interface IntegrationDetail {
+  integration: ApiResult<typeof describeIntegration>;
+  revisions: ApiResult<typeof listRevisions>;
+  certificates: ApiResult<typeof listCertificates>;
+}
+interface ParticipantsView { participants: ApiResult<typeof listParticipants> }
+interface ExchangesView { exchanges: ApiResult<typeof listUnifiedExchanges> }
+interface CallbacksView { callbacks: ApiResult<typeof listUnifiedCallbacks> }
+type UnifiedExchange = ExchangesView["exchanges"][number];
 
 /**
  * Phase C6 — interoperability control plane.
@@ -62,8 +87,8 @@ function Empty({ children }: { children: React.ReactNode }) {
 }
 
 /** The six readiness dimensions, always shown together and never averaged. */
-function ReadinessGrid({ r }: { r: any }) {
-  const rows: [string, string][] = [
+function ReadinessGrid({ r }: { r: ReadinessAssessment | null | undefined }) {
+  const rows: [string, string | undefined][] = [
     ["Architecture", r?.dimensions?.architecture],
     ["Contract", r?.dimensions?.contract],
     ["Configuration", r?.dimensions?.configuration],
@@ -87,12 +112,12 @@ export function IntegrationControlPlane() {
   const push = useToastStore((s) => s.push);
   const [tab, setTab] = useState<Tab>("overview");
 
-  const [data, setData] = useState<any>(null);
-  const [participants, setParticipants] = useState<any>(null);
-  const [exchanges, setExchanges] = useState<any>(null);
-  const [callbacks, setCallbacks] = useState<any>(null);
+  const [data, setData] = useState<ControlPlaneOverview | null>(null);
+  const [participants, setParticipants] = useState<ParticipantsView | null>(null);
+  const [exchanges, setExchanges] = useState<ExchangesView | null>(null);
+  const [callbacks, setCallbacks] = useState<CallbacksView | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [loadedDetail, setLoadedDetail] = useState<{ system: string; data: any } | null>(null);
+  const [loadedDetail, setLoadedDetail] = useState<{ system: string; data: IntegrationDetail | null } | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
@@ -144,9 +169,9 @@ export function IntegrationControlPlane() {
   }
 
   const detail = loadedDetail && loadedDetail.system === selected ? loadedDetail.data : null;
-  const integrations: any[] = data?.integrations ?? [];
+  const integrations = data?.integrations ?? [];
   const failing = (exchanges?.exchanges ?? []).filter(
-    (e: any) => e.operationalState === "FAILED" || e.operationalState === "REQUIRES_REVIEW"
+    (e: UnifiedExchange) => e.operationalState === "FAILED" || e.operationalState === "REQUIRES_REVIEW"
   );
 
   return (
@@ -178,9 +203,9 @@ export function IntegrationControlPlane() {
         })}
       </div>
 
-      {(data?.alerts?.length ?? 0) > 0 && (
+      {data && data.alerts.length > 0 && (
         <div className="space-y-1.5">
-          {data.alerts.slice(0, 4).map((a: any) => (
+          {data.alerts.slice(0, 4).map((a) => (
             <div key={a.id}
               className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-[11.5px] leading-relaxed ${
                 a.severity === "CRITICAL" ? "border-red/40 bg-red/5 text-red" : "border-amber/40 bg-amber/5 text-amber"
@@ -211,7 +236,7 @@ export function IntegrationControlPlane() {
             </div>
 
             <div className="mt-4 space-y-2">
-              {(data?.metrics?.bySystem ?? []).map((s: any) => (
+              {(data?.metrics?.bySystem ?? []).map((s) => (
                 <div key={s.system} className="rounded-lg border border-hairline px-3 py-2">
                   <p className="text-[12.5px] font-medium">{s.system}</p>
                   <p className="mt-1 text-[11px] text-text-tertiary">
@@ -223,11 +248,11 @@ export function IntegrationControlPlane() {
             </div>
           </Card>
 
-          {(data?.metrics?.failuresByCategory?.length ?? 0) > 0 && (
+          {data && data.metrics.failuresByCategory.length > 0 && (
             <Card>
               <CardLabel>Failures by category</CardLabel>
               <div className="mt-3 space-y-1">
-                {data.metrics.failuresByCategory.map((f: any) => (
+                {data.metrics.failuresByCategory.map((f) => (
                   <div key={f.category} className="flex items-center justify-between text-[12px]">
                     <StatusPill label={f.category} tone={tone(f.category)} className="rounded-md" />
                     <span className="text-text-secondary">{f.count}</span>
@@ -314,8 +339,8 @@ export function IntegrationControlPlane() {
                   <CardLabel>Capabilities</CardLabel>
                   <div className="mt-3 space-y-1.5">
                     {detail.integration.descriptor.capabilities
-                      .filter((c: any) => c.support !== "NOT_APPLICABLE")
-                      .map((c: any) => (
+                      .filter((c) => c.support !== "NOT_APPLICABLE")
+                      .map((c) => (
                         <div key={c.capability} className="rounded-lg border border-hairline px-3 py-2">
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-[12px] font-medium">{c.capability}</span>
@@ -374,7 +399,7 @@ export function IntegrationControlPlane() {
                     <Card>
                       <CardLabel>Configuration history</CardLabel>
                       <div className="mt-3 space-y-1.5">
-                        {(detail.revisions ?? []).map((r: any) => (
+                        {(detail.revisions ?? []).map((r) => (
                           <div key={r.id} className="rounded-lg border border-hairline px-3 py-2">
                             <div className="flex items-center justify-between">
                               <span className="text-[12px] font-medium">r{r.revision} · {r.changeKind}</span>
@@ -393,7 +418,7 @@ export function IntegrationControlPlane() {
                     <Card>
                       <CardLabel>Certificates</CardLabel>
                       <div className="mt-3 space-y-1.5">
-                        {(detail.certificates ?? []).map((c: any) => (
+                        {(detail.certificates ?? []).map((c) => (
                           <div key={c.id} className="rounded-lg border border-hairline px-3 py-2">
                             <div className="flex items-center justify-between">
                               <span className="text-[12px] font-medium">{c.usage} · {c.role}</span>
@@ -426,7 +451,7 @@ export function IntegrationControlPlane() {
             can be exchanged with.
           </p>
           <div className="mt-3 space-y-2">
-            {(participants?.participants ?? []).map((p: any) => (
+            {(participants?.participants ?? []).map((p) => (
               <div key={p.id} className="flex items-center justify-between gap-2 rounded-lg border border-hairline px-3 py-2">
                 <div className="min-w-0">
                   <p className="truncate text-[12.5px] font-medium">{p.name}</p>
@@ -450,7 +475,7 @@ export function IntegrationControlPlane() {
             the clinical or financial payload it carried.
           </p>
           <div className="mt-3 space-y-2">
-            {(tab === "failures" ? failing : exchanges?.exchanges ?? []).map((e: any) => (
+            {(tab === "failures" ? failing : exchanges?.exchanges ?? []).map((e) => (
               <div key={`${e.source}-${e.id}`} className="rounded-lg border border-hairline px-3 py-2">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-[12.5px] font-medium">{e.system} · {e.direction}</p>
@@ -496,7 +521,7 @@ export function IntegrationControlPlane() {
             callback changed nothing.
           </p>
           <div className="mt-3 space-y-2">
-            {(callbacks?.callbacks ?? []).map((c: any) => (
+            {(callbacks?.callbacks ?? []).map((c) => (
               <div key={`${c.source}-${c.id}`} className="rounded-lg border border-hairline px-3 py-2">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-[12.5px] font-medium">{c.system} · {c.kind}</p>

@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { checkRateLimit, clearRateLimit, clientIp, resetInboundRateLimiter } from "./rateLimit";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { checkRateLimit, clearRateLimit, clientIp, rateLimit, resetInboundRateLimiter } from "./rateLimit";
 
 describe("checkRateLimit", () => {
   beforeEach(() => resetInboundRateLimiter());
@@ -31,5 +31,47 @@ describe("clientIp", () => {
     expect(clientIp(new Headers({ "x-forwarded-for": "1.1.1.1, 10.0.0.1" }))).toBe("1.1.1.1");
     expect(clientIp(new Headers({ "x-real-ip": "2.2.2.2" }))).toBe("2.2.2.2");
     expect(clientIp(new Headers())).toBe("unknown");
+  });
+});
+
+describe("rateLimit (Upstash backend)", () => {
+  const env = { ...process.env };
+  afterEach(() => {
+    process.env = { ...env };
+    vi.unstubAllGlobals();
+    resetInboundRateLimiter();
+  });
+
+  it("uses the in-memory limiter when Upstash is not configured", async () => {
+    delete process.env.UPSTASH_REDIS_REST_URL;
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    expect((await rateLimit("m", 1, 1000)).allowed).toBe(true);
+    expect((await rateLimit("m", 1, 1000)).allowed).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("sends an atomic EVAL to Upstash and maps the reply", async () => {
+    process.env.UPSTASH_REDIS_REST_URL = "https://example.upstash.io/";
+    process.env.UPSTASH_REDIS_REST_TOKEN = "tok";
+    const fetchSpy = vi.fn().mockResolvedValue(new Response(JSON.stringify({ result: [0, 1234] })));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    expect(await rateLimit("u", 5, 60_000)).toEqual({ allowed: false, retryAfterMs: 1234 });
+    const [url, init] = fetchSpy.mock.calls[0];
+    expect(url).toBe("https://example.upstash.io");
+    expect(init.headers.Authorization).toBe("Bearer tok");
+    const body = JSON.parse(init.body);
+    expect(body[0]).toBe("EVAL");
+    expect(body.slice(2, 4)).toEqual([1, "aarogya:rl:u"]);
+  });
+
+  it("falls back to memory when Upstash errors", async () => {
+    process.env.UPSTASH_REDIS_REST_URL = "https://example.upstash.io";
+    process.env.UPSTASH_REDIS_REST_TOKEN = "tok";
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("down")));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await rateLimit("f", 1, 1000)).allowed).toBe(true);
+    expect((await rateLimit("f", 1, 1000)).allowed).toBe(false);
   });
 });

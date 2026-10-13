@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  LayoutGrid, BedDouble, ClipboardList, LogOut, Building2, CreditCard, Stethoscope,
+  LayoutGrid, BedDouble, ClipboardList, LogOut, KeyRound, Building2, CreditCard, Stethoscope,
   ClipboardCheck, FlaskConical, ScanLine, Receipt, DoorOpen,
   UserPlus, Siren, ArrowRightLeft, Pill, Microscope,
   ShieldCheck, BarChart3, Settings2, Boxes, Truck, HeartPulse, Scissors, Droplet, Wrench, Network, ShieldAlert, Plug,
@@ -235,6 +235,9 @@ function SidebarContent({
       <NavList nav={nav} pathname={pathname} onNavigate={onNavigate} />
       <div className="mt-2 shrink-0 space-y-0.5 border-t border-hairline pt-2">
         <ThemeToggle variant="sidebar" />
+        <Link href="/account/password" onClick={onNavigate} className="focus-ring flex w-full items-center gap-2.5 rounded-control px-3 py-2 text-left text-[12.5px] font-medium text-text-tertiary transition-colors hover:bg-fill-subtle hover:text-text-primary">
+          <KeyRound size={14} /> Change password
+        </Link>
         <button onClick={onLogout} className="focus-ring flex w-full items-center gap-2.5 rounded-control px-3 py-2 text-left text-[12.5px] font-medium text-text-tertiary transition-colors hover:bg-danger/10 hover:text-danger">
           <LogOut size={14} /> Sign out
         </button>

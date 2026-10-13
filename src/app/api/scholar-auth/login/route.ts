@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import { createSession } from "@/lib/auth/session";
-import { checkRateLimit, clearRateLimit, clientIp } from "@/lib/auth/rateLimit";
+import { clientIp, rateLimit, resetRateLimit } from "@/lib/auth/rateLimit";
 
 // Brute-force bounds. Per-email stops guessing one account's password from
 // many IPs; per-IP stops spraying many accounts from one IP. A successful
@@ -36,10 +36,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Email and password are required." }, { status: 400 });
   }
 
-  const ipLimit = checkRateLimit(`login:ip:${clientIp(req.headers)}`, PER_IP, WINDOW_MS);
+  const ipLimit = await rateLimit(`login:ip:${clientIp(req.headers)}`, PER_IP, WINDOW_MS);
   if (!ipLimit.allowed) return tooMany(ipLimit.retryAfterMs);
   const emailKey = `login:email:${email}`;
-  const emailLimit = checkRateLimit(emailKey, PER_EMAIL, WINDOW_MS);
+  const emailLimit = await rateLimit(emailKey, PER_EMAIL, WINDOW_MS);
   if (!emailLimit.allowed) return tooMany(emailLimit.retryAfterMs);
 
   const user = await prisma.user.findUnique({ where: { email } });
@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid email or password." }, { status: 401 });
   }
 
-  clearRateLimit(emailKey);
+  await resetRateLimit(emailKey);
   await createSession(user.id, user.role);
   return NextResponse.json({ id: user.id, role: user.role, displayName: user.displayName, email: user.email });
 }

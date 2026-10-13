@@ -5,9 +5,20 @@ import { IdCard, ShieldCheck, Trophy, Stethoscope } from "lucide-react";
 import { Card, CardLabel } from "@/components/ui/Card";
 import { StatusPill } from "@/components/ui/StatusPill";
 
+// GET /api/student/dashboard and /api/student/progress — the fields this view reads.
+interface Dashboard {
+  profile: { fullLegalName: string; course: string; academicYear: number; clinicalXp: number };
+  competencies: { domain: string; score: number; attempts: number }[];
+  achievements: { code: string; title: string; description: string | null; icon: string | null; earnedAt: string }[];
+  totalCasesCompleted: number;
+}
+interface Progress {
+  specialtyPerformance: { specialty: string; averageScore: number; count: number }[];
+}
+
 export function StudentPassport() {
-  const [dashboard, setDashboard] = useState<any>(null); // eslint-disable-line @typescript-eslint/no-explicit-any
-  const [progress, setProgress] = useState<any>(null); // eslint-disable-line @typescript-eslint/no-explicit-any
+  const [dashboard, setDashboard] = useState<Dashboard | null>(null);
+  const [progress, setProgress] = useState<Progress | null>(null);
 
   useEffect(() => {
     fetch("/api/student/dashboard").then((r) => r.json()).then(setDashboard);
@@ -45,7 +56,7 @@ export function StudentPassport() {
       <Card className="mt-4 rounded-[20px]">
         <div className="flex items-center gap-2"><Stethoscope size={14} className="text-cyan" /><CardLabel>Specialties explored</CardLabel></div>
         <div className="mt-3 flex flex-wrap gap-1.5">
-          {progress?.specialtyPerformance?.length ? progress.specialtyPerformance.map((s: any) => ( // eslint-disable-line @typescript-eslint/no-explicit-any
+          {progress?.specialtyPerformance?.length ? progress.specialtyPerformance.map((s) => (
             <StatusPill key={s.specialty} label={`${s.specialty} (${s.count})`} tone="cyan" className="rounded-md" />
           )) : <p className="text-[12.5px] text-text-tertiary">No cases completed yet.</p>}
         </div>
@@ -55,7 +66,7 @@ export function StudentPassport() {
         <div className="flex items-center gap-2"><ShieldCheck size={14} className="text-cyan" /><CardLabel>Competencies</CardLabel></div>
         <div className="mt-3 space-y-2">
           {dashboard.competencies.length === 0 && <p className="text-[12.5px] text-text-tertiary">No competency data yet.</p>}
-          {dashboard.competencies.map((c: any) => ( // eslint-disable-line @typescript-eslint/no-explicit-any
+          {dashboard.competencies.map((c) => (
             <div key={c.domain} className="flex items-center justify-between text-[12.5px]">
               <span>{c.domain}</span>
               <span className="tabular-nums text-text-tertiary">{c.score}% ({c.attempts} attempts)</span>
@@ -68,7 +79,7 @@ export function StudentPassport() {
         <div className="flex items-center gap-2"><Trophy size={14} className="text-amber" /><CardLabel>Achievements</CardLabel></div>
         <div className="mt-3 grid grid-cols-2 gap-2.5 sm:grid-cols-3">
           {dashboard.achievements.length === 0 && <p className="col-span-full text-[12.5px] text-text-tertiary">No achievements yet.</p>}
-          {dashboard.achievements.map((a: any) => ( // eslint-disable-line @typescript-eslint/no-explicit-any
+          {dashboard.achievements.map((a) => (
             <div key={a.code} className="rounded-lg border border-hairline p-3 text-center">
               <Trophy size={16} className="mx-auto text-amber" />
               <p className="mt-1.5 text-[11.5px] font-medium">{a.title}</p>

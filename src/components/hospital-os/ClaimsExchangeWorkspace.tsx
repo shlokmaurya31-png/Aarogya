@@ -11,7 +11,53 @@ import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { minorToRupees } from "@/lib/hospital/billing/money";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { ClaimSettlement, NhcxExchange, Prisma } from "@prisma/client";
+import type { ApiResult, Serialized } from "@/lib/types/api";
+import type { buildClaimPackage } from "@/lib/hospital/nhcx/claimPackage";
+import type { getNhcxAdapter } from "@/lib/hospital/nhcx/adapter";
+import type { describeNhcxConfig, checkNhcxEnvironmentSafety } from "@/lib/hospital/nhcx/config";
+import type { describeContract } from "@/lib/hospital/nhcx/contract";
+import type { listQueries } from "@/lib/hospital/nhcx/queries";
+import type { listExceptions } from "@/lib/hospital/nhcx/reconciliation";
+
+// Response shapes of the NHCX routes, which assemble their payloads inline.
+// Keep in step with src/app/api/hospital/claims/nhcx/route.ts and friends.
+interface NhcxOverview {
+  claimsByStatus: { status: string; _count: number }[];
+  exchangesByState: { protocolState: string; _count: number }[];
+  failedExchanges: Serialized<NhcxExchange>[];
+  openExceptions: number;
+  openQueries: number;
+  connectivity: {
+    config: ApiResult<typeof describeNhcxConfig>;
+    capabilities: ApiResult<ReturnType<typeof getNhcxAdapter>["capabilities"]>;
+    safe: boolean;
+    warning: ApiResult<typeof checkNhcxEnvironmentSafety>["warning"];
+    contract: ApiResult<typeof describeContract>;
+  };
+}
+type ClaimPackage = ApiResult<typeof buildClaimPackage>;
+interface ClaimDetail {
+  package: ClaimPackage;
+  readiness: {
+    submittable: boolean;
+    blockers: ClaimPackage["blockers"];
+    warnings: ClaimPackage["warnings"];
+    excludedDocuments: ClaimPackage["excludedDocuments"];
+  };
+  submissions: Serialized<Prisma.ClaimSubmissionGetPayload<{
+    select: {
+      id: true; version: true; submissionType: true; status: true; claimedAmountMinor: true; approvedAmountMinor: true;
+      snapshotHash: true; correctionReason: true; builtAt: true; submittedAt: true; respondedAt: true;
+    };
+  }>>[];
+  exchanges: Serialized<NhcxExchange>[];
+}
+type ClaimRow = Serialized<Prisma.ClaimGetPayload<{
+  include: { coverage: { include: { payer: true } }; invoice: { select: { invoiceNumber: true; patientId: true } } };
+}>>;
+interface QueriesView { queries: ApiResult<typeof listQueries> }
+interface ReconciliationView { settlements: Serialized<ClaimSettlement>[]; exceptions: ApiResult<typeof listExceptions> }
 
 /**
  * Phase C5 — NHCX claims exchange workspace.
@@ -75,12 +121,12 @@ export function ClaimsExchangeWorkspace() {
   const push = useToastStore((s) => s.push);
   const [tab, setTab] = useState<Tab>("overview");
 
-  const [overview, setOverview] = useState<any>(null);
-  const [claims, setClaims] = useState<any[] | null>(null);
+  const [overview, setOverview] = useState<NhcxOverview | null>(null);
+  const [claims, setClaims] = useState<ClaimRow[] | null>(null);
   const [selectedClaim, setSelectedClaim] = useState<string | null>(null);
-  const [loadedDetail, setLoadedDetail] = useState<{ claimId: string; data: any } | null>(null);
-  const [queries, setQueries] = useState<any>(null);
-  const [recon, setRecon] = useState<any>(null);
+  const [loadedDetail, setLoadedDetail] = useState<{ claimId: string; data: ClaimDetail | null } | null>(null);
+  const [queries, setQueries] = useState<QueriesView | null>(null);
+  const [recon, setRecon] = useState<ReconciliationView | null>(null);
   const [busy, setBusy] = useState(false);
 
   const loadOverview = useCallback(() => {
@@ -187,8 +233,8 @@ export function ClaimsExchangeWorkspace() {
         <Card>
           <CardLabel>Claims exchange status</CardLabel>
           <div className="mt-3 flex flex-wrap gap-2">
-            <Metric label="Claims" value={(overview?.claimsByStatus ?? []).reduce((a: number, r: any) => a + (r._count ?? 0), 0)} />
-            <Metric label="Exchanges" value={(overview?.exchangesByState ?? []).reduce((a: number, r: any) => a + (r._count ?? 0), 0)} />
+            <Metric label="Claims" value={(overview?.claimsByStatus ?? []).reduce((a, r) => a + (r._count ?? 0), 0)} />
+            <Metric label="Exchanges" value={(overview?.exchangesByState ?? []).reduce((a, r) => a + (r._count ?? 0), 0)} />
             <Metric label="Failed" value={overview?.failedExchanges?.length ?? 0} t={(overview?.failedExchanges?.length ?? 0) > 0 ? "red" : "neutral"} />
             <Metric label="Open queries" value={overview?.openQueries ?? 0} t={(overview?.openQueries ?? 0) > 0 ? "amber" : "neutral"} />
             <Metric label="Open exceptions" value={overview?.openExceptions ?? 0} t={(overview?.openExceptions ?? 0) > 0 ? "red" : "neutral"} />
@@ -198,7 +244,7 @@ export function ClaimsExchangeWorkspace() {
             <div>
               <p className="text-[11px] uppercase tracking-[0.1em] text-text-tertiary">Claims by canonical status</p>
               <div className="mt-2 space-y-1">
-                {(overview?.claimsByStatus ?? []).map((r: any) => (
+                {(overview?.claimsByStatus ?? []).map((r) => (
                   <div key={r.status} className="flex items-center justify-between text-[12px]">
                     <StatusPill label={r.status} tone={tone(r.status)} className="rounded-md" />
                     <span className="text-text-secondary">{r._count}</span>
@@ -210,7 +256,7 @@ export function ClaimsExchangeWorkspace() {
             <div>
               <p className="text-[11px] uppercase tracking-[0.1em] text-text-tertiary">Exchanges by protocol state</p>
               <div className="mt-2 space-y-1">
-                {(overview?.exchangesByState ?? []).map((r: any) => (
+                {(overview?.exchangesByState ?? []).map((r) => (
                   <div key={r.protocolState} className="flex items-center justify-between text-[12px]">
                     <StatusPill label={r.protocolState} tone={tone(r.protocolState)} className="rounded-md" />
                     <span className="text-text-secondary">{r._count}</span>
@@ -228,7 +274,7 @@ export function ClaimsExchangeWorkspace() {
           <Card>
             <CardLabel>Claims</CardLabel>
             <div className="mt-3 space-y-2">
-              {(claims ?? []).map((c: any) => (
+              {(claims ?? []).map((c) => (
                 <button key={c.id} onClick={() => setSelectedClaim(c.id)}
                   className={`flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left ${
                     selectedClaim === c.id ? "border-cyan/40 bg-cyan/[0.04]" : "border-hairline"}`}>
@@ -252,7 +298,7 @@ export function ClaimsExchangeWorkspace() {
                 {!detail ? <Empty>Loading…</Empty> : (
                   <>
                     <div className="mt-3 flex flex-wrap gap-2">
-                      <Metric label="Claimed" value={money(detail.package?.claimedAmountMinor)} />
+                      <Metric label="Claimed" value={money((detail.package?.lines ?? []).reduce((sum, l) => sum + l.claimedAmountMinor, 0))} />
                       <Metric label="Lines" value={detail.package?.lines?.length ?? 0} />
                       <Metric label="Documents" value={detail.package?.documents?.length ?? 0} />
                       <Metric label="Blockers" value={readiness?.blockers?.length ?? 0} t={(readiness?.blockers?.length ?? 0) > 0 ? "red" : "emerald"} />
@@ -260,23 +306,23 @@ export function ClaimsExchangeWorkspace() {
 
                     {/* Blockers and warnings are never merged into one list: a
                         warning is information, a blocker is a refusal. */}
-                    {(readiness?.blockers?.length ?? 0) > 0 && (
+                    {readiness && readiness.blockers.length > 0 && (
                       <div className="mt-3 space-y-1.5">
-                        {readiness.blockers.map((b: string, i: number) => (
+                        {readiness.blockers.map((b, i) => (
                           <div key={i} className="flex items-start gap-2 rounded-lg border border-red/40 bg-red/5 px-3 py-2 text-[11.5px] text-red">
                             <AlertTriangle size={13} className="mt-0.5 shrink-0" />{b}
                           </div>
                         ))}
                       </div>
                     )}
-                    {(readiness?.warnings?.length ?? 0) > 0 && (
+                    {readiness && readiness.warnings.length > 0 && (
                       <div className="mt-2 space-y-1.5">
-                        {readiness.warnings.map((w: string, i: number) => (
+                        {readiness.warnings.map((w, i) => (
                           <div key={i} className="rounded-lg border border-amber/30 bg-amber/5 px-3 py-2 text-[11.5px] text-amber">{w}</div>
                         ))}
                       </div>
                     )}
-                    {(readiness?.excludedDocuments?.length ?? 0) > 0 && (
+                    {readiness && readiness.excludedDocuments.length > 0 && (
                       <p className="mt-2 text-[11px] text-text-tertiary">
                         {readiness.excludedDocuments.length} document(s) were withheld from the
                         package by minimisation or authorization and will not be disclosed.
@@ -298,7 +344,7 @@ export function ClaimsExchangeWorkspace() {
               <Card>
                 <CardLabel>Submission versions</CardLabel>
                 <div className="mt-3 space-y-2">
-                  {(detail?.submissions ?? []).map((s: any) => (
+                  {(detail?.submissions ?? []).map((s) => (
                     <div key={s.id} className="rounded-lg border border-hairline px-3 py-2">
                       <div className="flex items-center justify-between">
                         <p className="text-[12.5px] font-medium">v{s.version} · {s.submissionType}</p>
@@ -327,7 +373,7 @@ export function ClaimsExchangeWorkspace() {
               <Card>
                 <CardLabel>Exchange attempts</CardLabel>
                 <div className="mt-3 space-y-2">
-                  {(detail?.exchanges ?? []).map((e: any) => (
+                  {(detail?.exchanges ?? []).map((e) => (
                     <div key={e.id} className="rounded-lg border border-hairline px-3 py-2">
                       <div className="flex items-center justify-between">
                         <p className="text-[12.5px] font-medium">{e.exchangeType} · {e.direction}</p>
@@ -360,7 +406,7 @@ export function ClaimsExchangeWorkspace() {
         <Card>
           <CardLabel>Payer queries</CardLabel>
           <div className="mt-3 space-y-2">
-            {(queries?.queries ?? []).map((q: any) => (
+            {(queries?.queries ?? []).map((q) => (
               <div key={q.id} className="rounded-lg border border-hairline px-3 py-2">
                 <div className="flex items-center justify-between">
                   <p className="text-[12.5px] font-medium">{q.reasonCode ?? "Clarification"}</p>
@@ -385,7 +431,7 @@ export function ClaimsExchangeWorkspace() {
             moves money; the canonical receipt is still entered in Billing → Payments.
           </p>
           <div className="mt-3 space-y-2">
-            {(recon?.settlements ?? []).map((s: any) => (
+            {(recon?.settlements ?? []).map((s) => (
               <div key={s.id} className="flex items-center justify-between rounded-lg border border-hairline px-3 py-2">
                 <div>
                   <p className="text-[12.5px] font-medium">{money(s.settledAmountMinor)}</p>
@@ -403,7 +449,7 @@ export function ClaimsExchangeWorkspace() {
         <Card>
           <CardLabel>Reconciliation exceptions</CardLabel>
           <div className="mt-3 space-y-2">
-            {(recon?.exceptions ?? []).map((e: any) => (
+            {(recon?.exceptions ?? []).map((e) => (
               <div key={e.id} className="rounded-lg border border-hairline px-3 py-2">
                 <div className="flex items-center justify-between">
                   <p className="text-[12.5px] font-medium">{e.exceptionType}</p>
@@ -445,7 +491,7 @@ export function ClaimsExchangeWorkspace() {
                 <span>{conn.warning}</span>
               </div>
             )}
-            {conn?.config?.missing?.length > 0 && (
+            {conn && conn.config.missing.length > 0 && (
               <p className="mt-2 text-[11px] text-text-tertiary">
                 Missing configuration: <span className="text-amber">{conn.config.missing.join(", ")}</span>
               </p>
@@ -475,7 +521,7 @@ export function ClaimsExchangeWorkspace() {
           <Card>
             <CardLabel>Recent failures</CardLabel>
             <div className="mt-3 space-y-2">
-              {(overview?.failedExchanges ?? []).map((e: any) => (
+              {(overview?.failedExchanges ?? []).map((e) => (
                 <div key={e.id} className="rounded-lg border border-hairline px-3 py-2 text-[11.5px]">
                   <p className="font-medium">{e.exchangeType} · attempt {e.attemptCount}/{e.maxAttempts}</p>
                   <p className="mt-0.5 text-red">{e.errorCategory}: {e.errorMessage}</p>

@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
+import { enforceLicensure } from "@/lib/hospital/workforce/licensure";
 import { withApiErrors, NotFoundError, BadRequestError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { isLabOrderTransitionAllowed, InvalidLabOrderTransitionError } from "@/lib/hospital/diagnosticsLifecycle";
@@ -25,6 +26,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const { id } = await params;
     const body = await req.json().catch(() => null);
     const { session, facilityId, staff } = await requireFacilityStaff("lab:result:enter", body?.facilityId);
+    await enforceLicensure({ staff, facilityId }, "labResultRelease");
 
     const order = await prisma.labOrder.findUnique({ where: { id }, include: { encounter: true, patient: true } });
     if (!order || order.encounter.facilityId !== facilityId) throw new NotFoundError("Lab order not found.");
