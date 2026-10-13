@@ -35,7 +35,6 @@ import { addInvoiceLine, voidInvoice, generateInvoiceForPeriod, finalizeInvoiceT
 import { ingestWebhook } from "../src/lib/billing/webhooks";
 import { fakeSign } from "../src/lib/billing/provider/fake";
 
-const IS_PG = /^postgres/i.test(process.env.DATABASE_URL ?? "");
 let pass = 0, fail = 0;
 const failures: string[] = [];
 function ok(l: string) { pass++; console.log(`  ✓ ${l}`); }
@@ -100,7 +99,7 @@ const PROF_TOTAL = 2_499_900 + 449_982; // professional price + 18% GST
 const STARTER_TOTAL = 499_900 + 89_982;
 
 async function run() {
-  console.log(`\nPhase D3 SaaS billing verification (provider: ${IS_PG ? "PostgreSQL" : "SQLite"})\n`);
+  console.log(`\nPhase D3 SaaS billing verification (provider: PostgreSQL)\n`);
   await cleanup();
   await ensureCommercialBootstrap();
   await ensureBillingBootstrap();
@@ -202,7 +201,7 @@ async function run() {
 
   await cleanup();
   console.log(`\n────────────────────`);
-  console.log(`RESULT: ${pass} passed, ${fail} failed  (${IS_PG ? "PostgreSQL" : "SQLite"})`);
+  console.log(`RESULT: ${pass} passed, ${fail} failed  (PostgreSQL)`);
   if (fail) { console.log("FAILURES:"); failures.forEach((f) => console.log("  - " + f)); }
   await prisma.$disconnect();
   process.exit(fail ? 1 : 0);
@@ -226,7 +225,6 @@ async function makeOpenInvoice(actorUserId: string, organizationId: string, isoS
 
 async function concurrency(mPlatform: ActorMemberships) {
   console.log("[concurrency]");
-  if (!IS_PG) { console.log("  · skipped (SQLite serialises writers; run against PostgreSQL for the authoritative race gate)"); return; }
 
   // 1. Duplicate renewal: many concurrent renewals -> one invoice, one payment.
   {

@@ -30,7 +30,6 @@ import { getCommercialSummary } from "../src/lib/commercial/summary";
 import { createFacility } from "../src/lib/enterprise/facilities";
 import { addOrganizationMembership } from "../src/lib/enterprise/memberships";
 
-const IS_PG = /^postgres/i.test(process.env.DATABASE_URL ?? "");
 let pass = 0, fail = 0;
 const failures: string[] = [];
 function ok(l: string) { pass++; console.log(`  ✓ ${l}`); }
@@ -86,7 +85,7 @@ async function seed() {
 const load = (id: string, role: "AAROGYA_ADMIN" | "HOSPITAL_ADMIN" | "DOCTOR") => loadActorMemberships(id, role);
 
 async function run() {
-  console.log(`\nPhase D2 commercial verification (provider: ${IS_PG ? "PostgreSQL" : "SQLite"})\n`);
+  console.log(`\nPhase D2 commercial verification (provider: PostgreSQL)\n`);
   await cleanup();
   await ensureCommercialBootstrap();
   await seed();
@@ -209,7 +208,7 @@ async function run() {
 
   await cleanup();
   console.log(`\n──────────────────────────────────────`);
-  console.log(`RESULT: ${pass} passed, ${fail} failed  (${IS_PG ? "PostgreSQL" : "SQLite"})`);
+  console.log(`RESULT: ${pass} passed, ${fail} failed  (PostgreSQL)`);
   if (fail) { console.log("FAILURES:"); failures.forEach((f) => console.log("  - " + f)); }
   await prisma.$disconnect();
   process.exit(fail ? 1 : 0);
@@ -217,7 +216,6 @@ async function run() {
 
 async function concurrency(mPlatform: ActorMemberships) {
   console.log("[concurrency]");
-  if (!IS_PG) { console.log("  · skipped (SQLite serialises writers; run against PostgreSQL for the authoritative race gate)"); return; }
   const mAdminC = await load(ID.uAdminC, "HOSPITAL_ADMIN");
 
   // 1. Facility limit race: org C has 1 facility, cap it at 2, fire 5 concurrent creates → exactly one succeeds.

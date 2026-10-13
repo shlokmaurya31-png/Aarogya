@@ -23,7 +23,6 @@ import {
 } from "../src/lib/config";
 import { loadActorMemberships, type ActorMemberships } from "../src/lib/auth/tenantContext";
 
-const IS_PG = /^postgres/i.test(process.env.DATABASE_URL ?? "");
 let pass = 0, fail = 0; const failures: string[] = [];
 const ok = (l: string) => { pass++; console.log(`  ✓ ${l}`); };
 const bad = (l: string, d?: string) => { fail++; failures.push(l + (d ? ` — ${d}` : "")); console.log(`  ✗ ${l}${d ? ` — ${d}` : ""}`); };
@@ -84,7 +83,7 @@ async function fireEvent(type: string, opts: { organizationId?: string | null; f
 }
 
 async function run() {
-  console.log(`\n=== PHASE D8 CONFIGURATION GATE (${IS_PG ? "PostgreSQL" : "SQLite"}) ===\n`);
+  console.log(`\n=== PHASE D8 CONFIGURATION GATE (PostgreSQL) ===\n`);
   await cleanup();
   await seed();
   const P = await loadActorMemberships(ID.uPlatform, "AAROGYA_ADMIN");
@@ -202,7 +201,7 @@ async function run() {
 
   await cleanup();
   console.log(`\n────────────────────`);
-  console.log(`RESULT: ${pass} passed, ${fail} failed  (${IS_PG ? "PostgreSQL" : "SQLite"})`);
+  console.log(`RESULT: ${pass} passed, ${fail} failed  (PostgreSQL)`);
   if (fail) { console.log("FAILURES:"); failures.forEach((f) => console.log("  - " + f)); }
   await prisma.$disconnect();
   process.exit(fail ? 1 : 0);
@@ -265,7 +264,6 @@ async function clinicalSafetyGate() {
 
 async function concurrency(P: ActorMemberships, A: ActorMemberships, labDefId: string, labDefKey: string) {
   console.log("[concurrency races]");
-  if (!IS_PG) { console.log("  · concurrency races skipped (SQLite serialises writers); single-effect proven by the sequential cases above"); return; }
   const key = "queue.triage.max_wait";
 
   // Race 1 — two workers update the same draft → one deterministic final draft.

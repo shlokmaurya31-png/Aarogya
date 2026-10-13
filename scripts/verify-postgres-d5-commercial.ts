@@ -25,7 +25,6 @@ import { getReconciliationDashboard, listOrganizationExceptions, assignException
 import { revenueReport, arAgingReport } from "../src/lib/commercial/analytics/reports";
 import { getProviderHealth } from "../src/lib/commercial/analytics/providerHealth";
 
-const IS_PG = /^postgres/i.test(process.env.DATABASE_URL ?? "");
 let pass = 0, fail = 0; const failures: string[] = [];
 function ok(l: string) { pass++; console.log(`  ✓ ${l}`); }
 function bad(l: string, d?: string) { fail++; failures.push(l + (d ? ` — ${d}` : "")); console.log(`  ✗ ${l}${d ? ` — ${d}` : ""}`); }
@@ -95,7 +94,7 @@ async function makeInvoice(actor: string, organizationId: string, isoStart: stri
 }
 
 async function run() {
-  console.log(`\nPhase D5 commercial intelligence gate (provider: ${IS_PG ? "PostgreSQL" : "SQLite"})\n`);
+  console.log(`\nPhase D5 commercial intelligence gate (provider: PostgreSQL)\n`);
   await cleanup(); await ensureCommercialBootstrap(); await ensureBillingBootstrap(); await seed(); await ensureBillingBootstrap();
 
   const mPlatform = await loadActorMemberships(ID.uPlatform, "AAROGYA_ADMIN");
@@ -190,7 +189,7 @@ async function run() {
 
   await cleanup();
   console.log(`\n────────────────────`);
-  console.log(`RESULT: ${pass} passed, ${fail} failed  (${IS_PG ? "PostgreSQL" : "SQLite"})`);
+  console.log(`RESULT: ${pass} passed, ${fail} failed  (PostgreSQL)`);
   if (fail) { console.log("FAILURES:"); failures.forEach((f) => console.log("  - " + f)); }
   await prisma.$disconnect();
   process.exit(fail ? 1 : 0);
@@ -198,7 +197,6 @@ async function run() {
 
 async function concurrency(mPlatform: ActorMemberships) {
   console.log("[concurrency]");
-  if (!IS_PG) { console.log("  · skipped (SQLite serialises writers)"); return; }
 
   // Concurrent resolution of one OPEN exception -> exactly one wins.
   {

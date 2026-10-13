@@ -19,7 +19,6 @@ import { getEventMetrics, listEvents, getEvent, listDeadLetters, listOrganizatio
 import { PermanentEventError, RetryableEventError } from "../src/lib/events/types";
 import { loadActorMemberships, type ActorMemberships } from "../src/lib/auth/tenantContext";
 
-const IS_PG = /^postgres/i.test(process.env.DATABASE_URL ?? "");
 let pass = 0, fail = 0; const failures: string[] = [];
 const ok = (l: string) => { pass++; console.log(`  ✓ ${l}`); };
 const bad = (l: string, d?: string) => { fail++; failures.push(l + (d ? ` — ${d}` : "")); console.log(`  ✗ ${l}${d ? ` — ${d}` : ""}`); };
@@ -85,7 +84,7 @@ const emitTest = (organizationId: string, aggregateId: string) =>
   emitDomainEvent(prisma, { type: "InvoiceCreated", aggregateId, organizationId, correlationId: `d6gate:${aggregateId}`, payload: { invoiceId: aggregateId, totalMinor: 1000, currency: "INR" } });
 
 async function run() {
-  console.log(`\n=== PHASE D6 EVENT GATE (${IS_PG ? "PostgreSQL" : "SQLite"}) ===\n`);
+  console.log(`\n=== PHASE D6 EVENT GATE (PostgreSQL) ===\n`);
   await cleanup();
   await seed();
   registerConsumer(testConsumer);
@@ -240,7 +239,7 @@ async function run() {
   unregisterConsumer(testConsumer.name);
   await cleanup();
   console.log(`\n────────────────────`);
-  console.log(`RESULT: ${pass} passed, ${fail} failed  (${IS_PG ? "PostgreSQL" : "SQLite"})`);
+  console.log(`RESULT: ${pass} passed, ${fail} failed  (PostgreSQL)`);
   if (fail) { console.log("FAILURES:"); failures.forEach((f) => console.log("  - " + f)); }
   await prisma.$disconnect();
   process.exit(fail ? 1 : 0);
@@ -248,7 +247,6 @@ async function run() {
 
 async function concurrency(mPlatform: ActorMemberships) {
   console.log("[concurrency races]");
-  if (!IS_PG) { console.log("  · concurrency races skipped (SQLite serialises writers); single-effect proven by the sequential cases above"); return; }
 
   // Race 1 — two transactions performing the same idempotent domain action.
   {

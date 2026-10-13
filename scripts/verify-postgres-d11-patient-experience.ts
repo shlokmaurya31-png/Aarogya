@@ -25,7 +25,6 @@ import { inviteDelegate, acceptDelegation, revokeDelegation, listGrantedDelegati
 import { updateProfile } from "../src/lib/patient/experience/profile";
 import { getAbhaStatus } from "../src/lib/patient/experience/abha";
 
-const IS_PG = /^postgres/i.test(process.env.DATABASE_URL ?? "");
 let pass = 0, fail = 0; const failures: string[] = [];
 const ok = (l: string) => { pass++; console.log(`  ✓ ${l}`); };
 const bad = (l: string, d?: string) => { fail++; failures.push(l + (d ? ` — ${d}` : "")); console.log(`  ✗ ${l}${d ? ` — ${d}` : ""}`); };
@@ -122,7 +121,7 @@ async function seed() {
 }
 
 async function main() {
-  console.log(`\nPHASE D11 — Patient Experience gate (${IS_PG ? "PostgreSQL" : "SQLite"})\n`);
+  console.log(`\nPHASE D11 — Patient Experience gate (PostgreSQL)\n`);
   await cleanup();
   await seed();
 

@@ -43,7 +43,6 @@ import {
 import { setOrgConfig, setFacilityConfig, setDepartmentConfig, resolveConfig, resetFacilityConfig } from "../src/lib/enterprise/configuration";
 import { provisionOrganization } from "../src/lib/enterprise/provisioning";
 
-const IS_PG = /^postgres/i.test(process.env.DATABASE_URL ?? "");
 
 let pass = 0;
 let fail = 0;
@@ -128,7 +127,7 @@ async function seed() {
 const load = (userId: string, role: "HOSPITAL_ADMIN" | "DOCTOR" | "AAROGYA_ADMIN") => loadActorMemberships(userId, role);
 
 async function run() {
-  console.log(`\nPhase D1 tenancy verification (provider: ${IS_PG ? "PostgreSQL" : "SQLite"})\n`);
+  console.log(`\nPhase D1 tenancy verification (provider: PostgreSQL)\n`);
   await cleanup();
   await seed();
 
@@ -255,7 +254,7 @@ async function run() {
 
   await cleanup();
   console.log(`\n──────────────────────────────────────`);
-  console.log(`RESULT: ${pass} passed, ${fail} failed  (${IS_PG ? "PostgreSQL" : "SQLite"})`);
+  console.log(`RESULT: ${pass} passed, ${fail} failed  (PostgreSQL)`);
   if (fail) { console.log("FAILURES:"); failures.forEach((f) => console.log("  - " + f)); }
   await prisma.$disconnect();
   process.exit(fail ? 1 : 0);
@@ -269,10 +268,6 @@ async function removeFacilityMembershipRaw(membershipId: string, m: ActorMembers
 
 async function concurrency() {
   console.log("[concurrency]");
-  if (!IS_PG) {
-    console.log("  · skipped (SQLite serialises writers; run against PostgreSQL for the authoritative race gate)");
-    return;
-  }
   // Use the platform admin here: the last-admin section above intentionally
   // stripped uOrgAdminA's administration, so a fresh load of that user would no
   // longer be authorized. The platform admin is a stable authorized caller.
