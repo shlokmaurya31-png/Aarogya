@@ -2,8 +2,7 @@ name: CI
 
 # Automates the integrity discipline Aarogya already enforces by hand every
 # phase: the unit suite must stay green and the production build must compile
-# and type-check on every change. Lint runs too, but is advisory for now (see
-# the `lint` job) because of pre-existing debt in older *.test.ts files.
+# and type-check on every change, and lint must pass with zero warnings.
 #
 # NOT covered here: the ~40 scripts/verify-postgres-*.ts integrity gates. Each
 # needs a freshly migrated + seeded Postgres and is non-idempotent, with no
@@ -102,11 +101,8 @@ jobs:
             --exit-code
 
   lint:
-    name: Lint (advisory)
+    name: Lint
     runs-on: ubuntu-latest
-    # Advisory: does not gate merges yet. Existing lint errors live in older
-    # test files; once cleared, drop continue-on-error to make this blocking.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -119,4 +115,4 @@ jobs:
         run: npm ci
 
       - name: ESLint
-        run: npm run lint
+        run: npm run lint -- --max-warnings=0

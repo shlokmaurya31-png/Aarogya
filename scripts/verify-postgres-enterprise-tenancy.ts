@@ -35,7 +35,7 @@ import {
   type ActorMemberships,
 } from "../src/lib/auth/tenantContext";
 import { getOrganizationForActor, transitionOrganization } from "../src/lib/enterprise/organizations";
-import { createFacility, transitionFacility } from "../src/lib/enterprise/facilities";
+import { transitionFacility } from "../src/lib/enterprise/facilities";
 import {
   addOrganizationMembership, addFacilityMembership, removeOrganizationMembership,
   setOrganizationMembershipScope,
@@ -133,7 +133,7 @@ async function run() {
   await seed();
 
   const mStdA1 = await load(ID.uStdA1, "DOCTOR");
-  const mMulti = await load(ID.uMulti, "DOCTOR");
+  await load(ID.uMulti, "DOCTOR");
   const mOrgAdminA = await load(ID.uOrgAdminA, "HOSPITAL_ADMIN");
   const mFacAdminA1 = await load(ID.uFacAdminA1, "HOSPITAL_ADMIN");
   const mB1 = await load(ID.uB1, "DOCTOR");

@@ -22,7 +22,8 @@ const runId = Date.now();
 let pass = 0, fail = 0;
 function report(name: string, ok: boolean, detail?: string) {
   console.log(`${ok ? "PASS" : "FAIL"} — ${name}${detail ? ` (${detail})` : ""}`);
-  ok ? pass++ : fail++;
+  if (ok) pass++;
+  else fail++;
 }
 
 async function main() {

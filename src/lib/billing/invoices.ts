@@ -13,7 +13,6 @@ import { isInvoiceMutable, isInvoicePayable } from "./constants";
 import { sumMinor } from "./money";
 
 type Tx = Prisma.TransactionClient;
-type DbClient = Tx | typeof prisma;
 
 /**
  * Phase D3 — SaaS invoice service.

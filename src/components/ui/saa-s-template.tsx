@@ -217,6 +217,7 @@ const Hero = React.memo(() => {
         />
 
         <div className="relative z-10">
+          {/* eslint-disable-next-line @next/next/no-img-element -- remote preview image in an unused template */}
           <img
             src="https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1600&q=80"
             alt="Dashboard preview showing analytics and metrics interface"

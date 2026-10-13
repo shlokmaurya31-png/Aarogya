@@ -160,7 +160,7 @@ async function main() {
     await verifiedCompatibleIssue(req.id, unit.id);
     const issueAttempt = issueUnit({ requestId: req.id, facilityId: facility.id, unitId: unit.id, issuedByStaffId: staff.id, byUserId: staff.userId }).then(() => ({ ok: true as const }), (err) => ({ ok: false as const, err }));
     const recallAttempt = recallUnit({ unitId: unit.id, facilityId: facility.id, reason: "supplier recall", byUserId: staff.userId }).then(() => ({ ok: true as const }), (err) => ({ ok: false as const, err }));
-    const [ri, rr] = await Promise.all([issueAttempt, recallAttempt]);
+    const [ri] = await Promise.all([issueAttempt, recallAttempt]);
     const finalUnit = await prisma.bloodUnit.findUniqueOrThrow({ where: { id: unit.id } });
     // Recall always records the flag; if the unit ended ISSUED, that issue must have won the race before recall quarantined it. The invariant that matters: a recalled+quarantined unit is never left ISSUED.
     const coherent = finalUnit.recalled ? (finalUnit.status !== "AVAILABLE" && finalUnit.status !== "RESERVED") : true;

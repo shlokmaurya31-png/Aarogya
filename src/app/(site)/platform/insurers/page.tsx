@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import {
-  PageHeader, Section, Prose, CardGrid, Card, BulletList, Callout, PageCta,
+  PageHeader, Section, CardGrid, Card, BulletList, Callout, PageCta,
 } from "@/components/site/primitives";
 
 export const metadata: Metadata = {

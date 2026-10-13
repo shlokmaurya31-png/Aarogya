@@ -157,6 +157,7 @@ export async function endAccessSession(sessionId: string, by: "DOCTOR" | "PATIEN
     sessionId: session.id,
     doctorName: session.doctorName,
     endedBy: by,
+    endedByUserId: actingUserId,
     durationMinutes: durationMin,
   };
   await recordAuditEvent("patient.access.ended", session.doctorUserId ?? null, detail, {

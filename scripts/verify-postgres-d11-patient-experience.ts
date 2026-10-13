@@ -20,7 +20,7 @@ import { listAppointments, requestAppointment, cancelPatientAppointment, listBoo
 import { listReports, getDocumentForDownload } from "../src/lib/patient/experience/reports";
 import { listInvoices } from "../src/lib/patient/experience/billing";
 import { initiatePatientPayment, confirmPatientPayment } from "../src/lib/patient/experience/payments";
-import { listPatientConsents, grantPatientConsent } from "../src/lib/patient/experience/consent";
+import { grantPatientConsent } from "../src/lib/patient/experience/consent";
 import { inviteDelegate, acceptDelegation, revokeDelegation, listGrantedDelegations } from "../src/lib/patient/experience/family";
 import { updateProfile } from "../src/lib/patient/experience/profile";
 import { getAbhaStatus } from "../src/lib/patient/experience/abha";
