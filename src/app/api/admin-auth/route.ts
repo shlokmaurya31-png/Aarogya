@@ -1,24 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
-export async function POST(req: NextRequest) {
-  const adminEmail = process.env.ADMIN_EMAIL;
-  const adminPassword = process.env.ADMIN_PASSWORD;
-
-  if (!adminEmail || !adminPassword) {
-    return NextResponse.json(
-      { error: "Admin credentials are not configured on the server." },
-      { status: 500 }
-    );
-  }
-
-  const { email, password } = await req.json();
-  if (typeof email !== "string" || typeof password !== "string") {
-    return NextResponse.json({ error: "Missing email or password." }, { status: 400 });
-  }
-
-  if (email.trim().toLowerCase() !== adminEmail.toLowerCase() || password !== adminPassword) {
-    return NextResponse.json({ error: "Invalid admin credentials." }, { status: 401 });
-  }
-
-  return NextResponse.json({ ok: true });
+// Retired. This compared a password to ADMIN_EMAIL/ADMIN_PASSWORD env vars
+// (non-constant-time, no rate limit) and issued no session — the "admin"
+// state lived in localStorage. Admins now sign in via /api/scholar-auth/login
+// as an AAROGYA_ADMIN account.
+export async function POST() {
+  return NextResponse.json(
+    { error: "This sign-in method has been retired. Use /admin/login." },
+    { status: 410 }
+  );
 }

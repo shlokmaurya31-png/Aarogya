@@ -157,6 +157,11 @@ export const TRANSLATIONS: Record<string, Translation> = {
   "login.toast.welcomeBackHospital": { en: "Welcome back to the hospital portal.", hi: "अस्पताल पोर्टल पर वापसी पर स्वागत है।", bn: "হাসপাতাল পোর্টালে ফিরে আসায় স্বাগতম।", mr: "रुग्णालय पोर्टलवर पुन्हा स्वागत आहे.", te: "ఆసుపత్రి పోర్టల్‌కు తిరిగి స్వాగతం.", ta: "மருத்துவமனை போர்ட்டலுக்கு மீண்டும் வரவேற்கிறோம்.", gu: "હોસ્પિટલ પોર્ટલ પર ફરી સ્વાગત છે.", ur: "ہسپتال پورٹل پر خوش آمدید۔", kn: "ಆಸ್ಪತ್ರೆ ಪೋರ್ಟಲ್‌ಗೆ ಮತ್ತೆ ಸ್ವಾಗತ.", or: "ଡାକ୍ତରଖାନା ପୋର୍ଟାଲରେ ପୁନର୍ବାର ସ୍ୱାଗତ।", ml: "ആശുപത്രി പോർട്ടലിലേക്ക് വീണ്ടും സ്വാഗതം." },
   "login.submit.signin": { en: "Sign in", hi: "साइन इन करें", bn: "সাইন ইন করুন", mr: "साइन इन करा", te: "సైన్ ఇన్ చేయండి", ta: "உள்நுழையவும்", gu: "સાઇન ઇન કરો", ur: "سائن ان کریں", kn: "ಸೈನ್ ಇನ್ ಮಾಡಿ", or: "ସାଇନ ଇନ କରନ୍ତୁ", ml: "സൈൻ ഇൻ ചെയ്യുക" },
   "login.submit.createAccount": { en: "Create account", hi: "खाता बनाएं", bn: "অ্যাকাউন্ট তৈরি করুন", mr: "खाते तयार करा", te: "ఖాతా సృష్టించండి", ta: "கணக்கை உருவாக்கு", gu: "ખાતું બનાવો", ur: "اکاؤنٹ بنائیں", kn: "ಖಾತೆ ರಚಿಸಿ", or: "ଖାତା ତିଆରି କରନ୍ତୁ", ml: "അക്കൗണ്ട് സൃഷ്ടിക്കുക" },
+  "login.field.sex": { en: "Sex", hi: "लिंग" },
+  "login.sex.female": { en: "Female", hi: "महिला" },
+  "login.sex.male": { en: "Male", hi: "पुरुष" },
+  "login.sex.other": { en: "Other", hi: "अन्य" },
+  "login.signup.staffNotice": { en: "Doctor, lab and hospital accounts are created by your facility's administrator in Hospital OS, after your registration and credentials are checked. Ask them for an invite, then", hi: "डॉक्टर, लैब और अस्पताल खाते आपकी सुविधा के प्रशासक द्वारा Hospital OS में आपके पंजीकरण और प्रमाण-पत्रों की जांच के बाद बनाए जाते हैं। उनसे आमंत्रण लें, फिर" },
   "login.submit.submitApplication": { en: "Submit application", hi: "आवेदन जमा करें", bn: "আবেদন জমা দিন", mr: "अर्ज सादर करा", te: "దరఖాస్తు సమర్పించండి", ta: "விண்ணப்பத்தை சமர்ப்பிக்கவும்", gu: "અરજી સબમિટ કરો", ur: "درخواست جمع کریں", kn: "ಅರ್ಜಿ ಸಲ್ಲಿಸಿ", or: "ଆବେଦନ ଦାଖଲ କରନ୍ତୁ", ml: "അപേക്ഷ സമർപ്പിക്കുക" },
 
   // Onboarding

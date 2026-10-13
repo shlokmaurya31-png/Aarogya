@@ -6,7 +6,7 @@ export default function manifest(): MetadataRoute.Manifest {
     short_name: "Aarogya",
     description:
       "A unified AI health operating system connecting patients, doctors, hospitals, labs, pharmacies, and insurers across India.",
-    start_url: "/dashboard",
+    start_url: "/login",
     display: "standalone",
     orientation: "portrait",
     background_color: "#ffffff",
