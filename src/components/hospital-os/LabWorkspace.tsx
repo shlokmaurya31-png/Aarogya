@@ -8,15 +8,20 @@ import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { LabQueue } from "@/components/hospital-os/LabQueue";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { ApiResult } from "@/lib/types/api";
+import type { listQc, listCalibration, listExternalReferrals } from "@/lib/hospital/diagnosticsAdvanced";
+
+type QcRun = ApiResult<typeof listQc>[number];
+type Calibration = ApiResult<typeof listCalibration>[number];
+type ExternalReferral = ApiResult<typeof listExternalReferrals>[number];
 type Tab = "worklist" | "qc" | "calibration" | "external";
 
 export function LabWorkspace() {
   const push = useToastStore((s) => s.push);
   const [tab, setTab] = useState<Tab>("worklist");
-  const [qc, setQc] = useState<any[] | null>(null);
-  const [cal, setCal] = useState<any[] | null>(null);
-  const [ext, setExt] = useState<any[] | null>(null);
+  const [qc, setQc] = useState<QcRun[] | null>(null);
+  const [cal, setCal] = useState<Calibration[] | null>(null);
+  const [ext, setExt] = useState<ExternalReferral[] | null>(null);
   // record forms
   const [qcForm, setQcForm] = useState({ instrumentId: "", controlType: "NORMAL", observedValue: "", result: "PASS" });
   const [calForm, setCalForm] = useState({ instrumentId: "", calibrationType: "" });
@@ -69,7 +74,7 @@ export function LabWorkspace() {
             <div className="mt-2 space-y-1.5">
               {!qc && <div className="h-16 animate-pulse rounded-xl bg-black/[0.04]" />}
               {qc && qc.length === 0 && <p className="text-[13px] text-text-tertiary">No QC runs.</p>}
-              {qc?.map((q: any) => (
+              {qc?.map((q) => (
                 <div key={q.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-1.5 text-[12.5px]">
                   <span>{q.instrumentId} · {q.controlType}{q.observedValue != null ? ` · obs ${q.observedValue}` : ""}{q.result ? ` · ${q.result}` : ""}</span>
                   <span className="flex items-center gap-1.5">
@@ -96,7 +101,7 @@ export function LabWorkspace() {
             <div className="mt-2 space-y-1.5">
               {!cal && <div className="h-16 animate-pulse rounded-xl bg-black/[0.04]" />}
               {cal && cal.length === 0 && <p className="text-[13px] text-text-tertiary">No calibrations.</p>}
-              {cal?.map((c: any) => (
+              {cal?.map((c) => (
                 <div key={c.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-1.5 text-[12.5px]">
                   <span>{c.instrumentId} · {c.calibrationType} · {new Date(c.calibratedAt).toLocaleDateString()}</span>
                   <span className="flex items-center gap-1.5">
@@ -125,7 +130,7 @@ export function LabWorkspace() {
             <div className="mt-2 space-y-1.5">
               {!ext && <div className="h-16 animate-pulse rounded-xl bg-black/[0.04]" />}
               {ext && ext.length === 0 && <p className="text-[13px] text-text-tertiary">No referrals.</p>}
-              {ext?.map((r: any) => {
+              {ext?.map((r) => {
                 const next: Record<string, string> = { DRAFT: "SENT", SENT: "RESULT_RECEIVED", RESULT_RECEIVED: "REVIEWED" };
                 return (
                   <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-1.5 text-[12.5px]">

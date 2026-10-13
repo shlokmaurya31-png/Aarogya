@@ -7,14 +7,17 @@ import { StatusPill } from "@/components/ui/StatusPill";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { RadiologyQueue } from "@/components/hospital-os/RadiologyQueue";
+import type { ApiResult } from "@/lib/types/api";
+import type { getRadiologyAcquisitionWorklist } from "@/lib/hospital/diagnosticsAdvanced";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 type Tab = "worklist" | "acquisition";
+
+type AcquisitionStudy = ApiResult<typeof getRadiologyAcquisitionWorklist>[number];
 
 export function RadiologyWorkspace() {
   const push = useToastStore((s) => s.push);
   const [tab, setTab] = useState<Tab>("worklist");
-  const [worklist, setWorklist] = useState<any[] | null>(null);
+  const [worklist, setWorklist] = useState<AcquisitionStudy[] | null>(null);
   const [form, setForm] = useState<Record<string, { uid: string; images: string; notes: string }>>({});
 
   const load = useCallback(() => {
@@ -56,7 +59,7 @@ export function RadiologyWorkspace() {
           <div className="mt-3 space-y-2">
             {!worklist && <div className="h-24 animate-pulse rounded-xl bg-black/[0.04]" />}
             {worklist && worklist.length === 0 && <p className="text-[13px] text-text-tertiary">No arrived/in-progress/completed studies.</p>}
-            {worklist?.map((s: any) => {
+            {worklist?.map((s) => {
               const f = form[s.studyId] ?? { uid: "", images: "", notes: "" };
               return (
                 <div key={s.studyId} className="rounded-xl border border-hairline p-3">

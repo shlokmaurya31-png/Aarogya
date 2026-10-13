@@ -7,7 +7,40 @@ import { StatusPill } from "@/components/ui/StatusPill";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { InteropConnection } from "@prisma/client";
+import type { ApiResult, Serialized } from "@/lib/types/api";
+import type { describeAbdmConfig, checkEnvironmentSafety } from "@/lib/hospital/interoperability/config";
+import type { getExchangeAdapter } from "@/lib/hospital/interoperability/adapters/abdm";
+import type { checkAbdmHealth } from "@/lib/hospital/interoperability/abdm/health";
+import type { describeCallbackRoutes } from "@/lib/hospital/interoperability/abdm/callbacks";
+import type { describeProfileCoverage } from "@/lib/hospital/interoperability/fhir/profiles";
+import type { listExternalIdentifiers } from "@/lib/hospital/interoperability/externalIdentity";
+import type { listConsents } from "@/lib/hospital/interoperability/consent";
+import type { listExchanges } from "@/lib/hospital/interoperability/exchange";
+import type { listImportedResources } from "@/lib/hospital/interoperability/fhir/import";
+
+/** GET /api/hospital/interoperability/connections (built inline in the route). */
+interface ConnectionsView {
+  connections: Serialized<InteropConnection>[];
+  runtime: {
+    abdm: ApiResult<typeof describeAbdmConfig>;
+    capabilities: ApiResult<ReturnType<typeof getExchangeAdapter>["capabilities"]>;
+    safe: boolean;
+    warning: ApiResult<typeof checkEnvironmentSafety>["warning"];
+  };
+}
+/** GET /api/hospital/interoperability/abdm/connection-test (configured state only). */
+interface AbdmView {
+  facilityId: string;
+  health: ApiResult<typeof checkAbdmHealth>;
+  callbackRoutes: ApiResult<typeof describeCallbackRoutes>;
+  profiles: ApiResult<typeof describeProfileCoverage>;
+}
+type Loaded =
+  | { tab: "identities"; data: ApiResult<typeof listExternalIdentifiers> }
+  | { tab: "consents"; data: ApiResult<typeof listConsents> }
+  | { tab: "exchanges"; data: ApiResult<typeof listExchanges> }
+  | { tab: "imports"; data: ApiResult<typeof listImportedResources> };
 
 /**
  * Phase C1 — Hospital OS interoperability workspace.
@@ -69,9 +102,9 @@ export function InteroperabilityWorkspace() {
   // Rows are tagged with the tab they belong to, so "loading" is DERIVED from a
   // tab/data mismatch rather than from a synchronous setState inside the effect
   // (which would trigger a cascading render).
-  const [loaded, setLoaded] = useState<{ tab: Tab; data: any[] } | null>(null);
-  const [connections, setConnections] = useState<any>(null);
-  const [abdm, setAbdm] = useState<any>(null);
+  const [loaded, setLoaded] = useState<Loaded | null>(null);
+  const [connections, setConnections] = useState<ConnectionsView | null>(null);
+  const [abdm, setAbdm] = useState<AbdmView | null>(null);
   const [testing, setTesting] = useState(false);
 
   const loadConnections = useCallback(() => {
@@ -103,7 +136,7 @@ export function InteroperabilityWorkspace() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { push(data.error ?? "Connection test failed.", "red"); return; }
-      setAbdm((prev: any) => ({ ...(prev ?? {}), health: data.health }));
+      setAbdm((prev) => (prev ? { ...prev, health: data.health } : prev));
       push(`ABDM: ${data.health?.state ?? "UNKNOWN"}`, data.health?.state === "AVAILABLE" ? "emerald" : "amber");
     } finally {
       setTesting(false);
@@ -115,8 +148,8 @@ export function InteroperabilityWorkspace() {
     const e = ENDPOINTS[t];
     fetch(e.url)
       .then((r) => r.json())
-      .then((d) => setLoaded({ tab: t, data: d[e.key] ?? [] }))
-      .catch(() => setLoaded({ tab: t, data: [] }));
+      .then((d) => setLoaded({ tab: t, data: d[e.key] ?? [] } as Loaded))
+      .catch(() => setLoaded({ tab: t, data: [] } as Loaded));
   }, []);
   useEffect(() => { loadRows(tab); }, [tab, loadRows]);
 
@@ -128,6 +161,10 @@ export function InteroperabilityWorkspace() {
   }
 
   const rows = loaded && loaded.tab === tab ? loaded.data : null;
+  const identityRows = loaded?.tab === "identities" && tab === "identities" ? loaded.data : null;
+  const consentRows = loaded?.tab === "consents" && tab === "consents" ? loaded.data : null;
+  const exchangeRows = loaded?.tab === "exchanges" && tab === "exchanges" ? loaded.data : null;
+  const importRows = loaded?.tab === "imports" && tab === "imports" ? loaded.data : null;
   const runtime = connections?.runtime;
   const caps = runtime?.capabilities;
 
@@ -181,7 +218,7 @@ export function InteroperabilityWorkspace() {
             </p>
           )}
 
-          {runtime?.abdm?.missing?.length > 0 && (
+          {runtime && runtime.abdm.missing.length > 0 && (
             <p className="mt-2 text-[11px] text-text-tertiary">
               Missing configuration: <span className="text-amber">{runtime.abdm.missing.join(", ")}</span>
             </p>
@@ -279,7 +316,7 @@ export function InteroperabilityWorkspace() {
               </p>
             )}
             <div className="mt-3 space-y-1">
-              {(abdm?.profiles?.profiles ?? []).slice(0, 20).map((pr: any) => (
+              {(abdm?.profiles?.profiles ?? []).slice(0, 20).map((pr) => (
                 <div key={pr.canonical} className="flex items-center justify-between gap-2 text-[11px]">
                   <span className="truncate text-text-secondary">{pr.resourceType}</span>
                   <StatusPill tone={pr.status === "REGISTERED" ? "cyan" : "neutral"} label={pr.status} />
@@ -291,7 +328,7 @@ export function InteroperabilityWorkspace() {
           <Card>
             <CardLabel>Callback endpoints</CardLabel>
             <div className="mt-3 space-y-1">
-              {(abdm?.callbackRoutes ?? []).map((r: any) => (
+              {(abdm?.callbackRoutes ?? []).map((r) => (
                 <div key={r.kind} className="text-[11px]">
                   <p className="text-text-secondary">{r.kind}</p>
                   <p className="truncate font-mono text-[10px] text-text-tertiary">{r.url ?? r.path}</p>
@@ -314,7 +351,7 @@ export function InteroperabilityWorkspace() {
             {(connections?.connections ?? []).length === 0 && (
               <p className="text-xs text-text-tertiary">No external system has been configured for this facility yet.</p>
             )}
-            {(connections?.connections ?? []).map((c: any) => (
+            {(connections?.connections ?? []).map((c) => (
               <div key={c.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-2">
                 <div className="min-w-0">
                   <p className="text-sm text-text-primary">{c.system}</p>
@@ -340,7 +377,7 @@ export function InteroperabilityWorkspace() {
           {rows?.length === 0 && <p className="mt-3 text-xs text-text-tertiary">Nothing recorded yet.</p>}
 
           <div className="mt-3 space-y-2">
-            {tab === "identities" && rows?.map((r: any) => (
+            {identityRows?.map((r) => (
               <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-2">
                 <div className="min-w-0">
                   <p className="text-sm text-text-primary">
@@ -355,12 +392,12 @@ export function InteroperabilityWorkspace() {
               </div>
             ))}
 
-            {tab === "consents" && rows?.map((r: any) => (
+            {consentRows?.map((r) => (
               <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-2">
                 <div className="min-w-0">
                   <p className="text-sm text-text-primary">{r.purpose} → {r.recipientName ?? r.recipientIdentifier}</p>
                   <p className="text-[11px] text-text-tertiary">
-                    {(r.scopes ?? []).map((s: any) => s.scope).join(", ") || "no scope"}
+                    {(r.scopes ?? []).map((s) => s.scope).join(", ") || "no scope"}
                     {r.expiresAt ? ` · expires ${new Date(r.expiresAt).toLocaleDateString()}` : " · no expiry"}
                   </p>
                 </div>
@@ -378,7 +415,7 @@ export function InteroperabilityWorkspace() {
               </div>
             ))}
 
-            {tab === "exchanges" && rows?.map((r: any) => (
+            {exchangeRows?.map((r) => (
               <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-2">
                 <div className="min-w-0">
                   <p className="text-sm text-text-primary">{r.direction} · {r.destinationSystem} · {r.purpose}</p>
@@ -437,7 +474,7 @@ export function InteroperabilityWorkspace() {
               </div>
             ))}
 
-            {tab === "imports" && rows?.map((r: any) => (
+            {importRows?.map((r) => (
               <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-2">
                 <div className="min-w-0">
                   <p className="text-sm text-text-primary">{r.resourceType} · {r.sourceSystem}</p>

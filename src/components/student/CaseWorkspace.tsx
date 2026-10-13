@@ -12,6 +12,17 @@ import { PrescriptionForm, type RxEntry } from "@/components/student/Prescriptio
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { useToastStore } from "@/store/useToastStore";
 import { cn } from "@/lib/utils";
+import type { Serialized } from "@/lib/types/api";
+import type { CaseScoreBreakdown } from "@/lib/scoring/engine";
+import type { toDebriefView } from "@/lib/caseEngine/publicView";
+
+/** POST /api/student/cases/[id]/submit */
+interface SubmitResult {
+  score: Serialized<CaseScoreBreakdown>;
+  debrief: Serialized<ReturnType<typeof toDebriefView>>;
+  newAchievements: string[];
+  xpGain: number;
+}
 
 const STAGE_LABELS: Record<string, string> = {
   TRIAGE: "Triage", HISTORY: "History", PHYSICAL: "Examination", DIFFERENTIAL: "Differential",
@@ -60,7 +71,7 @@ export function CaseWorkspace({ caseId }: { caseId: string }) {
   const [vivaQuestion, setVivaQuestion] = useState<string | null>(null);
   const [vivaInput, setVivaInput] = useState("");
   const [vivaLoading, setVivaLoading] = useState(false);
-  const [result, setResult] = useState<{ score: any; debrief: any; newAchievements: string[]; xpGain: number } | null>(null); // eslint-disable-line @typescript-eslint/no-explicit-any
+  const [result, setResult] = useState<SubmitResult | null>(null);
 
   const load = useCallback(async (restart = false) => {
     const res = await fetch(`/api/student/cases/${caseId}${restart ? "?restart=true" : ""}`);
@@ -485,7 +496,7 @@ function VitalChip({ icon: Icon, label, value, status }: { icon: typeof HeartPul
   );
 }
 
-function DebriefPanel({ result, onReplay }: { result: { score: any; debrief: any; newAchievements: string[]; xpGain: number }; onReplay: () => void }) { // eslint-disable-line @typescript-eslint/no-explicit-any
+function DebriefPanel({ result, onReplay }: { result: SubmitResult; onReplay: () => void }) {
   const { score, debrief, newAchievements, xpGain } = result;
   return (
     <div className="space-y-4">
@@ -502,7 +513,7 @@ function DebriefPanel({ result, onReplay }: { result: { score: any; debrief: any
       <Card className="rounded-[20px]">
         <CardLabel>Score breakdown</CardLabel>
         <div className="mt-3 space-y-2.5">
-          {score.dimensions.map((d: any) => ( // eslint-disable-line @typescript-eslint/no-explicit-any
+          {score.dimensions.map((d) => (
             <div key={d.key}>
               <div className="flex items-center justify-between text-[12px]">
                 <span>{d.label}</span>
@@ -523,7 +534,7 @@ function DebriefPanel({ result, onReplay }: { result: { score: any; debrief: any
         <div className="mt-3">
           <p className="text-[11px] uppercase tracking-[0.08em] text-text-tertiary">Reference differentials</p>
           <ul className="mt-1.5 space-y-1.5">
-            {debrief.referenceDifferentials.map((d: any, i: number) => ( // eslint-disable-line @typescript-eslint/no-explicit-any
+            {debrief.referenceDifferentials.map((d, i) => (
               <li key={i} className="text-[12.5px]">
                 <span className="font-medium">{d.diagnosis}</span>{d.mustNotMiss && <span className="ml-1.5 text-[10px] text-red">must-not-miss</span>}
                 <p className="text-[11.5px] text-text-tertiary">{d.rationale}</p>

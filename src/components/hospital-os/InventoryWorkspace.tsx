@@ -8,16 +8,22 @@ import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { InventoryStock } from "@/components/hospital-os/InventoryStock";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { DepartmentSupplyRequest } from "@prisma/client";
+import type { ApiResult, Serialized } from "@/lib/types/api";
+import type { getInventoryValuation, getReorderSuggestions } from "@/lib/hospital/inventory/inventoryAdvanced";
+
+type Valuation = ApiResult<typeof getInventoryValuation>;
+type SupplyRequest = Serialized<DepartmentSupplyRequest>;
+type ReorderSuggestion = ApiResult<typeof getReorderSuggestions>[number];
 type Tab = "stock" | "valuation" | "requests" | "reorder";
 const rupees = (minor: number) => `₹${(minor / 100).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 
 export function InventoryWorkspace() {
   const push = useToastStore((s) => s.push);
   const [tab, setTab] = useState<Tab>("stock");
-  const [val, setVal] = useState<any>(null);
-  const [requests, setRequests] = useState<any[] | null>(null);
-  const [reorder, setReorder] = useState<any[] | null>(null);
+  const [val, setVal] = useState<Valuation | null>(null);
+  const [requests, setRequests] = useState<SupplyRequest[] | null>(null);
+  const [reorder, setReorder] = useState<ReorderSuggestion[] | null>(null);
 
   const loadTab = useCallback((t: Tab) => {
     if (t === "valuation") fetch("/api/hospital/inventory/valuation").then((r) => r.json()).then((d) => setVal(d.valuation ?? null));
@@ -66,7 +72,7 @@ export function InventoryWorkspace() {
               </Card>
               <Card className="rounded-[20px]"><CardLabel>Value by category</CardLabel>
                 <div className="mt-2 space-y-1">
-                  {val.byCategory.map((c: any) => <div key={c.category} className="flex items-center justify-between text-[12.5px]"><span>{c.category}</span><span>{rupees(c.valueMinor)} · {Math.round(c.quantity)} units</span></div>)}
+                  {val.byCategory.map((c) => <div key={c.category} className="flex items-center justify-between text-[12.5px]"><span>{c.category}</span><span>{rupees(c.valueMinor)} · {Math.round(c.quantity)} units</span></div>)}
                 </div>
               </Card>
             </>
@@ -79,7 +85,7 @@ export function InventoryWorkspace() {
           <div className="mt-2 space-y-1.5">
             {!requests && <div className="h-16 animate-pulse rounded-xl bg-black/[0.04]" />}
             {requests && requests.length === 0 && <p className="text-[13px] text-text-tertiary">No requests.</p>}
-            {requests?.map((r: any) => {
+            {requests?.map((r) => {
               const next: Record<string, string> = { REQUESTED: "APPROVED", APPROVED: "RESERVED", RESERVED: "ISSUED", ISSUED: "RECEIVED" };
               return (
                 <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-1.5 text-[12.5px]">
@@ -100,7 +106,7 @@ export function InventoryWorkspace() {
           <div className="mt-2 space-y-1.5">
             {!reorder && <div className="h-16 animate-pulse rounded-xl bg-black/[0.04]" />}
             {reorder && reorder.length === 0 && <p className="text-[13px] text-text-tertiary">No items below reorder point.</p>}
-            {reorder?.map((s: any) => (
+            {reorder?.map((s) => (
               <div key={s.itemId} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-1.5 text-[12.5px]">
                 <span>{s.name} · {s.sku}</span>
                 <span className="text-amber">available {s.available} ≤ reorder {s.reorderPoint}{s.suggestedQuantity ? ` · suggest ${s.suggestedQuantity}` : ""}</span>

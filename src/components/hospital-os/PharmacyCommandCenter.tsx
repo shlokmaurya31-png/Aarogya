@@ -8,15 +8,13 @@ import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { PharmacyWorkspace } from "@/components/hospital-os/PharmacyWorkspace";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-interface CommandCenter {
-  verification: { pendingVerification: number; held: number; rejected: number };
-  dispensing: { readyToDispense: number; controlledPending: number };
-  inventory: { expiringLots: number; expiredLots: number; quarantinedLots: number; recalledLots: number; lowStock: number };
-  returns: { pendingReturns: number };
-  requests: { pending: number };
-  recalls: { open: number };
-}
+import type { MedicationRecall, MedicationReturn, PharmacyRequest } from "@prisma/client";
+import type { ApiResult, Serialized } from "@/lib/types/api";
+import type { buildPharmacyCommandCenter, getPharmacyStock, getExpiryReport } from "@/lib/hospital/pharmacy";
+
+type CommandCenter = ApiResult<typeof buildPharmacyCommandCenter>;
+type StockRow = ApiResult<typeof getPharmacyStock>[number];
+type ExpiryRow = ApiResult<typeof getExpiryReport>[number];
 
 function Metric({ label, value, tone = "neutral" }: { label: string; value: number; tone?: "red" | "amber" | "cyan" | "neutral" | "emerald" }) {
   const color = tone === "red" ? "text-red" : tone === "amber" ? "text-amber" : tone === "cyan" ? "text-cyan" : tone === "emerald" ? "text-emerald" : "";
@@ -34,11 +32,11 @@ export function PharmacyCommandCenter() {
   const push = useToastStore((s) => s.push);
   const [cc, setCc] = useState<CommandCenter | null>(null);
   const [tab, setTab] = useState<Tab>("verify");
-  const [stock, setStock] = useState<any[] | null>(null);
-  const [expiry, setExpiry] = useState<any[] | null>(null);
-  const [requests, setRequests] = useState<any[] | null>(null);
-  const [returns, setReturns] = useState<any[] | null>(null);
-  const [recalls, setRecalls] = useState<any[] | null>(null);
+  const [stock, setStock] = useState<StockRow[] | null>(null);
+  const [expiry, setExpiry] = useState<ExpiryRow[] | null>(null);
+  const [requests, setRequests] = useState<Serialized<PharmacyRequest>[] | null>(null);
+  const [returns, setReturns] = useState<Serialized<MedicationReturn>[] | null>(null);
+  const [recalls, setRecalls] = useState<Serialized<MedicationRecall>[] | null>(null);
 
   const loadCc = useCallback(() => { fetch("/api/hospital/pharmacy/command-center").then((r) => r.json()).then((d) => setCc(d.commandCenter ?? null)); }, []);
   useEffect(loadCc, [loadCc]);
@@ -106,7 +104,7 @@ export function PharmacyCommandCenter() {
               <table className="w-full text-[12px]">
                 <thead><tr className="text-left text-text-tertiary"><th className="py-1 pr-3">Medication</th><th className="pr-3">Lot</th><th className="pr-3">Expiry</th><th className="pr-3">Loc</th><th className="pr-3">Avail</th><th className="pr-3">Resv</th><th>Flags</th></tr></thead>
                 <tbody>
-                  {stock.map((s: any, i: number) => (
+                  {stock.map((s, i) => (
                     <tr key={i} className="border-t border-hairline">
                       <td className="py-1 pr-3">{s.itemName}{s.highAlert ? " ⚠" : ""}{s.controlledClass ? ` · ${s.controlledClass}` : ""}</td>
                       <td className="pr-3">{s.lotNumber}</td>
@@ -114,7 +112,7 @@ export function PharmacyCommandCenter() {
                       <td className="pr-3">{s.locationName}</td>
                       <td className="pr-3">{s.available}</td>
                       <td className="pr-3">{s.reserved}</td>
-                      <td>{[s.quarantined && "QUAR", s.recalled && "RECALL", s.expired && "EXP"].filter(Boolean).map((f: any) => <StatusPill key={f} label={f} tone="red" className="mr-1 rounded-md" />)}</td>
+                      <td>{[s.quarantined && "QUAR", s.recalled && "RECALL", s.expired && "EXP"].filter((f): f is string => Boolean(f)).map((f) => <StatusPill key={f} label={f} tone="red" className="mr-1 rounded-md" />)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -129,7 +127,7 @@ export function PharmacyCommandCenter() {
           <div className="mt-2 space-y-1.5">
             {!expiry && <div className="h-24 animate-pulse rounded-xl bg-black/[0.04]" />}
             {expiry && expiry.length === 0 && <p className="text-[13px] text-text-tertiary">No lots expiring soon.</p>}
-            {expiry?.map((l: any) => (
+            {expiry?.map((l) => (
               <div key={l.lotId} className="flex items-center justify-between rounded-xl border border-hairline px-3 py-1.5 text-[12.5px]">
                 <span>{l.itemName} · {l.lotNumber} · on-hand {l.onHand}</span>
                 <span className="flex items-center gap-1.5">
@@ -147,7 +145,7 @@ export function PharmacyCommandCenter() {
           <div className="mt-2 space-y-1.5">
             {!requests && <div className="h-24 animate-pulse rounded-xl bg-black/[0.04]" />}
             {requests && requests.length === 0 && <p className="text-[13px] text-text-tertiary">No requests.</p>}
-            {requests?.map((r: any) => (
+            {requests?.map((r) => (
               <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-1.5 text-[12.5px]">
                 <span>Item {r.itemId.slice(-6)} · qty {r.quantity}{r.priority !== "ROUTINE" ? ` · ${r.priority}` : ""}</span>
                 <span className="flex items-center gap-1.5">
@@ -166,7 +164,7 @@ export function PharmacyCommandCenter() {
           <div className="mt-2 space-y-1.5">
             {!returns && <div className="h-24 animate-pulse rounded-xl bg-black/[0.04]" />}
             {returns && returns.length === 0 && <p className="text-[13px] text-text-tertiary">No returns.</p>}
-            {returns?.map((r: any) => (
+            {returns?.map((r) => (
               <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-1.5 text-[12.5px]">
                 <span>Item {r.itemId.slice(-6)} · qty {r.quantity} · {r.source}{r.isControlled ? " · CONTROLLED" : ""}</span>
                 <span className="flex flex-wrap items-center gap-1.5">
@@ -186,7 +184,7 @@ export function PharmacyCommandCenter() {
           <div className="mt-2 space-y-1.5">
             {!recalls && <div className="h-24 animate-pulse rounded-xl bg-black/[0.04]" />}
             {recalls && recalls.length === 0 && <p className="text-[13px] text-text-tertiary">No recalls.</p>}
-            {recalls?.map((r: any) => (
+            {recalls?.map((r) => (
               <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-1.5 text-[12.5px]">
                 <span>Item {r.itemId.slice(-6)}{r.batchRef ? ` · batch ${r.batchRef}` : ""} · {r.reason}</span>
                 <span className="flex items-center gap-1.5">

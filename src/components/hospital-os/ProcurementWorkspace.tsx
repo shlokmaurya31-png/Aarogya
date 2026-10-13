@@ -8,18 +8,30 @@ import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { Procurement } from "@/components/hospital-os/Procurement";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { Prisma } from "@prisma/client";
+import type { ApiResult, Serialized } from "@/lib/types/api";
+import type { getSupplierPerformance, compareQuotations } from "@/lib/hospital/procurement/procurementAdvanced";
+
+// Inline queries in the GET routes; keep these includes in step with them.
+type Rfq = Serialized<Prisma.RfqGetPayload<{
+  include: { lines: true; quotations: { select: { id: true; supplierId: true; totalMinor: true; status: true; selected: true } } };
+}>>;
+type SupplierRef = { supplier: { select: { name: true; code: true } } };
+type Contract = Serialized<Prisma.SupplierContractGetPayload<{ include: SupplierRef }>>;
+type SupplierInvoice = Serialized<Prisma.SupplierInvoiceGetPayload<{ include: SupplierRef }>>;
+type SupplierPerformance = ApiResult<typeof getSupplierPerformance>[number];
+type QuotationComparison = ApiResult<typeof compareQuotations>;
 type Tab = "pipeline" | "rfq" | "contracts" | "invoices" | "performance";
 const rupees = (minor: number) => `₹${(minor / 100).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 
 export function ProcurementWorkspace() {
   const push = useToastStore((s) => s.push);
   const [tab, setTab] = useState<Tab>("pipeline");
-  const [rfqs, setRfqs] = useState<any[] | null>(null);
-  const [contracts, setContracts] = useState<any[] | null>(null);
-  const [invoices, setInvoices] = useState<any[] | null>(null);
-  const [perf, setPerf] = useState<any[] | null>(null);
-  const [comparison, setComparison] = useState<any | null>(null);
+  const [rfqs, setRfqs] = useState<Rfq[] | null>(null);
+  const [contracts, setContracts] = useState<Contract[] | null>(null);
+  const [invoices, setInvoices] = useState<SupplierInvoice[] | null>(null);
+  const [perf, setPerf] = useState<SupplierPerformance[] | null>(null);
+  const [comparison, setComparison] = useState<QuotationComparison | null>(null);
 
   const loadTab = useCallback((t: Tab) => {
     if (t === "rfq") fetch("/api/hospital/procurement/rfq").then((r) => r.json()).then((d) => setRfqs(d.rfqs ?? []));
@@ -63,7 +75,7 @@ export function ProcurementWorkspace() {
             <div className="mt-2 space-y-1.5">
               {!rfqs && <div className="h-16 animate-pulse rounded-xl bg-black/[0.04]" />}
               {rfqs && rfqs.length === 0 && <p className="text-[13px] text-text-tertiary">No RFQs. Create one from an approved requisition (procurement API).</p>}
-              {rfqs?.map((r: any) => (
+              {rfqs?.map((r) => (
                 <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-1.5 text-[12.5px]">
                   <span>{r.rfqNumber ?? r.id.slice(-6)} · {r.lines.length} line(s) · {r.quotations.length} quote(s)</span>
                   <span className="flex items-center gap-1.5">
@@ -78,7 +90,7 @@ export function ProcurementWorkspace() {
             <Card className="rounded-[20px]"><CardLabel>Vendor comparison (cheapest total first — selection is a human decision)</CardLabel>
               <div className="mt-2 space-y-1.5">
                 {comparison.quotations.length === 0 && <p className="text-[13px] text-text-tertiary">No quotations recorded.</p>}
-                {comparison.quotations.map((q: any) => (
+                {comparison.quotations.map((q) => (
                   <div key={q.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-1.5 text-[12.5px]">
                     <span>{q.supplier.name} · {rupees(q.totalMinor)}{q.deliveryDays != null ? ` · ${q.deliveryDays}d` : ""}</span>
                     <span className="flex items-center gap-1.5">
@@ -99,7 +111,7 @@ export function ProcurementWorkspace() {
           <div className="mt-2 space-y-1.5">
             {!contracts && <div className="h-16 animate-pulse rounded-xl bg-black/[0.04]" />}
             {contracts && contracts.length === 0 && <p className="text-[13px] text-text-tertiary">No contracts.</p>}
-            {contracts?.map((c: any) => (
+            {contracts?.map((c) => (
               <div key={c.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-1.5 text-[12.5px]">
                 <span>{c.supplier.name} · item {c.itemId.slice(-6)} · {rupees(c.agreedPriceMinor)}{c.moq ? ` · MOQ ${c.moq}` : ""}</span>
                 <StatusPill label={c.active ? "ACTIVE" : "INACTIVE"} tone={c.active ? "emerald" : "neutral"} className="rounded-md" />
@@ -114,7 +126,7 @@ export function ProcurementWorkspace() {
           <div className="mt-2 space-y-1.5">
             {!invoices && <div className="h-16 animate-pulse rounded-xl bg-black/[0.04]" />}
             {invoices && invoices.length === 0 && <p className="text-[13px] text-text-tertiary">No invoices.</p>}
-            {invoices?.map((v: any) => (
+            {invoices?.map((v) => (
               <div key={v.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-1.5 text-[12.5px]">
                 <span>{v.supplier.name} · {v.invoiceRef} · {rupees(v.totalMinor)}{[v.quantityMismatch && "qty≠", v.priceMismatch && "price≠", v.missingReceipt && "no-GR"].filter(Boolean).length ? ` · ${[v.quantityMismatch && "qty≠", v.priceMismatch && "price≠", v.missingReceipt && "no-GR"].filter(Boolean).join(" ")}` : ""}</span>
                 <span className="flex items-center gap-1.5">
@@ -132,7 +144,7 @@ export function ProcurementWorkspace() {
           <div className="mt-2 space-y-1.5">
             {!perf && <div className="h-16 animate-pulse rounded-xl bg-black/[0.04]" />}
             {perf && perf.length === 0 && <p className="text-[13px] text-text-tertiary">No suppliers.</p>}
-            {perf?.map((p: any) => (
+            {perf?.map((p) => (
               <div key={p.supplierId} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline px-3 py-1.5 text-[12.5px]">
                 <span>{p.name} · {p.purchaseOrders} PO(s)</span>
                 <span className="text-text-tertiary">accepted {Math.round(p.acceptedQty)} · rejected {Math.round(p.rejectedQty)} · rejection {p.rejectionRate}%</span>
