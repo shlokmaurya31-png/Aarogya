@@ -61,10 +61,15 @@ export async function listItems(
 ) {
   return tx.item.findMany({
     where: {
-      OR: filters.facilityId ? [{ facilityId: filters.facilityId }, { facilityId: null }] : undefined,
       category: filters.category,
       active: filters.active,
-      ...(filters.search ? { OR: [{ name: textContains(filters.search) }, { sku: textContains(filters.search) }] } : {}),
+      // Facility scope and search are both OR-groups, so they must be ANDed:
+      // as two `OR` keys on one object, the search silently replaced the
+      // facility scope and returned other facilities' items.
+      AND: [
+        filters.facilityId ? { OR: [{ facilityId: filters.facilityId }, { facilityId: null }] } : {},
+        filters.search ? { OR: [{ name: textContains(filters.search) }, { sku: textContains(filters.search) }] } : {},
+      ],
     },
     orderBy: [{ name: "asc" }, { id: "asc" }],
     take: clampPageSize(filters.take),

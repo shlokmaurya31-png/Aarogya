@@ -6,6 +6,8 @@
  * the same function or filter its route uses, with the query in exact,
  * lower and upper case; all three must return the same rows.
  *
+ * Also checks that item search stays facility-scoped.
+ *
  * Read-only against seeded data, so safe to re-run.
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-search.ts
@@ -52,6 +54,12 @@ async function main() {
   const item = await prisma.item.findFirstOrThrow({ where: { facilityId: facility.id, category: "MEDICATION" }, orderBy: [{ name: "asc" }, { id: "asc" }] });
   const findItems = async (q: string) => (await listItems(prisma, { facilityId: facility.id, search: q })).map((i) => i.id);
   await caseInsensitive("Inventory item search", item.name.split(" ")[0], findItems);
+
+  // Search must stay inside the caller's facility (plus global items). A
+  // second `OR` for the search once replaced the facility scope.
+  const searched = await listItems(prisma, { facilityId: facility.id, search: item.name.split(" ")[0] });
+  const foreign = searched.filter((i) => i.facilityId !== null && i.facilityId !== facility.id);
+  report("Inventory item search never returns another facility's items", searched.length > 0 && foreign.length === 0, `returned=${searched.length} foreign=${foreign.length}`);
 
   // Scholar case library search.
   const provider = new SyntheticCaseProvider();
