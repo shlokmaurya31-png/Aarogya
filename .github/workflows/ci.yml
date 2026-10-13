@@ -70,8 +70,11 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+    # Prisma refuses a shadow database equal to the main one (it wipes the
+    # shadow). migrate diff only uses the shadow, so the main URL points at
+    # the always-present "postgres" database.
     env:
-      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/shadow"
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/postgres"
       SHADOW_DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/shadow"
     steps:
       - uses: actions/checkout@v4
