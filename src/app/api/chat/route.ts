@@ -1,5 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest, NextResponse } from "next/server";
+import { requireSession, UnauthorizedError } from "@/lib/auth/rbac";
+import { checkRateLimit } from "@/lib/auth/rateLimit";
 import {
   patient,
   doctorProfile,
@@ -214,7 +216,38 @@ If asked about admitting the patient or booking a bed, you can't complete the bo
 
 ${DOCTOR_RECORD_CONTEXT}`;
 
+// Every call spends Anthropic credits, so the route is signed-in only and
+// capped per user. Clients already fall back to canned replies on any non-200.
+const PER_MINUTE = 10;
+const PER_DAY = 200;
+const MAX_MESSAGE_CHARS = 2000;
+const MAX_PAGE_CHARS = 100;
+const MAX_BODY_BYTES = 64 * 1024;
+
 export async function POST(req: NextRequest) {
+  let userId: string;
+  try {
+    userId = (await requireSession()).userId;
+  } catch (err) {
+    if (err instanceof UnauthorizedError) {
+      return NextResponse.json({ error: "Sign in to use the assistant." }, { status: 401 });
+    }
+    throw err;
+  }
+
+  for (const [scope, limit, windowMs] of [
+    ["min", PER_MINUTE, 60_000],
+    ["day", PER_DAY, 86_400_000],
+  ] as const) {
+    const rl = checkRateLimit(`chat:${scope}:${userId}`, limit, windowMs);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: "Too many assistant requests. Try again shortly." },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } }
+      );
+    }
+  }
+
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return NextResponse.json(
@@ -223,10 +256,24 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { message, mode, page, patientData } = await req.json();
+  const raw = await req.text();
+  if (raw.length > MAX_BODY_BYTES) {
+    return NextResponse.json({ error: "Request too large." }, { status: 413 });
+  }
+  let body: { message?: unknown; mode?: unknown; page?: unknown; patientData?: PatientDataPayload | null };
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON." }, { status: 400 });
+  }
+  const { message, mode, patientData } = body;
   if (!message || typeof message !== "string") {
     return NextResponse.json({ error: "Missing 'message' string." }, { status: 400 });
   }
+  if (message.length > MAX_MESSAGE_CHARS) {
+    return NextResponse.json({ error: `Message exceeds ${MAX_MESSAGE_CHARS} characters.` }, { status: 400 });
+  }
+  const page = typeof body.page === "string" ? body.page.slice(0, MAX_PAGE_CHARS) : undefined;
 
   const basePrompt = mode === "doctor" ? DOCTOR_SYSTEM_PROMPT : buildPatientSystemPrompt(patientData);
   const system =

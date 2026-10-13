@@ -51,6 +51,56 @@ jobs:
       - name: Production build (prisma generate + next build)
         run: npm run build
 
+  migration-drift:
+    name: Migration drift
+    runs-on: ubuntu-latest
+    # Both migration sets must reproduce schema.prisma exactly. Catches a model
+    # added via `prisma db push` without a migration, or a SQLite migration
+    # that was never mirrored into migrations-postgres-baseline.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: shadow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: "file:./dev.db"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: SQLite migrations match schema
+        run: >-
+          npx prisma migrate diff
+          --from-migrations prisma/migrations
+          --to-schema-datamodel prisma/schema.prisma
+          --shadow-database-url "file:${{ runner.temp }}/shadow.db"
+          --exit-code
+
+      - name: Postgres baseline matches schema
+        run: |
+          sed 's/provider = "sqlite"/provider = "postgresql"/' prisma/schema.prisma > "$RUNNER_TEMP/schema.pg.prisma"
+          npx prisma migrate diff \
+            --from-migrations prisma/migrations-postgres-baseline \
+            --to-schema-datamodel "$RUNNER_TEMP/schema.pg.prisma" \
+            --shadow-database-url "postgresql://postgres:postgres@localhost:5432/shadow" \
+            --exit-code
+
   lint:
     name: Lint (advisory)
     runs-on: ubuntu-latest

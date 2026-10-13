@@ -10,7 +10,7 @@ export async function GET() {
     where: { id: session.userId },
     include: { studentProfile: { include: { institution: true } } },
   });
-  if (!user) return NextResponse.json({ user: null });
+  if (!user || (session.ver ?? 0) !== user.tokenVersion) return NextResponse.json({ user: null });
 
   return NextResponse.json({
     user: {

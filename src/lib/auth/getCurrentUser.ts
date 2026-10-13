@@ -12,5 +12,8 @@ export async function getCurrentUser() {
       hospitalStaffProfile: { include: { facility: true, department: true } },
     },
   });
+  // Same revocation check as requireSession: a cookie minted before the last
+  // tokenVersion bump (logout, password change, admin revoke) is dead.
+  if (!user || (session.ver ?? 0) !== user.tokenVersion) return null;
   return user;
 }

@@ -44,8 +44,8 @@ export function getRazorpayConfig(): RazorpayConfig {
     keyId: keyId!,
     keySecret: keySecret!,
     webhookSecret: webhookSecret!,
-    baseUrl: process.env.RAZORPAY_BASE_URL ?? "https://api.razorpay.com/v1",
-    webhookToleranceSeconds: Number(process.env.RAZORPAY_WEBHOOK_TOLERANCE_SECONDS ?? 300),
+    baseUrl: process.env.RAZORPAY_BASE_URL || "https://api.razorpay.com/v1",
+    webhookToleranceSeconds: Number(process.env.RAZORPAY_WEBHOOK_TOLERANCE_SECONDS || 300),
   };
 }
 

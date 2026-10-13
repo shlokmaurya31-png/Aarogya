@@ -44,7 +44,17 @@ export default function PrescriptionDocumentPage() {
         </button>
       </div>
 
-      <div className="mx-auto mt-6 w-full max-w-[720px] rounded-2xl border border-black/10 bg-white p-8 text-neutral-900 shadow-xl print:mt-0 print:rounded-none print:border-0 print:p-8 print:shadow-none sm:p-10">
+      <div className="relative mx-auto mt-6 w-full max-w-[720px] overflow-hidden rounded-2xl border border-black/10 bg-white p-8 text-neutral-900 shadow-xl print:mt-0 print:rounded-none print:border-0 print:p-8 print:shadow-none sm:p-10">
+        {/* Prototype data under a client-side demo login: anyone can enter any
+            doctor name and registration number, so the printout must never
+            pass as a real prescription. Real ones come from the Hospital OS
+            (GeneratedDocument + verify token). */}
+        <p
+          aria-hidden
+          className="pointer-events-none absolute inset-0 flex -rotate-[30deg] select-none items-center justify-center whitespace-nowrap text-[64px] font-bold tracking-widest text-red-600/15"
+        >
+          {t("prescriptionDoc.watermark")}
+        </p>
         <div className="border-b-2 border-neutral-900 pb-4">
           <div className="flex items-start justify-between gap-4">
             <div>
