@@ -6,7 +6,8 @@
   after the switch to a single Postgres database
   ([ADR 0001](adr/0001-postgres-single-database.md)), plus a search for
   SQLite-specific code that is still present.
-- **Nothing was fixed** while writing this report.
+- **Nothing was fixed** while writing sections 1–5. The fixes made on
+  2026-10-14, and the final status, are in [section 6](#6-fix-log-and-final-status-2026-10-14).
 
 ## How the checks were run
 
@@ -210,3 +211,51 @@ this is a line-based count, so some have `orderBy` on a later line. Where
 returned can vary. The seed had this problem in phases 5 and 6A; it was fixed
 in `6c3f0de`. These calls are worth a pass, starting with ones whose result
 picks an actor or a "current" record.
+
+## 6. Fix log and final status (2026-10-14)
+
+Fixed in the section 4 order, with one commit per root cause. After each
+fix, the affected checks were re-run with
+`npm run verify:all -- --only <pattern> --fresh-each` on a throwaway local
+database. No assertion was weakened, no test was skipped and no invariant
+was loosened. The two test changes **strengthen** gates; reasons are below.
+There were no schema changes, so no new migration was needed, and drift
+stays at exit 0.
+
+### Fixes
+
+| Commit | Root cause | Class | Change | Re-check |
+|---|---|---|---|---|
+| `9f6bc44` | **F2:** `contains` is case-sensitive on Postgres | (a) | Added `textContains()` in `src/lib/search.ts`, setting `mode: "insensitive"`. All nine search filters use it. Patient search moved to `src/lib/hospital/patientSearch.ts`, so the route and the gate run one query. New gate `verify-postgres-search`. | Gate fails 5/5 on the old filters and passes 5/5 now. `--only search --fresh-each`: 1/1. |
+| `da29059` | **New, found while fixing F2:** `listItems` had two `OR` keys, so the search replaced the facility scope. Inventory search returned other facilities' items: Pune saw Noida's "Amoxicillin". Pre-existing, not caused by the cutover. | (a), tenant isolation | The two OR-groups are now combined with `AND`. The search gate asserts no foreign items. A scan of every `where: {}` in `src/` found no other duplicate-`OR` object; the scanner was confirmed to catch the original bug. | Fails on the old code (`foreign=1`). `--only search,inventory --fresh-each`: 5/5. |
+| `ac22c9b` | **F1:** the CI drift job had `DATABASE_URL` equal to `SHADOW_DATABASE_URL` | (d) | `DATABASE_URL` now points at the service's built-in `postgres` database. This is the minimal fix; the CI rework is still planned for prompt 8. | Reproduced locally: the same URLs exit 1 with the CI error, and distinct URLs exit 0. Not yet seen on GitHub, because the branch isn't pushed. |
+| `bcf21b5` | **§5:** the double-booking advisory lock depended on `DATABASE_URL.startsWith("postgres")` | (a) | The lock is now unconditional and `isPostgres()` is removed. | 30 trials of 5 concurrent bookings: 30/30 double-booked without the lock, 0/30 with it. |
+| `b8425ba` | **Gate weakness:** the appointment race was a single two-way race that **passed with the lock removed** | (b) | Step 6 is now 10 rounds of 5 concurrent bookings, each needing exactly 1 winner and 4 `SlotConflictError`s. The test was wrong because it could not detect the failure it documents; the assertion is now stronger. | Without the lock: FAIL (`cleanRounds=1/10, maxWinners=5`). With it: PASS on 3/3 fresh runs. |
+| `fc725ea` | **§5:** 9 gates skipped their races when `IS_PG` was false | (b) | Removed `IS_PG`, the skip branches and the dialect labels from 11 scripts. Races always run. | `--only <those 11> --fresh-each`: 11/11. |
+| `c374b4c` | **§5:** stale SQLite claims | n/a | The About page no longer claims SQLite gates. Dropped the `.pgreplay` ignore entries. | Lint and build pass. |
+
+### Final status
+
+| Check | Result | Duration |
+|---|---|---|
+| `npm run verify:all` (41 gates, including the new `verify-postgres-search`) | **41/41 PASS** | 49.8s |
+| `npm test` (73 files) | **981/981 PASS** | 4s |
+| `npm run lint -- --max-warnings=0` | **PASS** | 16s |
+| `npm run build` | **PASS** | 47s |
+| Migration drift (local) | **PASS**, exit 0 | 2s |
+| CI drift job | Fixed and verified locally; confirm on the next push | n/a |
+
+### Not fixed, with reasons
+
+| Item | Reason |
+|---|---|
+| **F3:** Vercel's runtime `DATABASE_URL` | It needs a staging Postgres (Supabase), and its URL set in Vercel. Neither exists yet. Planned for prompt 9. |
+| CI drift fix confirmed on GitHub | The branch isn't pushed. The fix was reproduced and verified locally with the same command. |
+| JSON arrays stored as `String` (5 columns) and text "enums" (8) | These aren't failures. Each is a schema and data-shape change that needs a migration that converts existing rows, plus updates to every reader. It also needs a product decision on the API shape. Better as its own reviewed change. |
+| `SQLITE_BUSY` / `database is locked` in `rbac.ts`, and its unit test | Harmless dead pattern. Removing it means deleting a test, which these rules say not to do without a reason that goes beyond tidiness. Left for an explicit decision. |
+| SQLite rationale in ~28 code comments | No behaviour impact. To be reworded when those files are next touched. |
+| `prisma/dev.db` | A local, untracked file that the owner should delete. |
+| `findFirst` calls without `orderBy` (59 of 91, rough count) | Needs a case-by-case review; nothing is failing. It's still on the follow-up list. |
+| New, out of scope: `GET /api/hospital/invoices` | The `total` count ignores the `invoiceNumber` filter, so `total` can exceed the filtered rows. It was found while fixing F2. It is pre-existing and unrelated to Postgres, and should be fixed separately. |
+| `verify-abdm-sandbox` | Still excluded from `verify:all`. It needs real ABDM sandbox credentials. |
+
