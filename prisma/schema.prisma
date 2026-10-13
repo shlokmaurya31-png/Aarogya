@@ -7,6 +7,8 @@
 //
 // Local dev:   npm run db:up   (docker compose: Postgres + aarogya_shadow)
 //              npx prisma migrate dev --name <change>
+// Staging:     npm run staging:migrate (Supabase, ap-south-1; see
+//              docs/STAGING_SUPABASE.md)
 // Production:  npx prisma migrate deploy
 //
 // Some guarantees (GiST EXCLUDE constraints, partial unique indexes) cannot be
@@ -21,6 +23,9 @@ generator client {
 datasource db {
   provider          = "postgresql"
   url               = env("DATABASE_URL")
+  // Migrations use directUrl. Locally it equals DATABASE_URL; on Supabase
+  // DATABASE_URL is the transaction pooler and DIRECT_URL the session pooler.
+  directUrl         = env("DIRECT_URL")
   shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
   // pgvector, for RAG embeddings (no vector columns yet). See ADR 0001.
   extensions        = [vector]

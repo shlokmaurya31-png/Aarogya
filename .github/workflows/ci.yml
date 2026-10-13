@@ -43,6 +43,7 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya"
+      DIRECT_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya"
       SHADOW_DATABASE_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya_shadow"
       AUTH_SECRET: "ci-dummy-secret-not-used-for-anything-real-000000"
       CLINICAL_DATA_MODE: synthetic
@@ -91,6 +92,7 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya"
+      DIRECT_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya"
       SHADOW_DATABASE_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya_shadow"
       AUTH_SECRET: "ci-dummy-secret-not-used-for-anything-real-000000"
       CLINICAL_DATA_MODE: synthetic
@@ -149,6 +151,7 @@ jobs:
     # shadow), so the shadow is a separate database.
     env:
       DATABASE_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya"
+      DIRECT_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya"
       SHADOW_DATABASE_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya_shadow"
     steps:
       - uses: actions/checkout@v4

@@ -13,7 +13,8 @@
  *   --timeout <s>  per-script timeout in seconds (default 300)
  *
  * Safety: resetting wipes the database, so this refuses to run unless
- * DATABASE_URL points at localhost / 127.0.0.1 / ::1, or ALLOW_REMOTE_VERIFY=1.
+ * DATABASE_URL and DIRECT_URL point at localhost / 127.0.0.1 / ::1, or
+ * ALLOW_REMOTE_VERIFY=1. Supabase (staging) hosts are refused even then.
  *
  * Usage: npm run verify:all -- [--fresh-each] [--only nhcx] [--timeout 600]
  */
@@ -116,20 +117,40 @@ function parseArgs(argv: string[]): Options {
   return opts;
 }
 
-function assertSafeTarget() {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL is not set (see .env.example).");
-  let host: string;
+function hostOf(name: string, url: string | undefined): string {
+  if (!url) throw new Error(`${name} is not set (see .env.example).`);
   try {
-    host = new URL(url).hostname;
+    return new URL(url).hostname;
   } catch {
-    throw new Error("DATABASE_URL is not a valid URL.");
+    throw new Error(`${name} is not a valid URL.`);
   }
-  const local = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(host);
-  if (!local && process.env.ALLOW_REMOTE_VERIFY !== "1") {
+}
+
+// Both URLs are checked: `prisma migrate reset` connects through DIRECT_URL,
+// the gates through DATABASE_URL.
+function assertSafeTarget() {
+  const host = hostOf("DATABASE_URL", process.env.DATABASE_URL);
+  const hosts = [host, hostOf("DIRECT_URL", process.env.DIRECT_URL)];
+  // Staging (Supabase) is never a valid target, whatever the override says.
+  const staging = hosts.find((h) => /(^|\.)supabase\.(co|com)$/i.test(h));
+  if (staging) {
+    throw new Error(`Refusing to run: "${staging}" is the Supabase staging database. verify:all must never run against staging (docs/STAGING_SUPABASE.md).`);
+  }
+  const remote = hosts.find((h) => !["localhost", "127.0.0.1", "::1", "[::1]"].includes(h));
+  if (remote && process.env.ALLOW_REMOTE_VERIFY !== "1") {
     throw new Error(
-      `Refusing to run: DATABASE_URL points at "${host}", not localhost. verify:all wipes the database. ` +
+      `Refusing to run: "${remote}" is not localhost. verify:all wipes the database. ` +
         "Set ALLOW_REMOTE_VERIFY=1 only if that database is disposable."
+    );
+  }
+  // migrate reset (DIRECT_URL) and the gates (DATABASE_URL) must hit the
+  // same database; otherwise overriding only DATABASE_URL would reset
+  // whatever DIRECT_URL in .env points at, e.g. the dev database.
+  const [db, direct] = [new URL(process.env.DATABASE_URL!), new URL(process.env.DIRECT_URL!)];
+  if (db.hostname !== direct.hostname || db.pathname !== direct.pathname) {
+    throw new Error(
+      `Refusing to run: DATABASE_URL (${db.hostname}${db.pathname}) and DIRECT_URL (${direct.hostname}${direct.pathname}) name different databases. ` +
+        "Set both to the database verify:all may wipe."
     );
   }
   return host;

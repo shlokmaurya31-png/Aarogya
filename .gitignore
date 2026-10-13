@@ -30,9 +30,11 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files: every .env* is ignored (secrets: .env, .env.local,
+# .env.staging.local, ...) except the committed placeholder templates.
 .env*
 !.env.example
+!.env.staging.example
 
 # vercel
 .vercel
@@ -42,7 +44,6 @@ yarn-error.log*
 next-env.d.ts
 
 .vercel
-.env*
 
 # Aarogya Scholar local dev database + restricted verification-document store
 /prisma/dev.db

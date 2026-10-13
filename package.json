@@ -19,7 +19,10 @@
     "db:reset": "prisma migrate reset --force",
     "db:studio": "prisma studio",
     "test": "vitest run",
-    "verify:all": "tsx scripts/verify-all.ts"
+    "verify:all": "tsx scripts/verify-all.ts",
+    "staging:migrate": "tsx scripts/staging.ts migrate",
+    "staging:seed": "tsx scripts/staging.ts seed",
+    "staging:check": "tsx scripts/staging.ts check"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
