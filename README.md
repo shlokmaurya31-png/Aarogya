@@ -1,5 +1,10 @@
 # Aarogya AI
 
+[![CI](https://github.com/shlokmaurya31-png/Aarogya/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/shlokmaurya31-png/Aarogya/actions/workflows/ci.yml?query=branch%3Amain)
+[![CI (pull requests)](https://github.com/shlokmaurya31-png/Aarogya/actions/workflows/ci.yml/badge.svg?event=pull_request)](https://github.com/shlokmaurya31-png/Aarogya/actions/workflows/ci.yml?query=event%3Apull_request)
+
+CI runs on PostgreSQL 16 + pgvector: Test & Build, Integrity gates (`npm run verify:all`), Migration drift and Lint.
+
 India's unified health intelligence platform: one permanent health record for every patient, read by AI, verified by labs, and understood by every doctor they'll ever meet.
 
 Aarogya AI is a prototype health-record and clinical-workflow platform connecting **patients**, **doctors**, **hospitals**, **labs**, and **insurers** around a single longitudinal record. It ships as a cinematic marketing site plus a fully interactive command-center dashboard with separate patient and doctor experiences — plus three newer, database-backed systems built on a **unified clinical core**: **Aarogya Scholar** (a medical-education ecosystem for verified healthcare students — see [`docs/STUDENT_PLATFORM_ARCHITECTURE.md`](docs/STUDENT_PLATFORM_ARCHITECTURE.md), intentionally isolated from real clinical data), **Aarogya Hospital OS** (a real, multi-facility hospital operations platform — see [`docs/ENTERPRISE_HOSPITAL_ARCHITECTURE.md`](docs/ENTERPRISE_HOSPITAL_ARCHITECTURE.md)), and a **Patient self-service portal** reading the same longitudinal record Hospital OS's doctors write to (see [`docs/CLINICAL_CORE.md`](docs/CLINICAL_CORE.md)).
