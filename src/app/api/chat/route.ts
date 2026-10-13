@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest, NextResponse } from "next/server";
 import { requireSession, UnauthorizedError } from "@/lib/auth/rbac";
-import { checkRateLimit } from "@/lib/auth/rateLimit";
+import { rateLimit } from "@/lib/auth/rateLimit";
 import {
   patient,
   doctorProfile,
@@ -239,7 +239,7 @@ export async function POST(req: NextRequest) {
     ["min", PER_MINUTE, 60_000],
     ["day", PER_DAY, 86_400_000],
   ] as const) {
-    const rl = checkRateLimit(`chat:${scope}:${userId}`, limit, windowMs);
+    const rl = await rateLimit(`chat:${scope}:${userId}`, limit, windowMs);
     if (!rl.allowed) {
       return NextResponse.json(
         { error: "Too many assistant requests. Try again shortly." },
