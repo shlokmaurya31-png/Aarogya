@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import type { EntitlementType, SubscriptionStatus } from "@prisma/client";
+import type { EntitlementType, Prisma, SubscriptionStatus } from "@prisma/client";
 import { getEntitlementSpec } from "./registry";
 import { isCommercialActive } from "./constants";
 
@@ -69,16 +69,24 @@ export function deriveCommercialState(
   return { status: sub.status, active, reason: active ? undefined : sub.status };
 }
 
+/**
+ * `db` defaults to the global client. Callers inside an interactive
+ * transaction must pass their `tx`: querying the global client there needs a
+ * second pooled connection while the transaction holds one, and a burst of
+ * concurrent callers can exhaust the pool and stall until the transaction
+ * timeout (seen in CI with a 5-connection pool).
+ */
 export async function evaluateEntitlement(
-  args: { organizationId: string; facilityId?: string | null; key: string; now?: Date }
+  args: { organizationId: string; facilityId?: string | null; key: string; now?: Date },
+  db: Prisma.TransactionClient = prisma
 ): Promise<EntitlementResult> {
   const spec = getEntitlementSpec(args.key);
   if (!spec) throw new Error(`Unknown entitlement: ${args.key}`);
   const now = args.now ?? new Date();
 
-  const def = await prisma.entitlementDefinition.findUnique({ where: { key: args.key } });
+  const def = await db.entitlementDefinition.findUnique({ where: { key: args.key } });
 
-  const sub = await prisma.organizationSubscription.findUnique({
+  const sub = await db.organizationSubscription.findUnique({
     where: { organizationId: args.organizationId },
     select: { id: true, status: true, trialEndsAt: true, cancelAtPeriodEnd: true, currentPeriodEnd: true, gracePeriodEndsAt: true },
   });
@@ -93,19 +101,19 @@ export async function evaluateEntitlement(
       // Defense in depth: only a facility that actually belongs to the evaluated
       // organization may contribute an override. Even if a caller passes a
       // facilityId from another tenant, its override can never leak across orgs.
-      const fo = await prisma.facilityEntitlementOverride.findFirst({
+      const fo = await db.facilityEntitlementOverride.findFirst({
         where: { facilityId: args.facilityId, entitlementId: def.id, facility: { organizationId: args.organizationId } },
       });
       if (fo && notExpired(fo, now)) { chosen = fo; source = "FACILITY_OVERRIDE"; }
     }
     if (!chosen) {
-      const oo = await prisma.organizationEntitlementOverride.findUnique({
+      const oo = await db.organizationEntitlementOverride.findUnique({
         where: { organizationId_entitlementId: { organizationId: args.organizationId, entitlementId: def.id } },
       });
       if (oo && notExpired(oo, now)) { chosen = oo; source = "ORGANIZATION_OVERRIDE"; }
     }
     if (!chosen && sub) {
-      const se = await prisma.subscriptionEntitlement.findUnique({
+      const se = await db.subscriptionEntitlement.findUnique({
         where: { subscriptionId_entitlementId: { subscriptionId: sub.id, entitlementId: def.id } },
       });
       if (se) { chosen = se; source = "SUBSCRIPTION"; }
@@ -150,7 +158,10 @@ export async function hasEntitlement(args: { organizationId: string; facilityId?
 }
 
 /** Resolve a LIMIT entitlement to its effective cap. */
-export async function resolveLimit(args: { organizationId: string; key: string; now?: Date }): Promise<{ limit: number | null; unlimited: boolean; commercialActive: boolean; commercialStatus: SubscriptionStatus | "NONE" }> {
-  const r = await evaluateEntitlement(args);
+export async function resolveLimit(
+  args: { organizationId: string; key: string; now?: Date },
+  db: Prisma.TransactionClient = prisma
+): Promise<{ limit: number | null; unlimited: boolean; commercialActive: boolean; commercialStatus: SubscriptionStatus | "NONE" }> {
+  const r = await evaluateEntitlement(args, db);
   return { limit: r.limit, unlimited: r.unlimited, commercialActive: r.commercialActive, commercialStatus: r.commercialStatus };
 }
