@@ -259,3 +259,25 @@ stays at exit 0.
 | New, out of scope: `GET /api/hospital/invoices` | The `total` count ignores the `invoiceNumber` filter, so `total` can exceed the filtered rows. It was found while fixing F2. It is pre-existing and unrelated to Postgres, and should be fixed separately. |
 | `verify-abdm-sandbox` | Still excluded from `verify:all`. It needs real ABDM sandbox credentials. |
 
+## 7. CI on Postgres (prompt 8)
+
+CI now runs every job against a `pgvector/pgvector:pg16` service:
+
+- **Test & Build:** runs `prisma migrate deploy` before the tests and the
+  build.
+- **Integrity gates:** a new job that runs `npm run verify:all` and uploads
+  `.verify-report/latest.md` as the `verify-report` artifact.
+- **Migration drift:** runs as before.
+- **Lint:** already blocking, with `--max-warnings=0`.
+
+No `file:` URL remains in CI.
+
+The first CI run of the gates job found one more real bug:
+
+| Commit | Root cause | Class | Evidence |
+|---|---|---|---|
+| `2bc1d9b` | `enforceLimit` held a SERIALIZABLE transaction, while `resolveLimit` queried the **global** client and so needed a second pooled connection. Prisma's default pool is `2 × CPUs + 1`, which is 5 on the 2-core runner. Six concurrent creates exhausted the pool and every transaction timed out at 5s. Developer machines have bigger pools, which hid it. | (a) | CI: `commercial-entitlements` 24 passed / 2 failed (`facility limit race`, `user limit race`, `succeeded=0`). Reproduced locally with `?connection_limit=5`. After the fix it passes at pool 5 (3/3 fresh) and at pool 2, and the full `verify:all` passes 41/41 at pool 5. |
+
+**Lesson:** CI's small connection pool is a useful stress setting. A local run
+with `?connection_limit=5` on `DATABASE_URL` reproduces it.
+
