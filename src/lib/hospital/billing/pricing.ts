@@ -40,7 +40,7 @@ export function dateRangesOverlap(aFrom: Date, aTo: Date | null, bFrom: Date, bT
  * Effective-dated pricing — never overwrites historical pricing. Overlap
  * invariant checked app-side (same idiom as ImagingStudy scheduling) and
  * backstopped on Postgres by a GiST exclusion constraint (see
- * prisma/migrations-postgres-baseline) — the app-level check alone can't
+ * prisma/migrations) — the app-level check alone can't
  * close a genuine concurrent race between two overlapping-range creates.
  */
 export async function createTariff(

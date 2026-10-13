@@ -7,8 +7,17 @@ needed, and what was deliberately deferred (and why). Newest phase appended last
 Conventions followed every phase: server-validated logic with Vitest tests,
 facility tenant scoping, RBAC + `recordAuditEvent` on writes and PHI reads,
 adapter interfaces for external providers (dev impl + real impl gated on env
-creds, never faked), entitlement gates server-side, money as minor units, paired
-migrations in `prisma/migrations` and `prisma/migrations-postgres-baseline`.
+creds, never faked), entitlement gates server-side, money as minor units, and one
+Postgres migration history in `prisma/migrations`.
+
+**Migrations, from 13 Oct 2026:** Postgres is the only database
+([ADR 0001](adr/0001-postgres-single-database.md)). Each schema change gets one
+migration in `prisma/migrations`, created with `npx prisma migrate dev` against
+the local Postgres (`npm run db:up`). Never edit an applied migration; fix drift
+with a new one. Entries below dated before 13 Oct 2026 describe the old
+convention: paired migrations in `prisma/migrations` (SQLite, now frozen in
+`prisma/archive/migrations-sqlite`) and `prisma/migrations-postgres-baseline`
+(now `prisma/migrations`).
 
 ---
 

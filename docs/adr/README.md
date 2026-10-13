@@ -1,0 +1,11 @@
+# Architecture Decision Records
+
+Short records of significant, hard-to-reverse decisions: the context, what we
+decided, and what follows from it. An ADR is never rewritten after it is
+accepted; a later ADR supersedes it.
+
+File names are `NNNN-short-title.md`, numbered in order.
+
+| # | Decision | Status | Date |
+|---|----------|--------|------|
+| [0001](0001-postgres-single-database.md) | Postgres is the single database and migration history | Accepted | 2026-10-13 |

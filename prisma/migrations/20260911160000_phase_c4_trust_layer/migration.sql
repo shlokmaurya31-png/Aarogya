@@ -1,18 +1,25 @@
--- Phase C4 — health data trust layer (SQLite).
+-- Phase C4 — health data trust layer (PostgreSQL).
+-- Mirrors prisma/migrations/20260911160000_phase_c4_trust_layer.
 --
--- Adds BreakGlassAccess, PrivacyRequest and User.tokenVersion.
+-- Fully ADDITIVE: two new tables plus one nullable-with-default column on
+-- User. Nothing is dropped or retyped and no row is touched.
 --
--- NOTE ON THE "DROP TABLE User" BELOW: this is NOT destructive. It is Prisma's
--- standard SQLite table-rebuild for adding a column with a default, and the
--- INSERT...SELECT immediately above it copies every existing row into the new
--- table before the old one is dropped and the new one renamed. Every existing
--- column is carried across. SQLite cannot ALTER a table in place the way
--- PostgreSQL can, which is why the PostgreSQL baseline for this same migration
--- is a plain ALTER TABLE ADD COLUMN. Same pattern as the B5/B6/B7 migrations.
+-- The SQLite mirror of this migration contains a DROP TABLE "User" — that is
+-- Prisma rebuilding the table because SQLite cannot ADD COLUMN with a default
+-- in place, and it copies every row first. PostgreSQL supports ALTER TABLE
+-- directly, which is why this side is a simple ADD COLUMN.
+--
+-- User.tokenVersion is the session revocation mechanism: sessions are
+-- stateless HMAC cookies carrying the version they were minted at, and
+-- requireSession refuses a mismatch. Bumping it invalidates every cookie held
+-- by that user. See src/lib/auth/authorize/sessionControl.ts.
+
+-- AlterTable
+ALTER TABLE "User" ADD COLUMN     "tokenVersion" INTEGER NOT NULL DEFAULT 0;
 
 -- CreateTable
 CREATE TABLE "BreakGlassAccess" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "facilityId" TEXT NOT NULL,
     "patientId" TEXT NOT NULL,
     "encounterId" TEXT,
@@ -21,22 +28,24 @@ CREATE TABLE "BreakGlassAccess" (
     "reason" TEXT NOT NULL,
     "emergencyContext" TEXT NOT NULL,
     "status" TEXT NOT NULL DEFAULT 'ACTIVE',
-    "activatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "expiresAt" DATETIME NOT NULL,
-    "completedAt" DATETIME,
-    "revokedAt" DATETIME,
+    "activatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "expiresAt" TIMESTAMP(3) NOT NULL,
+    "completedAt" TIMESTAMP(3),
+    "revokedAt" TIMESTAMP(3),
     "revokedByUserId" TEXT,
     "revokedReason" TEXT,
     "correlationId" TEXT NOT NULL,
     "useCount" INTEGER NOT NULL DEFAULT 0,
     "version" INTEGER NOT NULL DEFAULT 1,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "BreakGlassAccess_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "PrivacyRequest" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "facilityId" TEXT NOT NULL,
     "patientId" TEXT NOT NULL,
     "requestType" TEXT NOT NULL,
@@ -46,37 +55,18 @@ CREATE TABLE "PrivacyRequest" (
     "reason" TEXT,
     "status" TEXT NOT NULL DEFAULT 'REQUESTED',
     "reviewedByUserId" TEXT,
-    "reviewedAt" DATETIME,
+    "reviewedAt" TIMESTAMP(3),
     "decisionNote" TEXT,
-    "actionedAt" DATETIME,
+    "actionedAt" TIMESTAMP(3),
     "actionedByUserId" TEXT,
     "legalHold" BOOLEAN NOT NULL DEFAULT false,
     "legalHoldReason" TEXT,
     "version" INTEGER NOT NULL DEFAULT 1,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
-);
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
 
--- RedefineTables
-PRAGMA defer_foreign_keys=ON;
-PRAGMA foreign_keys=OFF;
-CREATE TABLE "new_User" (
-    "id" TEXT NOT NULL PRIMARY KEY,
-    "email" TEXT NOT NULL,
-    "passwordHash" TEXT NOT NULL,
-    "tokenVersion" INTEGER NOT NULL DEFAULT 0,
-    "role" TEXT NOT NULL,
-    "displayName" TEXT NOT NULL,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    CONSTRAINT "PrivacyRequest_pkey" PRIMARY KEY ("id")
 );
-INSERT INTO "new_User" ("createdAt", "displayName", "email", "id", "passwordHash", "role", "updatedAt") SELECT "createdAt", "displayName", "email", "id", "passwordHash", "role", "updatedAt" FROM "User";
-DROP TABLE "User";
-ALTER TABLE "new_User" RENAME TO "User";
-CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
-CREATE INDEX "User_role_idx" ON "User"("role");
-PRAGMA foreign_keys=ON;
-PRAGMA defer_foreign_keys=OFF;
 
 -- CreateIndex
 CREATE INDEX "BreakGlassAccess_facilityId_status_idx" ON "BreakGlassAccess"("facilityId", "status");

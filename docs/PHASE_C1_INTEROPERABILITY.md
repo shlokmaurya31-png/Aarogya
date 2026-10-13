@@ -188,25 +188,17 @@ matching. These are later C phases.
   drop, no retype
 
 ```bash
-# Fresh PostgreSQL 16 + full replay + seed + gate
-docker run -d --name aarogya-c1-pg -e POSTGRES_PASSWORD=c1 -e POSTGRES_USER=c1 \
-  -e POSTGRES_DB=aarogya_c1 -p 55434:5432 postgres:16
-
-mkdir -p .pgreplay
-sed 's/provider = "sqlite"/provider = "postgresql"/' prisma/schema.prisma > .pgreplay/schema.prisma
-cp -r prisma/migrations-postgres-baseline .pgreplay/migrations
-export DATABASE_URL="postgresql://c1:c1@localhost:55434/aarogya_c1"
-
-npx prisma migrate deploy --schema .pgreplay/schema.prisma
-npx prisma migrate diff --from-url "$DATABASE_URL" \
-  --to-schema-datamodel .pgreplay/schema.prisma --exit-code --script   # must be empty
-npx prisma generate --schema .pgreplay/schema.prisma
+# Fresh replay + seed + gate (current flow: Postgres is the only database,
+# see docs/adr/0001-postgres-single-database.md)
+npm run db:up
+npx prisma migrate reset --force --skip-seed
+npx prisma migrate diff --from-migrations prisma/migrations \
+  --to-schema-datamodel prisma/schema.prisma \
+  --shadow-database-url "$SHADOW_DATABASE_URL" --exit-code   # must exit 0
 npx tsx prisma/seed.ts
 
 npx tsx scripts/verify-postgres-interoperability.ts
 for s in scripts/verify-postgres-*.ts; do npx tsx "$s"; done   # Phase B regression
-
-npx prisma generate   # restore the SQLite client for local dev
 ```
 
 The verification scripts are **not idempotent** — they consume identifiers,
