@@ -1,7 +1,8 @@
 /**
  * Seeds demo users (dev-only, clearly documented) + Institution + 25
  * synthetic teaching cases + achievement catalog. Run with `npm run db:seed`.
- * Safe to re-run: uses upsert-by-unique-key throughout.
+ * Safe to re-run: upserts by natural key, and each hospital phase is guarded
+ * so a second run changes nothing.
  */
 import { PrismaClient, Role, Course, LearningTrack, VerificationStatus, VerificationMethod } from "@prisma/client";
 import { hashPassword } from "../src/lib/auth/password";
@@ -227,6 +228,32 @@ async function main() {
       console.log(`Configuration seed: ${cfg.created} demo override(s) published.`);
     }
   }
+  await printSummary();
+}
+
+/** Row counts for the main models, so a seed run ends with a quick sanity check. */
+async function printSummary() {
+  const counts: [string, number][] = [
+    ["Users", await prisma.user.count()],
+    ["  Scholar accounts", await prisma.user.count({ where: { email: { endsWith: "@demo.aarogya" } } })],
+    ["  Hospital staff", await prisma.hospitalStaffProfile.count()],
+    ["Organizations", await prisma.organization.count()],
+    ["Facilities", await prisma.facility.count()],
+    ["Departments", await prisma.department.count()],
+    ["Beds", await prisma.bed.count()],
+    ["Patients", await prisma.patient.count()],
+    ["Encounters", await prisma.encounter.count()],
+    ["Appointments", await prisma.appointment.count()],
+    ["Lab orders", await prisma.labOrder.count()],
+    ["Imaging orders", await prisma.imagingOrder.count()],
+    ["Medication orders", await prisma.medicationOrder.count()],
+    ["Tariffs", await prisma.tariff.count()],
+    ["Inventory items", await prisma.item.count()],
+    ["Synthetic cases", await prisma.clinicalCase.count()],
+    ["Achievements", await prisma.achievement.count()],
+  ];
+  console.log("\nSeed summary:");
+  for (const [label, n] of counts) console.log(`  ${label.padEnd(20)} ${n}`);
 }
 
 main()

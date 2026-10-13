@@ -19,19 +19,25 @@ Aarogya AI is a prototype health-record and clinical-workflow platform connectin
 - [Tailwind CSS 4](https://tailwindcss.com) with a custom design-token system (light theme)
 - [Framer Motion](https://www.framer.com/motion/) for animation, [Lenis](https://github.com/darkroomengineering/lenis) for smooth scroll
 - [Zustand](https://github.com/pmndrs/zustand) for shared client state (UI mode, records, prescriptions, toasts, language) — used by the original Patient/Doctor prototype
-- [Prisma](https://www.prisma.io) + SQLite for Aarogya Scholar's persistence (real accounts, verification, case attempts, scoring, competencies)
+- [Prisma](https://www.prisma.io) + PostgreSQL 16 (with pgvector) as the single database for every environment; see [`docs/adr/0001-postgres-single-database.md`](docs/adr/0001-postgres-single-database.md)
 - [Recharts](https://recharts.org) for vitals/competency charts, [lucide-react](https://lucide.dev) for icons
-- [React Three Fiber](https://docs.pmnd.rs/react-three-fiber) / drei (available for 3D work, not currently on the critical path)
 - [Vitest](https://vitest.dev) for unit tests (RBAC, de-identification, scoring, case engine, RxLab rules)
 
 ## Getting started
 
+Prerequisites: Node 20 and Docker, running (Docker Desktop, or Colima on macOS).
+
 ```bash
-npm install
-npx prisma migrate dev   # creates prisma/dev.db and applies the Scholar schema
-npm run db:seed          # seeds demo accounts + 25 synthetic teaching cases
+npm run setup   # install deps, create .env, start Postgres, migrate, seed
 npm run dev
 ```
+
+`npm run setup` runs `npm ci`, creates `.env` from `.env.example` with a random
+`AUTH_SECRET` (an existing `.env` is never touched), starts PostgreSQL 16 +
+pgvector with `npm run db:up`, then `npm run db:fresh`. That applies every
+migration and seeds two demo facilities (Pune, Noida), all the demo accounts
+below, and the 25 synthetic teaching cases. The seed is idempotent: running it
+again changes nothing.
 
 Open [http://localhost:3000](http://localhost:3000) for the landing page,
 [http://localhost:3000/dashboard](http://localhost:3000/dashboard) for the Patient/Doctor prototype,
@@ -46,8 +52,12 @@ npm run build      # production build
 npm run start      # serve the production build
 npm run lint        # run ESLint
 npm run test        # run the Vitest suite
+npm run db:up       # start local Postgres (docker compose)
+npm run db:down     # stop it (data is kept in the aarogya-pgdata volume)
+npm run db:psql     # psql shell on the local database
+npm run db:fresh    # wipe the local database, apply all migrations, seed
 npm run db:migrate  # create/apply a new Prisma migration
-npm run db:seed     # re-seed demo accounts + synthetic cases (idempotent)
+npm run db:seed     # re-seed demo data (idempotent)
 npm run db:studio   # browse the local database
 ```
 
@@ -201,7 +211,7 @@ src/
   store/                    # Zustand stores (original Patient/Doctor client state — untouched)
   types/                    # shared TypeScript types (clinicalCase.ts added for Scholar)
 prisma/
-  schema.prisma              # shared persistence layer for Scholar + Hospital OS (SQLite dev, Postgres-portable)
+  schema.prisma              # shared persistence layer for Scholar + Hospital OS (PostgreSQL)
   seed.ts, seedData/          # demo accounts, achievements, 25 synthetic teaching cases, demo hospital (Aarogya Medical Centre)
 docs/                       # architecture, privacy, threat model, future-integration docs
 ```
@@ -210,4 +220,4 @@ docs/                       # architecture, privacy, threat model, future-integr
 
 The original Patient/Doctor prototype is built on mock data with **no backend**: all "records," "prescriptions," and "AI analysis" are simulated client-side via Zustand, and translations are hand-written. Both should be reviewed before any real clinical or production use.
 
-Aarogya Scholar, added alongside it, introduces this repository's **first real backend** (Prisma + SQLite, hashed passwords, signed sessions, server-side RBAC) — but only for the student/educator/admin surfaces described above. The two systems currently run side by side rather than being unified; see `docs/STUDENT_PLATFORM_ARCHITECTURE.md` §2.10 for the migration path.
+Aarogya Scholar, added alongside it, introduces this repository's **first real backend** (Prisma + PostgreSQL, hashed passwords, signed sessions, server-side RBAC) — but only for the student/educator/admin surfaces described above. The two systems currently run side by side rather than being unified; see `docs/STUDENT_PLATFORM_ARCHITECTURE.md` §2.10 for the migration path.

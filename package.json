@@ -11,6 +11,8 @@
     "db:down": "docker compose down",
     "db:logs": "docker compose logs -f db",
     "db:psql": "docker compose exec db psql -U aarogya -d aarogya",
+    "db:fresh": "prisma migrate reset --force --skip-seed && npm run db:seed",
+    "setup": "npm ci && node scripts/setup-env.mjs && npm run db:up && npm run db:fresh",
     "lint": "eslint",
     "db:migrate": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",

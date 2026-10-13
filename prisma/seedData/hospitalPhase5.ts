@@ -43,13 +43,14 @@ export async function seedPhase5Billing(prisma: PrismaClient) {
     create: { payerId: insurer.id, name: "Family Floater Gold", planCode: "FFG-01", copayPercent: 10 },
   });
 
-  const facilities = await prisma.facility.findMany();
+  // Explicit orderBy: Postgres guarantees no row order without one.
+  const facilities = await prisma.facility.findMany({ orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
   const billingStaffByFacility = new Map<string, { userId: string }>();
   const effectiveFrom = new Date("2026-01-01");
 
   for (const facility of facilities) {
-    const billingStaff = await prisma.hospitalStaffProfile.findFirst({ where: { facilityId: facility.id, user: { role: "BILLING_STAFF" } } });
-    const admin = await prisma.hospitalStaffProfile.findFirst({ where: { facilityId: facility.id, user: { role: "HOSPITAL_ADMIN" } } });
+    const billingStaff = await prisma.hospitalStaffProfile.findFirst({ where: { facilityId: facility.id, user: { role: "BILLING_STAFF" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+    const admin = await prisma.hospitalStaffProfile.findFirst({ where: { facilityId: facility.id, user: { role: "HOSPITAL_ADMIN" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
     const createdByUser = billingStaff ?? admin;
     if (!createdByUser) continue; // a facility with neither role seeded has nothing to attribute tariffs to — skip rather than fabricate an actor
     billingStaffByFacility.set(facility.id, { userId: createdByUser.userId });
