@@ -4,6 +4,7 @@ import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { draftInvoiceForAccount } from "@/lib/hospital/billing/invoices";
+import { textContains } from "@/lib/search";
 
 const MAX_PAGE_SIZE = 100;
 
@@ -21,7 +22,7 @@ export async function GET(req: NextRequest) {
 
     const [invoices, total] = await Promise.all([
       prisma.invoice.findMany({
-        where: { facilityId, status: status as never, patientId, encounterId, invoiceNumber: invoiceNumber ? { contains: invoiceNumber } : undefined },
+        where: { facilityId, status: status as never, patientId, encounterId, invoiceNumber: invoiceNumber ? textContains(invoiceNumber) : undefined },
         include: { patient: { select: { fullName: true, uhid: true } }, payer: { select: { name: true } } },
         orderBy: { createdAt: "desc" },
         take,

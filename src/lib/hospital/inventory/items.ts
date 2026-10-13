@@ -2,6 +2,7 @@ import type { Prisma, ItemCategory, UnitOfMeasure } from "@prisma/client";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { computeAvailable } from "./stockBalance";
 import { clampPageSize } from "./expiry";
+import { textContains } from "@/lib/search";
 
 type Tx = Prisma.TransactionClient;
 
@@ -63,7 +64,7 @@ export async function listItems(
       OR: filters.facilityId ? [{ facilityId: filters.facilityId }, { facilityId: null }] : undefined,
       category: filters.category,
       active: filters.active,
-      ...(filters.search ? { OR: [{ name: { contains: filters.search } }, { sku: { contains: filters.search } }] } : {}),
+      ...(filters.search ? { OR: [{ name: textContains(filters.search) }, { sku: textContains(filters.search) }] } : {}),
     },
     orderBy: [{ name: "asc" }, { id: "asc" }],
     take: clampPageSize(filters.take),

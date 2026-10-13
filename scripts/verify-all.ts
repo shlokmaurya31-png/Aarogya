@@ -77,6 +77,8 @@ const ORDER = [
   "verify-postgres-d9-builder",
   "verify-postgres-d10-command-center",
   "verify-postgres-d11-patient-experience",
+  // Postgres cutover — dialect behaviour SQLite used to hide
+  "verify-postgres-search",
 ];
 const LAST = "verify-postgres-phase-b-final";
 
