@@ -28,8 +28,6 @@ export function appointmentsOverlap(aStart: Date, aEnd: Date, bStart: Date, bEnd
   return aStart < bEnd && aEnd > bStart;
 }
 
-const isPostgres = () => Boolean(process.env.DATABASE_URL?.startsWith("postgres"));
-
 /**
  * Books an appointment with a transactional conflict check (brief §61) —
  * queries for existing active appointments genuinely OVERLAPPING the
@@ -57,7 +55,7 @@ const isPostgres = () => Boolean(process.env.DATABASE_URL?.startsWith("postgres"
  * incorrectly reject legitimate bookings for any clinic session configured
  * with `maxConcurrentAppointments > 1`.
  *
- * Instead, on Postgres, this transaction takes a `pg_advisory_xact_lock`
+ * Instead, this transaction takes a `pg_advisory_xact_lock`
  * keyed on `doctorStaffId` before counting overlaps — this is the
  * brief-sanctioned "transactional serialization" mechanism: it forces any
  * two concurrent `bookAppointment` calls for the *same* doctor to run
@@ -66,9 +64,9 @@ const isPostgres = () => Boolean(process.env.DATABASE_URL?.startsWith("postgres"
  * phantom-read race for any value of `maxConcurrentAppointments`, not just
  * 1. The lock is scoped to the transaction (`_xact_`) so it releases
  * automatically on commit or rollback — no separate unlock call needed.
- * SQLite doesn't need this: `$transaction` calls already serialize against
- * SQLite's single connection, so no cross-doctor lock is necessary there;
- * the advisory-lock call is skipped entirely (it doesn't exist on SQLite).
+ * The lock is unconditional: it used to be skipped unless DATABASE_URL
+ * started with "postgres" (a SQLite-era check), which would have silently
+ * reopened the race under any other URL form, e.g. prisma://.
  */
 export async function bookAppointment(input: {
   facilityId: string;
@@ -86,14 +84,12 @@ export async function bookAppointment(input: {
   byUserId: string;
 }) {
   return prisma.$transaction(async (tx) => {
-    if (isPostgres()) {
-      // Serializes concurrent bookAppointment calls for this doctor so the
-      // overlap count below and the eventual create are effectively one
-      // atomic step — closes the phantom-read race for any
-      // maxConcurrentAppointments value. hashtext() is a stable, built-in
-      // Postgres hash; _xact_ scope means it auto-releases on commit/rollback.
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${input.doctorStaffId}))`;
-    }
+    // Serializes concurrent bookAppointment calls for this doctor so the
+    // overlap count below and the eventual create are effectively one
+    // atomic step — closes the phantom-read race for any
+    // maxConcurrentAppointments value. hashtext() is a stable, built-in
+    // Postgres hash; _xact_ scope means it auto-releases on commit/rollback.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${input.doctorStaffId}))`;
 
     const dayStart = new Date(input.scheduledStart);
     dayStart.setHours(0, 0, 0, 0);
