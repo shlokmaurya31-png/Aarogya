@@ -4,7 +4,7 @@ import { BadRequestError } from "@/lib/auth/rbac";
 import { getOrCreateLot } from "@/lib/hospital/inventory/lots";
 import { getOrCreateStockBalance, atomicIncrementOnHand } from "@/lib/hospital/inventory/stockBalance";
 import { postLedgerEntry } from "@/lib/hospital/inventory/ledger";
-import { assertItemInFacility, assertLocationInFacility, assertPurchaseOrderInFacility, assertPurchaseOrderLineInFacility } from "@/lib/hospital/inventory/facilityScope";
+import { assertItemInFacility, assertLocationInFacility, assertPurchaseOrderInFacility, assertPurchaseOrderLineInFacility, assertReplayInFacility } from "@/lib/hospital/inventory/facilityScope";
 import { nextGoodsReceiptSequence, formatSequenceNumber } from "./sequence";
 import { recomputeReceivingStatus } from "./purchaseOrders";
 
@@ -70,7 +70,7 @@ export async function recordGoodsReceipt(
     VALUES (${id}, ${input.purchaseOrderId}, ${input.facilityId}, ${Prisma.raw("'RECORDED'")}, ${input.recordedByStaffId}, CURRENT_TIMESTAMP, ${input.notes ?? null}, ${input.idempotencyKey})
     ON CONFLICT ("idempotencyKey") DO NOTHING
   `;
-  const receipt = await tx.goodsReceipt.findUniqueOrThrow({ where: { idempotencyKey: input.idempotencyKey } });
+  const receipt = assertReplayInFacility(await tx.goodsReceipt.findUniqueOrThrow({ where: { idempotencyKey: input.idempotencyKey } }), input.facilityId);
   if (rowsInserted === 0) return { receipt, alreadyExisted: true as const };
 
   for (const line of input.lines) {
