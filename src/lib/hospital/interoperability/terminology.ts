@@ -95,6 +95,7 @@ export async function resolveExternalCode(lookup: TerminologyLookup) {
       status: "ACTIVE",
       OR: [{ facilityId: lookup.facilityId }, { facilityId: null }],
     },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
   if (rows.length === 0) return null;
   const preferred = rows.find((r) => r.facilityId === lookup.facilityId) ?? rows[0];
@@ -113,6 +114,7 @@ export async function resolveExternalCodes(
       localCode: { in: [...new Set(codes.map((c) => c.localCode))] },
       OR: [{ facilityId }, { facilityId: null }],
     },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
   const out = new Map<string, { system: string; code: string; display?: string }>();
   for (const row of rows) {

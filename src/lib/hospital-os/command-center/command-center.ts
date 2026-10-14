@@ -1,4 +1,6 @@
 import type { FacilityContext } from "@/lib/auth/hospitalRbac";
+import { prisma } from "@/lib/db";
+import { NotFoundError } from "@/lib/auth/rbac";
 import { buildThresholds } from "./thresholds";
 import { resolveWindow, type TimeWindow } from "./filters";
 import { canSeeSection, type CommandContext, type SectionKey } from "./authz";
@@ -73,11 +75,24 @@ export interface OverviewOptions {
   sections?: SectionKey[]; // optional subset (still authorized)
 }
 
+/**
+ * A department filter must be one of the caller's own facility's departments.
+ * It feeds department-level configuration (thresholds), so another facility's
+ * department would read that facility's settings. Unknown or foreign: 404.
+ */
+async function ownDepartment(fctx: FacilityContext, departmentId: string | null | undefined): Promise<string | null> {
+  if (!departmentId) return null;
+  const dept = await prisma.department.findUnique({ where: { id: departmentId }, select: { facilityId: true } });
+  if (!dept || dept.facilityId !== fctx.facilityId) throw new NotFoundError("Department not found.");
+  return departmentId;
+}
+
 export async function getCommandCenterOverview(fctx: FacilityContext, opts: OverviewOptions = {}): Promise<CommandCenterOverview> {
   const now = new Date();
   const window: TimeWindow = resolveWindow(opts.window, opts.from, opts.to, now);
-  const thresholds = await buildThresholds({ organizationId: fctx.organizationId, facilityId: fctx.facilityId, departmentId: opts.departmentId ?? null });
-  const ctx: CommandContext = { session: fctx.session, organizationId: fctx.organizationId, facilityId: fctx.facilityId, departmentId: opts.departmentId ?? null, window, thresholds, now };
+  const departmentId = await ownDepartment(fctx, opts.departmentId);
+  const thresholds = await buildThresholds({ organizationId: fctx.organizationId, facilityId: fctx.facilityId, departmentId });
+  const ctx: CommandContext = { session: fctx.session, organizationId: fctx.organizationId, facilityId: fctx.facilityId, departmentId, window, thresholds, now };
 
   const wanted = (opts.sections && opts.sections.length ? opts.sections : (Object.keys(RUNNERS) as SectionKey[]));
   const authorized: SectionKey[] = [];
@@ -94,7 +109,7 @@ export async function getCommandCenterOverview(fctx: FacilityContext, opts: Over
   return {
     facilityId: fctx.facilityId,
     organizationId: fctx.organizationId,
-    departmentId: opts.departmentId ?? null,
+    departmentId,
     window: { key: window.key, from: window.from.toISOString(), to: window.to.toISOString(), label: window.label },
     asOf: now.toISOString(),
     overallStatus,
@@ -111,7 +126,8 @@ export async function getCommandCenterSection(fctx: FacilityContext, key: Sectio
     return { key, label: LABELS[key], status: "UNAVAILABLE", asOf: now.toISOString(), metrics: [], drivers: [], drillDown: null, unavailable: { reason: "restricted" } };
   }
   const window = resolveWindow(opts.window, opts.from, opts.to, now);
-  const thresholds = await buildThresholds({ organizationId: fctx.organizationId, facilityId: fctx.facilityId, departmentId: opts.departmentId ?? null });
-  const ctx: CommandContext = { session: fctx.session, organizationId: fctx.organizationId, facilityId: fctx.facilityId, departmentId: opts.departmentId ?? null, window, thresholds, now };
+  const departmentId = await ownDepartment(fctx, opts.departmentId);
+  const thresholds = await buildThresholds({ organizationId: fctx.organizationId, facilityId: fctx.facilityId, departmentId });
+  const ctx: CommandContext = { session: fctx.session, organizationId: fctx.organizationId, facilityId: fctx.facilityId, departmentId, window, thresholds, now };
   return safe(ctx, key, RUNNERS[key]);
 }

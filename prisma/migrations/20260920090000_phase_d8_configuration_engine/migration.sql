@@ -1,12 +1,14 @@
--- Phase D8 — configuration engine (SQLite).
+-- Phase D8 — configuration engine (PostgreSQL).
+-- Mirrors prisma/migrations/20260920090000_phase_d8_configuration_engine.
+--
 -- Strictly additive: two new tables (governed override store + immutable change
--- history) with their indexes. No change to any existing table (the D1
--- OrgConfigValue/FacilityConfigValue/DepartmentConfigValue KV is untouched).
--- Status/type fields are TEXT; allowed values enforced in code (src/lib/config/).
+-- history) with their indexes. No DROP, no retype, no data change, no enum. The D1
+-- Org/Facility/Department ConfigValue KV is untouched. Status/type fields are TEXT
+-- (allowed values enforced in code), matching the D5/D6 convention.
 
 -- CreateTable
 CREATE TABLE "ConfigurationOverride" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "key" TEXT NOT NULL,
     "valueType" TEXT NOT NULL,
     "scope" TEXT NOT NULL,
@@ -17,18 +19,20 @@ CREATE TABLE "ConfigurationOverride" (
     "value" TEXT NOT NULL,
     "status" TEXT NOT NULL DEFAULT 'DRAFT',
     "version" INTEGER NOT NULL DEFAULT 0,
-    "effectiveFrom" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "effectiveUntil" DATETIME,
+    "effectiveFrom" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "effectiveUntil" TIMESTAMP(3),
     "reason" TEXT,
     "createdByUserId" TEXT,
     "updatedByUserId" TEXT,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "ConfigurationOverride_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "ConfigurationChange" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "overrideId" TEXT,
     "key" TEXT NOT NULL,
     "scope" TEXT NOT NULL,
@@ -40,7 +44,9 @@ CREATE TABLE "ConfigurationChange" (
     "version" INTEGER,
     "actorUserId" TEXT,
     "reason" TEXT,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "ConfigurationChange_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex

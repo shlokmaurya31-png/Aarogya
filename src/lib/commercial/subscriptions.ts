@@ -61,7 +61,7 @@ export async function syncSubscriptionEntitlements(client: DbClient, subscriptio
 export async function ensureDefaultSubscription(client: DbClient, organizationId: string): Promise<void> {
   const existing = await client.organizationSubscription.findUnique({ where: { organizationId }, select: { id: true } });
   if (existing) return;
-  const defaultPlan = await client.subscriptionPlan.findFirst({ where: { isDefault: true, status: "ACTIVE" } });
+  const defaultPlan = await client.subscriptionPlan.findFirst({ where: { isDefault: true, status: "ACTIVE" }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
   if (!defaultPlan) return; // catalogue not bootstrapped yet
   const sub = await client.organizationSubscription.create({
     data: { organizationId, planId: defaultPlan.id, status: "ACTIVE", billingInterval: "NONE", isDefault: true, currentPeriodStart: new Date() },

@@ -1,5 +1,5 @@
 import type { Prisma } from "@prisma/client";
-import { NotFoundError } from "@/lib/auth/rbac";
+import { ConflictError, NotFoundError } from "@/lib/auth/rbac";
 
 type Tx = Prisma.TransactionClient;
 
@@ -16,6 +16,17 @@ type Tx = Prisma.TransactionClient;
  * LabTestCatalog's precedent) — those are allowed at any facility; a
  * facility-scoped item must match exactly.
  */
+
+/**
+ * Idempotency keys are client-supplied and globally unique, so an
+ * INSERT ... ON CONFLICT replay can land on another facility's row. Only a
+ * row of the caller's own facility is a true retry; any other is a conflict,
+ * and that row is never returned.
+ */
+export function assertReplayInFacility<R extends { facilityId: string }>(row: R, facilityId: string): R {
+  if (row.facilityId !== facilityId) throw new ConflictError("That idempotency key is already in use.");
+  return row;
+}
 
 export class ResourceFacilityMismatchError extends NotFoundError {
   constructor(resource: string) {

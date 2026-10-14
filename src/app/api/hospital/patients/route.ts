@@ -7,6 +7,7 @@ import { recordAuditEvent } from "@/lib/auth/audit";
 import { emitDomainEvent } from "@/lib/events/emit";
 import { facilityOrganizationId } from "@/lib/events/tenant";
 import { createPatientWithUhid } from "@/lib/hospital/uhid";
+import { patientSearchWhere } from "@/lib/hospital/patientSearch";
 
 export async function GET(req: NextRequest) {
   return withApiErrors(async () => {
@@ -15,20 +16,7 @@ export async function GET(req: NextRequest) {
     const q = searchParams.get("q")?.trim();
 
     const patients = await prisma.patient.findMany({
-      where: {
-        facilityId,
-        ...(q
-          ? {
-              OR: [
-                { fullName: { contains: q } },
-                { uhid: { contains: q } },
-                { phone: { contains: q } },
-                // Phase 6.8 — search by any patient identifier (ABHA/MRN/insurance).
-                { identifiers: { some: { value: { contains: q } } } },
-              ],
-            }
-          : {}),
-      },
+      where: patientSearchWhere(facilityId, q),
       orderBy: { createdAt: "desc" },
       take: 50,
     });

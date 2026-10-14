@@ -9,6 +9,7 @@ import { sniffContentType, validateUpload, safeName, safeScope, maxSizeForBucket
 import { buildRef, assertSafeRef } from "./ref";
 import { createDownloadToken, verifyDownloadToken, clampTtl, DEFAULT_TTL_SECONDS } from "./token";
 import { LocalDiskStorageAdapter } from "./localAdapter";
+import { S3StorageAdapter, readS3ConfigFromEnv } from "./s3Adapter";
 import { getStorageAdapter, __resetStorageAdapterForTests } from "./index";
 import { StorageValidationError, StorageRefError } from "./types";
 
@@ -138,5 +139,43 @@ describe("adapter selection", () => {
     expect(getStorageAdapter().name).toBe("local-disk");
     Object.assign(process.env, saved);
     __resetStorageAdapterForTests();
+  });
+});
+
+describe("S3 bucket layout", () => {
+  const base = { bucket: "aarogya", region: "ap-south-1", accessKeyId: "k", secretAccessKey: "s" };
+  const ref = "generated-pdf/fac1/aaaaaaaaaaaaaaaa-rx.pdf";
+
+  it("single bucket: logical bucket is a key prefix", () => {
+    const a = new S3StorageAdapter({ ...base, keyPrefix: "staging/" });
+    expect(a.locate(ref)).toEqual({ Bucket: "aarogya", Key: "staging/generated-pdf/fac1/aaaaaaaaaaaaaaaa-rx.pdf" });
+    expect(a.physicalBuckets()).toEqual(["aarogya"]);
+  });
+
+  it("per-logical: the logical bucket is the physical bucket", () => {
+    const a = new S3StorageAdapter({ ...base, bucket: "", bucketPerLogical: true });
+    expect(a.locate(ref)).toEqual({ Bucket: "generated-pdf", Key: "fac1/aaaaaaaaaaaaaaaa-rx.pdf" });
+    expect(a.physicalBuckets()).toContain("generated-pdf");
+  });
+
+  it("reads per-logical config without STORAGE_S3_BUCKET; checksums default on", () => {
+    const saved = { ...process.env };
+    try {
+      delete process.env.STORAGE_S3_BUCKET;
+      delete process.env.STORAGE_S3_CHECKSUMS;
+      Object.assign(process.env, {
+        STORAGE_S3_REGION: "ap-south-1",
+        STORAGE_S3_ACCESS_KEY_ID: "k",
+        STORAGE_S3_SECRET_ACCESS_KEY: "s",
+      });
+      expect(readS3ConfigFromEnv()).toBeNull();
+      process.env.STORAGE_S3_BUCKET_PER_LOGICAL = "true";
+      expect(readS3ConfigFromEnv()).toMatchObject({ bucket: "", bucketPerLogical: true, checksums: true });
+      process.env.STORAGE_S3_CHECKSUMS = "false";
+      expect(readS3ConfigFromEnv()?.checksums).toBe(false);
+    } finally {
+      for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+      Object.assign(process.env, saved);
+    }
   });
 });

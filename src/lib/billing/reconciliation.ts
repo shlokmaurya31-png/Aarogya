@@ -26,6 +26,7 @@ async function flag(kind: "STATE_MISMATCH" | "STUCK_PAYMENT" | "REFUND_MISMATCH"
   // De-duplicate: one open exception per (kind, providerRef).
   const existing = await prisma.billingReconciliationException.findFirst({
     where: { kind, providerRef: opts.providerRef ?? null, resolved: false },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
   if (existing) return existing;
   const row = await prisma.billingReconciliationException.create({

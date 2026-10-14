@@ -13,8 +13,8 @@ export async function buildPatientSummary(patientId: string) {
   const [patient, activeProblems, activeAllergies, activeMedications, recentVitals, recentEncounters, pendingLabOrders, pendingImagingOrders, recentNotes, activeCarePlans, currentLocation, activeAdmission, recentDocuments] =
     await Promise.all([
       prisma.patient.findUnique({ where: { id: patientId }, include: { emergencyContacts: true, identifiers: true } }),
-      prisma.problem.findMany({ where: { patientId: { in: patientIds }, status: "active" } }),
-      prisma.allergy.findMany({ where: { patientId: { in: patientIds }, status: "ACTIVE" } }),
+      prisma.problem.findMany({ where: { patientId: { in: patientIds }, status: "active" }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] }),
+      prisma.allergy.findMany({ where: { patientId: { in: patientIds }, status: "ACTIVE" }, orderBy: [{ recordedAt: "asc" }, { id: "asc" }] }),
       prisma.medicationOrder.findMany({
         where: { patientId: { in: patientIds }, status: { in: ["ORDERED", "VERIFIED", "DISPENSED"] } },
         orderBy: { orderedAt: "desc" },
@@ -30,8 +30,8 @@ export async function buildPatientSummary(patientId: string) {
         take: 5,
         include: { department: true },
       }),
-      prisma.labOrder.findMany({ where: { patientId: { in: patientIds }, status: { not: "RESULTED" } } }),
-      prisma.imagingOrder.findMany({ where: { patientId: { in: patientIds }, status: { not: "REPORTED" } } }),
+      prisma.labOrder.findMany({ where: { patientId: { in: patientIds }, status: { not: "RESULTED" } }, orderBy: [{ orderedAt: "desc" }, { id: "desc" }] }),
+      prisma.imagingOrder.findMany({ where: { patientId: { in: patientIds }, status: { not: "REPORTED" } }, orderBy: [{ orderedAt: "desc" }, { id: "desc" }] }),
       prisma.clinicalNote.findMany({
         where: { encounter: { patientId: { in: patientIds } } },
         orderBy: { createdAt: "desc" },

@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 import { selectFefoLot, validateExplicitLot } from "./fefo";
 import { getOrCreateStockBalance, atomicIncrementReserved, atomicDecrementReserved, atomicConvertReservedToIssued } from "./stockBalance";
 import { postLedgerEntry } from "./ledger";
-import { assertItemInFacility, assertLocationInFacility, assertLotInFacility } from "./facilityScope";
+import { assertItemInFacility, assertLocationInFacility, assertLotInFacility, assertReplayInFacility } from "./facilityScope";
 
 type Tx = Prisma.TransactionClient;
 
@@ -51,7 +51,7 @@ export async function reserveStock(tx: Tx, input: ReserveStockInput) {
       (${id}, ${input.facilityId}, ${input.itemId}, ${lotId}, ${input.locationId}, ${input.quantity}, ${Prisma.raw("'ACTIVE'")}, ${input.reservedForType ?? null}, ${input.reservedForId ?? null}, ${input.patientId ?? null}, ${input.encounterId ?? null}, ${input.requestedByStaffId}, ${input.expiresAt ?? null}, ${input.idempotencyKey}, CURRENT_TIMESTAMP)
     ON CONFLICT ("idempotencyKey") DO NOTHING
   `;
-  const reservation = await tx.stockReservation.findUniqueOrThrow({ where: { idempotencyKey: input.idempotencyKey } });
+  const reservation = assertReplayInFacility(await tx.stockReservation.findUniqueOrThrow({ where: { idempotencyKey: input.idempotencyKey } }), input.facilityId);
   if (rowsInserted === 0) return { reservation, alreadyExisted: true as const };
 
   const item = await tx.item.findUniqueOrThrow({ where: { id: input.itemId } });

@@ -21,7 +21,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const body = await req.json().catch(() => null);
     const { session, facilityId } = await requireFacilityStaff("inventory:item:manage", body?.facilityId);
 
-    const item = await prisma.$transaction((tx) => updateItem(tx, id, body ?? {}));
+    const item = await prisma.$transaction((tx) => updateItem(tx, id, facilityId, body ?? {}));
     await recordAuditEvent("hospital.inventory.itemUpdated", session.userId, { itemId: id }, { facilityId });
     return { item };
   });

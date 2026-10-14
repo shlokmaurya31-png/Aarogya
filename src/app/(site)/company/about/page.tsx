@@ -74,7 +74,7 @@ export default function AboutPage() {
         <Callout title="Architecture before enforcement, never enforcement theatre">
           <p>
             Aarogya is built in disciplined phases, each closed only when it passes correctness and security
-            gates on both SQLite and PostgreSQL, with zero schema drift and no weakened tests. The result is a
+            gates on PostgreSQL, with zero schema drift and no weakened tests. The result is a
             platform whose claims you can check in the codebase — the same standard we ask of any health
             system that touches a patient&rsquo;s life.
           </p>

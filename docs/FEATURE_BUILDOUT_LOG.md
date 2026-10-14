@@ -7,8 +7,17 @@ needed, and what was deliberately deferred (and why). Newest phase appended last
 Conventions followed every phase: server-validated logic with Vitest tests,
 facility tenant scoping, RBAC + `recordAuditEvent` on writes and PHI reads,
 adapter interfaces for external providers (dev impl + real impl gated on env
-creds, never faked), entitlement gates server-side, money as minor units, paired
-migrations in `prisma/migrations` and `prisma/migrations-postgres-baseline`.
+creds, never faked; [ADR 0003](adr/0003-adapters-for-external-services.md)), entitlement gates server-side, money as minor units, and one
+Postgres migration history in `prisma/migrations`.
+
+**Migrations, from 13 Oct 2026:** Postgres is the only database
+([ADR 0001](adr/0001-postgres-single-database.md)). Each schema change gets one
+migration in `prisma/migrations`, created with `npx prisma migrate dev` against
+the local Postgres (`npm run db:up`). Never edit an applied migration; fix drift
+with a new one. Entries below dated before 13 Oct 2026 describe the old
+convention: paired migrations in `prisma/migrations` (SQLite, now frozen in
+`prisma/archive/migrations-sqlite`) and `prisma/migrations-postgres-baseline`
+(now `prisma/migrations`).
 
 ---
 
@@ -59,6 +68,27 @@ token resolution, and default adapter selection.
   work); the PHI-read audit belongs at issuance, added per consumer.
 
 **Gate.** `npm test` 941 passing (+19), `npm run build` green, lint clean for new files.
+
+**Update, 14 Oct 2026: Supabase Storage for staging.** The S3 adapter now
+connects to Supabase Storage over its S3 protocol (docs/STAGING_SUPABASE.md §4).
+Two small, env-controlled adapter options were added; the defaults are unchanged:
+
+- `STORAGE_S3_BUCKET_PER_LOGICAL=true`: each logical bucket is its own physical
+  bucket (`generated-pdf/...` goes into the `generated-pdf` bucket), so
+  `STORAGE_S3_BUCKET` isn't needed.
+- `STORAGE_S3_CHECKSUMS=false`: no `x-amz-checksum-*` headers, including the
+  SDK's default CRC32. Supabase doesn't list them as supported.
+
+The adapter never sent ACL, SSE or Content-MD5 headers. New scripts:
+
+- `storage:init`: creates any missing bucket, private, idempotent.
+- `storage:check`: put, get + sha256, signed URL fetch, privacy probe and delete,
+  for every bucket.
+- `staging:document`: one real PDF through `src/lib/documents`, checking its
+  bucket and its QR verify link.
+
+Each script works against local disk or S3, and with `--staging` against
+Supabase.
 
 ---
 

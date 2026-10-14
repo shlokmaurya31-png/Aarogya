@@ -11,7 +11,7 @@
 import { PrismaClient } from "@prisma/client";
 import { createItem } from "../../src/lib/hospital/inventory/items";
 import { createStockLocation } from "../../src/lib/hospital/inventory/locations";
-import { linkMedicationToItem } from "../../src/lib/hospital/inventory/itemMedicationLink";
+import { linkMedicationToItem, SYSTEM_ACTOR } from "../../src/lib/hospital/inventory/itemMedicationLink";
 import { createSupplier } from "../../src/lib/hospital/procurement/suppliers";
 import { createRequisitionDraft, addRequisitionLine, submitRequisition, approveRequisition } from "../../src/lib/hospital/procurement/requisitions";
 import { createPurchaseOrderDraft, addPurchaseOrderLine, submitForApproval, approvePurchaseOrder } from "../../src/lib/hospital/procurement/purchaseOrders";
@@ -38,10 +38,12 @@ export async function seedPhase6aInventory(prisma: PrismaClient) {
     return;
   }
 
-  const facilities = await prisma.facility.findMany();
+  // Explicit orderBy everywhere below: Postgres guarantees no row order
+  // without one, and the demo chain must pick the same actors every run.
+  const facilities = await prisma.facility.findMany({ orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
 
   for (const facility of facilities) {
-    const admin = await prisma.hospitalStaffProfile.findFirst({ where: { facilityId: facility.id, user: { role: "HOSPITAL_ADMIN" } } });
+    const admin = await prisma.hospitalStaffProfile.findFirst({ where: { facilityId: facility.id, user: { role: "HOSPITAL_ADMIN" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
     if (!admin) continue; // no admin seeded at this facility — nothing to attribute procurement approvals to, skip rather than fabricate an actor
 
     const centralStore = await prisma.$transaction((tx) => createStockLocation(tx, { facilityId: facility.id, name: "Central Store", type: "WAREHOUSE" }));
@@ -58,7 +60,7 @@ export async function seedPhase6aInventory(prisma: PrismaClient) {
       const item = await prisma.$transaction((tx) =>
         createItem(tx, { facilityId: facility.id, sku: `${drug.sku}-${facility.id}`, name: drug.drugName, category: "MEDICATION", baseUnit: "TABLET", reorderPoint: 20, reorderQuantity: 200 })
       );
-      await prisma.$transaction((tx) => linkMedicationToItem(tx, { facilityId: facility.id, drugName: drug.drugName, itemId: item.id }));
+      await prisma.$transaction((tx) => linkMedicationToItem(tx, SYSTEM_ACTOR, { target: { scope: "FACILITY", facilityId: facility.id }, drugName: drug.drugName, itemId: item.id }));
       items.push({ itemId: item.id, drugName: drug.drugName });
     }
     await prisma.$transaction((tx) =>
@@ -69,7 +71,7 @@ export async function seedPhase6aInventory(prisma: PrismaClient) {
     // requisition -> approval -> PO -> approval -> goods receipt ->
     // approval (posts stock to Central Store) -> transfer to Central
     // Pharmacy -> receive.
-    const department = await prisma.department.findFirst({ where: { facilityId: facility.id } });
+    const department = await prisma.department.findFirst({ where: { facilityId: facility.id }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
     if (!department) continue;
 
     const requisitionItem = items[0];
@@ -83,7 +85,7 @@ export async function seedPhase6aInventory(prisma: PrismaClient) {
     // staffId, and there's only one HOSPITAL_ADMIN seeded per facility;
     // approve via a second staff profile if one exists, else skip approval
     // and leave the demo chain at SUBMITTED (still a valid, inspectable state).
-    const secondApprover = await prisma.hospitalStaffProfile.findFirst({ where: { facilityId: facility.id, id: { not: admin.id }, user: { role: { in: ["HOSPITAL_ADMIN", "PHARMACIST"] } } } });
+    const secondApprover = await prisma.hospitalStaffProfile.findFirst({ where: { facilityId: facility.id, id: { not: admin.id }, user: { role: { in: ["HOSPITAL_ADMIN", "PHARMACIST"] } } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
     if (!secondApprover) {
       console.log(`Seeded Phase 6A inventory foundation for ${facility.name}: items/locations/supplier/requisition (left SUBMITTED — no second approver role seeded at this facility to demonstrate approval without a same-actor violation).`);
       continue;
@@ -98,7 +100,7 @@ export async function seedPhase6aInventory(prisma: PrismaClient) {
       return approvePurchaseOrder(tx, submitted.id, { approvedByStaffId: secondApprover.id });
     });
 
-    const poLine = await prisma.purchaseOrderLine.findFirstOrThrow({ where: { purchaseOrderId: po.id } });
+    const poLine = await prisma.purchaseOrderLine.findFirstOrThrow({ where: { purchaseOrderId: po.id }, orderBy: [{ id: "asc" }] });
     const receiptResult = await prisma.$transaction(async (tx) => {
       const recorded = await recordGoodsReceipt(tx, {
         facilityId: facility.id,
@@ -123,7 +125,7 @@ export async function seedPhase6aInventory(prisma: PrismaClient) {
       return approveGoodsReceipt(tx, recorded.receipt.id, { approvedByStaffId: secondApprover.id, actorUserId: secondApprover.userId });
     });
 
-    const receivedLot = await prisma.itemLot.findFirstOrThrow({ where: { itemId: requisitionItem.itemId, facilityId: facility.id } });
+    const receivedLot = await prisma.itemLot.findFirstOrThrow({ where: { itemId: requisitionItem.itemId, facilityId: facility.id }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
     await prisma.$transaction((tx) =>
       initiateTransfer(tx, {
         facilityId: facility.id,

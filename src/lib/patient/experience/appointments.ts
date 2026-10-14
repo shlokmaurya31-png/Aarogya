@@ -83,6 +83,7 @@ export async function listBookableDoctors(scope: PatientAccessScope) {
   const blocks = await prisma.doctorScheduleBlock.findMany({
     where: { facilityId: scope.facilityId, type: "CLINIC_SESSION" },
     include: { staff: { include: { user: { select: { displayName: true } }, department: { select: { name: true } } } } },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
   const seen = new Map<string, { staffId: string; name: string; role: string; department: string | null; slotMinutes: number }>();
   for (const b of blocks) {

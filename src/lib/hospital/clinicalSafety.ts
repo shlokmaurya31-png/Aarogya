@@ -31,7 +31,7 @@ export async function checkMedicationSafety(
   const flags: SafetyFlag[] = [];
   const needle = (genericName || drugName).toLowerCase();
 
-  const allergies = await prisma.allergy.findMany({ where: { patientId } });
+  const allergies = await prisma.allergy.findMany({ where: { patientId }, orderBy: [{ recordedAt: "asc" }, { id: "asc" }] });
   for (const allergy of allergies) {
     const substance = allergy.substance.toLowerCase();
     if (needle.includes(substance) || substance.includes(needle)) {
@@ -46,6 +46,7 @@ export async function checkMedicationSafety(
 
   const activeOrders = await prisma.medicationOrder.findMany({
     where: { patientId, status: { in: ["ORDERED", "PHARMACY_REVIEW", "VERIFIED", "DISPENSED", "ACTIVE"] } },
+    orderBy: [{ orderedAt: "asc" }, { id: "asc" }],
   });
   for (const order of activeOrders) {
     const existing = (order.genericName || order.drugName).toLowerCase();

@@ -1,7 +1,7 @@
 import { Prisma, PaymentMethod } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db";
-import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
+import { BadRequestError, ConflictError, NotFoundError } from "@/lib/auth/rbac";
 import { getOrCreateBillingAccount } from "./billingAccount";
 import { refreshInvoicePaymentStatus } from "./invoices";
 
@@ -46,7 +46,7 @@ interface RecordPaymentInput {
  */
 export async function recordPayment(tx: Tx, input: RecordPaymentInput) {
   const existing = await tx.payment.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
-  if (existing) return { payment: existing, alreadyExisted: true as const };
+  if (existing) return { payment: assertPaymentReplay(existing, input), alreadyExisted: true as const };
 
   if (input.amountMinor <= 0) throw new BadRequestError("amountMinor must be positive.");
 
@@ -73,9 +73,22 @@ export async function recordPayment(tx: Tx, input: RecordPaymentInput) {
     VALUES (${randomUUID()}, ${account.id}, ${input.patientId}, ${input.facilityId}, ${input.amountMinor}, ${Prisma.raw(`'${input.method}'`)}, ${input.idempotencyKey}, ${input.referenceNo ?? null}, ${input.receivedByUserId})
     ON CONFLICT ("idempotencyKey") DO NOTHING
   `;
-  const payment = await tx.payment.findUniqueOrThrow({ where: { idempotencyKey: input.idempotencyKey } });
+  const payment = assertPaymentReplay(await tx.payment.findUniqueOrThrow({ where: { idempotencyKey: input.idempotencyKey } }), input);
 
   return { payment, alreadyExisted: rowsInserted === 0 };
+}
+
+/**
+ * idempotencyKey is client-supplied and globally unique, so a replayed key can
+ * name a payment from another facility or patient. Only a true retry (same
+ * facility, same patient) may return the existing row; anything else is a
+ * conflict, never another facility's payment.
+ */
+function assertPaymentReplay<P extends { facilityId: string; patientId: string }>(payment: P, input: { facilityId: string; patientId: string }): P {
+  if (payment.facilityId !== input.facilityId || payment.patientId !== input.patientId) {
+    throw new ConflictError("That idempotency key is already in use.");
+  }
+  return payment;
 }
 
 /**

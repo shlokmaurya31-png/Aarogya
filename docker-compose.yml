@@ -1,0 +1,31 @@
+# Local development database: Postgres 16 with the pgvector extension
+# available. Postgres is Aarogya's only database; there is no SQLite path.
+#
+#   npm run db:up     start and wait until healthy
+#   npm run db:psql   open a psql shell
+#   npm run db:down   stop (data persists in the aarogya-pgdata volume)
+#
+# Credentials are local-dev only. Never reuse them anywhere reachable.
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: aarogya-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: aarogya
+      POSTGRES_PASSWORD: aarogya
+      POSTGRES_DB: aarogya
+    ports:
+      - "5432:5432"
+    volumes:
+      - aarogya-pgdata:/var/lib/postgresql/data
+      # Runs once, on first start with an empty volume.
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aarogya -d aarogya"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  aarogya-pgdata:

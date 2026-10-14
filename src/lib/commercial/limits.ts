@@ -51,8 +51,8 @@ export async function requireEntitlement(args: { organizationId: string; facilit
  * Runs the count-then-create in a SERIALIZABLE transaction so two concurrent
  * creations for the same organization cannot both pass a limit of N when the
  * count is N-1. On PostgreSQL the loser aborts with serialization_failure
- * (mapped to a retryable 409); on SQLite writers serialise so the second sees
- * the committed count and is denied. Either way exactly one succeeds.
+ * (mapped to a retryable 409), so exactly one succeeds. Every query, including
+ * the plan/limit lookup, runs on the transaction client.
  *
  * `count` and `create` receive the transaction client so the count's predicate
  * and the insert are in the same transaction (required for SSI to detect the
@@ -69,7 +69,9 @@ export async function enforceLimit<T>(args: {
   const adding = args.adding ?? 1;
   try {
     return await prisma.$transaction(async (tx) => {
-      const { limit, unlimited, commercialActive } = await resolveLimit({ organizationId: args.organizationId, key: args.key });
+      // On `tx`, not the global client: a second connection per in-flight
+      // transaction exhausts small pools under concurrent creates.
+      const { limit, unlimited, commercialActive } = await resolveLimit({ organizationId: args.organizationId, key: args.key }, tx);
       if (!commercialActive) {
         throw new EntitlementDeniedError("The organization's subscription is not active.", "COMMERCIAL_INACTIVE");
       }

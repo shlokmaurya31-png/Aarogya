@@ -1,19 +1,31 @@
 /**
- * Phase 1.1 — S3 / S3-compatible storage adapter (S3, Cloudflare R2, MinIO).
+ * Phase 1.1 — S3 / S3-compatible storage adapter (S3, Cloudflare R2, MinIO,
+ * Supabase Storage).
  *
  * Activates ONLY when the STORAGE_S3_* credentials exist in the environment
  * (see .env.example). Until then getStorageAdapter never selects it, so this
  * code path is dormant, not faked. Downloads use provider-native presigned URLs.
  *
+ * Two bucket layouts:
+ *   - one physical bucket (STORAGE_S3_BUCKET), logical buckets as key prefixes;
+ *   - one physical bucket per logical bucket (STORAGE_S3_BUCKET_PER_LOGICAL=true),
+ *     so `generated-pdf/...` lands in the `generated-pdf` bucket. Supabase
+ *     staging uses this (docs/STAGING_SUPABASE.md).
+ *
+ * Never sent: ACLs, server-side-encryption headers or Content-MD5. Integrity
+ * checksums (x-amz-checksum-*, including the SDK's default CRC32) can be turned
+ * off with STORAGE_S3_CHECKSUMS=false for stores that don't document them.
+ *
  * The AWS SDK is imported dynamically so the default local-disk path never pays
  * to load it.
  */
-import type {
-  LoadedObject,
-  PutObjectInput,
-  SignedDownload,
-  StorageAdapter,
-  StoredObject,
+import {
+  STORAGE_BUCKETS,
+  type LoadedObject,
+  type PutObjectInput,
+  type SignedDownload,
+  type StorageAdapter,
+  type StoredObject,
 } from "./types";
 import { validateUpload } from "./validation";
 import { buildRef, assertSafeRef } from "./ref";
@@ -28,14 +40,19 @@ export interface S3Config {
   endpoint?: string;
   keyPrefix?: string;
   forcePathStyle?: boolean;
+  /** Each logical bucket is its own physical bucket; `bucket` is then unused. */
+  bucketPerLogical?: boolean;
+  /** Send x-amz-checksum-* headers (default true). */
+  checksums?: boolean;
 }
 
 export function readS3ConfigFromEnv(): S3Config | null {
-  const bucket = process.env.STORAGE_S3_BUCKET;
+  const bucketPerLogical = process.env.STORAGE_S3_BUCKET_PER_LOGICAL === "true";
+  const bucket = process.env.STORAGE_S3_BUCKET || (bucketPerLogical ? "" : undefined);
   const region = process.env.STORAGE_S3_REGION;
   const accessKeyId = process.env.STORAGE_S3_ACCESS_KEY_ID;
   const secretAccessKey = process.env.STORAGE_S3_SECRET_ACCESS_KEY;
-  if (!bucket || !region || !accessKeyId || !secretAccessKey) return null;
+  if (bucket === undefined || !region || !accessKeyId || !secretAccessKey) return null;
   return {
     bucket,
     region,
@@ -44,6 +61,8 @@ export function readS3ConfigFromEnv(): S3Config | null {
     endpoint: process.env.STORAGE_S3_ENDPOINT || undefined,
     keyPrefix: process.env.STORAGE_S3_KEY_PREFIX || undefined,
     forcePathStyle: process.env.STORAGE_S3_FORCE_PATH_STYLE === "true",
+    bucketPerLogical,
+    checksums: process.env.STORAGE_S3_CHECKSUMS !== "false",
   };
 }
 
@@ -59,9 +78,17 @@ export class S3StorageAdapter implements StorageAdapter {
     this.cfg = cfg;
   }
 
-  private key(storageRef: string): string {
+  /** Physical bucket + key for a storageRef. */
+  locate(storageRef: string): { Bucket: string; Key: string } {
     const prefix = this.cfg.keyPrefix ? this.cfg.keyPrefix.replace(/\/+$/, "") + "/" : "";
-    return prefix + storageRef;
+    if (!this.cfg.bucketPerLogical) return { Bucket: this.cfg.bucket, Key: prefix + storageRef };
+    const slash = storageRef.indexOf("/");
+    return { Bucket: storageRef.slice(0, slash), Key: prefix + storageRef.slice(slash + 1) };
+  }
+
+  /** The physical buckets this adapter writes to. */
+  physicalBuckets(): string[] {
+    return this.cfg.bucketPerLogical ? [...STORAGE_BUCKETS] : [this.cfg.bucket];
   }
 
   private async client() {
@@ -72,6 +99,9 @@ export class S3StorageAdapter implements StorageAdapter {
           region: this.cfg.region,
           endpoint: this.cfg.endpoint,
           forcePathStyle: this.cfg.forcePathStyle,
+          ...(this.cfg.checksums === false
+            ? { requestChecksumCalculation: "WHEN_REQUIRED", responseChecksumValidation: "WHEN_REQUIRED" }
+            : {}),
           credentials: { accessKeyId: this.cfg.accessKeyId, secretAccessKey: this.cfg.secretAccessKey },
         });
       })();
@@ -88,11 +118,10 @@ export class S3StorageAdapter implements StorageAdapter {
     const client = (await this.client()) as any;
     await client.send(
       new PutObjectCommand({
-        Bucket: this.cfg.bucket,
-        Key: this.key(storageRef),
+        ...this.locate(storageRef),
         Body: input.bytes,
         ContentType: contentType,
-        ChecksumSHA256: Buffer.from(sha256, "hex").toString("base64"),
+        ...(this.cfg.checksums === false ? {} : { ChecksumSHA256: Buffer.from(sha256, "hex").toString("base64") }),
       })
     );
     return { storageRef, sha256, size: input.bytes.length, contentType };
@@ -103,7 +132,7 @@ export class S3StorageAdapter implements StorageAdapter {
     const { GetObjectCommand } = await import("@aws-sdk/client-s3");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const client = (await this.client()) as any;
-    const res = await client.send(new GetObjectCommand({ Bucket: this.cfg.bucket, Key: this.key(storageRef) }));
+    const res = await client.send(new GetObjectCommand(this.locate(storageRef)));
     const bytes = Buffer.from(await res.Body.transformToByteArray());
     return { bytes, contentType: res.ContentType ?? "application/octet-stream" };
   }
@@ -117,7 +146,7 @@ export class S3StorageAdapter implements StorageAdapter {
     const client = (await this.client()) as any;
     const url = await getSignedUrl(
       client,
-      new GetObjectCommand({ Bucket: this.cfg.bucket, Key: this.key(storageRef) }),
+      new GetObjectCommand(this.locate(storageRef)),
       { expiresIn: ttl }
     );
     return { url, expiresAt: new Date(Date.now() + ttl * 1000) };
@@ -128,6 +157,6 @@ export class S3StorageAdapter implements StorageAdapter {
     const { DeleteObjectCommand } = await import("@aws-sdk/client-s3");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const client = (await this.client()) as any;
-    await client.send(new DeleteObjectCommand({ Bucket: this.cfg.bucket, Key: this.key(storageRef) }));
+    await client.send(new DeleteObjectCommand(this.locate(storageRef)));
   }
 }

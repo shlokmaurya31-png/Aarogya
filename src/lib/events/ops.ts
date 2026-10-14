@@ -119,11 +119,20 @@ export async function listDeadLetters(m: ActorMemberships, opts?: { limit?: numb
 }
 
 /** Tenant-scoped: an organization's own events (operational metadata + safe payload). */
+/**
+ * An organization's events. Its administrators (and the platform) see all of
+ * them. Any other member sees only organization-level events (no facility) and
+ * events of the facilities they belong to: a facility-scoped event names that
+ * facility's patients and records, so a sibling facility must never see it.
+ */
 export async function listOrganizationEvents(m: ActorMemberships, organizationId: string, filter: Omit<EventFilter, "organizationId"> = {}) {
   assertOrganizationAccess(m, organizationId);
+  const seesAll = m.isPlatformAdmin || m.adminOrgIds.has(organizationId);
+  const ownFacilities = [...new Set([...m.facilityMemberships.keys(), ...(m.primaryFacilityId ? [m.primaryFacilityId] : [])])];
   return prisma.domainEventOutbox.findMany({
     where: {
       organizationId,
+      ...(seesAll ? {} : { OR: [{ facilityId: null }, { facilityId: { in: ownFacilities } }] }),
       ...(filter.status ? { status: filter.status } : {}),
       ...(filter.eventType ? { eventType: filter.eventType } : {}),
       ...(filter.from || filter.to ? { occurredAt: { ...(filter.from ? { gte: filter.from } : {}), ...(filter.to ? { lte: filter.to } : {}) } } : {}),

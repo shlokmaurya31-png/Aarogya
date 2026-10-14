@@ -16,9 +16,9 @@ export async function seedPhase3Clinical(prisma: PrismaClient) {
   }
 
   const facility = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
-  const doctors = await prisma.hospitalStaffProfile.findMany({ where: { facilityId: facility.id, user: { role: "DOCTOR" } }, include: { user: true } });
-  const nurses = await prisma.hospitalStaffProfile.findMany({ where: { facilityId: facility.id, user: { role: "NURSE" } } });
-  const pharmacist = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facility.id, user: { role: "PHARMACIST" } } });
+  const doctors = await prisma.hospitalStaffProfile.findMany({ where: { facilityId: facility.id, user: { role: "DOCTOR" } }, include: { user: true }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+  const nurses = await prisma.hospitalStaffProfile.findMany({ where: { facilityId: facility.id, user: { role: "NURSE" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+  const pharmacist = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facility.id, user: { role: "PHARMACIST" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
   const doctor = doctors[0];
 
   // ── Configurable abnormal-vital thresholds (brief §13) — explicit, hospital-configured example values, not a clinical claim ──
@@ -37,7 +37,7 @@ export async function seedPhase3Clinical(prisma: PrismaClient) {
   }
 
   // ── Scenario A: OPD medication (register -> ... -> order -> pharmacy -> dispense -> administer) ──
-  const opdEncounter = await prisma.encounter.findFirst({ where: { facilityId: facility.id, type: "OPD", status: "REGISTERED" }, include: { patient: true } });
+  const opdEncounter = await prisma.encounter.findFirst({ where: { facilityId: facility.id, type: "OPD", status: "REGISTERED" }, include: { patient: true }, orderBy: [{ registeredAt: "asc" }, { id: "asc" }] });
   if (opdEncounter) {
     const orderA = await prisma.order.create({
       data: { facilityId: facility.id, encounterId: opdEncounter.id, patientId: opdEncounter.patientId, orderingStaffId: doctor.id, orderType: "MEDICATION", indication: "Uncomplicated UTI" },
@@ -69,6 +69,7 @@ export async function seedPhase3Clinical(prisma: PrismaClient) {
   const ipdEncounter = await prisma.encounter.findFirst({
     where: { facilityId: facility.id, status: "ADMITTED" },
     include: { patient: true, admission: { include: { bed: true } } },
+    orderBy: [{ registeredAt: "asc" }, { id: "asc" }],
   });
   if (ipdEncounter && ipdEncounter.admission) {
     await prisma.nursingAssignment.create({
@@ -131,9 +132,9 @@ export async function seedPhase3Clinical(prisma: PrismaClient) {
   }
 
   // ── Scenario C: Safety — documented allergy, conflicting order with override ──
-  const allergyPatient = await prisma.patient.findFirst({ where: { facilityId: facility.id, allergies: { some: { substance: { contains: "penicillin" } } } }, include: { allergies: true } });
+  const allergyPatient = await prisma.patient.findFirst({ where: { facilityId: facility.id, allergies: { some: { substance: { contains: "penicillin" } } } }, include: { allergies: true }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
   const anyEncounterForAllergy = allergyPatient
-    ? await prisma.encounter.findFirst({ where: { patientId: allergyPatient.id, facilityId: facility.id } })
+    ? await prisma.encounter.findFirst({ where: { patientId: allergyPatient.id, facilityId: facility.id }, orderBy: [{ registeredAt: "asc" }, { id: "asc" }] })
     : null;
   if (allergyPatient && anyEncounterForAllergy) {
     const orderC = await prisma.order.create({
@@ -161,6 +162,7 @@ export async function seedPhase3Clinical(prisma: PrismaClient) {
   // ── Scenario D: Pharmacy rejection -> doctor corrects -> resubmit -> verified ──
   const rejectPatientEncounter = await prisma.encounter.findFirst({
     where: { facilityId: facility.id, type: "OPD", status: "REGISTERED", id: { not: opdEncounter?.id } },
+    orderBy: [{ registeredAt: "asc" }, { id: "asc" }],
   });
   if (rejectPatientEncounter) {
     const orderD = await prisma.order.create({

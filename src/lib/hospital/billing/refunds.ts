@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db";
-import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
+import { BadRequestError, ConflictError, NotFoundError } from "@/lib/auth/rbac";
 
 type Tx = Prisma.TransactionClient;
 
@@ -47,7 +47,7 @@ export async function requestRefund(
   input: { paymentId: string; amountMinor: number; reason: string; requestedByUserId: string; idempotencyKey: string }
 ) {
   const existing = await tx.refund.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
-  if (existing) return { refund: existing, alreadyExisted: true as const };
+  if (existing) return { refund: assertRefundReplay(existing, input.paymentId), alreadyExisted: true as const };
 
   if (input.amountMinor <= 0) throw new BadRequestError("amountMinor must be positive.");
 
@@ -62,9 +62,20 @@ export async function requestRefund(
     VALUES (${randomUUID()}, ${input.paymentId}, ${input.amountMinor}, ${input.reason}, ${input.requestedByUserId}, ${input.idempotencyKey})
     ON CONFLICT ("idempotencyKey") DO NOTHING
   `;
-  const refund = await tx.refund.findUniqueOrThrow({ where: { idempotencyKey: input.idempotencyKey } });
+  const refund = assertRefundReplay(await tx.refund.findUniqueOrThrow({ where: { idempotencyKey: input.idempotencyKey } }), input.paymentId);
 
   return { refund, alreadyExisted: rowsInserted === 0 };
+}
+
+/**
+ * idempotencyKey is client-supplied and globally unique. The caller has already
+ * proven input.paymentId belongs to its facility, so only a refund of that same
+ * payment is a true retry; a key used for any other payment (possibly another
+ * facility's) is a conflict and never returns that refund.
+ */
+function assertRefundReplay<R extends { paymentId: string }>(refund: R, paymentId: string): R {
+  if (refund.paymentId !== paymentId) throw new ConflictError("That idempotency key is already in use.");
+  return refund;
 }
 
 export async function approveRefund(tx: Tx, refundId: string, input: { approvedByUserId: string }) {

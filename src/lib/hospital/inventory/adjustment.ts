@@ -3,7 +3,7 @@ import { Prisma, type AdjustmentReason } from "@prisma/client";
 import { BadRequestError } from "@/lib/auth/rbac";
 import { getOrCreateStockBalance, atomicIncrementOnHand, atomicDecrementOnHand } from "./stockBalance";
 import { postLedgerEntry } from "./ledger";
-import { assertItemInFacility, assertLocationInFacility, assertLotInFacility } from "./facilityScope";
+import { assertItemInFacility, assertLocationInFacility, assertLotInFacility, assertReplayInFacility } from "./facilityScope";
 
 type Tx = Prisma.TransactionClient;
 
@@ -66,7 +66,7 @@ export async function createAdjustment(tx: Tx, input: CreateAdjustmentInput) {
       (${id}, ${input.facilityId}, ${input.itemId}, ${input.lotId}, ${input.locationId}, ${input.quantityDelta}, ${Prisma.raw(`'${input.reason}'`)}, ${input.notes ?? null}, ${Prisma.raw(`'${initialStatus}'`)}, ${input.requestedByStaffId}, ${input.sourceType ?? null}, ${input.sourceId ?? null}, ${input.idempotencyKey}, CURRENT_TIMESTAMP)
     ON CONFLICT ("idempotencyKey") DO NOTHING
   `;
-  const adjustment = await tx.stockAdjustment.findUniqueOrThrow({ where: { idempotencyKey: input.idempotencyKey } });
+  const adjustment = assertReplayInFacility(await tx.stockAdjustment.findUniqueOrThrow({ where: { idempotencyKey: input.idempotencyKey } }), input.facilityId);
   if (rowsInserted === 0) return { adjustment, alreadyExisted: true as const };
 
   if (!isHighImpact) {

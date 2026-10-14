@@ -1,16 +1,17 @@
--- Phase C5 — NHCX / health claims exchange foundation.
+-- Phase C5 — NHCX / health claims exchange foundation (PostgreSQL).
+-- Mirrors prisma/migrations/20260911170000_phase_c5_nhcx_claims_exchange.
 --
--- Strictly additive: seven new tables, no ALTER, no DROP, no column removal and
--- no change to any Phase 5 billing or C1–C4 interoperability table. The
--- canonical Claim / Invoice / Payment records remain the single source of
--- financial truth; everything here is protocol and evidence state beside them.
+-- Fully ADDITIVE: seven new tables. No ALTER, no DROP, no retype, and no row in
+-- any existing table is read or written. Phase 5 billing (Claim, Invoice,
+-- Payment) and the C1–C4 interoperability tables are untouched.
 --
--- Tables are created in dependency order so that every foreign key references a
--- table that already exists at that point in the replay.
+-- Foreign keys are declared after every table exists, so a replay from zero
+-- never references a table that has not yet been created — the defect class
+-- found during the Phase B gate.
 
 -- CreateTable
 CREATE TABLE "ClaimSubmission" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "facilityId" TEXT NOT NULL,
     "claimId" TEXT NOT NULL,
     "version" INTEGER NOT NULL,
@@ -28,20 +29,21 @@ CREATE TABLE "ClaimSubmission" (
     "snapshotHash" TEXT,
     "snapshotBytes" INTEGER,
     "externalReference" TEXT,
-    "builtAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "submittedAt" DATETIME,
-    "respondedAt" DATETIME,
+    "builtAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "submittedAt" TIMESTAMP(3),
+    "respondedAt" TIMESTAMP(3),
     "builtByUserId" TEXT NOT NULL,
     "submittedByUserId" TEXT,
     "lockVersion" INTEGER NOT NULL DEFAULT 1,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL,
-    CONSTRAINT "ClaimSubmission_claimId_fkey" FOREIGN KEY ("claimId") REFERENCES "Claim" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "ClaimSubmission_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "ClaimSubmissionDocument" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "facilityId" TEXT NOT NULL,
     "submissionId" TEXT NOT NULL,
     "documentId" TEXT NOT NULL,
@@ -50,13 +52,14 @@ CREATE TABLE "ClaimSubmissionDocument" (
     "title" TEXT NOT NULL,
     "contentHash" TEXT,
     "dataClass" TEXT,
-    "includedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT "ClaimSubmissionDocument_submissionId_fkey" FOREIGN KEY ("submissionId") REFERENCES "ClaimSubmission" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+    "includedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "ClaimSubmissionDocument_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "NhcxExchange" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "facilityId" TEXT NOT NULL,
     "submissionId" TEXT,
     "claimId" TEXT,
@@ -71,22 +74,23 @@ CREATE TABLE "NhcxExchange" (
     "errorMessage" TEXT,
     "attemptCount" INTEGER NOT NULL DEFAULT 0,
     "maxAttempts" INTEGER NOT NULL DEFAULT 3,
-    "nextRetryAt" DATETIME,
-    "requestedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "submittedAt" DATETIME,
-    "acknowledgedAt" DATETIME,
-    "completedAt" DATETIME,
+    "nextRetryAt" TIMESTAMP(3),
+    "requestedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "submittedAt" TIMESTAMP(3),
+    "acknowledgedAt" TIMESTAMP(3),
+    "completedAt" TIMESTAMP(3),
     "latencyMs" INTEGER,
     "requestedByUserId" TEXT,
     "version" INTEGER NOT NULL DEFAULT 1,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL,
-    CONSTRAINT "NhcxExchange_submissionId_fkey" FOREIGN KEY ("submissionId") REFERENCES "ClaimSubmission" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "NhcxExchange_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "NhcxCallbackEvent" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "facilityId" TEXT NOT NULL,
     "exchangeId" TEXT,
     "correlationId" TEXT NOT NULL,
@@ -97,14 +101,15 @@ CREATE TABLE "NhcxCallbackEvent" (
     "payloadHash" TEXT,
     "payloadBytes" INTEGER,
     "sourceAddress" TEXT,
-    "receivedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "processedAt" DATETIME,
-    CONSTRAINT "NhcxCallbackEvent_exchangeId_fkey" FOREIGN KEY ("exchangeId") REFERENCES "NhcxExchange" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+    "receivedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "processedAt" TIMESTAMP(3),
+
+    CONSTRAINT "NhcxCallbackEvent_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "ClaimQuery" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "facilityId" TEXT NOT NULL,
     "submissionId" TEXT NOT NULL,
     "claimId" TEXT NOT NULL,
@@ -114,38 +119,41 @@ CREATE TABLE "ClaimQuery" (
     "status" TEXT NOT NULL DEFAULT 'RECEIVED',
     "responseText" TEXT,
     "respondedByUserId" TEXT,
-    "respondedAt" DATETIME,
+    "respondedAt" TIMESTAMP(3),
     "responseDocumentIds" TEXT,
-    "dueAt" DATETIME,
-    "receivedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "resolvedAt" DATETIME,
+    "dueAt" TIMESTAMP(3),
+    "receivedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "resolvedAt" TIMESTAMP(3),
     "version" INTEGER NOT NULL DEFAULT 1,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL,
-    CONSTRAINT "ClaimQuery_submissionId_fkey" FOREIGN KEY ("submissionId") REFERENCES "ClaimSubmission" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "ClaimQuery_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "ClaimSettlement" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "facilityId" TEXT NOT NULL,
     "claimId" TEXT NOT NULL,
     "externalSettlementRef" TEXT NOT NULL,
     "settledAmountMinor" INTEGER NOT NULL,
-    "settlementDate" DATETIME,
+    "settlementDate" TIMESTAMP(3),
     "status" TEXT NOT NULL DEFAULT 'NOTIFIED',
     "paymentId" TEXT,
-    "reconciledAt" DATETIME,
+    "reconciledAt" TIMESTAMP(3),
     "reconciledByUserId" TEXT,
     "notes" TEXT,
     "version" INTEGER NOT NULL DEFAULT 1,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "ClaimSettlement_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "ReconciliationException" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "facilityId" TEXT NOT NULL,
     "claimId" TEXT,
     "invoiceId" TEXT,
@@ -160,10 +168,12 @@ CREATE TABLE "ReconciliationException" (
     "status" TEXT NOT NULL DEFAULT 'OPEN',
     "resolutionNote" TEXT,
     "resolvedByUserId" TEXT,
-    "resolvedAt" DATETIME,
-    "detectedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "resolvedAt" TIMESTAMP(3),
+    "detectedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "version" INTEGER NOT NULL DEFAULT 1,
-    "updatedAt" DATETIME NOT NULL
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "ReconciliationException_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex
@@ -182,8 +192,8 @@ CREATE UNIQUE INDEX "ClaimSubmissionDocument_submission_document_version_key" ON
 CREATE INDEX "ClaimSubmissionDocument_facilityId_idx" ON "ClaimSubmissionDocument"("facilityId");
 
 -- CreateIndex: the idempotency and correlation guarantees are database
--- constraints, not application checks — a concurrent dispatch loses the insert
--- rather than creating a second external request.
+-- constraints, not application checks — under a concurrent dispatch one inserter
+-- loses on the unique index rather than a second external request being created.
 CREATE UNIQUE INDEX "NhcxExchange_idempotencyKey_key" ON "NhcxExchange"("idempotencyKey");
 
 -- CreateIndex
@@ -233,3 +243,18 @@ CREATE INDEX "ReconciliationException_facilityId_exceptionType_idx" ON "Reconcil
 
 -- CreateIndex
 CREATE INDEX "ReconciliationException_claimId_idx" ON "ReconciliationException"("claimId");
+
+-- AddForeignKey
+ALTER TABLE "ClaimSubmission" ADD CONSTRAINT "ClaimSubmission_claimId_fkey" FOREIGN KEY ("claimId") REFERENCES "Claim"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ClaimSubmissionDocument" ADD CONSTRAINT "ClaimSubmissionDocument_submissionId_fkey" FOREIGN KEY ("submissionId") REFERENCES "ClaimSubmission"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "NhcxExchange" ADD CONSTRAINT "NhcxExchange_submissionId_fkey" FOREIGN KEY ("submissionId") REFERENCES "ClaimSubmission"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "NhcxCallbackEvent" ADD CONSTRAINT "NhcxCallbackEvent_exchangeId_fkey" FOREIGN KEY ("exchangeId") REFERENCES "NhcxExchange"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ClaimQuery" ADD CONSTRAINT "ClaimQuery_submissionId_fkey" FOREIGN KEY ("submissionId") REFERENCES "ClaimSubmission"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

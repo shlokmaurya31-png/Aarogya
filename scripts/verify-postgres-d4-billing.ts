@@ -32,7 +32,6 @@ import { syncProviderCustomer } from "../src/lib/billing/billingAccount";
 import { refundViaProvider } from "../src/lib/billing/refunds";
 import { recordManualPayment } from "../src/lib/billing/payments";
 
-const IS_PG = /^postgres/i.test(process.env.DATABASE_URL ?? "");
 let pass = 0, fail = 0; const failures: string[] = [];
 function ok(l: string) { pass++; console.log(`  ✓ ${l}`); }
 function bad(l: string, d?: string) { fail++; failures.push(l + (d ? ` — ${d}` : "")); console.log(`  ✗ ${l}${d ? ` — ${d}` : ""}`); }
@@ -102,7 +101,7 @@ async function makeInvoiceWithOrder(actor: string, organizationId: string, order
 }
 
 async function run() {
-  console.log(`\nPhase D4 provider productionization gate (provider: ${IS_PG ? "PostgreSQL" : "SQLite"})\n`);
+  console.log(`\nPhase D4 provider productionization gate (provider: PostgreSQL)\n`);
   await cleanup(); await ensureCommercialBootstrap(); await ensureBillingBootstrap(); await seed(); await ensureBillingBootstrap();
 
   const mPlatform = await loadActorMemberships(ID.uPlatform, "AAROGYA_ADMIN");
@@ -197,7 +196,7 @@ async function run() {
 
   await cleanup();
   console.log(`\n────────────────────`);
-  console.log(`RESULT: ${pass} passed, ${fail} failed  (${IS_PG ? "PostgreSQL" : "SQLite"})`);
+  console.log(`RESULT: ${pass} passed, ${fail} failed  (PostgreSQL)`);
   if (fail) { console.log("FAILURES:"); failures.forEach((f) => console.log("  - " + f)); }
   await prisma.$disconnect();
   process.exit(fail ? 1 : 0);
@@ -205,7 +204,6 @@ async function run() {
 
 async function concurrency(mPlatform: ActorMemberships) {
   console.log("[concurrency]");
-  if (!IS_PG) { console.log("  · skipped (SQLite serialises writers)"); return; }
   void Prisma;
 
   // Concurrent duplicate capture webhooks -> exactly one payment.

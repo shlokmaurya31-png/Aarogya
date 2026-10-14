@@ -1,20 +1,34 @@
-// Aarogya Scholar persistence layer.
+// Aarogya persistence layer.
 //
-// Datasource is SQLite for zero-setup local dev (no Docker/Postgres required).
-// Every type used below (String/Int/Float/Boolean/DateTime/Json) has a direct
-// Postgres equivalent, so moving to production is a one-line datasource change:
-//   provider = "sqlite"
-//   url      = env("DATABASE_URL")   // postgres://...
-// See docs/STUDENT_PLATFORM_ARCHITECTURE.md §2.10 and
-// docs/REAL_CLINICAL_DATA_INTEGRATION.md for the migration path.
+// PostgreSQL 16 (with pgvector available) is the only database, in every
+// environment. There is exactly one migration history: prisma/migrations.
+// The old SQLite history is frozen in prisma/archive/migrations-sqlite and is
+// never applied again. See docs/adr/0001-postgres-single-database.md.
+//
+// Local dev:   npm run db:up   (docker compose: Postgres + aarogya_shadow)
+//              npx prisma migrate dev --name <change>
+// Staging:     npm run staging:migrate (Supabase, ap-south-1; see
+//              docs/STAGING_SUPABASE.md)
+// Production:  npx prisma migrate deploy
+//
+// Some guarantees (GiST EXCLUDE constraints, partial unique indexes) cannot be
+// expressed in this DSL and live only in hand-written migration SQL. Never
+// edit an applied migration; add a new one.
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider          = "postgresql"
+  url               = env("DATABASE_URL")
+  // Migrations use directUrl. Locally it equals DATABASE_URL; on Supabase
+  // DATABASE_URL is the transaction pooler and DIRECT_URL the session pooler.
+  directUrl         = env("DIRECT_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+  // pgvector, for RAG embeddings (no vector columns yet). See ADR 0001.
+  extensions        = [vector]
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -954,6 +968,7 @@ model Organization {
   collectionActivities CollectionActivity[]
   // Phase D6 — transactional domain-event outbox rows scoped to this org.
   domainEvents         DomainEventOutbox[]
+  medicationItemLinks  MedicationItemLink[]
 
   @@index([status])
 }
@@ -3351,7 +3366,7 @@ model PreAuthorization {
  * Facility-scoped price list entry. facilityId and payerId are both
  * deliberately NOT nullable — self-pay uses the seeded CASH Payer sentinel
  * above rather than payerId: null, because a Postgres exclusion constraint
- * (see prisma/migrations-postgres-baseline) over nullable columns is
+ * (see prisma/migrations) over nullable columns is
  * awkward (NULLs don't participate in the "=" comparison the constraint
  * needs). Effective-dated: never overwrite historical pricing — a new
  * tariff for the same (facilityId, chargeCode, payerId) gets a new row
@@ -4846,7 +4861,7 @@ model ClinicalHandoff {
 // Phase 6.7: a partial unique index enforcing "at most one open
 // (endAt IS NULL) assignment per patient" is added by hand in
 // prisma/migrations/*_phase6_7_nursing_core and mirrored in
-// prisma/migrations-postgres-baseline — not expressible in schema.prisma
+// prisma/migrations — not expressible in schema.prisma
 // syntax, same convention as the exclusion constraints on Payer/Tariff.
 // assignNurse() already expressed this invariant in application code; the
 // index closes the concurrent-create race where two simultaneous
@@ -5371,16 +5386,38 @@ model ItemUnitConversion {
  * medicationLifecycle.ts already applies for its Phase 5 charge code, so
  * there is one normalization convention, not two.
  */
-model MedicationItemLink {
-  id          String    @id @default(cuid())
-  facility    Facility? @relation(fields: [facilityId], references: [id])
-  facilityId  String?
-  drugNameKey String
-  item        Item      @relation(fields: [itemId], references: [id])
-  itemId      String
-  createdAt   DateTime  @default(now())
+/// Who a drug-name → item mapping applies to, and who may create it:
+/// GLOBAL (every facility; platform admin), ORGANIZATION (every facility of
+/// one organization; that organization's admin), FACILITY (one facility; that
+/// facility's inventory manager). Resolution is facility → organization →
+/// global. GLOBAL and ORGANIZATION links may only point at global catalog
+/// items (Item.facilityId NULL), so no facility's own item crosses a tenant.
+enum MedicationLinkScope {
+  GLOBAL
+  ORGANIZATION
+  FACILITY
+}
 
-  @@unique([facilityId, drugNameKey])
+model MedicationItemLink {
+  id             String              @id @default(cuid())
+  scope          MedicationLinkScope @default(FACILITY)
+  /// facilityId, organizationId or "GLOBAL": the uniqueness namespace. It is
+  /// never NULL, so a second GLOBAL link for the same drug is a real unique
+  /// violation (Postgres treats NULLs as distinct). A CHECK constraint in the
+  /// migration keeps scope, scopeRef and the two ids consistent.
+  scopeRef       String
+  facility       Facility?           @relation(fields: [facilityId], references: [id])
+  facilityId     String?
+  organization   Organization?       @relation(fields: [organizationId], references: [id])
+  organizationId String?
+  drugNameKey    String
+  item           Item                @relation(fields: [itemId], references: [id])
+  itemId         String
+  createdAt      DateTime            @default(now())
+
+  @@unique([scopeRef, drugNameKey])
+  @@index([facilityId])
+  @@index([organizationId])
 }
 
 /**

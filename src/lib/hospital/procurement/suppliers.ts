@@ -1,5 +1,5 @@
 import type { Prisma } from "@prisma/client";
-import { BadRequestError } from "@/lib/auth/rbac";
+import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 
 type Tx = Prisma.TransactionClient;
 
@@ -21,8 +21,9 @@ export async function createSupplier(tx: Tx, input: CreateSupplierInput) {
 }
 
 export async function updateSupplier(tx: Tx, id: string, facilityId: string, input: Partial<Omit<CreateSupplierInput, "facilityId" | "code">> & { active?: boolean }) {
-  const supplier = await tx.supplier.findUniqueOrThrow({ where: { id } });
-  if (supplier.facilityId !== facilityId) throw new BadRequestError("Supplier not found.");
+  // Unknown and another facility's supplier are the same 404.
+  const supplier = await tx.supplier.findUnique({ where: { id } });
+  if (!supplier || supplier.facilityId !== facilityId) throw new NotFoundError("Supplier not found.");
   return tx.supplier.update({ where: { id }, data: input });
 }
 

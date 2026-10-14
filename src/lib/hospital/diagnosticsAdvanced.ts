@@ -35,6 +35,7 @@ export async function setSpecimenIdentity(input: { specimenId: string; facilityI
 export async function lookupSpecimen(facilityId: string, code: string) {
   const specimen = await prisma.specimen.findFirst({
     where: { facilityId, OR: [{ barcode: code }, { accessionNumber: code }] },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     include: { patient: true, labOrder: true },
   });
   if (!specimen) throw new NotFoundError("No specimen matches that barcode/accession in this facility.");

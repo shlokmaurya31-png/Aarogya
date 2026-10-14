@@ -20,8 +20,9 @@
 /**
  * Logical partitions of the object store. The bucket is the first path segment
  * of every storageRef and selects the validation policy. It is NOT necessarily a
- * physical S3 bucket — the S3 adapter maps all logical buckets into one
- * configured bucket under a key prefix.
+ * physical S3 bucket: by default the S3 adapter maps all logical buckets into one
+ * configured bucket under a key prefix; with STORAGE_S3_BUCKET_PER_LOGICAL=true
+ * each logical bucket is a physical bucket of the same name (Supabase staging).
  */
 export const STORAGE_BUCKETS = [
   "clinical-documents",

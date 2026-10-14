@@ -6,7 +6,7 @@ export async function GET() {
   return withApiErrors(async () => {
     const { session } = await requireVerifiedStudent("student:progress:view");
 
-    const competencies = await prisma.studentCompetency.findMany({ where: { userId: session.userId } });
+    const competencies = await prisma.studentCompetency.findMany({ where: { userId: session.userId }, orderBy: [{ domain: "asc" }, { id: "asc" }] });
     const attempts = await prisma.caseAttempt.findMany({
       where: { studentId: session.userId, submittedAt: { not: null } },
       orderBy: { submittedAt: "asc" },

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { textContains } from "@/lib/search";
 import type { ClinicalCaseProvider, CaseListFilter } from "../provider";
 import type {
   ClinicalCaseFull,
@@ -64,9 +65,9 @@ export class SyntheticCaseProvider implements ClinicalCaseProvider {
         ...(filter.query
           ? {
               OR: [
-                { title: { contains: filter.query } },
-                { chiefComplaint: { contains: filter.query } },
-                { specialty: { contains: filter.query } },
+                { title: textContains(filter.query) },
+                { chiefComplaint: textContains(filter.query) },
+                { specialty: textContains(filter.query) },
               ],
             }
           : {}),

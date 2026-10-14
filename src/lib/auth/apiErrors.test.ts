@@ -37,6 +37,13 @@ describe("withApiErrors classification", () => {
     expect(body.error).toMatch(/changed concurrently/i);
   });
 
+  it("maps Prisma's record-not-found (P2025) to 404 with no internals, not a masked 500", async () => {
+    const err = Object.assign(new Error("No record was found for an update. Table MedicationOrder"), { code: "P2025" });
+    const { code, body } = await status(async () => { throw err; });
+    expect(code).toBe(404);
+    expect(body.error).toBe("Not found.");
+  });
+
   it("maps a serialization failure and Prisma's P2034 to 409", async () => {
     for (const code of ["40001", "P2034"]) {
       const err = Object.assign(new Error("could not serialize access due to concurrent update"), { code });

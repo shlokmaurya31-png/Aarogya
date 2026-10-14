@@ -43,7 +43,7 @@ export class StudyConcurrencyError extends BadRequestError {
  * caller's transaction. This app-level check relies on the DB's
  * transaction isolation and is the only guard on SQLite dev. On Postgres,
  * it is backstopped by a GiST exclusion constraint
- * (`imaging_resource_no_overlap`, see prisma/migrations-postgres-baseline)
+ * (`imaging_resource_no_overlap`, see prisma/migrations)
  * which is the actual DB-level guarantee — the app-level check here can't
  * by itself prevent two concurrent transactions from both passing a
  * count-then-create race; the constraint closes that gap. See

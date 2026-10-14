@@ -133,6 +133,7 @@ export async function listAccessiblePatients(ctx: PatientContext): Promise<Acces
       OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
     },
     include: { scopes: true },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
   for (const d of delegations) {
     // Never let a delegate observe their own record via the delegate path.

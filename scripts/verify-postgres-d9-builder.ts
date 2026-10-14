@@ -19,7 +19,6 @@ import { saveDraft, getDraft, listDrafts, publishDraft, importWorkflow, exportWo
 import { setOverride, publishOverride } from "../src/lib/config";
 import { loadActorMemberships, type ActorMemberships } from "../src/lib/auth/tenantContext";
 
-const IS_PG = /^postgres/i.test(process.env.DATABASE_URL ?? "");
 let pass = 0, fail = 0; const failures: string[] = [];
 const ok = (l: string) => { pass++; console.log(`  ✓ ${l}`); };
 const bad = (l: string, d?: string) => { fail++; failures.push(l + (d ? ` — ${d}` : "")); console.log(`  ✗ ${l}${d ? ` — ${d}` : ""}`); };
@@ -77,7 +76,7 @@ const labDoc = (name = "Critical lab") => ({ name, trigger: { eventType: "LabRes
 ] });
 
 async function run() {
-  console.log(`\n=== PHASE D9 WORKFLOW BUILDER GATE (${IS_PG ? "PostgreSQL" : "SQLite"}) ===\n`);
+  console.log(`\n=== PHASE D9 WORKFLOW BUILDER GATE (PostgreSQL) ===\n`);
   await cleanup();
   await seed();
   const A = await loadActorMemberships(ID.uAdminA, "HOSPITAL_ADMIN");
@@ -177,7 +176,7 @@ async function run() {
 
   await cleanup();
   console.log(`\n────────────────────`);
-  console.log(`RESULT: ${pass} passed, ${fail} failed  (${IS_PG ? "PostgreSQL" : "SQLite"})`);
+  console.log(`RESULT: ${pass} passed, ${fail} failed  (PostgreSQL)`);
   if (fail) { console.log("FAILURES:"); failures.forEach((f) => console.log("  - " + f)); }
   await prisma.$disconnect();
   process.exit(fail ? 1 : 0);
@@ -215,7 +214,6 @@ async function securityGate(A: ActorMemberships, B: ActorMemberships, O: ActorMe
 
 async function concurrency(A: ActorMemberships) {
   console.log("[concurrency races]");
-  if (!IS_PG) { console.log("  · concurrency races skipped (SQLite serialises writers); single-effect proven by the sequential cases above"); return; }
 
   // Race 1 — two edits to the same draft → one draft row, deterministic content.
   {

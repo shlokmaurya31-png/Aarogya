@@ -117,34 +117,26 @@ eventually wired.
 ## 7. Reproducing the gate
 
 ```bash
-# 1. Disposable PostgreSQL 16
-docker run -d --name aarogya-gate-pg \
-  -e POSTGRES_PASSWORD=gate -e POSTGRES_USER=gate -e POSTGRES_DB=aarogya_gate \
-  -p 55433:5432 postgres:16
+# 1. Local PostgreSQL 16 + pgvector (docker compose; creates aarogya_shadow too)
+npm run db:up
 
-# 2. PostgreSQL-flavoured schema + the production migration tree
-mkdir -p .pgreplay
-sed 's/provider = "sqlite"/provider = "postgresql"/' prisma/schema.prisma > .pgreplay/schema.prisma
-cp -r prisma/migrations-postgres-baseline .pgreplay/migrations
+# 2. Replay the whole history from zero, then prove there is no drift.
+#    schema.prisma is Postgres-native: no provider swap, no scratch copy.
+#    DATABASE_URL / SHADOW_DATABASE_URL come from .env (see .env.example).
+npx prisma migrate reset --force --skip-seed
+npx prisma migrate diff --from-migrations prisma/migrations \
+  --to-schema-datamodel prisma/schema.prisma \
+  --shadow-database-url "$SHADOW_DATABASE_URL" --exit-code
 
-export DATABASE_URL="postgresql://gate:gate@localhost:55433/aarogya_gate"
-
-# 3. Replay the whole history from zero, then prove there is no drift
-npx prisma migrate deploy --schema .pgreplay/schema.prisma
-npx prisma migrate diff --from-url "$DATABASE_URL" \
-  --to-schema-datamodel .pgreplay/schema.prisma --exit-code --script
-
-# 4. Seed and run the gate
-npx prisma generate --schema .pgreplay/schema.prisma
+# 3. Seed and run the gate
 npx tsx prisma/seed.ts
 npx tsx scripts/verify-postgres-phase-b-final.ts
 for s in scripts/verify-postgres-*.ts; do npx tsx "$s"; done
-
-# 5. Restore the SQLite client for local development
-npx prisma generate
 ```
 
-`.pgreplay/` is a scratch directory and is git-ignored.
+Since 13 October 2026 Postgres is the only database
+([ADR 0001](adr/0001-postgres-single-database.md)); the earlier recipe that
+`sed`-swapped the provider into a `.pgreplay/` copy is obsolete.
 
 **The verification scripts are not idempotent.** They consume appointment slots,
 roster windows and document versions, so re-running them against an

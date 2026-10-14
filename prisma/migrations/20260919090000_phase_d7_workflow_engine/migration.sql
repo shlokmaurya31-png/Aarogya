@@ -1,12 +1,14 @@
--- Phase D7 — workflow engine (SQLite).
+-- Phase D7 — workflow engine (PostgreSQL).
+-- Mirrors prisma/migrations/20260919090000_phase_d7_workflow_engine.
+--
 -- Strictly additive: six new tables (definition, version, instance, step, task,
--- timer) with their indexes and foreign keys. No change to any existing table.
--- Status/category fields are TEXT; allowed values are enforced in code
--- (src/lib/workflows/), matching the D5/D6 convention.
+-- timer) with their indexes and foreign keys. No DROP, no retype, no data change,
+-- no enum. Status/category fields are TEXT (allowed values enforced in code),
+-- matching the D5/D6 convention so both trees are identical here.
 
 -- CreateTable
 CREATE TABLE "WorkflowDefinition" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "organizationId" TEXT,
     "facilityId" TEXT,
     "key" TEXT NOT NULL,
@@ -18,27 +20,30 @@ CREATE TABLE "WorkflowDefinition" (
     "currentVersionId" TEXT,
     "createdByUserId" TEXT,
     "updatedByUserId" TEXT,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "WorkflowDefinition_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "WorkflowVersion" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "workflowDefinitionId" TEXT NOT NULL,
     "version" INTEGER NOT NULL,
     "status" TEXT NOT NULL DEFAULT 'DRAFT',
     "config" JSONB NOT NULL,
-    "publishedAt" DATETIME,
-    "retiredAt" DATETIME,
+    "publishedAt" TIMESTAMP(3),
+    "retiredAt" TIMESTAMP(3),
     "createdByUserId" TEXT,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT "WorkflowVersion_workflowDefinitionId_fkey" FOREIGN KEY ("workflowDefinitionId") REFERENCES "WorkflowDefinition" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "WorkflowVersion_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "WorkflowInstance" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "workflowDefinitionId" TEXT NOT NULL,
     "workflowVersionId" TEXT NOT NULL,
     "triggerEventId" TEXT NOT NULL,
@@ -57,20 +62,20 @@ CREATE TABLE "WorkflowInstance" (
     "failureMessage" TEXT,
     "cancelledByUserId" TEXT,
     "cancelReason" TEXT,
-    "startedAt" DATETIME,
-    "completedAt" DATETIME,
-    "cancelledAt" DATETIME,
-    "failedAt" DATETIME,
-    "lastAttemptAt" DATETIME,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL,
-    CONSTRAINT "WorkflowInstance_workflowDefinitionId_fkey" FOREIGN KEY ("workflowDefinitionId") REFERENCES "WorkflowDefinition" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT "WorkflowInstance_workflowVersionId_fkey" FOREIGN KEY ("workflowVersionId") REFERENCES "WorkflowVersion" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+    "startedAt" TIMESTAMP(3),
+    "completedAt" TIMESTAMP(3),
+    "cancelledAt" TIMESTAMP(3),
+    "failedAt" TIMESTAMP(3),
+    "lastAttemptAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "WorkflowInstance_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "WorkflowStep" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "workflowInstanceId" TEXT NOT NULL,
     "nodeKey" TEXT NOT NULL,
     "stepIndex" INTEGER NOT NULL,
@@ -78,21 +83,22 @@ CREATE TABLE "WorkflowStep" (
     "status" TEXT NOT NULL DEFAULT 'PENDING',
     "attemptCount" INTEGER NOT NULL DEFAULT 0,
     "maxAttempts" INTEGER NOT NULL DEFAULT 5,
-    "availableAt" DATETIME,
+    "availableAt" TIMESTAMP(3),
     "claimToken" TEXT,
-    "startedAt" DATETIME,
-    "completedAt" DATETIME,
+    "startedAt" TIMESTAMP(3),
+    "completedAt" TIMESTAMP(3),
     "failureCategory" TEXT,
     "failureMessage" TEXT,
     "resultRef" TEXT,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL,
-    CONSTRAINT "WorkflowStep_workflowInstanceId_fkey" FOREIGN KEY ("workflowInstanceId") REFERENCES "WorkflowInstance" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "WorkflowStep_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "WorkflowTask" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "workflowInstanceId" TEXT NOT NULL,
     "workflowStepId" TEXT,
     "organizationId" TEXT,
@@ -106,33 +112,35 @@ CREATE TABLE "WorkflowTask" (
     "status" TEXT NOT NULL DEFAULT 'OPEN',
     "assignedRole" TEXT,
     "assignedUserId" TEXT,
-    "dueAt" DATETIME,
+    "dueAt" TIMESTAMP(3),
     "completedByUserId" TEXT,
-    "completedAt" DATETIME,
-    "cancelledAt" DATETIME,
+    "completedAt" TIMESTAMP(3),
+    "cancelledAt" TIMESTAMP(3),
     "idempotencyKey" TEXT NOT NULL,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL,
-    CONSTRAINT "WorkflowTask_workflowInstanceId_fkey" FOREIGN KEY ("workflowInstanceId") REFERENCES "WorkflowInstance" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "WorkflowTask_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "WorkflowTimer" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "workflowInstanceId" TEXT NOT NULL,
     "workflowStepId" TEXT,
     "kind" TEXT NOT NULL,
-    "availableAt" DATETIME NOT NULL,
+    "availableAt" TIMESTAMP(3) NOT NULL,
     "status" TEXT NOT NULL DEFAULT 'PENDING',
     "claimToken" TEXT,
-    "claimedAt" DATETIME,
-    "completedAt" DATETIME,
+    "claimedAt" TIMESTAMP(3),
+    "completedAt" TIMESTAMP(3),
     "attemptCount" INTEGER NOT NULL DEFAULT 0,
     "payload" JSONB,
     "idempotencyKey" TEXT NOT NULL,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL,
-    CONSTRAINT "WorkflowTimer_workflowInstanceId_fkey" FOREIGN KEY ("workflowInstanceId") REFERENCES "WorkflowInstance" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "WorkflowTimer_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex
@@ -169,3 +177,11 @@ CREATE INDEX "WorkflowTask_workflowInstanceId_idx" ON "WorkflowTask"("workflowIn
 CREATE UNIQUE INDEX "WorkflowTimer_idempotencyKey_key" ON "WorkflowTimer"("idempotencyKey");
 CREATE INDEX "WorkflowTimer_status_availableAt_idx" ON "WorkflowTimer"("status", "availableAt");
 CREATE INDEX "WorkflowTimer_workflowInstanceId_idx" ON "WorkflowTimer"("workflowInstanceId");
+
+-- AddForeignKey
+ALTER TABLE "WorkflowVersion" ADD CONSTRAINT "WorkflowVersion_workflowDefinitionId_fkey" FOREIGN KEY ("workflowDefinitionId") REFERENCES "WorkflowDefinition"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "WorkflowInstance" ADD CONSTRAINT "WorkflowInstance_workflowDefinitionId_fkey" FOREIGN KEY ("workflowDefinitionId") REFERENCES "WorkflowDefinition"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "WorkflowInstance" ADD CONSTRAINT "WorkflowInstance_workflowVersionId_fkey" FOREIGN KEY ("workflowVersionId") REFERENCES "WorkflowVersion"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "WorkflowStep" ADD CONSTRAINT "WorkflowStep_workflowInstanceId_fkey" FOREIGN KEY ("workflowInstanceId") REFERENCES "WorkflowInstance"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "WorkflowTask" ADD CONSTRAINT "WorkflowTask_workflowInstanceId_fkey" FOREIGN KEY ("workflowInstanceId") REFERENCES "WorkflowInstance"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "WorkflowTimer" ADD CONSTRAINT "WorkflowTimer_workflowInstanceId_fkey" FOREIGN KEY ("workflowInstanceId") REFERENCES "WorkflowInstance"("id") ON DELETE CASCADE ON UPDATE CASCADE;

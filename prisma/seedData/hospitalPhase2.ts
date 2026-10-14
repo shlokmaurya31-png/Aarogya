@@ -38,7 +38,7 @@ export async function seedPhase2PatientFlow(prisma: PrismaClient) {
   });
 
   const doctors = await prisma.hospitalStaffProfile.findMany({ where: { facilityId: facility.id, user: { role: "DOCTOR" } }, include: { user: true, department: true }, orderBy: { user: { displayName: "asc" } } });
-  const nurses = await prisma.hospitalStaffProfile.findMany({ where: { facilityId: facility.id, user: { role: "NURSE" } }, take: 5 });
+  const nurses = await prisma.hospitalStaffProfile.findMany({ where: { facilityId: facility.id, user: { role: "NURSE" } }, take: 5, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
   const emergencyDoctor = doctors.find((d) => d.department?.name === "Emergency") ?? doctors[0];
   const opdDoctors = doctors.filter((d) => d.department?.name !== "Emergency").slice(0, 3);
   const patients = await prisma.patient.findMany({ where: { facilityId: facility.id }, take: 40, orderBy: { createdAt: "asc" } });
@@ -115,7 +115,7 @@ export async function seedPhase2PatientFlow(prisma: PrismaClient) {
 
   // ── ED surge scenario (brief §65): mixed triage levels, some pre-triage, one long-waiting for the SLA alert to fire ──
   const edAreas = ["RESUSCITATION", "HIGH_PRIORITY", "STANDARD", "OBSERVATION"];
-  const edBeds = await prisma.bed.findMany({ where: { facilityId: facility.id, status: BedStatus.AVAILABLE, ward: { wardType: "EMERGENCY" } }, take: 4 });
+  const edBeds = await prisma.bed.findMany({ where: { facilityId: facility.id, status: BedStatus.AVAILABLE, ward: { wardType: "EMERGENCY" } }, take: 4, orderBy: [{ label: "asc" }, { id: "asc" }] });
   let edCount = 0;
   for (let i = 0; i < 10 && i + 20 < patients.length; i++) {
     const patient = patients[i + 20];
@@ -161,7 +161,7 @@ export async function seedPhase2PatientFlow(prisma: PrismaClient) {
 
   // One ED patient in CT temporarily (brief §33 non-bed location example).
   if (patients[30]) {
-    const ctEncounter = await prisma.encounter.findFirst({ where: { patientId: patients[30].id, type: "ED" } });
+    const ctEncounter = await prisma.encounter.findFirst({ where: { patientId: patients[30].id, type: "ED" }, orderBy: [{ registeredAt: "asc" }, { id: "asc" }] });
     if (ctEncounter) {
       await prisma.encounterLocation.create({ data: { encounterId: ctEncounter.id, facilityId: facility.id, areaLabel: "CT (temporary)" } });
     }
@@ -180,7 +180,7 @@ export async function seedPhase2PatientFlow(prisma: PrismaClient) {
   }
 
   const secondUnadmitted = await prisma.encounter.findMany({ where: { facilityId: facility.id, type: "ED", status: "TRIAGED" }, orderBy: { registeredAt: "asc" }, skip: 1, take: 1 });
-  const generalBed = await prisma.bed.findFirst({ where: { facilityId: facility.id, status: BedStatus.AVAILABLE, ward: { wardType: "GENERAL" } } });
+  const generalBed = await prisma.bed.findFirst({ where: { facilityId: facility.id, status: BedStatus.AVAILABLE, ward: { wardType: "GENERAL" } }, orderBy: [{ label: "asc" }, { id: "asc" }] });
   if (secondUnadmitted[0] && generalBed && doctors[0]) {
     const req = await prisma.admissionRequest.create({
       data: {
@@ -195,7 +195,7 @@ export async function seedPhase2PatientFlow(prisma: PrismaClient) {
   }
 
   // ── Transfer request (brief §34): one pending on an existing admitted patient ──
-  const activeAdmission = await prisma.admission.findFirst({ where: { encounter: { facilityId: facility.id }, discharge: null } });
+  const activeAdmission = await prisma.admission.findFirst({ where: { encounter: { facilityId: facility.id }, discharge: null }, orderBy: [{ admittedAt: "asc" }, { id: "asc" }] });
   if (activeAdmission && nurses[0]) {
     await prisma.transferRequest.create({
       data: {

@@ -23,7 +23,6 @@ import { completeWorkflowTask } from "../src/lib/workflows/tasks";
 import { validateWorkflowConfig } from "../src/lib/workflows/validator";
 import { loadActorMemberships, type ActorMemberships } from "../src/lib/auth/tenantContext";
 
-const IS_PG = /^postgres/i.test(process.env.DATABASE_URL ?? "");
 let pass = 0, fail = 0; const failures: string[] = [];
 const ok = (l: string) => { pass++; console.log(`  ✓ ${l}`); };
 const bad = (l: string, d?: string) => { fail++; failures.push(l + (d ? ` — ${d}` : "")); console.log(`  ✗ ${l}${d ? ` — ${d}` : ""}`); };
@@ -88,7 +87,7 @@ async function seedRunnable(defId: string, versionId: string, env: DomainEventEn
 const mPlatform = () => loadActorMemberships(ID.uPlatform, "AAROGYA_ADMIN");
 
 async function run() {
-  console.log(`\n=== PHASE D7 WORKFLOW GATE (${IS_PG ? "PostgreSQL" : "SQLite"}) ===\n`);
+  console.log(`\n=== PHASE D7 WORKFLOW GATE (PostgreSQL) ===\n`);
   await cleanup();
   await seed();
   const P = await mPlatform();
@@ -215,7 +214,7 @@ async function run() {
 
   await cleanup();
   console.log(`\n────────────────────`);
-  console.log(`RESULT: ${pass} passed, ${fail} failed  (${IS_PG ? "PostgreSQL" : "SQLite"})`);
+  console.log(`RESULT: ${pass} passed, ${fail} failed  (PostgreSQL)`);
   if (fail) { console.log("FAILURES:"); failures.forEach((f) => console.log("  - " + f)); }
   await prisma.$disconnect();
   process.exit(fail ? 1 : 0);
@@ -321,7 +320,6 @@ async function privacyGate(P: ActorMemberships) {
 // ── Concurrency (PostgreSQL only) ────────────────────────────────────────────
 async function concurrency(P: ActorMemberships) {
   console.log("[concurrency races]");
-  if (!IS_PG) { console.log("  · concurrency races skipped (SQLite serialises writers); single-effect proven by the sequential idempotency/cancellation cases above"); return; }
 
   const simple = await prisma.workflowDefinition.findFirstOrThrow({ where: { key: `${KEY_PREFIX}simple` } });
   const critical = await prisma.workflowDefinition.findFirstOrThrow({ where: { key: `${KEY_PREFIX}critical` } });

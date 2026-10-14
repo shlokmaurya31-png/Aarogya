@@ -149,7 +149,7 @@ export async function createStaffingRequirement(input: {
 
 /** Informational comparison of required vs currently-assigned staffing (brief §17). Never a staffing decision. */
 export async function getStaffingCoverage(facilityId: string) {
-  const requirements = await prisma.staffingRequirement.findMany({ where: { facilityId, status: "ACTIVE" } });
+  const requirements = await prisma.staffingRequirement.findMany({ where: { facilityId, status: "ACTIVE" }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
   const activeAssignments = await prisma.workforceAssignment.findMany({ where: { facilityId, status: "ACTIVE" } });
   return requirements.map((r) => {
     const assigned = activeAssignments.filter((a) => (r.departmentId ? a.departmentId === r.departmentId : true) && (r.role ? a.operationalRole === r.role : true)).length;

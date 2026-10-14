@@ -244,6 +244,7 @@ export async function breakGlassAbuseReport(facilityId: string, sinceDays = 30) 
       actorUserId: true, patientId: true, status: true, useCount: true,
       activatedAt: true, expiresAt: true,
     },
+    orderBy: [{ activatedAt: "asc" }, { id: "asc" }],
   });
 
   const byActor = new Map<string, number>();

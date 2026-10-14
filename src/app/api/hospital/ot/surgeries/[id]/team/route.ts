@@ -11,7 +11,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const { facilityId } = await requireFacilityStaff("clinical:chart:read", searchParams.get("facilityId") ?? undefined);
     const surgery = await prisma.surgery.findUnique({ where: { id } });
     if (!surgery || surgery.facilityId !== facilityId) throw new NotFoundError("Surgery not found.");
-    const team = await prisma.surgeryTeamMember.findMany({ where: { surgeryId: id } });
+    const team = await prisma.surgeryTeamMember.findMany({ where: { surgeryId: id }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
     return { team };
   });
 }

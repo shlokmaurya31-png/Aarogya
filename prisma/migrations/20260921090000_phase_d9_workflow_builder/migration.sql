@@ -1,12 +1,13 @@
--- Phase D9 — workflow builder (SQLite).
+-- Phase D9 — workflow builder (PostgreSQL).
+-- Mirrors prisma/migrations/20260921090000_phase_d9_workflow_builder.
+--
 -- Strictly additive: one new table holding the in-progress visual authoring
--- document (possibly-incomplete drafts), so D7's strict WorkflowVersion.config
--- store is never polluted with invalid definitions. No change to any existing
--- table. Status is TEXT (values enforced in code, per the D5–D8 convention).
+-- document (possibly-incomplete drafts). No DROP, no retype, no data change, no
+-- enum. Status is TEXT (values enforced in code), per the D5–D8 convention.
 
 -- CreateTable
 CREATE TABLE "WorkflowBuilderDraft" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "organizationId" TEXT,
     "facilityId" TEXT,
     "workflowDefinitionId" TEXT,
@@ -16,8 +17,10 @@ CREATE TABLE "WorkflowBuilderDraft" (
     "status" TEXT NOT NULL DEFAULT 'DRAFT',
     "createdByUserId" TEXT,
     "updatedByUserId" TEXT,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "WorkflowBuilderDraft_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex

@@ -18,7 +18,7 @@ export interface FlowTimelineEntry {
 export async function buildEncounterFlowTimeline(encounterId: string): Promise<FlowTimelineEntry[]> {
   const encounter = await prisma.encounter.findUniqueOrThrow({ where: { id: encounterId } });
   const [appointment, queueEntries, triageAssessments, admissionRequests, transferRequests, admission] = await Promise.all([
-    prisma.appointment.findFirst({ where: { encounterId } }),
+    prisma.appointment.findFirst({ where: { encounterId }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] }),
     prisma.queueEntry.findMany({ where: { encounterId }, orderBy: { enteredAt: "asc" } }),
     prisma.triageAssessment.findMany({ where: { encounterId }, orderBy: { createdAt: "asc" } }),
     prisma.admissionRequest.findMany({ where: { encounterId }, orderBy: { createdAt: "asc" } }),

@@ -78,22 +78,35 @@ async function main() {
     report("Cancelled appointment frees the slot for reuse", r1.ok && r2.ok);
   }
 
-  // 6. Genuine parallel race: two truly concurrent bookings for the same doctor at overlapping times — exactly one must win.
+  // 6. Genuine parallel race: 10 rounds of 5 truly concurrent bookings for
+  // the same doctor and slot — exactly one must win each round. (A single
+  // two-way race was too weak: with the advisory lock removed it still
+  // passed, while 5-way rounds double-book every time without the lock.)
   {
-    const [r1, r2] = await Promise.all([book(doctor.id, patient1.id, at(6, 0), at(6, 30)), book(doctor.id, patient2.id, at(6, 0), at(6, 30))]);
-    const successes = [r1, r2].filter((r) => r.ok).length;
-    const conflictRejections = [r1, r2].filter((r) => !r.ok && r.err instanceof SlotConflictError).length;
+    const contenders = await prisma.patient.findMany({ where: { facilityId: facility.id }, orderBy: [{ createdAt: "asc" }, { id: "asc" }], take: 5 });
+    const rounds = 10;
+    let cleanRounds = 0;
+    let maxWinners = 0;
+    for (let round = 0; round < rounds; round++) {
+      const start = at(6, round * 30);
+      const end = at(6, round * 30 + 30);
+      const results = await Promise.all(contenders.map((p) => book(doctor.id, p.id, start, end)));
+      const winners = results.filter((r) => r.ok).length;
+      const conflicts = results.filter((r) => !r.ok && r.err instanceof SlotConflictError).length;
+      maxWinners = Math.max(maxWinners, winners);
+      if (winners === 1 && conflicts === contenders.length - 1) cleanRounds += 1;
+    }
     report(
-      "Genuine parallel race: exactly one of two truly concurrent overlapping bookings commits",
-      successes === 1 && conflictRejections === 1,
-      `successes=${successes} conflictRejections=${conflictRejections}`
+      `Genuine parallel race: exactly one of ${contenders.length} concurrent overlapping bookings commits, in every one of ${rounds} rounds`,
+      contenders.length === 5 && cleanRounds === rounds,
+      `cleanRounds=${cleanRounds}/${rounds} maxWinners=${maxWinners}`
     );
   }
 
   // 7. Genuine parallel race, different doctors — both must succeed (the advisory lock is keyed per-doctor, so it must not serialize unrelated doctors into a false conflict).
   {
     const otherDoctor = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facility.id, user: { role: "DOCTOR" } }, skip: 1 });
-    const [r1, r2] = await Promise.all([book(doctor.id, patient1.id, at(7, 0), at(7, 30)), book(otherDoctor.id, patient2.id, at(7, 0), at(7, 30))]);
+    const [r1, r2] = await Promise.all([book(doctor.id, patient1.id, at(12, 0), at(12, 30)), book(otherDoctor.id, patient2.id, at(12, 0), at(12, 30))]);
     report("Genuine parallel race, different doctors: both commit (no false cross-doctor conflict)", r1.ok && r2.ok);
   }
 

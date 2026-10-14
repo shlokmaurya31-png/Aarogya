@@ -133,10 +133,10 @@ export async function seedPhase1Extensions(prisma: PrismaClient) {
 
   // ── Phase 1 clinical-core entities attached to the FIRST facility's existing patients ──
   const patients = await prisma.patient.findMany({ where: { facilityId: primaryFacility.id }, take: 15, orderBy: { createdAt: "asc" } });
-  const doctors = await prisma.hospitalStaffProfile.findMany({ where: { facility: { id: primaryFacility.id }, user: { role: "DOCTOR" } } });
-  const nurses = await prisma.hospitalStaffProfile.findMany({ where: { facility: { id: primaryFacility.id }, user: { role: "NURSE" } } });
-  const encounters = await prisma.encounter.findMany({ where: { patientId: { in: patients.map((p) => p.id) } } });
-  const departments = await prisma.department.findMany({ where: { facilityId: primaryFacility.id } });
+  const doctors = await prisma.hospitalStaffProfile.findMany({ where: { facility: { id: primaryFacility.id }, user: { role: "DOCTOR" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+  const nurses = await prisma.hospitalStaffProfile.findMany({ where: { facility: { id: primaryFacility.id }, user: { role: "NURSE" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+  const encounters = await prisma.encounter.findMany({ where: { patientId: { in: patients.map((p) => p.id) } }, orderBy: [{ registeredAt: "asc" }, { id: "asc" }] });
+  const departments = await prisma.department.findMany({ where: { facilityId: primaryFacility.id }, orderBy: [{ name: "asc" }, { id: "asc" }] });
 
   function pick<T>(arr: T[], i: number): T { return arr[i % arr.length]; }
   function encounterFor(patientId: string) { return encounters.find((e) => e.patientId === patientId); }

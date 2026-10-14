@@ -12,7 +12,6 @@ import { setOverride, publishOverride } from "../src/lib/config";
 import { loadActorMemberships } from "../src/lib/auth/tenantContext";
 import type { FacilityContext } from "../src/lib/auth/hospitalRbac";
 
-const IS_PG = /^postgres/i.test(process.env.DATABASE_URL ?? "");
 let pass = 0, fail = 0; const failures: string[] = [];
 const ok = (l: string) => { pass++; console.log(`  ✓ ${l}`); };
 const bad = (l: string, d?: string) => { fail++; failures.push(l + (d ? ` — ${d}` : "")); console.log(`  ✗ ${l}${d ? ` — ${d}` : ""}`); };
@@ -72,7 +71,7 @@ function fctx(role: "AAROGYA_ADMIN" | "NURSE", facilityId: string, organizationI
 }
 
 async function run() {
-  console.log(`\n=== PHASE D10 COMMAND CENTER GATE (${IS_PG ? "PostgreSQL" : "SQLite"}) ===\n`);
+  console.log(`\n=== PHASE D10 COMMAND CENTER GATE (PostgreSQL) ===\n`);
   await cleanup();
   await seed();
   const plat = fctx("AAROGYA_ADMIN", ID.facA, ID.orgA);
@@ -163,7 +162,7 @@ async function run() {
 
   await cleanup();
   console.log(`\n────────────────────`);
-  console.log(`RESULT: ${pass} passed, ${fail} failed  (${IS_PG ? "PostgreSQL" : "SQLite"})`);
+  console.log(`RESULT: ${pass} passed, ${fail} failed  (PostgreSQL)`);
   if (fail) { console.log("FAILURES:"); failures.forEach((f) => console.log("  - " + f)); }
   await prisma.$disconnect();
   process.exit(fail ? 1 : 0);

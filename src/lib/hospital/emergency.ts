@@ -104,7 +104,7 @@ export async function assignEdLocation(input: { encounterId: string; facilityId:
 export async function releaseEdLocation(input: { encounterId: string; facilityId: string; byUserId: string }) {
   return prisma.$transaction(async (tx) => {
     const enc = await loadEdEncounter(tx, input.encounterId, input.facilityId);
-    const prior = await tx.encounterLocation.findFirst({ where: { encounterId: input.encounterId, releasedAt: null } });
+    const prior = await tx.encounterLocation.findFirst({ where: { encounterId: input.encounterId, releasedAt: null }, orderBy: [{ assignedAt: "desc" }, { id: "desc" }] });
     if (!prior) return { released: false };
     await tx.encounterLocation.updateMany({ where: { encounterId: input.encounterId, releasedAt: null }, data: { releasedAt: new Date() } });
     if (prior.bedId) await tx.bed.updateMany({ where: { id: prior.bedId, status: "OCCUPIED" }, data: { status: "CLEANING" } });
@@ -202,7 +202,7 @@ export async function dispositionEncounter(input: {
     });
 
     // Release any active ED location and free its bed (patient is leaving the ED bay).
-    const prior = await tx.encounterLocation.findFirst({ where: { encounterId: enc.id, releasedAt: null } });
+    const prior = await tx.encounterLocation.findFirst({ where: { encounterId: enc.id, releasedAt: null }, orderBy: [{ assignedAt: "desc" }, { id: "desc" }] });
     if (prior) {
       await tx.encounterLocation.updateMany({ where: { encounterId: enc.id, releasedAt: null }, data: { releasedAt: new Date() } });
       // For an admit, the old ED bay is freed here; the new ward/ICU bed is occupied below.
@@ -380,5 +380,5 @@ export async function buildEdTimeline(encounterId: string, facilityId: string): 
   for (const b of blood) e.push({ id: `bld-${b.id}`, timestamp: b.requestedAt.toISOString(), type: "Blood", summary: `Blood request: ${b.productName}`, sourceType: "BloodRequest", sourceId: b.id });
   for (const h of handoffs) e.push({ id: `ho-${h.id}`, timestamp: h.createdAt.toISOString(), type: "Handoff", summary: `${h.type} handoff (${h.status})`, sourceType: "ClinicalHandoff", sourceId: h.id });
   if (disposition) e.push({ id: `disp-${disposition.id}`, timestamp: disposition.dispositionAt.toISOString(), type: "Disposition", summary: `Disposition: ${disposition.type}`, sourceType: "EdDisposition", sourceId: disposition.id });
-  return e.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  return e.sort((a, b) => a.timestamp.localeCompare(b.timestamp) || a.id.localeCompare(b.id));
 }

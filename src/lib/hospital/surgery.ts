@@ -200,7 +200,10 @@ export async function ensureChecklist(surgeryId: string, facilityId: string) {
   if (!surgery || surgery.facilityId !== facilityId) throw new NotFoundError("Surgery not found.");
   const existing = await prisma.surgeryChecklistItem.count({ where: { surgeryId } });
   if (existing === 0) {
-    await prisma.surgeryChecklistItem.createMany({ data: CHECKLIST_TEMPLATE.map((t) => ({ surgeryId, phase: t.phase, itemKey: t.itemKey, label: t.label })) });
+    // Concurrent first reads both see zero items; skipDuplicates lets the
+    // loser of that race no-op on the (surgeryId, itemKey) unique key instead
+    // of failing with a 500.
+    await prisma.surgeryChecklistItem.createMany({ data: CHECKLIST_TEMPLATE.map((t) => ({ surgeryId, phase: t.phase, itemKey: t.itemKey, label: t.label })), skipDuplicates: true });
   }
   return prisma.surgeryChecklistItem.findMany({ where: { surgeryId }, orderBy: [{ phase: "asc" }, { itemKey: "asc" }] });
 }

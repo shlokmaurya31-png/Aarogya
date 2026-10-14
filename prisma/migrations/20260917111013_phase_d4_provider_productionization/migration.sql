@@ -1,38 +1,30 @@
--- AlterTable
-ALTER TABLE "BillingPaymentAttempt" ADD COLUMN "failureCode" TEXT;
-ALTER TABLE "BillingPaymentAttempt" ADD COLUMN "providerRequestRef" TEXT;
+-- Phase D4 — provider productionization (PostgreSQL).
+-- Mirrors prisma/migrations/20260917111013_phase_d4_provider_productionization.
+--
+-- Strictly additive: one new enum value + new nullable/defaulted columns on three
+-- existing tables. No DROP, no retype, no data change. On PostgreSQL the
+-- reconciliation additions are plain ADD COLUMN (no table rebuild — that is a
+-- SQLite-only limitation); the enum value is added with ALTER TYPE ADD VALUE
+-- (not referenced within this migration, so it is transaction-safe).
+
+-- AlterEnum
+ALTER TYPE "BillingProviderKind" ADD VALUE IF NOT EXISTS 'RAZORPAY';
 
 -- AlterTable
-ALTER TABLE "BillingWebhookEvent" ADD COLUMN "lastErrorCode" TEXT;
-ALTER TABLE "BillingWebhookEvent" ADD COLUMN "lastErrorMessage" TEXT;
+ALTER TABLE "BillingPaymentAttempt" ADD COLUMN "providerRequestRef" TEXT;
+ALTER TABLE "BillingPaymentAttempt" ADD COLUMN "failureCode" TEXT;
+
+-- AlterTable
+ALTER TABLE "BillingWebhookEvent" ADD COLUMN "verifiedAt" TIMESTAMP(3);
 ALTER TABLE "BillingWebhookEvent" ADD COLUMN "normalizedType" TEXT;
 ALTER TABLE "BillingWebhookEvent" ADD COLUMN "providerResourceRef" TEXT;
-ALTER TABLE "BillingWebhookEvent" ADD COLUMN "verifiedAt" DATETIME;
+ALTER TABLE "BillingWebhookEvent" ADD COLUMN "lastErrorCode" TEXT;
+ALTER TABLE "BillingWebhookEvent" ADD COLUMN "lastErrorMessage" TEXT;
 
--- RedefineTables
-PRAGMA defer_foreign_keys=ON;
-PRAGMA foreign_keys=OFF;
-CREATE TABLE "new_BillingReconciliationException" (
-    "id" TEXT NOT NULL PRIMARY KEY,
-    "organizationId" TEXT,
-    "kind" TEXT NOT NULL,
-    "severity" TEXT NOT NULL DEFAULT 'MEDIUM',
-    "entityType" TEXT,
-    "entityId" TEXT,
-    "description" TEXT,
-    "detail" JSONB,
-    "providerKind" TEXT NOT NULL DEFAULT 'NONE',
-    "providerRef" TEXT,
-    "localRef" TEXT,
-    "resolved" BOOLEAN NOT NULL DEFAULT false,
-    "resolvedByUserId" TEXT,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "resolvedAt" DATETIME
-);
-INSERT INTO "new_BillingReconciliationException" ("createdAt", "detail", "id", "kind", "organizationId", "providerKind", "providerRef", "resolved", "resolvedAt") SELECT "createdAt", "detail", "id", "kind", "organizationId", "providerKind", "providerRef", "resolved", "resolvedAt" FROM "BillingReconciliationException";
-DROP TABLE "BillingReconciliationException";
-ALTER TABLE "new_BillingReconciliationException" RENAME TO "BillingReconciliationException";
-CREATE INDEX "BillingReconciliationException_resolved_idx" ON "BillingReconciliationException"("resolved");
-CREATE INDEX "BillingReconciliationException_organizationId_idx" ON "BillingReconciliationException"("organizationId");
-PRAGMA foreign_keys=ON;
-PRAGMA defer_foreign_keys=OFF;
+-- AlterTable
+ALTER TABLE "BillingReconciliationException" ADD COLUMN "severity" TEXT NOT NULL DEFAULT 'MEDIUM';
+ALTER TABLE "BillingReconciliationException" ADD COLUMN "entityType" TEXT;
+ALTER TABLE "BillingReconciliationException" ADD COLUMN "entityId" TEXT;
+ALTER TABLE "BillingReconciliationException" ADD COLUMN "description" TEXT;
+ALTER TABLE "BillingReconciliationException" ADD COLUMN "localRef" TEXT;
+ALTER TABLE "BillingReconciliationException" ADD COLUMN "resolvedByUserId" TEXT;

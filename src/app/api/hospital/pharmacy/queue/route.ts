@@ -32,6 +32,7 @@ export async function GET(req: NextRequest) {
     const currentMeds = await prisma.medicationOrder.findMany({
       where: { patientId: { in: patientIds }, status: { in: ["ACTIVE", "DISPENSED", "VERIFIED"] } },
       select: { id: true, patientId: true, drugName: true, dose: true, route: true, frequency: true },
+      orderBy: [{ orderedAt: "desc" }, { id: "desc" }],
     });
     const medsByPatient = new Map<string, typeof currentMeds>();
     for (const m of currentMeds) {

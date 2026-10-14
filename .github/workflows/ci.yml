@@ -1,13 +1,15 @@
 name: CI
 
-# Automates the integrity discipline Aarogya already enforces by hand every
-# phase: the unit suite must stay green and the production build must compile
-# and type-check on every change, and lint must pass with zero warnings.
+# CI tests what production runs: PostgreSQL 16 + pgvector (ADR 0001).
 #
-# NOT covered here: the ~40 scripts/verify-postgres-*.ts integrity gates. Each
-# needs a freshly migrated + seeded Postgres and is non-idempotent, with no
-# aggregate runner yet — that belongs in a dedicated workflow with a postgres
-# service container, added once an ordered runner exists.
+#   Test & Build      migrate a fresh Postgres, unit tests, production build
+#   Integrity gates   npm run verify:all: every scripts/verify-postgres-*.ts
+#                     against a reset + migrated + seeded Postgres
+#   Migration drift   prisma/migrations must reproduce schema.prisma exactly
+#   Lint              ESLint, zero warnings allowed
+#
+# Every job gets its own disposable pgvector/pgvector:pg16 service container.
+# All credentials below are throwaway CI values; no secret is referenced.
 
 on:
   push:
@@ -24,11 +26,25 @@ jobs:
   test-and-build:
     name: Test & Build
     runs-on: ubuntu-latest
-    # Env mirrors .env so prisma generate / next build (which prerenders some
-    # routes) never hard-fail on a missing boot variable. All values are
-    # local-dev dummies; no secret is referenced.
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: aarogya
+          POSTGRES_PASSWORD: aarogya
+          POSTGRES_DB: aarogya
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
-      DATABASE_URL: "file:./dev.db"
+      DATABASE_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya"
+      DIRECT_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya"
+      SHADOW_DATABASE_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya_shadow"
       AUTH_SECRET: "ci-dummy-secret-not-used-for-anything-real-000000"
       CLINICAL_DATA_MODE: synthetic
       AI_PROVIDER: mock
@@ -44,25 +60,29 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Create shadow database
+        run: PGPASSWORD=aarogya psql -h localhost -U aarogya -d aarogya -c "CREATE DATABASE aarogya_shadow"
+
+      - name: Apply migrations
+        run: npx prisma migrate deploy
+
       - name: Unit tests (vitest)
         run: npm test
 
       - name: Production build (prisma generate + next build)
         run: npm run build
 
-  migration-drift:
-    name: Migration drift
+  integrity-gates:
+    name: Integrity gates
     runs-on: ubuntu-latest
-    # Both migration sets must reproduce schema.prisma exactly. Catches a model
-    # added via `prisma db push` without a migration, or a SQLite migration
-    # that was never mirrored into migrations-postgres-baseline.
+    timeout-minutes: 20
     services:
       postgres:
-        image: postgres:16
+        image: pgvector/pgvector:pg16
         env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: shadow
+          POSTGRES_USER: aarogya
+          POSTGRES_PASSWORD: aarogya
+          POSTGRES_DB: aarogya
         ports:
           - 5432:5432
         options: >-
@@ -71,7 +91,13 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: "file:./dev.db"
+      DATABASE_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya"
+      DIRECT_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya"
+      SHADOW_DATABASE_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya_shadow"
+      AUTH_SECRET: "ci-dummy-secret-not-used-for-anything-real-000000"
+      CLINICAL_DATA_MODE: synthetic
+      AI_PROVIDER: mock
+      ABDM_ENVIRONMENT: DISABLED
     steps:
       - uses: actions/checkout@v4
 
@@ -83,26 +109,76 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: SQLite migrations match schema
+      - name: Create shadow database
+        run: PGPASSWORD=aarogya psql -h localhost -U aarogya -d aarogya -c "CREATE DATABASE aarogya_shadow"
+
+      # Resets, migrates and seeds once, then runs every gate in order
+      # (scripts/verify-all.ts). Exits non-zero if any gate fails.
+      - name: verify:all
+        run: npm run verify:all
+
+      - name: Upload gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-report
+          path: .verify-report/latest.md
+          include-hidden-files: true
+          if-no-files-found: warn
+
+  migration-drift:
+    name: Migration drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # prisma/migrations (Postgres, the only history) must reproduce
+    # schema.prisma exactly. Catches a model added via `prisma db push`
+    # without a migration, or a hand-edited migration.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: aarogya
+          POSTGRES_PASSWORD: aarogya
+          POSTGRES_DB: aarogya
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    # Prisma refuses a shadow database equal to the main one (it wipes the
+    # shadow), so the shadow is a separate database.
+    env:
+      DATABASE_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya"
+      DIRECT_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya"
+      SHADOW_DATABASE_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya_shadow"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create shadow database
+        run: PGPASSWORD=aarogya psql -h localhost -U aarogya -d aarogya -c "CREATE DATABASE aarogya_shadow"
+
+      - name: Migrations match schema
         run: >-
           npx prisma migrate diff
           --from-migrations prisma/migrations
           --to-schema-datamodel prisma/schema.prisma
-          --shadow-database-url "file:${{ runner.temp }}/shadow.db"
+          --shadow-database-url "$SHADOW_DATABASE_URL"
           --exit-code
-
-      - name: Postgres baseline matches schema
-        run: |
-          sed 's/provider = "sqlite"/provider = "postgresql"/' prisma/schema.prisma > "$RUNNER_TEMP/schema.pg.prisma"
-          npx prisma migrate diff \
-            --from-migrations prisma/migrations-postgres-baseline \
-            --to-schema-datamodel "$RUNNER_TEMP/schema.pg.prisma" \
-            --shadow-database-url "postgresql://postgres:postgres@localhost:5432/shadow" \
-            --exit-code
 
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 

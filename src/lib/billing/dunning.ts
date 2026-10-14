@@ -40,6 +40,7 @@ export async function processBillingDunning(m: ActorMemberships, opts?: { now?: 
     where: { status: { in: ["ACTIVE", "PAST_DUE", "GRACE"] } },
     select: { organizationId: true, status: true, gracePeriodEndsAt: true },
     take: limit,
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
 
   for (const sub of subs) {

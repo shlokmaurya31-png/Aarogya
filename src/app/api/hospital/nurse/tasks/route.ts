@@ -26,6 +26,7 @@ export async function GET(req: NextRequest) {
     const admittedEncounters = await prisma.encounter.findMany({
       where: { facilityId, status: "ADMITTED" },
       include: { patient: true, admission: { include: { bed: true } }, vitals: { orderBy: { recordedAt: "desc" }, take: 1 } },
+      orderBy: [{ registeredAt: "asc" }, { id: "asc" }],
     });
     const vitalsDue = admittedEncounters.filter((e) => {
       const last = e.vitals[0];

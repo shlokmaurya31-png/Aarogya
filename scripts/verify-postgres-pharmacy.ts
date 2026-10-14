@@ -37,7 +37,7 @@ async function main() {
     seq++;
     const drugName = `TESTDRUG-${runId}-${seq}`;
     const item = await prisma.item.create({ data: { facilityId: facility.id, sku: `MED-${runId}-${seq}`, name: drugName, category: "MEDICATION", baseUnit: "TABLET", controlledClass: controlled ? "SCHEDULE_X" : null } });
-    await prisma.medicationItemLink.create({ data: { facilityId: facility.id, drugNameKey: drugName.trim().toUpperCase(), itemId: item.id } });
+    await prisma.medicationItemLink.create({ data: { facilityId: facility.id, scopeRef: facility.id, drugNameKey: drugName.trim().toUpperCase(), itemId: item.id } });
     return { item, drugName };
   }
   async function lotWithStock(itemId: string, qty: number, expiresAt = new Date("2031-01-01")) {
@@ -191,8 +191,8 @@ async function main() {
     const dup = await prisma.item.create({ data: { facilityId: facility.id, sku, name: "Dup2", category: "MEDICATION", baseUnit: "TABLET" } }).then(() => ({ ok: true as const }), () => ({ ok: false as const }));
     const { item } = await medItem();
     const key = `DUPKEY-${runId}`;
-    await prisma.medicationItemLink.create({ data: { facilityId: facility.id, drugNameKey: key, itemId: item.id } });
-    const dupLink = await prisma.medicationItemLink.create({ data: { facilityId: facility.id, drugNameKey: key, itemId: item.id } }).then(() => ({ ok: true as const }), () => ({ ok: false as const }));
+    await prisma.medicationItemLink.create({ data: { facilityId: facility.id, scopeRef: facility.id, drugNameKey: key, itemId: item.id } });
+    const dupLink = await prisma.medicationItemLink.create({ data: { facilityId: facility.id, scopeRef: facility.id, drugNameKey: key, itemId: item.id } }).then(() => ({ ok: true as const }), () => ({ ok: false as const }));
     report("Duplicate Item.sku and MedicationItemLink are rejected by unique constraints", !dup.ok && !dupLink.ok, `dupItem=${dup.ok}, dupLink=${dupLink.ok}`);
   }
 

@@ -111,7 +111,7 @@ export async function ingestWebhook(input: { providerKind: BillingProviderKind; 
 
 /** Record a captured payment against the attempt's invoice, advancing renewal if applicable. */
 async function applyCapture(tx: Prisma.TransactionClient, providerKind: BillingProviderKind, event: { providerResourceRef?: string; providerPaymentRef?: string; amountMinor?: number }): Promise<IngestResult> {
-  const attempt = await tx.billingPaymentAttempt.findFirst({ where: { providerRequestRef: event.providerResourceRef } });
+  const attempt = await tx.billingPaymentAttempt.findFirst({ where: { providerRequestRef: event.providerResourceRef }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
   if (!attempt) {
     await flag(tx, "UNKNOWN_REFERENCE", providerKind, event, "captured event for an unknown order/request reference");
     return { status: "RECONCILE", detail: "unknown order reference" };
@@ -153,7 +153,7 @@ async function applyCapture(tx: Prisma.TransactionClient, providerKind: BillingP
 /** Mark the attempt failed. Dunning is handled separately (processBillingDunning). */
 async function applyFailure(tx: Prisma.TransactionClient, event: { providerResourceRef?: string; failureCode?: string }): Promise<IngestResult> {
   if (!event.providerResourceRef) return { status: "IGNORED", detail: "failure event without order reference" };
-  const attempt = await tx.billingPaymentAttempt.findFirst({ where: { providerRequestRef: event.providerResourceRef } });
+  const attempt = await tx.billingPaymentAttempt.findFirst({ where: { providerRequestRef: event.providerResourceRef }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
   if (!attempt) return { status: "IGNORED", detail: "failure for unknown order" };
   if (!canTransitionAttempt(attempt.status, "FAILED")) return { status: "DUPLICATE", detail: "attempt no longer pending" };
   await tx.billingPaymentAttempt.updateMany({

@@ -4,7 +4,7 @@ import { BadRequestError } from "@/lib/auth/rbac";
 import { validateExplicitLot } from "./fefo";
 import { getOrCreateStockBalance, atomicDecrementOnHand, atomicIncrementOnHand } from "./stockBalance";
 import { postLedgerEntry } from "./ledger";
-import { assertItemInFacility, assertLocationInFacility, assertLotInFacility } from "./facilityScope";
+import { assertItemInFacility, assertLocationInFacility, assertLotInFacility, assertReplayInFacility } from "./facilityScope";
 
 type Tx = Prisma.TransactionClient;
 
@@ -52,7 +52,7 @@ export async function initiateTransfer(tx: Tx, input: InitiateTransferInput) {
       (${id}, ${input.facilityId}, ${input.itemId}, ${input.lotId}, ${input.fromLocationId}, ${input.toLocationId}, ${input.quantity}, ${Prisma.raw("'IN_TRANSIT'")}, ${input.reason ?? null}, ${input.requestedByStaffId}, CURRENT_TIMESTAMP, ${input.idempotencyKey}, CURRENT_TIMESTAMP)
     ON CONFLICT ("idempotencyKey") DO NOTHING
   `;
-  const transfer = await tx.stockTransfer.findUniqueOrThrow({ where: { idempotencyKey: input.idempotencyKey } });
+  const transfer = assertReplayInFacility(await tx.stockTransfer.findUniqueOrThrow({ where: { idempotencyKey: input.idempotencyKey } }), input.facilityId);
   if (rowsInserted === 0) return { transfer, alreadyExisted: true as const };
 
   const item = await tx.item.findUniqueOrThrow({ where: { id: input.itemId } });
