@@ -609,7 +609,11 @@ as a known divergence. The problems:
 - **There is no read path.** Nothing reads the files back. A reviewer route
   is needed anyway, and should use `signedDownloadUrl` with an audit event.
 
-**Plan (Week 2, not done now):**
+**Status (Week 2): done.** `StorageVerificationProvider` stores through
+`getStorageAdapter()`; registration validates the file before creating the
+account; `npm run verification:migrate` (dry run; `-- --apply` to write)
+moves legacy rows; `verify-postgres-verification-uploads` gates it. The
+original plan, for reference:
 1. Implement `VerificationProvider` on top of `getStorageAdapter()`: bucket
    `verification`, scope `studentProfileId`, through `validateUpload`.
 2. Store the logical `storageRef` (`verification/<scope>/<sha16>-<name>`).

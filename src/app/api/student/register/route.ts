@@ -7,6 +7,7 @@ import { createSession } from "@/lib/auth/session";
 import { decideInitialVerificationStatus } from "@/lib/verification/decide";
 import { getVerificationProvider } from "@/lib/verification/provider";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { validateUpload, StorageValidationError } from "@/lib/storage";
 
 const RegisterSchema = z.object({
   fullLegalName: z.string().min(2),
@@ -37,6 +38,22 @@ export async function POST(req: NextRequest) {
   const existing = await prisma.user.findUnique({ where: { email: input.email.toLowerCase() } });
   if (existing) {
     return NextResponse.json({ error: "An account with this email already exists." }, { status: 409 });
+  }
+
+  // Check the optional verification document BEFORE creating anything, so a
+  // rejected file never leaves a half-created account behind. The storage
+  // adapter validates again when it stores the bytes.
+  const file = form.get("document");
+  const upload = file instanceof File && file.size > 0 ? { bytes: Buffer.from(await file.arrayBuffer()), name: file.name, type: file.type } : null;
+  if (upload) {
+    try {
+      validateUpload("verification", upload.bytes, upload.type);
+    } catch (err) {
+      if (err instanceof StorageValidationError) {
+        return NextResponse.json({ error: `Verification document rejected: ${err.message}` }, { status: 400 });
+      }
+      throw err;
+    }
   }
 
   const passwordHash = await hashPassword(input.password);
@@ -77,11 +94,9 @@ export async function POST(req: NextRequest) {
   });
 
   // Optional document upload for METHOD B/C — stored via the restricted VerificationProvider, never inline in the DB.
-  const file = form.get("document");
-  if (file instanceof File && file.size > 0) {
-    const bytes = Buffer.from(await file.arrayBuffer());
+  if (upload) {
     const provider = getVerificationProvider();
-    const stored = await provider.store(studentProfile.id, input.verificationMethod, bytes, file.name);
+    const stored = await provider.store(studentProfile.id, input.verificationMethod, upload.bytes, upload.name, upload.type);
     await prisma.verificationDocument.create({
       data: { studentProfileId: studentProfile.id, kind: input.verificationMethod, storageRef: stored.storageRef, sha256: stored.sha256 },
     });

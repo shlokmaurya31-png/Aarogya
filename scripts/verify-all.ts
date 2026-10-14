@@ -83,6 +83,9 @@ const ORDER = [
   // Every hospital list/search/lookup endpoint over HTTP, as every role:
   // no other facility's rows (builds and starts the app itself)
   "verify-postgres-tenancy-sweep",
+  // Week 2: identity and records
+  "verify-postgres-ai-assistant",
+  "verify-postgres-verification-uploads",
 ];
 const LAST = "verify-postgres-phase-b-final";
 
