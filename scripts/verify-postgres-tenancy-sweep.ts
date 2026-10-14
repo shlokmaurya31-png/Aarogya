@@ -482,7 +482,7 @@ async function medicationLinkSection(base: string) {
 
 /** Idempotency keys are client-supplied and globally unique; replay must stay in-facility. */
 async function idempotencySection(base: string, owned: Record<Site, Map<string, string>>) {
-  console.log("\nIdempotency keys across facilities:");
+  console.log("\nIdempotency keys across facilities (unique per facility, §8.4):");
   const cookies = { pune: await login(base, "pune", Role.HOSPITAL_ADMIN), noida: await login(base, "noida", Role.HOSPITAL_ADMIN) };
   const post = async (site: Site, url: string, body: unknown) => {
     const res = await fetch(base + url, { method: "POST", headers: { cookie: cookies[site], "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -497,9 +497,14 @@ async function idempotencySection(base: string, owned: Record<Site, Map<string, 
   if (punePay.status !== 200) bad(`pune payment setup → HTTP ${punePay.status} ${punePay.text.slice(0, 200)}`);
   const punePaymentId = JSON.parse(punePay.text).payment?.id as string | undefined;
   const replay = await post("noida", "/api/hospital/payments", { encounterId: await encounter("noida"), amountMinor: 1000, method: "CASH", idempotencyKey: payKey });
+  // §8.4: keys are unique per facility, so noida's use of the same key is its
+  // own payment — never pune's row, and pune's row is untouched.
   const payLeak = punePaymentId && replay.text.includes(punePaymentId);
-  if (replay.status === 409 && !payLeak) { ok(); console.log("  ✓ payment: pune's key from noida → 409, no pune data"); }
-  else bad(`payment: pune's idempotency key reused by noida → HTTP ${replay.status}${payLeak ? " and returned pune's payment" : ""}`);
+  const noidaOwn = replay.status === 200 ? (JSON.parse(replay.text).payment as { id: string; facilityId: string } | undefined) : undefined;
+  const pairCount = await prisma.payment.count({ where: { idempotencyKey: payKey } });
+  if (!payLeak && noidaOwn && noidaOwn.id !== punePaymentId && noidaOwn.facilityId === FACILITIES.noida && pairCount === 2) {
+    ok(); console.log("  ✓ payment: pune's key from noida → noida's own payment (keys are per facility), no pune data");
+  } else bad(`payment: pune's idempotency key reused by noida → HTTP ${replay.status}${payLeak ? " and returned pune's payment" : ""} (rows with the key: ${pairCount})`);
 
   const refundKey = `sweep-refund-${run}`;
   let puneRefundId: string | undefined;
@@ -515,8 +520,10 @@ async function idempotencySection(base: string, owned: Record<Site, Map<string, 
     const r = await post("noida", `/api/hospital/payments/${noidaPaymentId}/refund`, { amountMinor: 100, reason: "tenancy sweep", idempotencyKey: refundKey });
     const leaked = leaks(r.text, owned.pune);
     if (puneRefundId && r.text.includes(puneRefundId)) leaked.push(`Refund:${puneRefundId}`);
-    if (r.status === 409 && leaked.length === 0) { ok(); console.log("  ✓ refund: pune's key from noida → 409, no pune data"); }
-    else bad(`refund: pune's idempotency key reused by noida → HTTP ${r.status}${leaked.length ? ` and returned pune rows ${leaked.join(", ")}` : ""}`);
+    const noidaRefund = r.status === 200 ? (JSON.parse(r.text).refund as { id: string; facilityId: string } | undefined) : undefined;
+    if (leaked.length === 0 && noidaRefund && noidaRefund.id !== puneRefundId && noidaRefund.facilityId === FACILITIES.noida) {
+      ok(); console.log("  ✓ refund: pune's key from noida → noida's own refund (keys are per facility), no pune data");
+    } else bad(`refund: pune's idempotency key reused by noida → HTTP ${r.status}${leaked.length ? ` and returned pune rows ${leaked.join(", ")}` : ""}`);
   }
 }
 

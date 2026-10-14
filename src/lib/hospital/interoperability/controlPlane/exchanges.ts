@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/db";
 import { NotFoundError } from "@/lib/auth/rbac";
+import { $Enums } from "@prisma/client";
+import { parseEnum } from "@/lib/enumValue";
 
 /**
  * Phase C6 — unified exchange operations view.
@@ -381,7 +383,7 @@ export async function listUnifiedCallbacks(args: {
       : Promise.resolve([]),
     wantsNhcx
       ? prisma.nhcxCallbackEvent.findMany({
-          where: { facilityId: args.facilityId, ...(args.status ? { status: args.status } : {}) },
+          where: { facilityId: args.facilityId, ...(args.status ? { status: parseEnum($Enums.NhcxCallbackEventStatus, args.status, "status") } : {}) },
           orderBy: { receivedAt: "desc" }, take: limit,
         })
       : Promise.resolve([]),

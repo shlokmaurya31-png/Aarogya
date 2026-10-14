@@ -1067,6 +1067,7 @@ model Facility {
   invoices         Invoice[]
   invoiceSequences InvoiceSequence[]
   payments         Payment[]
+  refunds          Refund[]
   claims           Claim[]
 
   // Phase 6A — Inventory + Procurement Foundation.
@@ -1615,7 +1616,7 @@ model BillingInvoice {
   generatedByUserId String?
   /// Idempotency anchor for invoice generation (server-generated, e.g. one per
   /// billing period). A repeated generate with the same key returns the same row.
-  idempotencyKey    String?                    @unique
+  idempotencyKey    String?
   createdAt         DateTime                   @default(now())
   updatedAt         DateTime                   @default(now()) @updatedAt
 
@@ -1624,6 +1625,7 @@ model BillingInvoice {
   payments BillingPayment[]
   credits  BillingCredit[]
 
+  @@unique([organizationId, idempotencyKey])
   @@index([organizationId, status])
   @@index([billingAccountId])
   // Phase D5 — aging/overdue and period revenue aggregation read paths.
@@ -1690,7 +1692,7 @@ model BillingPaymentAttempt {
   amountMinor        Int
   currency           String                      @default("INR")
   status             BillingPaymentAttemptStatus @default(INITIATED)
-  idempotencyKey     String                      @unique
+  idempotencyKey     String
   providerKind       BillingProviderKind         @default(NONE)
   /// Phase D4 — the provider REQUEST reference (e.g. a Razorpay order id) created
   /// before the payment; distinct from providerPaymentRef (the resulting payment).
@@ -1705,6 +1707,7 @@ model BillingPaymentAttempt {
 
   payment BillingPayment?
 
+  @@unique([organizationId, idempotencyKey])
   @@index([invoiceId])
   @@index([organizationId])
 }
@@ -1733,7 +1736,7 @@ model BillingPayment {
   method             String?
   providerKind       BillingProviderKind    @default(NONE)
   providerPaymentRef String?                @unique
-  idempotencyKey     String                 @unique
+  idempotencyKey     String
   succeededAt        DateTime               @default(now())
   createdByUserId    String?
   createdAt          DateTime               @default(now())
@@ -1741,6 +1744,7 @@ model BillingPayment {
 
   refunds BillingRefund[]
 
+  @@unique([organizationId, idempotencyKey])
   @@index([invoiceId])
   @@index([organizationId])
   // Phase D5 — collected-in-period aggregation and failure/success analytics.
@@ -1764,13 +1768,14 @@ model BillingRefund {
   amountMinor       Int
   reason            String
   status            BillingRefundStatus @default(SUCCEEDED)
-  idempotencyKey    String              @unique
+  idempotencyKey    String
   providerKind      BillingProviderKind @default(NONE)
   providerRefundRef String?
   createdByUserId   String?
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @default(now()) @updatedAt
 
+  @@unique([organizationId, idempotencyKey])
   @@index([paymentId])
   @@index([organizationId])
 }
@@ -1870,32 +1875,32 @@ enum BillingReconciliationKind {
 /// engine. organizationId is a plain scalar (nullable) because some exceptions
 /// reference an unknown/foreign provider ref with no resolvable tenant.
 model BillingReconciliationException {
-  id               String                    @id @default(cuid())
+  id               String                               @id @default(cuid())
   organizationId   String?
   kind             BillingReconciliationKind
   /// Phase D4 — triage metadata. severity is LOW/MEDIUM/HIGH/CRITICAL (stored as
   /// text, not an enum, so it can evolve without a migration); entityType/entityId
   /// pin the affected local record; description is human-readable; resolver +
   /// resolvedAt attribute the resolution.
-  severity         String                    @default("MEDIUM")
+  severity         ReconciliationSeverity               @default(MEDIUM)
   entityType       String?
   entityId         String?
   description      String?
   detail           Json?
-  providerKind     BillingProviderKind       @default(NONE)
+  providerKind     BillingProviderKind                  @default(NONE)
   providerRef      String?
   localRef         String?
-  resolved         Boolean                   @default(false)
+  resolved         Boolean                              @default(false)
   resolvedByUserId String?
-  createdAt        DateTime                  @default(now())
+  createdAt        DateTime                             @default(now())
   resolvedAt       DateTime?
   /// Phase D5 — operational triage. status is OPEN/ACKNOWLEDGED/RESOLVED/DISMISSED
   /// (text, evolvable); `resolved` stays as the fast boolean and is kept in sync
   /// (true for RESOLVED/DISMISSED). `source` distinguishes a provider RECONCILIATION
   /// exception from a D5 LEAKAGE finding. assignedToUserId / resolution attribute
   /// the operational handling; canonical money is never changed by a resolution.
-  status           String                    @default("OPEN")
-  source           String                    @default("RECONCILIATION")
+  status           BillingReconciliationExceptionStatus @default(OPEN)
+  source           String                               @default("RECONCILIATION")
   assignedToUserId String?
   resolution       String?
   /// Phase D5 — race-safe leakage de-duplication. Set to source:kind:entityId
@@ -1903,7 +1908,7 @@ model BillingReconciliationException {
   /// condition can be re-detected later. The unique index makes concurrent
   /// detection runs create at most one open finding per condition. Null for
   /// provider RECONCILIATION exceptions (multiple nulls are allowed).
-  findingKey       String?                   @unique
+  findingKey       String?                              @unique
 
   @@index([resolved])
   @@index([organizationId])
@@ -3586,7 +3591,7 @@ model Payment {
   currency         String         @default("INR")
   method           PaymentMethod
   status           PaymentStatus  @default(RECEIVED)
-  idempotencyKey   String         @unique
+  idempotencyKey   String
   referenceNo      String?
   receivedAt       DateTime       @default(now())
   receivedByUserId String
@@ -3597,6 +3602,7 @@ model Payment {
   allocations PaymentAllocation[]
   refunds     Refund[]
 
+  @@unique([facilityId, idempotencyKey])
   @@index([billingAccountId])
   @@index([facilityId, receivedAt])
 }
@@ -3635,16 +3641,21 @@ model Refund {
   id                String       @id @default(cuid())
   payment           Payment      @relation(fields: [paymentId], references: [id])
   paymentId         String
+  /// The payment's facility (copied so the idempotency key is unique per facility, §8.4).
+  facility          Facility     @relation(fields: [facilityId], references: [id])
+  facilityId        String
   amountMinor       Int
   reason            String
   status            RefundStatus @default(REQUESTED)
   requestedByUserId String
   approvedByUserId  String?
   completedAt       DateTime?
-  idempotencyKey    String       @unique
+  idempotencyKey    String
   createdAt         DateTime     @default(now())
 
+  @@unique([facilityId, idempotencyKey])
   @@index([paymentId])
+  @@index([facilityId])
 }
 
 enum AdjustmentType {
@@ -8704,10 +8715,10 @@ model ClaimSubmission {
   version Int
 
   /// ORIGINAL | RESUBMISSION | APPEAL
-  submissionType String @default("ORIGINAL")
+  submissionType ClaimSubmissionSubmissionType @default(ORIGINAL)
 
   /// DRAFT | READY | SUBMITTED | ACKNOWLEDGED | ACCEPTED | REJECTED | FAILED | SUPERSEDED
-  status String @default("DRAFT")
+  status ClaimSubmissionStatus @default(DRAFT)
 
   /// Server-derived at build time from canonical records. Never client-supplied.
   claimedAmountMinor  Int
@@ -8804,14 +8815,14 @@ model NhcxExchange {
   /// COVERAGE_ELIGIBILITY | PREAUTH | CLAIM | COMMUNICATION | STATUS | PAYMENT_NOTICE
   exchangeType String
   /// OUTBOUND | INBOUND
-  direction    String @default("OUTBOUND")
+  direction    ExchangeDirection @default(OUTBOUND)
 
   /// NOT_SUBMITTED | SUBMITTED | ACKNOWLEDGED | RESPONDED | FAILED | CANCELLED
   protocolState String @default("NOT_SUBMITTED")
 
   /// Deterministic key. A retried submission resolves to the SAME exchange
   /// rather than creating a duplicate external request.
-  idempotencyKey    String  @unique
+  idempotencyKey    String
   /// Server-generated. Never accepted from a client or a callback body.
   correlationId     String  @unique
   /// Reference the external network issued, when one comes back.
@@ -8839,6 +8850,7 @@ model NhcxExchange {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([facilityId, idempotencyKey])
   @@index([facilityId, protocolState])
   @@index([facilityId, exchangeType])
   @@index([nextRetryAt])
@@ -8860,7 +8872,7 @@ model NhcxCallbackEvent {
   messageType     String
 
   /// ACCEPTED | DUPLICATE | UNMATCHED | REJECTED | CONFLICT
-  status          String  @default("ACCEPTED")
+  status          NhcxCallbackEventStatus @default(ACCEPTED)
   rejectionReason String?
 
   /// Recorded by hash and size; the body is never stored wholesale.
@@ -8893,7 +8905,7 @@ model ClaimQuery {
   reasonCode      String?
 
   /// RECEIVED | UNDER_REVIEW | RESPONSE_DRAFT | RESPONSE_SUBMITTED | ACKNOWLEDGED | RESOLVED | CLOSED
-  status String @default("RECEIVED")
+  status ClaimQueryStatus @default(RECEIVED)
 
   responseText        String?
   respondedByUserId   String?
@@ -8930,7 +8942,7 @@ model ClaimSettlement {
   settledAmountMinor Int
   settlementDate     DateTime?
   /// NOTIFIED | RECONCILED | DISPUTED | REJECTED
-  status             String    @default("NOTIFIED")
+  status             ClaimSettlementStatus @default(NOTIFIED)
 
   /// Canonical Payment this was matched to, once an operator reconciles it.
   paymentId          String?
@@ -8963,7 +8975,7 @@ model ReconciliationException {
   /// AMOUNT_MISMATCH | MISSING_SETTLEMENT | DUPLICATE_SETTLEMENT | OVERPAYMENT |
   /// UNDERPAYMENT | ORPHAN_EXTERNAL_REFERENCE | UNMATCHED_CLAIM | STALE_EXTERNAL_STATUS
   exceptionType String
-  severity      String @default("WARNING") // INFO | WARNING | CRITICAL
+  severity      AlertSeverity @default(WARNING) // INFO | WARNING | CRITICAL
 
   expectedAmountMinor Int?
   actualAmountMinor   Int?
@@ -8972,7 +8984,7 @@ model ReconciliationException {
   detail String
 
   /// OPEN | ACKNOWLEDGED | RESOLVED | DISMISSED
-  status           String    @default("OPEN")
+  status           ReconciliationExceptionStatus @default(OPEN)
   resolutionNote   String?
   resolvedByUserId String?
   resolvedAt       DateTime?
@@ -9698,4 +9710,79 @@ enum NotificationPriority {
   ROUTINE
   URGENT
   CRITICAL
+}
+
+// ── Section 8 (billing): status/priority enums (docs/POSTGRES_CUTOVER_REPORT.md §8.2) ──
+
+enum ReconciliationSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum BillingReconciliationExceptionStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  DISMISSED
+}
+
+enum ClaimSubmissionSubmissionType {
+  ORIGINAL
+  RESUBMISSION
+  APPEAL
+}
+
+enum ClaimSubmissionStatus {
+  DRAFT
+  READY
+  SUBMITTED
+  ACKNOWLEDGED
+  ACCEPTED
+  REJECTED
+  FAILED
+  SUPERSEDED
+}
+
+enum ExchangeDirection {
+  OUTBOUND
+  INBOUND
+}
+
+enum NhcxCallbackEventStatus {
+  ACCEPTED
+  REJECTED
+  DUPLICATE
+  UNMATCHED
+}
+
+enum ClaimQueryStatus {
+  RECEIVED
+  UNDER_REVIEW
+  RESPONSE_DRAFT
+  RESPONSE_SUBMITTED
+  ACKNOWLEDGED
+  RESOLVED
+  CLOSED
+}
+
+enum ClaimSettlementStatus {
+  NOTIFIED
+  RECONCILED
+  DISPUTED
+  REJECTED
+}
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum ReconciliationExceptionStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  DISMISSED
 }

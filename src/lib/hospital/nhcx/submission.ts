@@ -239,7 +239,7 @@ export async function dispatchSubmission(
   });
 
   // Idempotency: an identical dispatch resolves to the EXISTING exchange.
-  const existing = await prisma.nhcxExchange.findUnique({ where: { idempotencyKey } });
+  const existing = await prisma.nhcxExchange.findUnique({ where: { facilityId_idempotencyKey: { facilityId: input.facilityId, idempotencyKey } } });
   if (existing) {
     if (existing.facilityId !== input.facilityId) {
       throw new ConflictError("That submission is already in progress.");
@@ -266,7 +266,7 @@ export async function dispatchSubmission(
   } catch (e) {
     // Lost the insert race: somebody else created the same logical exchange.
     if ((e as { code?: string })?.code === "P2002") {
-      const raced = await prisma.nhcxExchange.findUnique({ where: { idempotencyKey } });
+      const raced = await prisma.nhcxExchange.findUnique({ where: { facilityId_idempotencyKey: { facilityId: input.facilityId, idempotencyKey } } });
       if (raced && raced.facilityId === input.facilityId) {
         return { exchange: raced, deduplicated: true, result: null };
       }

@@ -46,23 +46,25 @@ export async function requestRefund(
   tx: Tx,
   input: { paymentId: string; amountMinor: number; reason: string; requestedByUserId: string; idempotencyKey: string }
 ) {
-  const existing = await tx.refund.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
+  const payment = await tx.payment.findUniqueOrThrow({ where: { id: input.paymentId } });
+  // Keys are unique per facility (§8.4): the replay is looked up in the payment's facility.
+  const keyWhere = { facilityId_idempotencyKey: { facilityId: payment.facilityId, idempotencyKey: input.idempotencyKey } };
+  const existing = await tx.refund.findUnique({ where: keyWhere });
   if (existing) return { refund: assertRefundReplay(existing, input.paymentId), alreadyExisted: true as const };
 
   if (input.amountMinor <= 0) throw new BadRequestError("amountMinor must be positive.");
 
-  const payment = await tx.payment.findUniqueOrThrow({ where: { id: input.paymentId } });
   const refundable = payment.amountMinor - payment.allocatedMinor - payment.refundedMinor;
   if (input.amountMinor > refundable) throw new OverRefundError();
 
   // Raw INSERT ... ON CONFLICT DO NOTHING — see chargeCapture.ts's
   // createChargeIfNotExists for the full explanation.
   const rowsInserted = await tx.$executeRaw`
-    INSERT INTO "Refund" (id, "paymentId", "amountMinor", reason, "requestedByUserId", "idempotencyKey")
-    VALUES (${randomUUID()}, ${input.paymentId}, ${input.amountMinor}, ${input.reason}, ${input.requestedByUserId}, ${input.idempotencyKey})
-    ON CONFLICT ("idempotencyKey") DO NOTHING
+    INSERT INTO "Refund" (id, "paymentId", "facilityId", "amountMinor", reason, "requestedByUserId", "idempotencyKey")
+    VALUES (${randomUUID()}, ${input.paymentId}, ${payment.facilityId}, ${input.amountMinor}, ${input.reason}, ${input.requestedByUserId}, ${input.idempotencyKey})
+    ON CONFLICT ("facilityId", "idempotencyKey") DO NOTHING
   `;
-  const refund = assertRefundReplay(await tx.refund.findUniqueOrThrow({ where: { idempotencyKey: input.idempotencyKey } }), input.paymentId);
+  const refund = assertRefundReplay(await tx.refund.findUniqueOrThrow({ where: keyWhere }), input.paymentId);
 
   return { refund, alreadyExisted: rowsInserted === 0 };
 }
