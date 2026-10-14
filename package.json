@@ -22,7 +22,10 @@
     "verify:all": "tsx scripts/verify-all.ts",
     "staging:migrate": "tsx scripts/staging.ts migrate",
     "staging:seed": "tsx scripts/staging.ts seed",
-    "staging:check": "tsx scripts/staging.ts check"
+    "staging:check": "tsx scripts/staging.ts check",
+    "staging:document": "tsx scripts/staging.ts document",
+    "storage:init": "tsx scripts/storage.ts init",
+    "storage:check": "tsx scripts/storage.ts check"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -61,6 +64,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
+    "jsqr": "^1.4.0",
     "tailwindcss": "^4",
     "tsx": "^4.23.13",
     "typescript": "^5",

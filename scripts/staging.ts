@@ -5,6 +5,10 @@
  *   STAGING_CONFIRM=yes npm run staging:seed   demo seed (refuses without the flag)
  *   npm run staging:check                connectivity, Postgres version,
  *                                        migration status, pgvector placement
+ *   STAGING_CONFIRM=yes npm run staging:document
+ *                                        one real PDF through src/lib/documents,
+ *                                        stored in Supabase Storage; checks the
+ *                                        generated-pdf bucket and the QR link
  *
  * Credentials come ONLY from .env.staging.local (gitignored). Values in the
  * shell or in .env are deliberately not used for the database URLs, so a
@@ -16,31 +20,14 @@
  * Supabase hosts outright.
  */
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { PrismaClient } from "@prisma/client";
+import { createHash } from "node:crypto";
+import { ROOT, StagingError, applyStorageEnv, loadStagingStorage, readStagingEnvFile, scrub } from "./lib/stagingEnv";
+import { readQrCodes } from "./lib/pdfQr";
 
-const ROOT = path.resolve(__dirname, "..");
-const ENV_FILE = path.join(ROOT, ".env.staging.local");
 const PRISMA = path.join(ROOT, "node_modules", ".bin", "prisma");
 const TSX = path.join(ROOT, "node_modules", ".bin", "tsx");
-
-class StagingError extends Error {}
-
-/** Minimal .env parser: KEY=value, optional quotes, # comments. */
-function readEnvFile(file: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const raw of readFileSync(file, "utf8").split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line || line.startsWith("#")) continue;
-    const m = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
-    if (!m) continue;
-    let value = m[2].trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
-    out[m[1]] = value;
-  }
-  return out;
-}
 
 /** host:port/database, never credentials. */
 function describe(url: URL): string {
@@ -48,10 +35,7 @@ function describe(url: URL): string {
 }
 
 function loadStaging() {
-  if (!existsSync(ENV_FILE)) {
-    throw new StagingError("Missing .env.staging.local. Create it with: cp .env.staging.example .env.staging.local, then fill in the values (docs/STAGING_SUPABASE.md).");
-  }
-  const env = readEnvFile(ENV_FILE);
+  const env = readStagingEnvFile();
   const urls: Record<"DATABASE_URL" | "DIRECT_URL", URL> = {} as never;
   for (const key of ["DATABASE_URL", "DIRECT_URL"] as const) {
     const value = env[key];
@@ -79,12 +63,6 @@ function loadStaging() {
     .flatMap((u) => [u.password, decodeURIComponent(u.password), u.toString()])
     .filter((s) => s.length >= 4);
   return { env, urls, secrets };
-}
-
-function scrub(text: string, secrets: string[]): string {
-  let out = text;
-  for (const s of secrets) out = out.split(s).join("***");
-  return out.replace(/postgres(ql)?:\/\/[^@\s"']+@/g, "postgresql://***@");
 }
 
 function run(cmd: string, args: string[], childEnv: NodeJS.ProcessEnv, secrets: string[]): Promise<number> {
@@ -169,14 +147,122 @@ async function check() {
   }
 }
 
-const commands: Record<string, () => Promise<void>> = { migrate, seed, check };
+/**
+ * Generates one real document through the documents service against staging
+ * (database + Supabase Storage), then proves: the PDF is in the generated-pdf
+ * bucket with the recorded sha256, its signed URL downloads it, the QR printed
+ * on it is APP_BASE_URL/verify/<token>, and that page says "Authentic
+ * document" for it and "Not verified" for a made-up token. The document is
+ * kept, so it can be inspected in the Supabase dashboard.
+ */
+async function document() {
+  const env = readStagingEnvFile();
+  const { urls, secrets } = loadStaging();
+  const storage = loadStagingStorage(env);
+  const allSecrets = [...secrets, ...storage.secrets];
+  if (process.env.STAGING_CONFIRM !== "yes") {
+    throw new StagingError("Refusing to write a document to staging without STAGING_CONFIRM=yes. Run: STAGING_CONFIRM=yes npm run staging:document");
+  }
+  const appBaseUrl = env.APP_BASE_URL;
+  if (!appBaseUrl || /[<>]/.test(appBaseUrl)) throw new StagingError("APP_BASE_URL is not set in .env.staging.local (the staging app's public URL; the QR links point there).");
+  try {
+    new URL(appBaseUrl);
+  } catch {
+    throw new StagingError("APP_BASE_URL in .env.staging.local is not a valid URL.");
+  }
+
+  // Point the app modules at staging BEFORE importing them (prisma and the
+  // storage adapter read the environment on first use).
+  Object.assign(process.env, { DATABASE_URL: urls.DATABASE_URL.toString(), DIRECT_URL: urls.DIRECT_URL.toString(), APP_BASE_URL: appBaseUrl });
+  applyStorageEnv(storage.values);
+  console.log(`staging:document → db ${describe(urls.DATABASE_URL)}, storage ${storage.endpointHost}, APP_BASE_URL ${appBaseUrl}`);
+  await generateAndCheckDocument(allSecrets);
+}
+
+/** Exported for a local rehearsal against Postgres + a local S3 server. */
+export async function generateAndCheckDocument(secrets: string[]) {
+  const { prisma } = await import("../src/lib/db");
+  const { generateAndStoreDocument, verifyUrlFor } = await import("../src/lib/documents/service");
+  const { getStorageAdapter } = await import("../src/lib/storage");
+  const { S3StorageAdapter } = await import("../src/lib/storage/s3Adapter");
+  const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
+  const problems: string[] = [];
+  const step = (name: string, ok: boolean, detail = "") => {
+    if (!ok) problems.push(name);
+    console.log(`  ${ok ? "PASS" : "FAIL"} ${name}${detail ? ` (${scrub(detail, secrets)})` : ""}`);
+  };
+
+  try {
+    const adapter = getStorageAdapter();
+    if (!(adapter instanceof S3StorageAdapter)) throw new StagingError("The storage adapter is not S3; check the STORAGE_S3_* values.");
+
+    const facility = await prisma.facility.findFirst({ where: { name: "Aarogya Medical Centre" } });
+    if (!facility) throw new StagingError('Seeded facility "Aarogya Medical Centre" not found. Run STAGING_CONFIRM=yes npm run staging:seed first.');
+    const patient = await prisma.patient.findFirst({ where: { facilityId: facility.id }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+
+    const doc = await generateAndStoreDocument(
+      {
+        type: "prescription",
+        patient: { name: patient?.fullName ?? "Synthetic Patient", uhid: patient?.uhid ?? undefined },
+        diagnosis: "Staging smoke test (synthetic data)",
+        items: [{ drug: "Paracetamol 500 mg", dose: "1 tablet", frequency: "TDS", duration: "3 days" }],
+        advice: "Generated by npm run staging:document.",
+      },
+      {
+        facilityId: facility.id,
+        patientId: patient?.id ?? null,
+        letterhead: { facilityName: facility.name, authorName: "Staging smoke test" },
+      }
+    );
+    console.log(`  generated ${doc.documentNumber} · GeneratedDocument ${doc.id}`);
+
+    const { Bucket, Key } = adapter.locate(doc.storageRef);
+    step("stored in the generated-pdf bucket", Bucket === "generated-pdf", `s3://${Bucket}/${Key}`);
+
+    const loaded = await adapter.get(doc.storageRef);
+    step("object sha256 matches the GeneratedDocument row", sha(loaded.bytes) === doc.sha256, `${loaded.bytes.length} bytes, ${loaded.contentType}`);
+
+    const res = await fetch(doc.downloadUrl);
+    const downloaded = new Uint8Array(await res.arrayBuffer());
+    step("signed download URL returns the PDF", res.status === 200 && sha(downloaded) === doc.sha256, `HTTP ${res.status}`);
+
+    const expected = verifyUrlFor(doc.verifyToken);
+    const qrs = await readQrCodes(loaded.bytes);
+    step("QR on the PDF is APP_BASE_URL/verify/<token>", qrs.includes(expected), `QR: ${qrs.join(", ") || "none decoded"}`);
+
+    try {
+      const page = await fetch(expected);
+      const html = await page.text();
+      step("QR link: page says Authentic document", page.status === 200 && html.includes("Authentic document") && html.includes(doc.documentNumber), `HTTP ${page.status}`);
+      const bogus = await fetch(expected.replace(/\/verify\/.*$/, "/verify/not-a-real-token"));
+      const bogusHtml = await bogus.text();
+      step("made-up token: page says Not verified", bogusHtml.includes("Not verified"), `HTTP ${bogus.status}`);
+    } catch (err) {
+      step("QR link reachable", false, `${(err as Error).cause ?? (err as Error).message} — is the app at APP_BASE_URL running against this database?`);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+
+  if (problems.length) {
+    console.error(`\nstaging:document FAILED: ${problems.join("; ")}`);
+    process.exitCode = 1;
+  } else {
+    console.log("\nstaging:document OK");
+  }
+}
+
+const commands: Record<string, () => Promise<void>> = { migrate, seed, check, document };
 const name = process.argv[2] ?? "";
 const command = commands[name];
-if (!command) {
-  console.error(`Usage: tsx scripts/staging.ts <${Object.keys(commands).join("|")}>`);
-  process.exit(2);
+// Only when run directly; importing generateAndCheckDocument runs nothing.
+if (require.main === module) {
+  if (!command) {
+    console.error(`Usage: tsx scripts/staging.ts <${Object.keys(commands).join("|")}>`);
+    process.exit(2);
+  }
+  command().catch((err) => {
+    console.error(err instanceof StagingError ? err.message : err);
+    process.exitCode = 1;
+  });
 }
-command().catch((err) => {
-  console.error(err instanceof StagingError ? err.message : err);
-  process.exitCode = 1;
-});
