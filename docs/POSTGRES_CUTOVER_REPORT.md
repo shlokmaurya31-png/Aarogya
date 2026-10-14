@@ -330,8 +330,29 @@ are all in the Scholar (student) module.
 
 ### 8.2 Enums stored as text
 
-156 columns: **136 should become native enums, and 20 are deliberately
+156 columns: **136 should become constrained, and 20 are deliberately
 text.**
+
+The 136 are split into two groups, and each row below is marked (a) or
+(b):
+
+- **(a) Prisma enum first (116 columns).** State-machine and status
+  fields with fixed, known values: lifecycle `status` columns, the closed
+  `ROUTINE | URGENT | STAT` priorities, fixed severity scales, `direction`,
+  verification and environment flags, and closed scope/action/test-type
+  sets. The code owns every transition, so a new value is a code change
+  anyway, and a native enum makes Postgres reject anything else. Migrate
+  these first.
+- **(b) Keep as text, add a CHECK constraint (20 columns).** Sets that
+  are still evolving: categories, types, kinds, sources, domains,
+  modalities, relationships, external systems and workflow step types.
+  Adding a value to a CHECK is one migration with no enum type change and
+  no raw-SQL cast churn, which fits sets that grow with features. Promote a
+  column to an enum once its set settles.
+
+The 20 deliberately text columns (currency, open taxonomies, external
+ABDM/NHCX vocabularies) are unchanged from the list below. Currency gets
+its own 3-letter CHECK.
 
 **Deliberately text:**
 - **ISO 4217 currency codes** (13 columns): an external, open code set.
@@ -372,21 +393,21 @@ text.**
 
 | Column | Default | Values | Verdict |
 |---|---|---|---|
-| `DomainEventOutbox.status` | `PENDING` | PENDING \| PROCESSING \| PROCESSED \| RETRY \| DEAD_LETTER | Native enum |
-| `DomainEventDelivery.status` | `PENDING` | PENDING \| PROCESSED \| FAILED \| DEAD_LETTER | Native enum |
-| `WorkflowDefinition.status` | `ACTIVE` | ACTIVE \| INACTIVE | Native enum |
-| `WorkflowVersion.status` | `DRAFT` | DRAFT \| PUBLISHED \| RETIRED | Native enum |
-| `WorkflowInstance.status` | `RUNNABLE` | RUNNABLE \| RUNNING \| WAITING \| COMPLETED \| FAILED \| CANCELLED | Native enum |
-| `WorkflowStep.stepType` | — | CONDITION \| ACTION \| TASK \| TIMER | Native enum |
-| `WorkflowStep.status` | `PENDING` | PENDING \| RUNNING \| WAITING \| COMPLETED \| SKIPPED \| FAILED | Native enum |
-| `WorkflowTask.priority` | `ROUTINE` | ROUTINE \| URGENT \| STAT | Native enum |
-| `WorkflowTask.status` | `OPEN` | OPEN \| IN_PROGRESS \| COMPLETED \| CANCELLED \| EXPIRED | Native enum |
-| `WorkflowTimer.kind` | — | DELAY \| SLA | Native enum |
-| `WorkflowTimer.status` | `PENDING` | PENDING \| CLAIMED \| COMPLETED \| CANCELLED | Native enum |
-| `ConfigurationOverride.scope` | — | ORGANIZATION \| FACILITY \| DEPARTMENT | Native enum |
-| `ConfigurationOverride.status` | `DRAFT` | DRAFT \| PUBLISHED \| RETIRED | Native enum |
-| `ConfigurationChange.action` | — | SET \| PUBLISH \| RESET \| RETIRE | Native enum |
-| `WorkflowBuilderDraft.status` | `DRAFT` | DRAFT (builder-only lifecycle) | Native enum |
+| `DomainEventOutbox.status` | `PENDING` | PENDING \| PROCESSING \| PROCESSED \| RETRY \| DEAD_LETTER | **(a)** Prisma enum first |
+| `DomainEventDelivery.status` | `PENDING` | PENDING \| PROCESSED \| FAILED \| DEAD_LETTER | **(a)** Prisma enum first |
+| `WorkflowDefinition.status` | `ACTIVE` | ACTIVE \| INACTIVE | **(a)** Prisma enum first |
+| `WorkflowVersion.status` | `DRAFT` | DRAFT \| PUBLISHED \| RETIRED | **(a)** Prisma enum first |
+| `WorkflowInstance.status` | `RUNNABLE` | RUNNABLE \| RUNNING \| WAITING \| COMPLETED \| FAILED \| CANCELLED | **(a)** Prisma enum first |
+| `WorkflowStep.stepType` | — | CONDITION \| ACTION \| TASK \| TIMER | **(b)** text + CHECK (set still evolving) |
+| `WorkflowStep.status` | `PENDING` | PENDING \| RUNNING \| WAITING \| COMPLETED \| SKIPPED \| FAILED | **(a)** Prisma enum first |
+| `WorkflowTask.priority` | `ROUTINE` | ROUTINE \| URGENT \| STAT | **(a)** Prisma enum first |
+| `WorkflowTask.status` | `OPEN` | OPEN \| IN_PROGRESS \| COMPLETED \| CANCELLED \| EXPIRED | **(a)** Prisma enum first |
+| `WorkflowTimer.kind` | — | DELAY \| SLA | **(b)** text + CHECK (set still evolving) |
+| `WorkflowTimer.status` | `PENDING` | PENDING \| CLAIMED \| COMPLETED \| CANCELLED | **(a)** Prisma enum first |
+| `ConfigurationOverride.scope` | — | ORGANIZATION \| FACILITY \| DEPARTMENT | **(a)** Prisma enum first |
+| `ConfigurationOverride.status` | `DRAFT` | DRAFT \| PUBLISHED \| RETIRED | **(a)** Prisma enum first |
+| `ConfigurationChange.action` | — | SET \| PUBLISH \| RESET \| RETIRE | **(a)** Prisma enum first |
+| `WorkflowBuilderDraft.status` | `DRAFT` | DRAFT (builder-only lifecycle) | **(a)** Prisma enum first |
 
 **SaaS billing and commercial**
 
@@ -399,56 +420,56 @@ text.**
 | `BillingPaymentAttempt.currency` | `INR` | _defined in code_ | ISO 4217 currency code — an external, open code set. Keep text; add a 3-letter CHECK. |
 | `BillingPayment.currency` | `INR` | _defined in code_ | ISO 4217 currency code — an external, open code set. Keep text; add a 3-letter CHECK. |
 | `BillingCredit.currency` | `INR` | _defined in code_ | ISO 4217 currency code — an external, open code set. Keep text; add a 3-letter CHECK. |
-| `BillingReconciliationException.severity` | `MEDIUM` | _defined in code_ | Native enum |
-| `BillingReconciliationException.status` | `OPEN` | _defined in code_ | Native enum |
-| `BillingReconciliationException.source` | `RECONCILIATION` | _defined in code_ | Native enum |
-| `CollectionActivity.type` | — | NOTE \| CONTACT \| PROMISE_TO_PAY \| ESCALATION | Native enum |
+| `BillingReconciliationException.severity` | `MEDIUM` | _defined in code_ | **(a)** Prisma enum first |
+| `BillingReconciliationException.status` | `OPEN` | _defined in code_ | **(a)** Prisma enum first |
+| `BillingReconciliationException.source` | `RECONCILIATION` | _defined in code_ | **(b)** text + CHECK (set still evolving) |
+| `CollectionActivity.type` | — | NOTE \| CONTACT \| PROMISE_TO_PAY \| ESCALATION | **(b)** text + CHECK (set still evolving) |
 
 **Clinical core**
 
 | Column | Default | Values | Verdict |
 |---|---|---|---|
-| `Patient.registrationStatus` | `ACTIVE` | "ACTIVE" \| "INACTIVE" | Native enum |
-| `PatientIdentifier.status` | `ACTIVE` | "ACTIVE" \| "INVALID" \| "SUPERSEDED" | Native enum |
-| `Allergy.status` | `ACTIVE` | "ACTIVE" \| "INACTIVE" \| "ENTERED_IN_ERROR" | Native enum |
-| `Allergy.verification` | `UNCONFIRMED` | "UNCONFIRMED" \| "CONFIRMED" | Native enum |
-| `EpisodeOfCare.status` | `ACTIVE` | "ACTIVE" \| "CLOSED" | Native enum |
-| `Diagnosis.status` | `ACTIVE` | "ACTIVE" \| "RESOLVED" \| "ENTERED_IN_ERROR" | Native enum |
-| `ClinicalNote.status` | `SIGNED` | "DRAFT" \| "SIGNED" \| "AMENDED" \| "SUPERSEDED" | Native enum |
-| `LabOrder.priority` | `ROUTINE` | ROUTINE \| URGENT \| STAT | Native enum |
-| `ImagingOrder.modality` | — | XRAY \| CT \| MRI \| USG \| MAMMOGRAPHY \| INTERVENTIONAL | Native enum |
-| `ImagingOrder.priority` | `ROUTINE` | _defined in code_ | Native enum |
-| `ImagingStudy.imageAvailability` | `NONE` | _defined in code_ | Native enum |
-| `Task.priority` | `ROUTINE` | "ROUTINE" \| "URGENT" \| "STAT" | Native enum |
-| `Task.status` | `OPEN` | OPEN \| ASSIGNED \| IN_PROGRESS \| COMPLETED \| CANCELLED \| OVERDUE | Native enum |
-| `ClinicalDocument.status` | `CURRENT` | "CURRENT" \| "SUPERSEDED" | Native enum |
-| `ClinicalDocument.accessPolicy` | `CLINICAL_STAFF` | "CLINICAL_STAFF" \| "PATIENT_VISIBLE" \| "RESTRICTED" | Native enum |
-| `Consent.status` | `REQUESTED` | REQUESTED \| GRANTED \| DENIED \| REVOKED \| EXPIRED | Native enum |
-| `Referral.priority` | `ROUTINE` | ROUTINE \| URGENT \| STAT | Native enum |
-| `Referral.status` | `PLACED` | DRAFT \| PLACED \| ACKNOWLEDGED \| IN_PROGRESS \| COMPLETED \| CANCELLED \| REJECTED | Native enum |
-| `Appointment.status` | `REQUESTED` | REQUESTED\|CONFIRMED\|RESCHEDULED\|ARRIVED\|CHECKED_IN\|WAITING\|IN_CONSULTATION\|COMPLETED\|CANCELLED\|NO_SHOW | Native enum |
-| `QueueEntry.status` | `WAITING` | WAITING \| CALLED \| IN_SERVICE \| COMPLETED \| SKIPPED \| CANCELLED | Native enum |
-| `TriageAssessment.status` | `COMPLETED` | "DRAFT" \| "COMPLETED" \| "AMENDED" | Native enum |
-| `AdmissionRequest.status` | `PENDING` | PENDING \| DEFERRED \| BED_RESERVED \| ADMITTED \| REJECTED \| CANCELLED | Native enum |
-| `TransferRequest.status` | `REQUESTED` | REQUESTED \| ACCEPTED \| BED_RESERVED \| PATIENT_IN_TRANSIT \| COMPLETED \| CANCELLED \| REJECTED | Native enum |
-| `IcuDevice.status` | `PLANNED` | "PLANNED" \| "ACTIVE" \| "REMOVED" \| "DISCONTINUED" | Native enum |
-| `IcuInfusion.status` | `RUNNING` | "RUNNING" \| "PAUSED" \| "STOPPED" | Native enum |
-| `Surgery.urgency` | `ELECTIVE` | "ELECTIVE" \| "URGENT" \| "EMERGENCY" | Native enum |
-| `SurgerySchedule.status` | `SCHEDULED` | "SCHEDULED" \| "CANCELLED" | Native enum |
-| `AnesthesiaRecord.status` | `PLANNED` | "PLANNED" \| "IN_PROGRESS" \| "COMPLETED" | Native enum |
-| `SurgicalSpecimen.status` | `COLLECTED` | "COLLECTED" \| "SENT" \| "RECEIVED" | Native enum |
-| `RecoveryRecord.status` | `PENDING` | "PENDING" \| "IN_RECOVERY" \| "READY_FOR_TRANSFER" \| "TRANSFERRED" | Native enum |
-| `NursingAssessment.status` | `DRAFT` | "DRAFT" \| "COMPLETED" \| "SIGNED" \| "SUPERSEDED" | Native enum |
-| `BloodUnit.bloodGroupStatus` | `PENDING` | "PENDING" \| "CONFIRMED" — set only from an authorized typing record | Native enum |
-| `BloodTypingRecord.status` | `PENDING` | "PENDING" \| "RESULTED" \| "VERIFIED" | Native enum |
-| `BloodCompatibilityTest.testType` | `CROSSMATCH` | "TYPE_AND_SCREEN" \| "CROSSMATCH" | Native enum |
-| `BloodIssue.status` | `ISSUED` | "ISSUED" \| "IN_TRANSIT" \| "RECEIVED" \| "RETURNED" | Native enum |
+| `Patient.registrationStatus` | `ACTIVE` | "ACTIVE" \| "INACTIVE" | **(a)** Prisma enum first |
+| `PatientIdentifier.status` | `ACTIVE` | "ACTIVE" \| "INVALID" \| "SUPERSEDED" | **(a)** Prisma enum first |
+| `Allergy.status` | `ACTIVE` | "ACTIVE" \| "INACTIVE" \| "ENTERED_IN_ERROR" | **(a)** Prisma enum first |
+| `Allergy.verification` | `UNCONFIRMED` | "UNCONFIRMED" \| "CONFIRMED" | **(a)** Prisma enum first |
+| `EpisodeOfCare.status` | `ACTIVE` | "ACTIVE" \| "CLOSED" | **(a)** Prisma enum first |
+| `Diagnosis.status` | `ACTIVE` | "ACTIVE" \| "RESOLVED" \| "ENTERED_IN_ERROR" | **(a)** Prisma enum first |
+| `ClinicalNote.status` | `SIGNED` | "DRAFT" \| "SIGNED" \| "AMENDED" \| "SUPERSEDED" | **(a)** Prisma enum first |
+| `LabOrder.priority` | `ROUTINE` | ROUTINE \| URGENT \| STAT | **(a)** Prisma enum first |
+| `ImagingOrder.modality` | — | XRAY \| CT \| MRI \| USG \| MAMMOGRAPHY \| INTERVENTIONAL | **(b)** text + CHECK (set still evolving) |
+| `ImagingOrder.priority` | `ROUTINE` | _defined in code_ | **(a)** Prisma enum first |
+| `ImagingStudy.imageAvailability` | `NONE` | _defined in code_ | **(a)** Prisma enum first |
+| `Task.priority` | `ROUTINE` | "ROUTINE" \| "URGENT" \| "STAT" | **(a)** Prisma enum first |
+| `Task.status` | `OPEN` | OPEN \| ASSIGNED \| IN_PROGRESS \| COMPLETED \| CANCELLED \| OVERDUE | **(a)** Prisma enum first |
+| `ClinicalDocument.status` | `CURRENT` | "CURRENT" \| "SUPERSEDED" | **(a)** Prisma enum first |
+| `ClinicalDocument.accessPolicy` | `CLINICAL_STAFF` | "CLINICAL_STAFF" \| "PATIENT_VISIBLE" \| "RESTRICTED" | **(a)** Prisma enum first |
+| `Consent.status` | `REQUESTED` | REQUESTED \| GRANTED \| DENIED \| REVOKED \| EXPIRED | **(a)** Prisma enum first |
+| `Referral.priority` | `ROUTINE` | ROUTINE \| URGENT \| STAT | **(a)** Prisma enum first |
+| `Referral.status` | `PLACED` | DRAFT \| PLACED \| ACKNOWLEDGED \| IN_PROGRESS \| COMPLETED \| CANCELLED \| REJECTED | **(a)** Prisma enum first |
+| `Appointment.status` | `REQUESTED` | REQUESTED\|CONFIRMED\|RESCHEDULED\|ARRIVED\|CHECKED_IN\|WAITING\|IN_CONSULTATION\|COMPLETED\|CANCELLED\|NO_SHOW | **(a)** Prisma enum first |
+| `QueueEntry.status` | `WAITING` | WAITING \| CALLED \| IN_SERVICE \| COMPLETED \| SKIPPED \| CANCELLED | **(a)** Prisma enum first |
+| `TriageAssessment.status` | `COMPLETED` | "DRAFT" \| "COMPLETED" \| "AMENDED" | **(a)** Prisma enum first |
+| `AdmissionRequest.status` | `PENDING` | PENDING \| DEFERRED \| BED_RESERVED \| ADMITTED \| REJECTED \| CANCELLED | **(a)** Prisma enum first |
+| `TransferRequest.status` | `REQUESTED` | REQUESTED \| ACCEPTED \| BED_RESERVED \| PATIENT_IN_TRANSIT \| COMPLETED \| CANCELLED \| REJECTED | **(a)** Prisma enum first |
+| `IcuDevice.status` | `PLANNED` | "PLANNED" \| "ACTIVE" \| "REMOVED" \| "DISCONTINUED" | **(a)** Prisma enum first |
+| `IcuInfusion.status` | `RUNNING` | "RUNNING" \| "PAUSED" \| "STOPPED" | **(a)** Prisma enum first |
+| `Surgery.urgency` | `ELECTIVE` | "ELECTIVE" \| "URGENT" \| "EMERGENCY" | **(a)** Prisma enum first |
+| `SurgerySchedule.status` | `SCHEDULED` | "SCHEDULED" \| "CANCELLED" | **(a)** Prisma enum first |
+| `AnesthesiaRecord.status` | `PLANNED` | "PLANNED" \| "IN_PROGRESS" \| "COMPLETED" | **(a)** Prisma enum first |
+| `SurgicalSpecimen.status` | `COLLECTED` | "COLLECTED" \| "SENT" \| "RECEIVED" | **(a)** Prisma enum first |
+| `RecoveryRecord.status` | `PENDING` | "PENDING" \| "IN_RECOVERY" \| "READY_FOR_TRANSFER" \| "TRANSFERRED" | **(a)** Prisma enum first |
+| `NursingAssessment.status` | `DRAFT` | "DRAFT" \| "COMPLETED" \| "SIGNED" \| "SUPERSEDED" | **(a)** Prisma enum first |
+| `BloodUnit.bloodGroupStatus` | `PENDING` | "PENDING" \| "CONFIRMED" — set only from an authorized typing record | **(a)** Prisma enum first |
+| `BloodTypingRecord.status` | `PENDING` | "PENDING" \| "RESULTED" \| "VERIFIED" | **(a)** Prisma enum first |
+| `BloodCompatibilityTest.testType` | `CROSSMATCH` | "TYPE_AND_SCREEN" \| "CROSSMATCH" | **(a)** Prisma enum first |
+| `BloodIssue.status` | `ISSUED` | "ISSUED" \| "IN_TRANSIT" \| "RECEIVED" \| "RETURNED" | **(a)** Prisma enum first |
 
 **Hospital billing, supply chain**
 
 | Column | Default | Values | Verdict |
 |---|---|---|---|
-| `Charge.category` | — | CONSULTATION \| BED \| PROCEDURE \| LAB \| IMAGING \| PHARMACY \| NURSING \| PACKAGE \| OTHER | Native enum |
+| `Charge.category` | — | CONSULTATION \| BED \| PROCEDURE \| LAB \| IMAGING \| PHARMACY \| NURSING \| PACKAGE \| OTHER | **(b)** text + CHECK (set still evolving) |
 | `Charge.currency` | `INR` | _defined in code_ | ISO 4217 currency code — an external, open code set. Keep text; add a 3-letter CHECK. |
 | `Tariff.currency` | `INR` | _defined in code_ | ISO 4217 currency code — an external, open code set. Keep text; add a 3-letter CHECK. |
 | `PackageDefinition.currency` | `INR` | _defined in code_ | ISO 4217 currency code — an external, open code set. Keep text; add a 3-letter CHECK. |
@@ -456,118 +477,118 @@ text.**
 | `Payment.currency` | `INR` | _defined in code_ | ISO 4217 currency code — an external, open code set. Keep text; add a 3-letter CHECK. |
 | `PurchaseOrder.currency` | `INR` | _defined in code_ | ISO 4217 currency code — an external, open code set. Keep text; add a 3-letter CHECK. |
 | `SupplierContract.currency` | `INR` | _defined in code_ | ISO 4217 currency code — an external, open code set. Keep text; add a 3-letter CHECK. |
-| `DepartmentSupplyRequest.urgency` | `ROUTINE` | _defined in code_ | Native enum |
+| `DepartmentSupplyRequest.urgency` | `ROUTINE` | _defined in code_ | **(a)** Prisma enum first |
 
 **Operations: housekeeping, diet, transport, assets**
 
 | Column | Default | Values | Verdict |
 |---|---|---|---|
-| `HousekeepingRequest.priority` | `ROUTINE` | "ROUTINE" \| "URGENT" \| "STAT" | Native enum |
-| `HousekeepingRequest.status` | `REQUESTED` | REQUESTED\|ASSIGNED\|IN_PROGRESS\|COMPLETED\|INSPECTED\|CLOSED\|CANCELLED | Native enum |
-| `DietOrder.status` | `ACTIVE` | ACTIVE \| DISCONTINUED \| CANCELLED | Native enum |
-| `Meal.status` | `PLANNED` | PLANNED\|PREPARING\|READY\|DELIVERED\|REFUSED\|MISSED\|CANCELLED | Native enum |
-| `PatientTransportRequest.priority` | `ROUTINE` | _defined in code_ | Native enum |
-| `PatientTransportRequest.status` | `REQUESTED` | REQUESTED\|ACCEPTED\|ASSIGNED\|EN_ROUTE_TO_PICKUP\|PATIENT_PICKED_UP\|IN_TRANSIT\|ARRIVED\|COMPLETED\|CANCELLED\|REJECT | Native enum |
-| `Ambulance.status` | `AVAILABLE` | AVAILABLE \| ON_TRIP \| MAINTENANCE \| OUT_OF_SERVICE | Native enum |
-| `AmbulanceTrip.status` | `REQUESTED` | REQUESTED\|DISPATCHED\|EN_ROUTE\|AT_PICKUP\|PATIENT_ONBOARD\|IN_TRANSIT\|ARRIVED\|COMPLETED\|CANCELLED\|FAILED_DISPATCH | Native enum |
-| `MaintenanceRequest.priority` | `ROUTINE` | _defined in code_ | Native enum |
-| `MaintenanceRequest.status` | `REPORTED` | REPORTED\|TRIAGED\|ASSIGNED\|IN_PROGRESS\|RESOLVED\|VERIFIED\|CLOSED\|CANCELLED | Native enum |
-| `PreventiveMaintenance.status` | `SCHEDULED` | SCHEDULED \| DONE \| CANCELLED | Native enum |
-| `AssetDowntime.status` | `ACTIVE` | ACTIVE \| RESOLVED | Native enum |
-| `BiomedicalEquipment.status` | `IN_SERVICE` | IN_SERVICE \| UNDER_MAINTENANCE \| OUT_OF_SERVICE \| RETIRED | Native enum |
+| `HousekeepingRequest.priority` | `ROUTINE` | "ROUTINE" \| "URGENT" \| "STAT" | **(a)** Prisma enum first |
+| `HousekeepingRequest.status` | `REQUESTED` | REQUESTED\|ASSIGNED\|IN_PROGRESS\|COMPLETED\|INSPECTED\|CLOSED\|CANCELLED | **(a)** Prisma enum first |
+| `DietOrder.status` | `ACTIVE` | ACTIVE \| DISCONTINUED \| CANCELLED | **(a)** Prisma enum first |
+| `Meal.status` | `PLANNED` | PLANNED\|PREPARING\|READY\|DELIVERED\|REFUSED\|MISSED\|CANCELLED | **(a)** Prisma enum first |
+| `PatientTransportRequest.priority` | `ROUTINE` | _defined in code_ | **(a)** Prisma enum first |
+| `PatientTransportRequest.status` | `REQUESTED` | REQUESTED\|ACCEPTED\|ASSIGNED\|EN_ROUTE_TO_PICKUP\|PATIENT_PICKED_UP\|IN_TRANSIT\|ARRIVED\|COMPLETED\|CANCELLED\|REJECT | **(a)** Prisma enum first |
+| `Ambulance.status` | `AVAILABLE` | AVAILABLE \| ON_TRIP \| MAINTENANCE \| OUT_OF_SERVICE | **(a)** Prisma enum first |
+| `AmbulanceTrip.status` | `REQUESTED` | REQUESTED\|DISPATCHED\|EN_ROUTE\|AT_PICKUP\|PATIENT_ONBOARD\|IN_TRANSIT\|ARRIVED\|COMPLETED\|CANCELLED\|FAILED_DISPATCH | **(a)** Prisma enum first |
+| `MaintenanceRequest.priority` | `ROUTINE` | _defined in code_ | **(a)** Prisma enum first |
+| `MaintenanceRequest.status` | `REPORTED` | REPORTED\|TRIAGED\|ASSIGNED\|IN_PROGRESS\|RESOLVED\|VERIFIED\|CLOSED\|CANCELLED | **(a)** Prisma enum first |
+| `PreventiveMaintenance.status` | `SCHEDULED` | SCHEDULED \| DONE \| CANCELLED | **(a)** Prisma enum first |
+| `AssetDowntime.status` | `ACTIVE` | ACTIVE \| RESOLVED | **(a)** Prisma enum first |
+| `BiomedicalEquipment.status` | `IN_SERVICE` | IN_SERVICE \| UNDER_MAINTENANCE \| OUT_OF_SERVICE \| RETIRED | **(a)** Prisma enum first |
 
 **Quality and infection control**
 
 | Column | Default | Values | Verdict |
 |---|---|---|---|
-| `InfectionIncident.status` | `REPORTED` | REPORTED\|UNDER_REVIEW\|INVESTIGATION\|ACTION_REQUIRED\|RESOLVED\|CLOSED\|CANCELLED | Native enum |
-| `InfectionInvestigation.status` | `OPEN` | OPEN \| COMPLETED | Native enum |
-| `ExposureRecord.status` | `DOCUMENTED` | DOCUMENTED \| REVIEWED | Native enum |
+| `InfectionIncident.status` | `REPORTED` | REPORTED\|UNDER_REVIEW\|INVESTIGATION\|ACTION_REQUIRED\|RESOLVED\|CLOSED\|CANCELLED | **(a)** Prisma enum first |
+| `InfectionInvestigation.status` | `OPEN` | OPEN \| COMPLETED | **(a)** Prisma enum first |
+| `ExposureRecord.status` | `DOCUMENTED` | DOCUMENTED \| REVIEWED | **(a)** Prisma enum first |
 | `QualityIncident.category` | — | documentary: MEDICATION\|FALL\|PRESSURE_INJURY\|DIAGNOSTIC\|SURGICAL\|TRANSFUSION\|INFECTION\|EQUIPMENT\|OPERATIONAL\|S | Documentary taxonomy that organizations extend. Keep text; validate via configuration. |
-| `QualityIncident.severity` | `MODERATE` | LOW\|MODERATE\|HIGH\|CRITICAL (organizational classification, not a computed score) | Native enum |
-| `QualityIncident.confidentiality` | `STANDARD` | STANDARD\|RESTRICTED | Native enum |
-| `QualityIncident.status` | `REPORTED` | REPORTED\|TRIAGED\|UNDER_INVESTIGATION\|ACTION_REQUIRED\|RESOLVED\|CLOSED\|CANCELLED | Native enum |
-| `RootCauseAnalysis.methodology` | `FIVE_WHYS` | FIVE_WHYS\|FISHBONE\|OTHER (documentary — the system stores, does not infer) | Native enum |
-| `RootCauseAnalysis.status` | `DRAFT` | DRAFT\|UNDER_REVIEW\|REVIEWED | Native enum |
-| `CapaAction.actionType` | — | CORRECTIVE\|PREVENTIVE | Native enum |
-| `CapaAction.status` | `OPEN` | OPEN\|IN_PROGRESS\|COMPLETED\|VERIFIED\|CLOSED\|CANCELLED | Native enum |
-| `QualityStandard.status` | `ACTIVE` | ACTIVE\|ARCHIVED | Native enum |
-| `QualityMeasure.status` | `PENDING` | PENDING\|COMPLIANT\|PARTIAL\|NON_COMPLIANT\|NOT_APPLICABLE | Native enum |
-| `ComplianceEvidence.evidenceType`? | — | POLICY\|PROCEDURE\|REPORT\|TRAINING\|RECORD\|INVESTIGATION\|OTHER | Native enum |
-| `QualityFinding.sourceType`? | — | AUDIT\|STANDARD\|MEASURE\|INCIDENT\|OTHER | Native enum |
-| `QualityFinding.severity`? | — | LOW\|MODERATE\|HIGH\|CRITICAL | Native enum |
-| `QualityFinding.status` | `OPEN` | OPEN\|IN_PROGRESS\|CLOSED | Native enum |
-| `QualityAudit.status` | `PLANNED` | PLANNED\|IN_PROGRESS\|COMPLETED\|CLOSED | Native enum |
+| `QualityIncident.severity` | `MODERATE` | LOW\|MODERATE\|HIGH\|CRITICAL (organizational classification, not a computed score) | **(a)** Prisma enum first |
+| `QualityIncident.confidentiality` | `STANDARD` | STANDARD\|RESTRICTED | **(a)** Prisma enum first |
+| `QualityIncident.status` | `REPORTED` | REPORTED\|TRIAGED\|UNDER_INVESTIGATION\|ACTION_REQUIRED\|RESOLVED\|CLOSED\|CANCELLED | **(a)** Prisma enum first |
+| `RootCauseAnalysis.methodology` | `FIVE_WHYS` | FIVE_WHYS\|FISHBONE\|OTHER (documentary — the system stores, does not infer) | **(b)** text + CHECK (set still evolving) |
+| `RootCauseAnalysis.status` | `DRAFT` | DRAFT\|UNDER_REVIEW\|REVIEWED | **(a)** Prisma enum first |
+| `CapaAction.actionType` | — | CORRECTIVE\|PREVENTIVE | **(a)** Prisma enum first |
+| `CapaAction.status` | `OPEN` | OPEN\|IN_PROGRESS\|COMPLETED\|VERIFIED\|CLOSED\|CANCELLED | **(a)** Prisma enum first |
+| `QualityStandard.status` | `ACTIVE` | ACTIVE\|ARCHIVED | **(a)** Prisma enum first |
+| `QualityMeasure.status` | `PENDING` | PENDING\|COMPLIANT\|PARTIAL\|NON_COMPLIANT\|NOT_APPLICABLE | **(a)** Prisma enum first |
+| `ComplianceEvidence.evidenceType`? | — | POLICY\|PROCEDURE\|REPORT\|TRAINING\|RECORD\|INVESTIGATION\|OTHER | **(b)** text + CHECK (set still evolving) |
+| `QualityFinding.sourceType`? | — | AUDIT\|STANDARD\|MEASURE\|INCIDENT\|OTHER | **(b)** text + CHECK (set still evolving) |
+| `QualityFinding.severity`? | — | LOW\|MODERATE\|HIGH\|CRITICAL | **(a)** Prisma enum first |
+| `QualityFinding.status` | `OPEN` | OPEN\|IN_PROGRESS\|CLOSED | **(a)** Prisma enum first |
+| `QualityAudit.status` | `PLANNED` | PLANNED\|IN_PROGRESS\|COMPLETED\|CLOSED | **(a)** Prisma enum first |
 
 **Workforce**
 
 | Column | Default | Values | Verdict |
 |---|---|---|---|
-| `WorkforceAssignment.assignmentType` | `PRIMARY` | PRIMARY\|SECONDARY\|TEMPORARY | Native enum |
-| `WorkforceAssignment.status` | `ACTIVE` | ACTIVE\|ENDED | Native enum |
-| `StaffAvailability.availability` | `AVAILABLE` | AVAILABLE\|UNAVAILABLE\|ON_LEAVE\|SUSPENDED\|OFF_DUTY | Native enum |
-| `StaffShift.shiftType`? | — | DAY\|NIGHT\|EVENING\|ON_CALL | Native enum |
-| `StaffShift.status` | `SCHEDULED` | SCHEDULED\|CANCELLED\|COMPLETED | Native enum |
-| `StaffingRequirement.status` | `ACTIVE` | ACTIVE\|ARCHIVED | Native enum |
-| `Credential.credentialType` | — | REGISTRATION\|QUALIFICATION\|CERTIFICATION\|LICENSE\|SPECIALTY\|TRAINING | Native enum |
-| `Credential.status` | `PENDING` | PENDING\|VERIFIED\|EXPIRED\|SUSPENDED\|REVOKED | Native enum |
+| `WorkforceAssignment.assignmentType` | `PRIMARY` | PRIMARY\|SECONDARY\|TEMPORARY | **(a)** Prisma enum first |
+| `WorkforceAssignment.status` | `ACTIVE` | ACTIVE\|ENDED | **(a)** Prisma enum first |
+| `StaffAvailability.availability` | `AVAILABLE` | AVAILABLE\|UNAVAILABLE\|ON_LEAVE\|SUSPENDED\|OFF_DUTY | **(a)** Prisma enum first |
+| `StaffShift.shiftType`? | — | DAY\|NIGHT\|EVENING\|ON_CALL | **(b)** text + CHECK (set still evolving) |
+| `StaffShift.status` | `SCHEDULED` | SCHEDULED\|CANCELLED\|COMPLETED | **(a)** Prisma enum first |
+| `StaffingRequirement.status` | `ACTIVE` | ACTIVE\|ARCHIVED | **(a)** Prisma enum first |
+| `Credential.credentialType` | — | REGISTRATION\|QUALIFICATION\|CERTIFICATION\|LICENSE\|SPECIALTY\|TRAINING | **(b)** text + CHECK (set still evolving) |
+| `Credential.status` | `PENDING` | PENDING\|VERIFIED\|EXPIRED\|SUSPENDED\|REVOKED | **(a)** Prisma enum first |
 | `StaffPrivilege.privilegeType` | — | e.g. SURGERY\|ANESTHESIA\|BLOOD_BANK_VERIFY\|LAB_RESULT_VERIFY\|RADIOLOGY_REPORT_FINALIZE\|ICU_RESPONSIBILITY\|PHARM | Facility-defined privilege catalogue ("e.g. …" in the schema). Keep text; validate against a configured list. |
-| `StaffPrivilege.status` | `ACTIVE` | ACTIVE\|EXPIRED\|SUSPENDED\|REVOKED | Native enum |
+| `StaffPrivilege.status` | `ACTIVE` | ACTIVE\|EXPIRED\|SUSPENDED\|REVOKED | **(a)** Prisma enum first |
 
 **Interoperability: ABDM, NHCX, identifiers**
 
 | Column | Default | Values | Verdict |
 |---|---|---|---|
-| `ExternalIdentifier.entityType` | — | PATIENT \| FACILITY \| STAFF \| ENCOUNTER \| ORGANIZATION \| DOCUMENT | Native enum |
-| `ExternalIdentifier.use` | `OFFICIAL` | OFFICIAL \| SECONDARY \| OLD | Native enum |
-| `ExternalIdentifier.status` | `ACTIVE` | ACTIVE \| SUPERSEDED \| REVOKED \| INVALID | Native enum |
-| `ExternalIdentifier.source` | `LOCAL_ENTRY` | LOCAL_ENTRY \| REGISTRY_LOOKUP \| IMPORTED | Native enum |
-| `ExternalIdentifier.verificationStatus` | `UNVERIFIED` | UNVERIFIED \| VERIFIED \| FAILED | Native enum |
+| `ExternalIdentifier.entityType` | — | PATIENT \| FACILITY \| STAFF \| ENCOUNTER \| ORGANIZATION \| DOCUMENT | **(b)** text + CHECK (set still evolving) |
+| `ExternalIdentifier.use` | `OFFICIAL` | OFFICIAL \| SECONDARY \| OLD | **(a)** Prisma enum first |
+| `ExternalIdentifier.status` | `ACTIVE` | ACTIVE \| SUPERSEDED \| REVOKED \| INVALID | **(a)** Prisma enum first |
+| `ExternalIdentifier.source` | `LOCAL_ENTRY` | LOCAL_ENTRY \| REGISTRY_LOOKUP \| IMPORTED | **(b)** text + CHECK (set still evolving) |
+| `ExternalIdentifier.verificationStatus` | `UNVERIFIED` | UNVERIFIED \| VERIFIED \| FAILED | **(a)** Prisma enum first |
 | `InteropConsent.purpose` | — | TREATMENT \| REFERRAL \| SECOND_OPINION \| INSURANCE \| PATIENT_ACCESS \| RESEARCH \| OTHER | ABDM consent purpose — external vocabulary. Keep text, validated against the contract module. |
-| `InteropConsent.status` | `REQUESTED` | REQUESTED \| GRANTED \| ACTIVE \| EXPIRED \| REVOKED \| DECLINED \| CANCELLED | Native enum |
-| `InteropConsent.recipientType` | — | FACILITY \| ORGANIZATION \| PRACTITIONER \| PATIENT \| EXTERNAL_SYSTEM | Native enum |
-| `InteropConsent.source` | `LOCAL` | _defined in code_ | Native enum |
+| `InteropConsent.status` | `REQUESTED` | REQUESTED \| GRANTED \| ACTIVE \| EXPIRED \| REVOKED \| DECLINED \| CANCELLED | **(a)** Prisma enum first |
+| `InteropConsent.recipientType` | — | FACILITY \| ORGANIZATION \| PRACTITIONER \| PATIENT \| EXTERNAL_SYSTEM | **(b)** text + CHECK (set still evolving) |
+| `InteropConsent.source` | `LOCAL` | _defined in code_ | **(b)** text + CHECK (set still evolving) |
 | `InteropConsentScope.scope` | — | ALL_CLINICAL \| DIAGNOSIS \| LAB \| IMAGING \| MEDICATION \| DOCUMENTS \| ENCOUNTER \| ALLERGY \| VITALS \| CARE_PLAN \| | Maps to ABDM HI types — external vocabulary that ABDM extends. Keep text. |
-| `HealthInformationExchange.direction` | — | OUTBOUND \| INBOUND | Native enum |
-| `HealthInformationExchange.status` | `REQUESTED` | REQUESTED \| AUTHORIZED \| PROCESSING \| COMPLETED \| REJECTED \| FAILED \| CANCELLED | Native enum |
+| `HealthInformationExchange.direction` | — | OUTBOUND \| INBOUND | **(a)** Prisma enum first |
+| `HealthInformationExchange.status` | `REQUESTED` | REQUESTED \| AUTHORIZED \| PROCESSING \| COMPLETED \| REJECTED \| FAILED \| CANCELLED | **(a)** Prisma enum first |
 | `HealthInformationExchange.abdmProtocolState`? | — | NOT_SUBMITTED \| SUBMITTED \| ACKNOWLEDGED \| GRANTED \| DENIED \| EXPIRED \| ERRORED | Mirrors ABDM protocol states — external spec. Keep text. |
-| `InteropProvenance.direction` | — | OUTBOUND \| INBOUND | Native enum |
-| `InteropProvenance.dataOrigin` | — | LOCAL \| EXTERNAL \| IMPORTED \| MAPPED \| DERIVED | Native enum |
-| `ImportedResource.status` | `RECEIVED` | RECEIVED \| MAPPED \| IMPORTED \| REJECTED \| CONFLICT | Native enum |
-| `TerminologyMapping.domain` | — | DIAGNOSIS \| LAB \| MEDICATION \| OBSERVATION \| PROCEDURE \| UNIT | Native enum |
-| `TerminologyMapping.status` | `ACTIVE` | ACTIVE \| RETIRED | Native enum |
-| `InteropConnection.system` | — | ABDM \| HFR \| HPR \| NHCX | Native enum |
-| `InteropConnection.environment` | `DISABLED` | DISABLED \| SANDBOX \| PRODUCTION | Native enum |
-| `InteropConnection.status` | `NOT_CONFIGURED` | NOT_CONFIGURED \| CONFIGURED \| ERROR | Native enum |
-| `IntegrationCertificate.role`? | `CURRENT` | _defined in code_ | Native enum |
-| `IntegrationCertificate.status` | `NOT_CONFIGURED` | _defined in code_ | Native enum |
-| `ExternalParticipant.environment` | `SANDBOX` | _defined in code_ | Native enum |
-| `ExternalParticipant.status` | `ACTIVE` | _defined in code_ | Native enum |
-| `ExternalParticipant.trustStatus` | `UNVERIFIED` | _defined in code_ | Native enum |
-| `IntegrationAlert.severity` | `WARNING` | INFO \| WARNING \| CRITICAL | Native enum |
-| `IntegrationAlert.status` | `OPEN` | _defined in code_ | Native enum |
-| `AbdmCallbackEvent.status` | `ACCEPTED` | _defined in code_ | Native enum |
-| `ClaimSubmission.submissionType` | `ORIGINAL` | _defined in code_ | Native enum |
-| `ClaimSubmission.status` | `DRAFT` | _defined in code_ | Native enum |
-| `NhcxExchange.direction` | `OUTBOUND` | _defined in code_ | Native enum |
+| `InteropProvenance.direction` | — | OUTBOUND \| INBOUND | **(a)** Prisma enum first |
+| `InteropProvenance.dataOrigin` | — | LOCAL \| EXTERNAL \| IMPORTED \| MAPPED \| DERIVED | **(b)** text + CHECK (set still evolving) |
+| `ImportedResource.status` | `RECEIVED` | RECEIVED \| MAPPED \| IMPORTED \| REJECTED \| CONFLICT | **(a)** Prisma enum first |
+| `TerminologyMapping.domain` | — | DIAGNOSIS \| LAB \| MEDICATION \| OBSERVATION \| PROCEDURE \| UNIT | **(b)** text + CHECK (set still evolving) |
+| `TerminologyMapping.status` | `ACTIVE` | ACTIVE \| RETIRED | **(a)** Prisma enum first |
+| `InteropConnection.system` | — | ABDM \| HFR \| HPR \| NHCX | **(b)** text + CHECK (set still evolving) |
+| `InteropConnection.environment` | `DISABLED` | DISABLED \| SANDBOX \| PRODUCTION | **(a)** Prisma enum first |
+| `InteropConnection.status` | `NOT_CONFIGURED` | NOT_CONFIGURED \| CONFIGURED \| ERROR | **(a)** Prisma enum first |
+| `IntegrationCertificate.role`? | `CURRENT` | _defined in code_ | **(a)** Prisma enum first |
+| `IntegrationCertificate.status` | `NOT_CONFIGURED` | _defined in code_ | **(a)** Prisma enum first |
+| `ExternalParticipant.environment` | `SANDBOX` | _defined in code_ | **(a)** Prisma enum first |
+| `ExternalParticipant.status` | `ACTIVE` | _defined in code_ | **(a)** Prisma enum first |
+| `ExternalParticipant.trustStatus` | `UNVERIFIED` | _defined in code_ | **(a)** Prisma enum first |
+| `IntegrationAlert.severity` | `WARNING` | INFO \| WARNING \| CRITICAL | **(a)** Prisma enum first |
+| `IntegrationAlert.status` | `OPEN` | _defined in code_ | **(a)** Prisma enum first |
+| `AbdmCallbackEvent.status` | `ACCEPTED` | _defined in code_ | **(a)** Prisma enum first |
+| `ClaimSubmission.submissionType` | `ORIGINAL` | _defined in code_ | **(a)** Prisma enum first |
+| `ClaimSubmission.status` | `DRAFT` | _defined in code_ | **(a)** Prisma enum first |
+| `NhcxExchange.direction` | `OUTBOUND` | _defined in code_ | **(a)** Prisma enum first |
 | `NhcxExchange.protocolState` | `NOT_SUBMITTED` | _defined in code_ | Mirrors NHCX protocol states; the NHCX contract is not yet verified (see nhcx/adapter.ts). Keep text until it is. |
-| `NhcxCallbackEvent.status` | `ACCEPTED` | _defined in code_ | Native enum |
-| `ClaimQuery.status` | `RECEIVED` | _defined in code_ | Native enum |
-| `ClaimSettlement.status` | `NOTIFIED` | _defined in code_ | Native enum |
-| `ReconciliationException.severity` | `WARNING` | INFO \| WARNING \| CRITICAL | Native enum |
-| `ReconciliationException.status` | `OPEN` | _defined in code_ | Native enum |
+| `NhcxCallbackEvent.status` | `ACCEPTED` | _defined in code_ | **(a)** Prisma enum first |
+| `ClaimQuery.status` | `RECEIVED` | _defined in code_ | **(a)** Prisma enum first |
+| `ClaimSettlement.status` | `NOTIFIED` | _defined in code_ | **(a)** Prisma enum first |
+| `ReconciliationException.severity` | `WARNING` | INFO \| WARNING \| CRITICAL | **(a)** Prisma enum first |
+| `ReconciliationException.status` | `OPEN` | _defined in code_ | **(a)** Prisma enum first |
 
 **Privacy, patient access, notifications**
 
 | Column | Default | Values | Verdict |
 |---|---|---|---|
-| `BreakGlassAccess.status` | `ACTIVE` | _defined in code_ | Native enum |
-| `PrivacyRequest.status` | `REQUESTED` | _defined in code_ | Native enum |
-| `PatientDelegation.relationship` | — | PARENT \| CHILD \| SPOUSE \| GUARDIAN \| CAREGIVER \| OTHER | Native enum |
-| `PatientDelegation.status` | `INVITED` | _defined in code_ | Native enum |
-| `PatientAccessSession.status` | `PENDING` | _defined in code_ | Native enum |
-| `Notification.category` | `OPERATIONAL` | CLINICAL \| OPERATIONAL \| ADMINISTRATIVE \| SYSTEM | Native enum |
-| `Notification.priority` | `ROUTINE` | ROUTINE \| URGENT \| CRITICAL | Native enum |
+| `BreakGlassAccess.status` | `ACTIVE` | _defined in code_ | **(a)** Prisma enum first |
+| `PrivacyRequest.status` | `REQUESTED` | _defined in code_ | **(a)** Prisma enum first |
+| `PatientDelegation.relationship` | — | PARENT \| CHILD \| SPOUSE \| GUARDIAN \| CAREGIVER \| OTHER | **(b)** text + CHECK (set still evolving) |
+| `PatientDelegation.status` | `INVITED` | _defined in code_ | **(a)** Prisma enum first |
+| `PatientAccessSession.status` | `PENDING` | _defined in code_ | **(a)** Prisma enum first |
+| `Notification.category` | `OPERATIONAL` | CLINICAL \| OPERATIONAL \| ADMINISTRATIVE \| SYSTEM | **(b)** text + CHECK (set still evolving) |
+| `Notification.priority` | `ROUTINE` | ROUTINE \| URGENT \| CRITICAL | **(a)** Prisma enum first |
 
 ### 8.3 Student verification uploads → the storage adapter
 
