@@ -68,9 +68,9 @@ export async function recordGoodsReceipt(
   const rowsInserted = await tx.$executeRaw`
     INSERT INTO "GoodsReceipt" (id, "purchaseOrderId", "facilityId", status, "recordedByStaffId", "recordedAt", notes, "idempotencyKey")
     VALUES (${id}, ${input.purchaseOrderId}, ${input.facilityId}, ${Prisma.raw("'RECORDED'")}, ${input.recordedByStaffId}, CURRENT_TIMESTAMP, ${input.notes ?? null}, ${input.idempotencyKey})
-    ON CONFLICT ("idempotencyKey") DO NOTHING
+    ON CONFLICT ("facilityId", "idempotencyKey") DO NOTHING
   `;
-  const receipt = assertReplayInFacility(await tx.goodsReceipt.findUniqueOrThrow({ where: { idempotencyKey: input.idempotencyKey } }), input.facilityId);
+  const receipt = assertReplayInFacility(await tx.goodsReceipt.findUniqueOrThrow({ where: { facilityId_idempotencyKey: { facilityId: input.facilityId, idempotencyKey: input.idempotencyKey } } }), input.facilityId);
   if (rowsInserted === 0) return { receipt, alreadyExisted: true as const };
 
   for (const line of input.lines) {

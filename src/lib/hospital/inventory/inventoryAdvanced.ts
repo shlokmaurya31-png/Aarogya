@@ -1,9 +1,11 @@
+import { $Enums } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { reserveStock, releaseReservation } from "@/lib/hospital/inventory/reservation";
 import { issueStock } from "@/lib/hospital/inventory/issue";
 import type { Prisma, DepartmentSupplyRequestStatus, InventorySerialStatus } from "@prisma/client";
+import { parseEnum } from "@/lib/enumValue";
 
 /**
  * Enterprise inventory depth (Phase B8) — valuation, the GENERIC department
@@ -86,7 +88,7 @@ export async function createDepartmentRequest(input: { facilityId: string; itemI
   const item = await prisma.item.findUnique({ where: { id: input.itemId } });
   if (!item || (item.facilityId && item.facilityId !== input.facilityId)) throw new NotFoundError("Item not found in this facility.");
   const req = await prisma.departmentSupplyRequest.create({
-    data: { facilityId: input.facilityId, itemId: input.itemId, quantity: input.quantity, unit: input.unit, departmentId: input.departmentId, requestingLocationId: input.requestingLocationId, urgency: input.urgency ?? "ROUTINE", reason: input.reason, patientId: input.patientId, encounterId: input.encounterId, requestedByStaffId: input.requestedByStaffId },
+    data: { facilityId: input.facilityId, itemId: input.itemId, quantity: input.quantity, unit: input.unit, departmentId: input.departmentId, requestingLocationId: input.requestingLocationId, urgency: parseEnum($Enums.Priority, input.urgency ?? "ROUTINE", "urgency"), reason: input.reason, patientId: input.patientId, encounterId: input.encounterId, requestedByStaffId: input.requestedByStaffId },
   });
   await recordAuditEvent("hospital.inventory.deptRequestCreated", input.byUserId, { requestId: req.id, itemId: input.itemId, quantity: input.quantity, urgency: req.urgency }, { facilityId: input.facilityId, patientId: input.patientId, encounterId: input.encounterId });
   return req;

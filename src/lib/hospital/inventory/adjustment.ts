@@ -64,9 +64,9 @@ export async function createAdjustment(tx: Tx, input: CreateAdjustmentInput) {
       (id, "facilityId", "itemId", "lotId", "locationId", "quantityDelta", reason, notes, status, "requestedByStaffId", "sourceType", "sourceId", "idempotencyKey", "createdAt")
     VALUES
       (${id}, ${input.facilityId}, ${input.itemId}, ${input.lotId}, ${input.locationId}, ${input.quantityDelta}, ${Prisma.raw(`'${input.reason}'`)}, ${input.notes ?? null}, ${Prisma.raw(`'${initialStatus}'`)}, ${input.requestedByStaffId}, ${input.sourceType ?? null}, ${input.sourceId ?? null}, ${input.idempotencyKey}, CURRENT_TIMESTAMP)
-    ON CONFLICT ("idempotencyKey") DO NOTHING
+    ON CONFLICT ("facilityId", "idempotencyKey") DO NOTHING
   `;
-  const adjustment = assertReplayInFacility(await tx.stockAdjustment.findUniqueOrThrow({ where: { idempotencyKey: input.idempotencyKey } }), input.facilityId);
+  const adjustment = assertReplayInFacility(await tx.stockAdjustment.findUniqueOrThrow({ where: { facilityId_idempotencyKey: { facilityId: input.facilityId, idempotencyKey: input.idempotencyKey } } }), input.facilityId);
   if (rowsInserted === 0) return { adjustment, alreadyExisted: true as const };
 
   if (!isHighImpact) {

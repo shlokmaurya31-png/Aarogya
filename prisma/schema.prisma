@@ -5648,9 +5648,10 @@ model StockReservation {
   expiresAt          DateTime? // staff-observed only, never auto-transitioned — no cron in this codebase
   releasedAt         DateTime?
   releasedByUserId   String?
-  idempotencyKey     String                 @unique
+  idempotencyKey     String
   createdAt          DateTime               @default(now())
 
+  @@unique([facilityId, idempotencyKey])
   @@index([facilityId, itemId, lotId, locationId])
   @@index([status])
 }
@@ -5679,9 +5680,10 @@ model StockTransfer {
   receivedAt         DateTime?
   cancelledAt        DateTime?
   cancelledReason    String?
-  idempotencyKey     String              @unique
+  idempotencyKey     String
   createdAt          DateTime            @default(now())
 
+  @@unique([facilityId, idempotencyKey])
   @@index([facilityId, status])
 }
 
@@ -5709,11 +5711,12 @@ model StockAdjustment {
   rejectionReason    String?
   sourceType         String? // e.g. "StockTakeLine" when auto-created by a completed stocktake
   sourceId           String?
-  idempotencyKey     String                @unique
+  idempotencyKey     String
   createdAt          DateTime              @default(now())
 
   stockTakeLine StockTakeLine?
 
+  @@unique([facilityId, idempotencyKey])
   @@index([facilityId, status])
 }
 
@@ -5739,9 +5742,10 @@ model WasteRecord {
   approvedByStaffId  String?
   approvedAt         DateTime?
   notes              String?
-  idempotencyKey     String            @unique
+  idempotencyKey     String
   createdAt          DateTime          @default(now())
 
+  @@unique([facilityId, idempotencyKey])
   @@index([facilityId, status])
 }
 
@@ -5857,13 +5861,14 @@ model PurchaseRequisition {
   rejectionReason         String?
   cancelledAt             DateTime?
   cancelledReason         String?
-  idempotencyKey          String              @unique
+  idempotencyKey          String
   createdAt               DateTime            @default(now())
 
   lines          PurchaseRequisitionLine[]
   purchaseOrders PurchaseOrder[]
 
   @@unique([facilityId, requisitionNumber])
+  @@unique([facilityId, idempotencyKey])
   @@index([facilityId, status])
 }
 
@@ -5913,13 +5918,14 @@ model PurchaseOrder {
   cancelledAt          DateTime?
   cancelledReason      String?
   closedAt             DateTime?
-  idempotencyKey       String               @unique
+  idempotencyKey       String
   createdAt            DateTime             @default(now())
 
   lines         PurchaseOrderLine[]
   goodsReceipts GoodsReceipt[]
 
   @@unique([facilityId, orderNumber])
+  @@unique([facilityId, idempotencyKey])
   @@index([facilityId, status])
 }
 
@@ -5969,12 +5975,13 @@ model GoodsReceipt {
   rejectedByStaffId String?
   rejectedAt        DateTime?
   rejectionReason   String?
-  idempotencyKey    String             @unique
+  idempotencyKey    String
   notes             String?
 
   lines GoodsReceiptLine[]
 
   @@unique([facilityId, receiptNumber])
+  @@unique([facilityId, idempotencyKey])
   @@index([purchaseOrderId])
   @@index([facilityId, status])
 }
@@ -7074,7 +7081,7 @@ model DepartmentSupplyRequest {
   itemId               String
   quantity             Float
   unit                 String?
-  urgency              String                        @default("ROUTINE")
+  urgency              Priority                      @default(ROUTINE)
   reason               String?
   status               DepartmentSupplyRequestStatus @default(REQUESTED)
   patientId            String?

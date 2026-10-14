@@ -53,9 +53,9 @@ export async function recordWaste(tx: Tx, input: RecordWasteInput) {
       (id, "facilityId", "itemId", "lotId", "locationId", quantity, reason, status, "patientId", "encounterId", "requestedByStaffId", notes, "idempotencyKey", "createdAt")
     VALUES
       (${id}, ${input.facilityId}, ${input.itemId}, ${input.lotId}, ${input.locationId}, ${input.quantity}, ${Prisma.raw(`'${input.reason}'`)}, ${Prisma.raw(`'${initialStatus}'`)}, ${input.patientId ?? null}, ${input.encounterId ?? null}, ${input.requestedByStaffId}, ${input.notes ?? null}, ${input.idempotencyKey}, CURRENT_TIMESTAMP)
-    ON CONFLICT ("idempotencyKey") DO NOTHING
+    ON CONFLICT ("facilityId", "idempotencyKey") DO NOTHING
   `;
-  const waste = assertReplayInFacility(await tx.wasteRecord.findUniqueOrThrow({ where: { idempotencyKey: input.idempotencyKey } }), input.facilityId);
+  const waste = assertReplayInFacility(await tx.wasteRecord.findUniqueOrThrow({ where: { facilityId_idempotencyKey: { facilityId: input.facilityId, idempotencyKey: input.idempotencyKey } } }), input.facilityId);
   if (rowsInserted === 0) return { waste, alreadyExisted: true as const };
 
   if (!isHighValue) {
