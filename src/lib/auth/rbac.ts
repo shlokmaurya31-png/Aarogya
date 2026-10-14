@@ -26,7 +26,8 @@ export class NotFoundError extends Error {
 
 export class BadRequestError extends Error {
   status = 400 as const;
-  constructor(message = "Bad request.") {
+  /** Optional structured detail (e.g. validation issues) sent alongside the message. */
+  constructor(message = "Bad request.", public details?: Record<string, unknown>) {
     super(message);
   }
 }
@@ -117,7 +118,7 @@ export async function withApiErrors<T>(fn: () => Promise<T>): Promise<NextRespon
       return NextResponse.json({ error: err.message }, { status: 404 });
     }
     if (err instanceof BadRequestError) {
-      return NextResponse.json({ error: err.message }, { status: 400 });
+      return NextResponse.json({ error: err.message, ...err.details }, { status: 400 });
     }
     // Phase C4 — a structured authorization denial. Carries its own status
     // (403 / 404-shaped / 401 for step-up) and a decision code so a UI can

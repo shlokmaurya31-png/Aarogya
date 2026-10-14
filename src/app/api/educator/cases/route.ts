@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { Acuity, CaseSourceType, Difficulty } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { requirePermission, withApiErrors } from "@/lib/auth/rbac";
+import { requirePermission, withApiErrors, BadRequestError } from "@/lib/auth/rbac";
 import { DEFAULT_RUBRIC } from "@/lib/scoring/defaultRubrics";
 import { assertSyntheticCaseIsClean } from "@/lib/privacy/caseSanitizer";
 import { redactFreeText } from "@/lib/privacy/redaction";
@@ -54,9 +54,7 @@ export async function POST(req: NextRequest) {
     const session = await requirePermission("educator:case:create");
     const body = await req.json().catch(() => null);
     const parsed = CreateCaseSchema.safeParse(body);
-    if (!parsed.success) {
-      return { error: "Invalid case data.", issues: parsed.error.issues };
-    }
+    if (!parsed.success) throw new BadRequestError("Invalid case data.", { issues: parsed.error.issues });
     const input = parsed.data;
 
     // Educators author free text directly (unlike synthetic seed cases, which never touch real data

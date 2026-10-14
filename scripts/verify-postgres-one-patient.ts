@@ -54,6 +54,10 @@ async function main() {
     const frontDesk = await loginAs(base, "frontdesk@amc-demo.aarogya", STAFF_PASSWORD);
     const doctor = await loginAs(base, "doctor1@amc-demo.aarogya", STAFF_PASSWORD);
 
+    // Invalid registration data is a 400 with the validation issues, never a 200.
+    const invalid = await call(frontDesk, "POST", "/api/hospital/patients", { fullName: "A", sex: "" });
+    report("Invalid registration data is refused with 400", invalid.status === 400 && Array.isArray(invalid.json.issues), `HTTP ${invalid.status}`);
+
     // 1. Front desk registration.
     const reg = await call(frontDesk, "POST", "/api/hospital/patients", person);
     const hospitalPatient = reg.json.patient as { id: string; uhid: string } | undefined;

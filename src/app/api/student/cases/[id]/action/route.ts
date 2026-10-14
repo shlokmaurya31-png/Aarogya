@@ -33,6 +33,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const currentStage = attempt.stage as unknown as TsCaseStage;
 
     const result = applyAction(full.content, revealed, currentStage, action);
+    // An action the case doesn't know is a bad request: refuse it before anything is recorded.
+    if (result.error) throw new BadRequestError(result.error);
 
     const updateData: Record<string, unknown> = {
       revealedState: result.revealed as object,
@@ -73,6 +75,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const newRevealed = updated.revealedState as unknown as RevealedState;
     const view = toPublicView(full, newRevealed, updated.stage as unknown as TsCaseStage, updated.hintsUsed);
 
-    return { view, reveal: result.reveal ?? null, error: result.error ?? null, nextStagePreview: nextStage(updated.stage as unknown as TsCaseStage) };
+    return { view, reveal: result.reveal ?? null, nextStagePreview: nextStage(updated.stage as unknown as TsCaseStage) };
   });
 }

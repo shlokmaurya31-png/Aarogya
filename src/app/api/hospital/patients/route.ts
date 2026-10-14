@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
-import { withApiErrors } from "@/lib/auth/rbac";
+import { withApiErrors, BadRequestError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { emitDomainEvent } from "@/lib/events/emit";
 import { facilityOrganizationId } from "@/lib/events/tenant";
@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => null);
     const { session, facilityId } = await requireFacilityStaff("patient:write", body?.facilityId);
     const parsed = RegisterSchema.safeParse(body);
-    if (!parsed.success) return { error: "Invalid patient data.", issues: parsed.error.issues };
+    if (!parsed.success) throw new BadRequestError("Invalid patient data.", { issues: parsed.error.issues });
 
     const patient = await createPatientWithUhid(facilityId, (uhid) =>
       // Phase D6 — create the patient and emit PatientRegistered in one
