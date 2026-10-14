@@ -33,7 +33,7 @@ export default async function StudentProfilePage() {
           <Field label="Enrollment year" value={String(p.enrollmentYear)} />
           <Field label="Expected graduation" value={String(p.expectedGraduation)} />
           <Field label="Current rotation" value={p.currentRotation ?? "—"} />
-          <Field label="Clinical interests" value={JSON.parse(p.clinicalInterests || "[]").join(", ") || "—"} />
+          <Field label="Clinical interests" value={p.clinicalInterests.join(", ") || "—"} />
         </div>
       </Card>
 

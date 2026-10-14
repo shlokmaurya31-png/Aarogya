@@ -37,7 +37,7 @@ export async function GET() {
         (a) => a.caseId
       )
     );
-    const interests = JSON.parse(profile.clinicalInterests || "[]") as string[];
+    const interests = profile.clinicalInterests;
     const unattempted = allCases.filter((c) => !attemptedCaseIds.has(c.id));
     const recommended = [
       ...unattempted.filter((c) => interests.includes(c.specialty)),

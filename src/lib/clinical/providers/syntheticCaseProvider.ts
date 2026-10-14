@@ -22,7 +22,7 @@ function toSummary(row: {
   difficulty: string;
   acuity: string;
   sourceType: string;
-  learnerTracks: string;
+  learnerTracks: string[];
   patientName: string;
   patientAgeBand: string;
   patientSex: string;
@@ -38,7 +38,7 @@ function toSummary(row: {
     difficulty: row.difficulty as Difficulty,
     acuity: row.acuity as Acuity,
     sourceType: row.sourceType as CaseSourceType,
-    learnerTracks: JSON.parse(row.learnerTracks) as LearningTrack[],
+    learnerTracks: row.learnerTracks as LearningTrack[],
     patientName: row.patientName,
     patientAgeBand: row.patientAgeBand,
     patientSex: row.patientSex,
@@ -91,7 +91,7 @@ export class SyntheticCaseProvider implements ClinicalCaseProvider {
     if (!row) return null;
     return {
       ...toSummary(row),
-      learningObjectives: JSON.parse(row.learningObjectives) as string[],
+      learningObjectives: row.learningObjectives,
       content: row.content as unknown as CaseContent,
       referenceDx: row.referenceDx,
       rubric: row.rubric as unknown as ScoringRubric,

@@ -80,12 +80,10 @@ export async function POST(req: NextRequest) {
       expectedGraduation: input.expectedGraduation,
       studentIdentifier: input.studentIdentifier,
       institutionEmail: input.institutionEmail || undefined,
-      clinicalInterests: JSON.stringify(
-        (input.clinicalInterests || "")
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean)
-      ),
+      clinicalInterests: (input.clinicalInterests || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
       verificationStatus: status,
       verificationMethod: input.verificationMethod,
       verifiedAt: status === VerificationStatus.VERIFIED ? new Date() : undefined,

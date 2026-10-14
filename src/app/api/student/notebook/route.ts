@@ -7,7 +7,7 @@ export async function GET() {
   return withApiErrors(async () => {
     const { session } = await requireVerifiedStudent("student:notes:create");
     const entries = await prisma.notebookEntry.findMany({ where: { userId: session.userId }, orderBy: { createdAt: "desc" } });
-    return { entries: entries.map((e) => ({ ...e, tags: JSON.parse(e.tags || "[]") })) };
+    return { entries };
   });
 }
 
@@ -18,6 +18,8 @@ export async function POST(req: NextRequest) {
     const title = body?.title as string | undefined;
     const bodyText = body?.body as string | undefined;
     if (!title?.trim() || !bodyText?.trim()) throw new BadRequestError("title and body are required.");
+    const tags: unknown = body?.tags ?? [];
+    if (!Array.isArray(tags) || !tags.every((t) => typeof t === "string")) throw new BadRequestError("tags must be a list of strings.");
 
     const entry = await prisma.notebookEntry.create({
       data: {
@@ -26,10 +28,10 @@ export async function POST(req: NextRequest) {
         body: bodyText,
         specialty: body?.specialty || undefined,
         caseId: body?.caseId || undefined,
-        tags: JSON.stringify(body?.tags ?? []),
+        tags,
       },
     });
-    return { entry: { ...entry, tags: JSON.parse(entry.tags) } };
+    return { entry };
   });
 }
 

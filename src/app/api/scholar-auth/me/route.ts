@@ -30,7 +30,7 @@ export async function GET() {
             verificationStatus: user.studentProfile.verificationStatus,
             streakDays: user.studentProfile.streakDays,
             clinicalXp: user.studentProfile.clinicalXp,
-            clinicalInterests: JSON.parse(user.studentProfile.clinicalInterests || "[]"),
+            clinicalInterests: user.studentProfile.clinicalInterests,
           }
         : null,
     },

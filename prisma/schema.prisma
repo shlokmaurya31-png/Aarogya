@@ -225,7 +225,7 @@ model StudentProfile {
   studentIdentifier       String?
   institutionEmail        String?
   currentRotation         String?
-  clinicalInterests       String // JSON-encoded string[]
+  clinicalInterests       String[] // text[]
 
   verificationStatus VerificationStatus  @default(UNVERIFIED)
   verificationMethod VerificationMethod?
@@ -293,7 +293,7 @@ model ClinicalCase {
   difficulty    Difficulty
   acuity        Acuity
   sourceType    CaseSourceType @default(SYNTHETIC)
-  learnerTracks String // JSON-encoded LearningTrack[]
+  learnerTracks String[] // text[] of LearningTrack values (CHECK)
 
   // Educational patient (never a real identity — see educationalIdentity.ts)
   patientName     String
@@ -302,7 +302,7 @@ model ClinicalCase {
   patientSex      String
 
   chiefComplaint     String
-  learningObjectives String // JSON string[]
+  learningObjectives String[] // text[]
 
   // Full case content — server-only fields live here and are stripped by
   // src/lib/caseEngine/publicView.ts before ever reaching an HTTP response
@@ -438,7 +438,7 @@ model NotebookEntry {
   body      String
   specialty String?
   caseId    String?
-  tags      String // JSON string[]
+  tags      String[] // text[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -447,7 +447,7 @@ model LearningRecommendation {
   id        String   @id @default(cuid())
   userId    String
   reason    String
-  caseIds   String // JSON string[]
+  caseIds   String[] // text[]
   createdAt DateTime @default(now())
 }
 
