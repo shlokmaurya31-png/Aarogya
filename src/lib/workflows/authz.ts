@@ -36,10 +36,35 @@ export function assertCanAuthorWorkflow(m: ActorMemberships, organizationId: str
  * organizationId means a global platform template, readable by any workflow reader.
  * An org-scoped record is readable only by the platform or a member of that org.
  */
-export function assertCanReadWorkflowScope(m: ActorMemberships, organizationId: string | null): void {
+/** The facilities this member belongs to (memberships plus the home facility). */
+function ownFacilityIds(m: ActorMemberships): string[] {
+  return [...new Set([...m.facilityMemberships.keys(), ...(m.primaryFacilityId ? [m.primaryFacilityId] : [])])];
+}
+
+/**
+ * A workflow row may be scoped to one facility (facilityId), and an instance
+ * of it is driven by that facility's events and records. Org admins and the
+ * platform read every facility's rows; any other member reads org-level rows
+ * (facilityId null) and those of their own facilities only — a sibling
+ * facility is another tenant and gets the same 404 as an unknown id.
+ */
+export function assertCanReadWorkflowScope(m: ActorMemberships, organizationId: string | null, facilityId: string | null = null): void {
   if (m.isPlatformAdmin) return;
   if (organizationId === null) return; // global template
   assertOrganizationAccess(m, organizationId); // 404-shaped for outsiders
+  if (facilityId && !m.adminOrgIds.has(organizationId) && !ownFacilityIds(m).includes(facilityId)) throw new NotFoundError();
+}
+
+/** List filter matching assertCanReadWorkflowScope's facility rule (empty for platform). */
+export function workflowFacilityWhere(m: ActorMemberships): { OR: Record<string, unknown>[] } | Record<string, never> {
+  if (m.isPlatformAdmin) return {};
+  return {
+    OR: [
+      { facilityId: null },
+      { facilityId: { in: ownFacilityIds(m) } },
+      { organizationId: { in: [...m.adminOrgIds] } },
+    ],
+  };
 }
 
 /** A tenant-scoped list request must target an org the caller can access. */

@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { NotFoundError, BadRequestError, ConflictError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { type ActorMemberships } from "@/lib/auth/tenantContext";
-import { requireWorkflowPlatform, assertCanReadWorkflowScope } from "./authz";
+import { requireWorkflowPlatform, assertCanReadWorkflowScope, workflowFacilityWhere } from "./authz";
 import { cancelInstanceTimersTx } from "./timers";
 import { runInstance } from "./engine";
 
@@ -25,7 +25,7 @@ export async function getInstance(m: ActorMemberships, instanceId: string) {
     },
   });
   if (!inst) throw new NotFoundError();
-  assertCanReadWorkflowScope(m, inst.organizationId);
+  assertCanReadWorkflowScope(m, inst.organizationId, inst.facilityId);
   return inst;
 }
 
@@ -37,6 +37,7 @@ export async function listInstances(m: ActorMemberships, opts?: { organizationId
     if (opts?.organizationId) where.organizationId = opts.organizationId;
   } else {
     where.organizationId = { in: [...m.orgMemberships.keys()] };
+    where.AND = [workflowFacilityWhere(m)];
   }
   return prisma.workflowInstance.findMany({ where, orderBy: { createdAt: "desc" }, take: Math.min(opts?.limit ?? 100, 500), include: { definition: { select: { key: true, name: true } } } });
 }

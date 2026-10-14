@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError, ConflictError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { type ActorMemberships } from "@/lib/auth/tenantContext";
-import { assertCanAuthorWorkflow, assertCanReadWorkflowScope } from "./authz";
+import { assertCanAuthorWorkflow, assertCanReadWorkflowScope, workflowFacilityWhere } from "./authz";
 import { validateWorkflowConfig } from "./validator";
 
 /**
@@ -55,8 +55,10 @@ export async function createDefinition(m: ActorMemberships, input: CreateDefinit
 /** Create a new DRAFT version of an existing definition. */
 export async function createVersion(m: ActorMemberships, definitionId: string, config: unknown) {
   const cfg = validateWorkflowConfig(config);
-  const def = await prisma.workflowDefinition.findUnique({ where: { id: definitionId }, select: { id: true, organizationId: true } });
+  const def = await prisma.workflowDefinition.findUnique({ where: { id: definitionId }, select: { id: true, organizationId: true, facilityId: true } });
   if (!def) throw new NotFoundError();
+  // Rows the caller can't read (a sibling facility's) are 404, not 403.
+  assertCanReadWorkflowScope(m, def.organizationId, def.facilityId);
   assertCanAuthorWorkflow(m, def.organizationId);
   const latest = await prisma.workflowVersion.findFirst({ where: { workflowDefinitionId: definitionId }, orderBy: { version: "desc" }, select: { version: true } });
   const nextVersion = (latest?.version ?? 0) + 1;
@@ -76,8 +78,10 @@ export async function createVersion(m: ActorMemberships, definitionId: string, c
 export async function publishVersion(m: ActorMemberships, definitionId: string, versionId: string) {
   // Authorize by the definition's scope FIRST (before touching the versionId), so an
   // unauthorized caller is denied regardless of whether the versionId is valid.
-  const def = await prisma.workflowDefinition.findUnique({ where: { id: definitionId }, select: { organizationId: true } });
+  const def = await prisma.workflowDefinition.findUnique({ where: { id: definitionId }, select: { organizationId: true, facilityId: true } });
   if (!def) throw new NotFoundError();
+  // Rows the caller can't read (a sibling facility's) are 404, not 403.
+  assertCanReadWorkflowScope(m, def.organizationId, def.facilityId);
   assertCanAuthorWorkflow(m, def.organizationId);
   const version = await prisma.workflowVersion.findUnique({ where: { id: versionId } });
   if (!version || version.workflowDefinitionId !== definitionId) throw new NotFoundError();
@@ -95,8 +99,10 @@ export async function publishVersion(m: ActorMemberships, definitionId: string, 
 
 /** Retire the whole definition: no new instances will be triggered from it. */
 export async function retireDefinition(m: ActorMemberships, definitionId: string) {
-  const def = await prisma.workflowDefinition.findUnique({ where: { id: definitionId }, select: { id: true, organizationId: true } });
+  const def = await prisma.workflowDefinition.findUnique({ where: { id: definitionId }, select: { id: true, organizationId: true, facilityId: true } });
   if (!def) throw new NotFoundError();
+  // Rows the caller can't read (a sibling facility's) are 404, not 403.
+  assertCanReadWorkflowScope(m, def.organizationId, def.facilityId);
   assertCanAuthorWorkflow(m, def.organizationId);
   await prisma.$transaction(async (tx) => {
     await tx.workflowDefinition.update({ where: { id: definitionId }, data: { status: "INACTIVE", currentVersionId: null, updatedByUserId: m.userId } });
@@ -112,14 +118,14 @@ export async function getDefinition(m: ActorMemberships, definitionId: string) {
     include: { versions: { orderBy: { version: "desc" }, select: { id: true, version: true, status: true, publishedAt: true, retiredAt: true, createdAt: true } } },
   });
   if (!def) throw new NotFoundError();
-  assertCanReadWorkflowScope(m, def.organizationId);
+  assertCanReadWorkflowScope(m, def.organizationId, def.facilityId);
   return def;
 }
 
 export async function getVersionConfig(m: ActorMemberships, definitionId: string, versionId: string) {
-  const def = await prisma.workflowDefinition.findUnique({ where: { id: definitionId }, select: { organizationId: true } });
+  const def = await prisma.workflowDefinition.findUnique({ where: { id: definitionId }, select: { organizationId: true, facilityId: true } });
   if (!def) throw new NotFoundError();
-  assertCanReadWorkflowScope(m, def.organizationId);
+  assertCanReadWorkflowScope(m, def.organizationId, def.facilityId);
   const v = await prisma.workflowVersion.findUnique({ where: { id: versionId } });
   if (!v || v.workflowDefinitionId !== definitionId) throw new NotFoundError();
   return v;
@@ -134,6 +140,7 @@ export async function listDefinitions(m: ActorMemberships, opts?: { organization
   } else {
     const ownOrgIds = [...m.orgMemberships.keys()];
     where.OR = [{ organizationId: null }, { organizationId: { in: ownOrgIds } }];
+    where.AND = [workflowFacilityWhere(m)];
   }
   return prisma.workflowDefinition.findMany({ where, orderBy: { createdAt: "desc" }, take: Math.min(opts?.limit ?? 100, 500) });
 }

@@ -3,7 +3,7 @@ import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { type ActorMemberships } from "@/lib/auth/tenantContext";
 import { createDefinition, createVersion, publishVersion, getDefinition, getVersionConfig } from "@/lib/workflows";
-import { assertCanAuthorWorkflow, assertCanReadWorkflowScope } from "@/lib/workflows/authz";
+import { assertCanAuthorWorkflow, assertCanReadWorkflowScope, workflowFacilityWhere } from "@/lib/workflows/authz";
 import { parseBuilderDocument, type BuilderDocument } from "./document";
 import { compileBuilderDocument } from "./compile";
 
@@ -38,8 +38,10 @@ export async function saveDraft(m: ActorMemberships, input: SaveDraftInput) {
 
   let row;
   if (input.id) {
-    const existing = await prisma.workflowBuilderDraft.findUnique({ where: { id: input.id }, select: { id: true, organizationId: true } });
+    const existing = await prisma.workflowBuilderDraft.findUnique({ where: { id: input.id }, select: { id: true, organizationId: true, facilityId: true } });
     if (!existing) throw new NotFoundError();
+    // Rows the caller can't read (a sibling facility's) are 404, not 403.
+    assertCanReadWorkflowScope(m, existing.organizationId, existing.facilityId);
     assertCanAuthorWorkflow(m, existing.organizationId);
     row = await prisma.workflowBuilderDraft.update({
       where: { id: input.id },
@@ -57,18 +59,20 @@ export async function saveDraft(m: ActorMemberships, input: SaveDraftInput) {
 export async function getDraft(m: ActorMemberships, id: string) {
   const draft = await prisma.workflowBuilderDraft.findUnique({ where: { id } });
   if (!draft) throw new NotFoundError();
-  assertCanReadWorkflowScope(m, draft.organizationId);
+  assertCanReadWorkflowScope(m, draft.organizationId, draft.facilityId);
   return draft;
 }
 
 export async function listDrafts(m: ActorMemberships, organizationId: string) {
   assertCanReadWorkflowScope(m, organizationId);
-  return prisma.workflowBuilderDraft.findMany({ where: { organizationId }, orderBy: { updatedAt: "desc" }, take: 200 });
+  return prisma.workflowBuilderDraft.findMany({ where: { organizationId, ...workflowFacilityWhere(m) }, orderBy: { updatedAt: "desc" }, take: 200 });
 }
 
 export async function deleteDraft(m: ActorMemberships, id: string) {
-  const draft = await prisma.workflowBuilderDraft.findUnique({ where: { id }, select: { id: true, organizationId: true } });
+  const draft = await prisma.workflowBuilderDraft.findUnique({ where: { id }, select: { id: true, organizationId: true, facilityId: true } });
   if (!draft) throw new NotFoundError();
+  // Rows the caller can't read (a sibling facility's) are 404, not 403.
+  assertCanReadWorkflowScope(m, draft.organizationId, draft.facilityId);
   assertCanAuthorWorkflow(m, draft.organizationId);
   await prisma.workflowBuilderDraft.delete({ where: { id } });
   await recordAuditEvent("workflow.builder.draftDeleted", m.userId, { draftId: id }, { organizationId: draft.organizationId ?? undefined });
@@ -84,6 +88,8 @@ export async function deleteDraft(m: ActorMemberships, id: string) {
 export async function publishDraft(m: ActorMemberships, id: string) {
   const draft = await prisma.workflowBuilderDraft.findUnique({ where: { id } });
   if (!draft) throw new NotFoundError();
+  // Rows the caller can't read (a sibling facility's) are 404, not 403.
+  assertCanReadWorkflowScope(m, draft.organizationId, draft.facilityId);
   assertCanAuthorWorkflow(m, draft.organizationId);
   if (!draft.organizationId) throw new BadRequestError("Draft has no organization scope.");
   const config = compileBuilderDocument(draft.document as BuilderDocument); // throws if incomplete/invalid
