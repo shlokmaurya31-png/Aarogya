@@ -596,3 +596,35 @@ as a known divergence. The problems:
    their refs, verifying the sha256 of each.
 4. Add a gate that rejects a disallowed type, round-trips a PDF and
    refuses a path-style ref.
+
+### 8.4 Idempotency keys: make uniqueness composite per tenant
+
+**Today.** Every `idempotencyKey` is globally `@unique`, but most keys come
+from the client. A key that one facility already used therefore collides
+with another facility's row. The replay paths now refuse that collision
+with a 409 instead of returning the other facility's row. The fixes are
+`bff0cb7`, `b3b8717` and `0ae9206`, and the tenancy-sweep gate proves them
+for payments and refunds. That's a guard on the symptom, not the cause.
+
+**Week 2 schema work:** make the key unique **per tenant**:
+`@@unique([facilityId, idempotencyKey])`, or
+`[organizationId, idempotencyKey]` for organization-scoped billing. Then:
+- two tenants can never collide;
+- `INSERT … ON CONFLICT ("facilityId", "idempotencyKey")` and the re-read
+  are tenant-scoped by construction;
+- the 409 guard stays as defense in depth.
+
+| Model | Key source | Tenant column | Target |
+|---|---|---|---|
+| `Payment` | client | `facilityId` | `@@unique([facilityId, idempotencyKey])` |
+| `Refund` | client | none (scoped through `paymentId`) | Add `facilityId` (backfilled from the payment), then composite. Until then, the paymentId check in `requestRefund` is the guard. |
+| `StockReservation`, `StockTransfer`, `StockAdjustment`, `WasteRecord` | client (or `randomUUID()` if absent) | `facilityId` | Composite with `facilityId` |
+| `GoodsReceipt` | client (or `randomUUID()`) | `facilityId` | Composite with `facilityId` |
+| `HealthInformationExchange`, `NhcxExchange` | client header / body | `facilityId` | Composite with `facilityId`. Their code already refuses cross-facility replays. |
+| `BillingPayment`, `BillingPaymentAttempt`, `BillingRefund`, `BillingInvoice` | platform-only or system-generated | `organizationId` | Composite with `organizationId`. Lower priority: no tenant can submit these keys. |
+| `PurchaseRequisition`, `PurchaseOrder` | server-generated, facility ID inside the key | `facilityId` | Composite for consistency. Not exposed today. |
+| `WorkflowInstance`, `WorkflowTask`, `WorkflowTimer` | engine-generated from event IDs | `facilityId` / none | Leave as is: the keys are derived from globally unique event IDs. |
+
+The migration is one per model. Existing keys are already globally
+unique, so they're unique per tenant too and no data changes. The raw
+`INSERT … ON CONFLICT` statements must name the new composite target.
