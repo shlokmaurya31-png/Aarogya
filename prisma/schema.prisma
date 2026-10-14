@@ -530,15 +530,15 @@ model AuditEvent {
 // aggregate*, organizationId, payload, occurredAt) are never rewritten after
 // insert; only operational fields (status, attemptCount, *At, last error) change.
 model DomainEventOutbox {
-  id               String                @id @default(cuid())
+  id               String                  @id @default(cuid())
   /// Globally-unique public event identifier (distinct from the row `id`).
-  eventId          String                @unique
+  eventId          String                  @unique
   eventType        String
   eventVersion     Int
   aggregateType    String
   aggregateId      String
   organizationId   String?
-  organization     Organization?         @relation(fields: [organizationId], references: [id])
+  organization     Organization?           @relation(fields: [organizationId], references: [id])
   facilityId       String?
   /// The user whose action produced the event, if any (system events have none).
   actorUserId      String?
@@ -550,10 +550,10 @@ model DomainEventOutbox {
   /// Business-event time (when it happened in the domain).
   occurredAt       DateTime
   /// When the row was written (processing/clock separation from occurredAt).
-  recordedAt       DateTime              @default(now())
-  status           String                @default("PENDING") // PENDING | PROCESSING | PROCESSED | RETRY | DEAD_LETTER
-  attemptCount     Int                   @default(0)
-  maxAttempts      Int                   @default(8)
+  recordedAt       DateTime                @default(now())
+  status           DomainEventOutboxStatus @default(PENDING) // PENDING | PROCESSING | PROCESSED | RETRY | DEAD_LETTER
+  attemptCount     Int                     @default(0)
+  maxAttempts      Int                     @default(8)
   /// Per-claim token; a dispatcher owns an event only while its token matches.
   claimToken       String?
   nextAttemptAt    DateTime?
@@ -561,8 +561,8 @@ model DomainEventOutbox {
   processedAt      DateTime?
   lastErrorCode    String?
   lastErrorMessage String?
-  createdAt        DateTime              @default(now())
-  updatedAt        DateTime              @updatedAt
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
   deliveries       DomainEventDelivery[]
 
   @@index([status, nextAttemptAt])
@@ -578,17 +578,17 @@ model DomainEventOutbox {
 // (eventId, consumerName) guarantees one event is applied by one consumer at most
 // once effectively (at-least-once delivery + idempotent consumer = one effect).
 model DomainEventDelivery {
-  id            String            @id @default(cuid())
+  id            String                    @id @default(cuid())
   eventId       String
-  event         DomainEventOutbox @relation(fields: [eventId], references: [eventId], onDelete: Cascade)
+  event         DomainEventOutbox         @relation(fields: [eventId], references: [eventId], onDelete: Cascade)
   consumerName  String
-  status        String            @default("PENDING") // PENDING | PROCESSED | FAILED | DEAD_LETTER
-  attemptCount  Int               @default(0)
+  status        DomainEventDeliveryStatus @default(PENDING) // PENDING | PROCESSED | FAILED | DEAD_LETTER
+  attemptCount  Int                       @default(0)
   processedAt   DateTime?
   lastErrorCode String?
   lastError     String?
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
+  createdAt     DateTime                  @default(now())
+  updatedAt     DateTime                  @updatedAt
 
   @@unique([eventId, consumerName])
   @@index([consumerName, status])
@@ -610,7 +610,7 @@ model DomainEventDelivery {
 // operational layer; isolation is enforced in the service layer, never from client
 // input. See docs/platform/workflows/.
 model WorkflowDefinition {
-  id                  String   @id @default(cuid())
+  id                  String                   @id @default(cuid())
   /// Null = platform/global template; otherwise the owning organization.
   organizationId      String?
   facilityId          String?
@@ -621,13 +621,13 @@ model WorkflowDefinition {
   /// Denormalized from the active published version for indexed trigger matching.
   triggerEventType    String
   triggerEventVersion Int
-  status              String   @default("ACTIVE") // ACTIVE | INACTIVE
+  status              WorkflowDefinitionStatus @default(ACTIVE) // ACTIVE | INACTIVE
   /// The single currently-published version, if any.
   currentVersionId    String?
   createdByUserId     String?
   updatedByUserId     String?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
 
   versions  WorkflowVersion[]
   instances WorkflowInstance[]
@@ -642,17 +642,17 @@ model WorkflowDefinition {
 // mutated in place — changes create a new version. Historical instances keep
 // referencing the version that created them.
 model WorkflowVersion {
-  id                   String             @id @default(cuid())
+  id                   String                @id @default(cuid())
   workflowDefinitionId String
-  definition           WorkflowDefinition @relation(fields: [workflowDefinitionId], references: [id], onDelete: Cascade)
+  definition           WorkflowDefinition    @relation(fields: [workflowDefinitionId], references: [id], onDelete: Cascade)
   version              Int
-  status               String             @default("DRAFT") // DRAFT | PUBLISHED | RETIRED
+  status               WorkflowVersionStatus @default(DRAFT) // DRAFT | PUBLISHED | RETIRED
   /// The full validated workflow configuration (trigger, condition, steps).
   config               Json
   publishedAt          DateTime?
   retiredAt            DateTime?
   createdByUserId      String?
-  createdAt            DateTime           @default(now())
+  createdAt            DateTime              @default(now())
 
   instances WorkflowInstance[]
 
@@ -662,27 +662,27 @@ model WorkflowVersion {
 
 // One durable execution of a workflow version, created by a triggering event.
 model WorkflowInstance {
-  id                   String             @id @default(cuid())
+  id                   String                 @id @default(cuid())
   workflowDefinitionId String
-  definition           WorkflowDefinition @relation(fields: [workflowDefinitionId], references: [id])
+  definition           WorkflowDefinition     @relation(fields: [workflowDefinitionId], references: [id])
   workflowVersionId    String
-  workflowVersion      WorkflowVersion    @relation(fields: [workflowVersionId], references: [id])
+  workflowVersion      WorkflowVersion        @relation(fields: [workflowVersionId], references: [id])
   /// The D6 event that triggered this instance.
   triggerEventId       String
   /// Idempotency: `${definitionId}:${eventId}` for single-instance triggers, so a
   /// duplicate event delivery cannot create a second instance.
-  idempotencyKey       String             @unique
+  idempotencyKey       String                 @unique
   organizationId       String?
   facilityId           String?
   aggregateType        String
   aggregateId          String
-  status               String             @default("RUNNABLE") // RUNNABLE | RUNNING | WAITING | COMPLETED | FAILED | CANCELLED
+  status               WorkflowInstanceStatus @default(RUNNABLE) // RUNNABLE | RUNNING | WAITING | COMPLETED | FAILED | CANCELLED
   correlationId        String
   causationId          String?
   /// Loop-prevention: how deep this instance sits in an event→workflow→event chain.
-  depth                Int                @default(0)
+  depth                Int                    @default(0)
   claimToken           String?
-  attemptCount         Int                @default(0)
+  attemptCount         Int                    @default(0)
   failureCategory      String?
   failureMessage       String?
   cancelledByUserId    String?
@@ -692,8 +692,8 @@ model WorkflowInstance {
   cancelledAt          DateTime?
   failedAt             DateTime?
   lastAttemptAt        DateTime?
-  createdAt            DateTime           @default(now())
-  updatedAt            DateTime           @updatedAt
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
 
   steps  WorkflowStep[]
   tasks  WorkflowTask[]
@@ -709,15 +709,15 @@ model WorkflowInstance {
 
 // One durable execution step (a node of the bounded linear pipeline).
 model WorkflowStep {
-  id                 String           @id @default(cuid())
+  id                 String             @id @default(cuid())
   workflowInstanceId String
-  instance           WorkflowInstance @relation(fields: [workflowInstanceId], references: [id], onDelete: Cascade)
+  instance           WorkflowInstance   @relation(fields: [workflowInstanceId], references: [id], onDelete: Cascade)
   nodeKey            String
   stepIndex          Int
   stepType           String // CONDITION | ACTION | TASK | TIMER
-  status             String           @default("PENDING") // PENDING | RUNNING | WAITING | COMPLETED | SKIPPED | FAILED
-  attemptCount       Int              @default(0)
-  maxAttempts        Int              @default(5)
+  status             WorkflowStepStatus @default(PENDING) // PENDING | RUNNING | WAITING | COMPLETED | SKIPPED | FAILED
+  attemptCount       Int                @default(0)
+  maxAttempts        Int                @default(5)
   availableAt        DateTime?
   claimToken         String?
   startedAt          DateTime?
@@ -726,8 +726,8 @@ model WorkflowStep {
   failureMessage     String?
   /// Safe reference to what this step produced (e.g. a task/timer id).
   resultRef          String?
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
 
   @@unique([workflowInstanceId, stepIndex])
   @@index([workflowInstanceId, status])
@@ -738,9 +738,9 @@ model WorkflowStep {
 // (which requires a staff creator + facility and is clinically coupled): a workflow
 // task is system-created, may be org-scoped, and carries NO clinical authority.
 model WorkflowTask {
-  id                 String           @id @default(cuid())
+  id                 String             @id @default(cuid())
   workflowInstanceId String
-  instance           WorkflowInstance @relation(fields: [workflowInstanceId], references: [id], onDelete: Cascade)
+  instance           WorkflowInstance   @relation(fields: [workflowInstanceId], references: [id], onDelete: Cascade)
   workflowStepId     String?
   organizationId     String?
   facilityId         String?
@@ -749,8 +749,8 @@ model WorkflowTask {
   taskType           String
   title              String
   description        String?
-  priority           String           @default("ROUTINE") // ROUTINE | URGENT | STAT
-  status             String           @default("OPEN") // OPEN | IN_PROGRESS | COMPLETED | CANCELLED | EXPIRED
+  priority           Priority           @default(ROUTINE) // ROUTINE | URGENT | STAT
+  status             WorkflowTaskStatus @default(OPEN) // OPEN | IN_PROGRESS | COMPLETED | CANCELLED | EXPIRED
   assignedRole       String?
   assignedUserId     String?
   dueAt              DateTime?
@@ -758,9 +758,9 @@ model WorkflowTask {
   completedAt        DateTime?
   cancelledAt        DateTime?
   /// Idempotency: a step creating a task twice yields one task.
-  idempotencyKey     String           @unique
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
+  idempotencyKey     String             @unique
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
 
   @@index([organizationId, status])
   @@index([status, dueAt])
@@ -771,23 +771,23 @@ model WorkflowTask {
 // claim so it is correct under concurrent workers and process restarts, with no
 // continuously-running daemon required.
 model WorkflowTimer {
-  id                 String           @id @default(cuid())
+  id                 String              @id @default(cuid())
   workflowInstanceId String
-  instance           WorkflowInstance @relation(fields: [workflowInstanceId], references: [id], onDelete: Cascade)
+  instance           WorkflowInstance    @relation(fields: [workflowInstanceId], references: [id], onDelete: Cascade)
   workflowStepId     String?
   kind               String // DELAY | SLA
   availableAt        DateTime
-  status             String           @default("PENDING") // PENDING | CLAIMED | COMPLETED | CANCELLED
+  status             WorkflowTimerStatus @default(PENDING) // PENDING | CLAIMED | COMPLETED | CANCELLED
   claimToken         String?
   claimedAt          DateTime?
   completedAt        DateTime?
-  attemptCount       Int              @default(0)
+  attemptCount       Int                 @default(0)
   /// Small escalation metadata only (never PHI/secrets).
   payload            Json?
   /// Idempotency for the effect a fired timer produces.
-  idempotencyKey     String           @unique
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
+  idempotencyKey     String              @unique
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
 
   @@index([status, availableAt])
   @@index([workflowInstanceId])
@@ -808,11 +808,11 @@ model WorkflowTimer {
 // (consistent with D6/D7). C4 stays authoritative — configuration never grants
 // access. See docs/platform/configuration/.
 model ConfigurationOverride {
-  id              String    @id @default(cuid())
+  id              String                      @id @default(cuid())
   key             String
   valueType       String // BOOLEAN | NUMBER | STRING | ENUM | DURATION | JSON
   /// The scope level this value applies at.
-  scope           String // ORGANIZATION | FACILITY | DEPARTMENT
+  scope           ConfigurationOverrideScope // ORGANIZATION | FACILITY | DEPARTMENT
   /// The concrete id of the scope target (organization/facility/department id).
   scopeRef        String
   /// Owning organization — always set, for tenant filtering + isolation.
@@ -821,16 +821,16 @@ model ConfigurationOverride {
   departmentId    String?
   /// The value, stored as a string; parsed/validated per the registry spec.
   value           String
-  status          String    @default("DRAFT") // DRAFT | PUBLISHED | RETIRED
-  version         Int       @default(0)
+  status          ConfigurationOverrideStatus @default(DRAFT) // DRAFT | PUBLISHED | RETIRED
+  version         Int                         @default(0)
   /// Effective window (half-open). effectiveUntil null = current/open-ended.
-  effectiveFrom   DateTime  @default(now())
+  effectiveFrom   DateTime                    @default(now())
   effectiveUntil  DateTime?
   reason          String?
   createdByUserId String?
   updatedByUserId String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt       DateTime                    @default(now())
+  updatedAt       DateTime                    @updatedAt
 
   @@unique([scope, scopeRef, key, version])
   @@index([organizationId])
@@ -843,19 +843,19 @@ model ConfigurationOverride {
 // what it became, who changed it, and why). Distinct from AuditEvent: this is the
 // value-level ledger the config UI/explainer reads; AuditEvent records the act.
 model ConfigurationChange {
-  id             String   @id @default(cuid())
+  id             String                    @id @default(cuid())
   overrideId     String?
   key            String
   scope          String
   scopeRef       String
   organizationId String
-  action         String // SET | PUBLISH | RESET | RETIRE
+  action         ConfigurationChangeAction // SET | PUBLISH | RESET | RETIRE
   oldValue       String?
   newValue       String?
   version        Int?
   actorUserId    String?
   reason         String?
-  createdAt      DateTime @default(now())
+  createdAt      DateTime                  @default(now())
 
   @@index([organizationId])
   @@index([scope, scopeRef, key])
@@ -876,7 +876,7 @@ model ConfigurationChange {
 // document JSON is bounded and secret/PHI-guarded on write. See
 // docs/platform/workflow-builder/.
 model WorkflowBuilderDraft {
-  id                   String   @id @default(cuid())
+  id                   String                     @id @default(cuid())
   organizationId       String?
   facilityId           String?
   /// The D7 definition this draft edits, if any (null for a brand-new workflow).
@@ -886,11 +886,11 @@ model WorkflowBuilderDraft {
   name                 String
   /// The builder document (lenient superset of the canonical config + layout).
   document             Json
-  status               String   @default("DRAFT") // DRAFT (builder-only lifecycle)
+  status               WorkflowBuilderDraftStatus @default(DRAFT) // DRAFT (builder-only lifecycle)
   createdByUserId      String?
   updatedByUserId      String?
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  createdAt            DateTime                   @default(now())
+  updatedAt            DateTime                   @updatedAt
 
   @@index([organizationId])
   @@index([workflowDefinitionId])
@@ -7925,19 +7925,19 @@ model StaffPrivilege {
 /// always facility-scoped so one facility can never read or reuse the mapping
 /// belonging to another.
 model ExternalIdentifier {
-  id         String @id @default(cuid())
+  id         String                   @id @default(cuid())
   facilityId String
   entityType String // PATIENT | FACILITY | STAFF | ENCOUNTER | ORGANIZATION | DOCUMENT
   entityId   String
   system     String // canonical URI, e.g. https://healthid.abdm.gov.in
   value      String
-  use        String @default("OFFICIAL") // OFFICIAL | SECONDARY | OLD
-  status     String @default("ACTIVE") // ACTIVE | SUPERSEDED | REVOKED | INVALID
-  source     String @default("LOCAL_ENTRY") // LOCAL_ENTRY | REGISTRY_LOOKUP | IMPORTED
+  use        ExternalIdentifierUse    @default(OFFICIAL) // OFFICIAL | SECONDARY | OLD
+  status     ExternalIdentifierStatus @default(ACTIVE) // ACTIVE | SUPERSEDED | REVOKED | INVALID
+  source     String                   @default("LOCAL_ENTRY") // LOCAL_ENTRY | REGISTRY_LOOKUP | IMPORTED
 
   // Verification is NEVER inferred. A mapping stays UNVERIFIED until a real
   // registry response sets it; no code path marks it VERIFIED without one.
-  verificationStatus String    @default("UNVERIFIED") // UNVERIFIED | VERIFIED | FAILED
+  verificationStatus ExternalIdentifierVerificationStatus @default(UNVERIFIED) // UNVERIFIED | VERIFIED | FAILED
   verifiedAt         DateTime?
 
   // Registry synchronisation state. Adapter-invoked; no scheduler, no polling.
@@ -7983,7 +7983,7 @@ model InteropConsent {
   /// Free-text detail of what was consented to (e.g. a staff-recorded
   /// treatment consent's "Chronic disease management program").
   description String?
-  status      String  @default("REQUESTED") // REQUESTED | GRANTED | ACTIVE | EXPIRED | REVOKED | DECLINED | CANCELLED
+  status      InteropConsentStatus @default(REQUESTED) // REQUESTED | GRANTED | ACTIVE | EXPIRED | REVOKED | DECLINED | CANCELLED
 
   // Who the patient is sharing WITH. Required, so consent can never degrade
   // into "this patient data is shareable with anyone".
@@ -8045,9 +8045,9 @@ model HealthInformationExchange {
   facilityId String
   patientId  String?
 
-  direction String // OUTBOUND | INBOUND
+  direction ExchangeDirection // OUTBOUND | INBOUND
   purpose   String
-  status    String @default("REQUESTED") // REQUESTED | AUTHORIZED | PROCESSING | COMPLETED | REJECTED | FAILED | CANCELLED
+  status    HealthInformationExchangeStatus @default(REQUESTED) // REQUESTED | AUTHORIZED | PROCESSING | COMPLETED | REJECTED | FAILED | CANCELLED
 
   consent   InteropConsent? @relation(fields: [consentId], references: [id])
   consentId String?
@@ -8058,7 +8058,7 @@ model HealthInformationExchange {
 
   // Idempotency: a retried request carrying the same key resolves to the SAME
   // exchange rather than creating a duplicate external transfer.
-  idempotencyKey    String  @unique
+  idempotencyKey    String
   correlationId     String?
   externalRequestId String?
 
@@ -8104,6 +8104,7 @@ model HealthInformationExchange {
   provenance InteropProvenance[]
   imported   ImportedResource[]
 
+  @@unique([facilityId, idempotencyKey])
   @@index([facilityId, status])
   @@index([facilityId, patientId])
   @@index([abdmConsentId])
@@ -8122,7 +8123,7 @@ model InteropProvenance {
   entityType String
   entityId   String?
 
-  direction  String // OUTBOUND | INBOUND
+  direction  ExchangeDirection // OUTBOUND | INBOUND
   dataOrigin String // LOCAL | EXTERNAL | IMPORTED | MAPPED | DERIVED
 
   sourceSystem         String
@@ -8174,7 +8175,7 @@ model ImportedResource {
 
   // CONFLICT is an explicit review state. An external record that disagrees
   // with a local one is NEVER auto-merged.
-  status          String  @default("RECEIVED") // RECEIVED | MAPPED | IMPORTED | REJECTED | CONFLICT
+  status          ImportedResourceStatus @default(RECEIVED) // RECEIVED | MAPPED | IMPORTED | REJECTED | CONFLICT
   conflictReason  String?
   rejectionReason String?
 
@@ -8211,7 +8212,7 @@ model TerminologyMapping {
   externalCode    String
   externalDisplay String?
 
-  status     String  @default("ACTIVE") // ACTIVE | RETIRED
+  status     TerminologyMappingStatus @default(ACTIVE) // ACTIVE | RETIRED
   mapVersion String?
 
   createdByStaffId String?
@@ -8231,15 +8232,15 @@ model InteropConnection {
 
   // Defaults to DISABLED so interoperability is opt-in and a misconfigured
   // deployment cannot silently start talking to a live national registry.
-  environment String  @default("DISABLED") // DISABLED | SANDBOX | PRODUCTION
-  enabled     Boolean @default(false)
+  environment IntegrationEnvironment @default(DISABLED) // DISABLED | SANDBOX | PRODUCTION
+  enabled     Boolean                @default(false)
 
   baseUrl        String?
   /// NAME of the environment variable holding the client id — not the id, and
   /// never the secret. Nothing credential-bearing is persisted.
   clientIdEnvVar String?
 
-  status       String    @default("NOT_CONFIGURED") // NOT_CONFIGURED | CONFIGURED | ERROR
+  status       InteropConnectionStatus @default(NOT_CONFIGURED) // NOT_CONFIGURED | CONFIGURED | ERROR
   capabilities Json?
   lastSyncedAt DateTime?
   lastError    String?
@@ -8351,11 +8352,11 @@ model IntegrationCertificate {
   /// exactly one CURRENT and one NEXT can exist per usage while any number of
   /// retired certificates accumulate as history. Modelling retirement as a third
   /// non-null value would have made the SECOND rotation impossible.
-  role      String?   @default("CURRENT")
+  role      IntegrationCertificateRole? @default(CURRENT)
   retiredAt DateTime?
 
   /// NOT_CONFIGURED | VALID | EXPIRING | EXPIRED | INVALID
-  status String @default("NOT_CONFIGURED")
+  status IntegrationCertificateStatus @default(NOT_CONFIGURED)
 
   /// Reference to where the material lives. A path or env-var NAME, never bytes.
   materialRef String?
@@ -8410,13 +8411,13 @@ model ExternalParticipant {
 
   /// LOCAL | SANDBOX | PRODUCTION — a sandbox counterparty is not a production
   /// counterparty, and the unique key below keeps them distinct rows.
-  environment String @default("SANDBOX")
+  environment IntegrationEnvironment @default(SANDBOX)
 
   /// ACTIVE | INACTIVE
-  status      String @default("ACTIVE")
+  status      ExternalParticipantStatus      @default(ACTIVE)
   /// UNVERIFIED | VERIFIED | SUSPENDED | REVOKED. Never set to VERIFIED by an
   /// import; only by an explicit, audited operator action.
-  trustStatus String @default("UNVERIFIED")
+  trustStatus ExternalParticipantTrustStatus @default(UNVERIFIED)
 
   verifiedAt       DateTime?
   verifiedByUserId String?
@@ -8462,7 +8463,7 @@ model IntegrationAlert {
   /// REPEATED_FAILURE | RETRY_EXHAUSTED | CALLBACK_REJECTED |
   /// RECONCILIATION_MISMATCH | INTEGRATION_DISABLED | UNSAFE_ENVIRONMENT
   alertType String
-  severity  String @default("WARNING") // INFO | WARNING | CRITICAL
+  severity  AlertSeverity @default(WARNING) // INFO | WARNING | CRITICAL
 
   /// Stable identity of the underlying condition, so re-detecting it updates the
   /// open alert rather than creating a second one.
@@ -8471,10 +8472,10 @@ model IntegrationAlert {
   detail String
 
   /// OPEN | ACKNOWLEDGED | RESOLVED
-  status               String    @default("OPEN")
-  occurrenceCount      Int       @default(1)
-  firstDetectedAt      DateTime  @default(now())
-  lastDetectedAt       DateTime  @default(now())
+  status               IntegrationAlertStatus @default(OPEN)
+  occurrenceCount      Int                    @default(1)
+  firstDetectedAt      DateTime               @default(now())
+  lastDetectedAt       DateTime               @default(now())
   acknowledgedAt       DateTime?
   acknowledgedByUserId String?
   resolvedAt           DateTime?
@@ -8518,7 +8519,7 @@ model AbdmCallbackEvent {
   consentId  String?
 
   /// ACCEPTED | REJECTED | DUPLICATE | UNMATCHED
-  status          String  @default("ACCEPTED")
+  status          AbdmCallbackEventStatus @default(ACCEPTED)
   rejectionReason String?
 
   /// Payload is referenced by hash and size, never stored wholesale.
@@ -9785,4 +9786,191 @@ enum ReconciliationExceptionStatus {
   ACKNOWLEDGED
   RESOLVED
   DISMISSED
+}
+
+// ── Section 8 (platform): status/priority enums (docs/POSTGRES_CUTOVER_REPORT.md §8.2) ──
+
+enum DomainEventOutboxStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  RETRY
+  DEAD_LETTER
+}
+
+enum DomainEventDeliveryStatus {
+  PENDING
+  PROCESSED
+  FAILED
+  DEAD_LETTER
+}
+
+enum WorkflowDefinitionStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum WorkflowVersionStatus {
+  DRAFT
+  PUBLISHED
+  RETIRED
+}
+
+enum WorkflowInstanceStatus {
+  RUNNABLE
+  RUNNING
+  WAITING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum WorkflowStepStatus {
+  PENDING
+  RUNNING
+  WAITING
+  COMPLETED
+  SKIPPED
+  FAILED
+}
+
+enum WorkflowTaskStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+enum WorkflowTimerStatus {
+  PENDING
+  CLAIMED
+  COMPLETED
+  CANCELLED
+}
+
+enum ConfigurationOverrideScope {
+  ORGANIZATION
+  FACILITY
+  DEPARTMENT
+}
+
+enum ConfigurationOverrideStatus {
+  DRAFT
+  PUBLISHED
+  RETIRED
+}
+
+enum ConfigurationChangeAction {
+  SET
+  PUBLISH
+  RESET
+  RETIRE
+}
+
+enum WorkflowBuilderDraftStatus {
+  DRAFT
+}
+
+enum ExternalIdentifierUse {
+  OFFICIAL
+  SECONDARY
+  OLD
+}
+
+enum ExternalIdentifierStatus {
+  ACTIVE
+  SUPERSEDED
+  REVOKED
+  INVALID
+}
+
+enum ExternalIdentifierVerificationStatus {
+  UNVERIFIED
+  VERIFIED
+  FAILED
+}
+
+enum InteropConsentStatus {
+  REQUESTED
+  GRANTED
+  ACTIVE
+  EXPIRED
+  REVOKED
+  DECLINED
+  CANCELLED
+}
+
+enum HealthInformationExchangeStatus {
+  REQUESTED
+  AUTHORIZED
+  PROCESSING
+  COMPLETED
+  REJECTED
+  FAILED
+  CANCELLED
+}
+
+enum ImportedResourceStatus {
+  RECEIVED
+  MAPPED
+  IMPORTED
+  REJECTED
+  CONFLICT
+}
+
+enum TerminologyMappingStatus {
+  ACTIVE
+  RETIRED
+}
+
+enum IntegrationEnvironment {
+  DISABLED
+  LOCAL
+  SANDBOX
+  PRODUCTION
+}
+
+enum InteropConnectionStatus {
+  NOT_CONFIGURED
+  CONFIGURED
+  ERROR
+}
+
+enum IntegrationCertificateRole {
+  CURRENT
+  NEXT
+}
+
+enum IntegrationCertificateStatus {
+  NOT_CONFIGURED
+  VALID
+  EXPIRING
+  EXPIRED
+  INVALID
+}
+
+enum ExternalParticipantStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ExternalParticipantTrustStatus {
+  UNVERIFIED
+  VERIFIED
+  SUSPENDED
+  REVOKED
+}
+
+enum IntegrationAlertStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum AbdmCallbackEventStatus {
+  ACCEPTED
+  REJECTED
+  DUPLICATE
+  UNMATCHED
 }

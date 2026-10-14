@@ -4,6 +4,8 @@ import { recordAuditEvent } from "@/lib/auth/audit";
 import type { AuthorizationActor } from "@/lib/auth/authorize/types";
 import { assertKnownSystem } from "./registry";
 import { raiseAlert, resolveAlertsByType } from "./alerts";
+import { parseEnum } from "@/lib/enumValue";
+import { $Enums } from "@prisma/client";
 
 /**
  * Phase C6 — certificate lifecycle.
@@ -95,7 +97,7 @@ export async function registerCertificate(input: {
   if (!(CERTIFICATE_USAGES as readonly string[]).includes(input.usage)) {
     throw new BadRequestError(`usage must be one of ${CERTIFICATE_USAGES.join(", ")}.`);
   }
-  const role = input.role ?? "CURRENT";
+  const role = parseEnum($Enums.IntegrationCertificateRole, input.role ?? "CURRENT", "role");
   if (!(CERTIFICATE_ROLES as readonly string[]).includes(role)) {
     throw new BadRequestError(`role must be one of ${CERTIFICATE_ROLES.join(", ")}.`);
   }

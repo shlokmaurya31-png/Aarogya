@@ -7,6 +7,8 @@ import {
   EXTERNAL_ENTITY_TYPES, IDENTIFIER_STATUSES, assertOneOf, assertSystemMatchesEntity,
   assertEntityInFacility, assertStaffInFacility, maskIdentifier,
 } from "./shared";
+import { parseEnum } from "@/lib/enumValue";
+import { $Enums } from "@prisma/client";
 
 /**
  * Phase C1 — external identity mapping (ABHA / HFR / HPR and partner registries).
@@ -91,7 +93,7 @@ export async function linkExternalIdentifier(input: {
         entityId: input.entityId,
         system,
         value,
-        use: input.use ?? "OFFICIAL",
+        use: parseEnum($Enums.ExternalIdentifierUse, input.use ?? "OFFICIAL", "use"),
         // A newly linked identifier is ALWAYS unverified. Only a genuine
         // registry response may change this.
         verificationStatus: "UNVERIFIED",
@@ -139,7 +141,7 @@ export async function linkExternalIdentifier(input: {
 export async function unlinkExternalIdentifier(input: {
   facilityId: string; identifierId: string; status?: string; reason?: string; byUserId: string;
 }) {
-  const status = input.status ?? "REVOKED";
+  const status = parseEnum($Enums.ExternalIdentifierStatus, input.status ?? "REVOKED", "status");
   assertOneOf(status, IDENTIFIER_STATUSES, "identifier status");
   if (status === "ACTIVE") throw new BadRequestError("Use the link operation to activate an identifier.");
 

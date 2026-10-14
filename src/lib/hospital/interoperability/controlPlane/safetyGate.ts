@@ -128,7 +128,7 @@ export async function evaluateOutboundGate(req: OutboundGateRequest): Promise<Ga
   // than a constraint violation.
   if (req.idempotencyKey) {
     const [abdm, nhcx] = await Promise.all([
-      prisma.healthInformationExchange.findUnique({ where: { idempotencyKey: req.idempotencyKey } }),
+      prisma.healthInformationExchange.findUnique({ where: { facilityId_idempotencyKey: { facilityId: req.facilityId, idempotencyKey: req.idempotencyKey } } }),
       prisma.nhcxExchange.findUnique({ where: { facilityId_idempotencyKey: { facilityId: req.facilityId, idempotencyKey: req.idempotencyKey } } }),
     ]);
     const existing = abdm ?? nhcx;

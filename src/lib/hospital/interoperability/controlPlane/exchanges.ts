@@ -377,7 +377,7 @@ export async function listUnifiedCallbacks(args: {
   const [abdm, nhcx] = await Promise.all([
     wantsAbdm
       ? prisma.abdmCallbackEvent.findMany({
-          where: { facilityId: args.facilityId, ...(args.status ? { status: args.status } : {}) },
+          where: { facilityId: args.facilityId, ...(args.status ? { status: parseEnum($Enums.AbdmCallbackEventStatus, args.status, "status") } : {}) },
           orderBy: { receivedAt: "desc" }, take: limit,
         })
       : Promise.resolve([]),

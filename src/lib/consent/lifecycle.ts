@@ -9,6 +9,8 @@ import {
   assertPatientInFacility, assertStaffInFacility,
 } from "@/lib/hospital/interoperability/shared";
 import { decideConsent } from "./evaluate";
+import { parseEnum } from "@/lib/enumValue";
+import { $Enums } from "@prisma/client";
 
 /**
  * Phase C1 — consent lifecycle (D2: the single consent model, src/lib/consent).
@@ -247,7 +249,7 @@ export async function listConsents(args: { facilityId: string; patientId?: strin
     where: {
       facilityId: args.facilityId,
       ...(args.patientId ? { patientId: args.patientId } : {}),
-      ...(args.status ? { status: args.status } : {}),
+      ...(args.status ? { status: parseEnum($Enums.InteropConsentStatus, args.status, "status") } : {}),
     },
     include: { scopes: true },
     orderBy: { createdAt: "desc" },

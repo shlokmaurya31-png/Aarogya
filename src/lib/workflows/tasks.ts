@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import type { Prisma, WorkflowTaskStatus } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { NotFoundError, ConflictError } from "@/lib/auth/rbac";
 import { assertNoSensitiveData } from "@/lib/events/sensitiveGuard";
@@ -52,7 +52,7 @@ export async function createWorkflowTask(tx: Tx, input: CreateWorkflowTaskInput)
   }
 }
 
-const OPEN_TASK_STATES = ["OPEN", "IN_PROGRESS"];
+const OPEN_TASK_STATES: WorkflowTaskStatus[] = ["OPEN", "IN_PROGRESS"];
 
 /**
  * Complete a task. Guarded + idempotent: a concurrent double-completion yields a

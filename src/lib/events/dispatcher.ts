@@ -172,7 +172,7 @@ async function finalize(id: string, token: string, now: Date, status: Outcome, c
       ? { status, processedAt: now, claimToken: null, lastErrorCode: null, lastErrorMessage: null, nextAttemptAt: null }
       : status === "RETRY"
         ? { status, claimToken: null, nextAttemptAt: backoffFrom(now, attempt), lastErrorCode: code, lastErrorMessage: message }
-        : { status: "DEAD_LETTER", claimToken: null, nextAttemptAt: null, lastErrorCode: code, lastErrorMessage: message };
+        : { status: "DEAD_LETTER" as const, claimToken: null, nextAttemptAt: null, lastErrorCode: code, lastErrorMessage: message };
   await prisma.domainEventOutbox.updateMany({ where: { id, claimToken: token, status: "PROCESSING" }, data });
   return status;
 }

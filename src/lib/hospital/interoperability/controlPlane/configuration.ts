@@ -3,6 +3,8 @@ import { BadRequestError, NotFoundError, ConflictError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import type { AuthorizationActor } from "@/lib/auth/authorize/types";
 import { assertKnownSystem, type IntegrationSystem } from "./registry";
+import { parseEnum } from "@/lib/enumValue";
+import { $Enums } from "@prisma/client";
 
 /**
  * Phase C6 — integration configuration, enablement and production approval.
@@ -206,7 +208,7 @@ export async function configureIntegration(input: {
         data: {
           facilityId: input.facilityId,
           system,
-          environment,
+          environment: parseEnum($Enums.IntegrationEnvironment, environment, "environment"),
           // A brand-new integration is never born enabled.
           enabled: false,
           baseUrl,
@@ -230,7 +232,7 @@ export async function configureIntegration(input: {
     const r = await tx.interopConnection.updateMany({
       where: { id: existing.id, version: existing.version },
       data: {
-        environment,
+        environment: parseEnum($Enums.IntegrationEnvironment, environment, "environment"),
         baseUrl,
         clientIdEnvVar,
         ...(input.protocolVersion !== undefined ? { protocolVersion: input.protocolVersion } : {}),
@@ -391,7 +393,7 @@ export async function rollbackConfiguration(input: {
     const r = await tx.interopConnection.updateMany({
       where: { id: connection.id, version: connection.version },
       data: {
-        environment: snap.environment,
+        environment: parseEnum($Enums.IntegrationEnvironment, snap.environment, "environment"),
         baseUrl: snap.baseUrl,
         clientIdEnvVar: snap.clientIdEnvVar,
         protocolVersion: snap.protocolVersion,
