@@ -211,8 +211,9 @@ src/
     verification/             # verification-document storage boundary
     hospital/                 # bed + encounter state machines, admission/transfer/discharge transactions, clinical safety checks, alert engine, command-center aggregation
     patient/                  # duplicate detection, logical merge, longitudinal timeline + summary aggregation (unified clinical core)
-    i18n.ts, mock-data.ts, ...   # shared helpers (mock-data.ts: landing-page demo content only)
+    i18n.ts, ...              # shared helpers
   store/                    # Zustand stores for client-only UI preferences (toasts, theme, language)
+  content/marketing/        # landing-page demo copy (fictional; lint-banned outside src/components/landing)
   types/                    # shared TypeScript types (clinicalCase.ts added for Scholar)
 prisma/
   schema.prisma              # shared persistence layer for Scholar + Hospital OS (PostgreSQL)

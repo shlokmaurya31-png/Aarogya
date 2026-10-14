@@ -3,7 +3,7 @@
 import { useRef } from "react";
 import { motion, useScroll, useSpring } from "framer-motion";
 import { SectionHeading } from "./SectionHeading";
-import { timeline } from "@/lib/mock-data";
+import { landingStoryTimeline } from "@/content/marketing/landingDemo";
 import { TIMELINE_TYPE_META, formatEventDate } from "@/lib/timeline-meta";
 
 export function TimelineSection() {
@@ -32,7 +32,7 @@ export function TimelineSection() {
         />
 
         <div className="space-y-10">
-          {timeline.map((event, i) => {
+          {landingStoryTimeline.map((event, i) => {
             const meta = TIMELINE_TYPE_META[event.type];
             const Icon = meta.icon;
             return (

@@ -4,7 +4,7 @@
  *
  *   - A patient's context is built from their own record (via the patient
  *     portal's readers): real allergies and active medicines, nothing from
- *     src/lib/mock-data.ts, nothing from another patient or facility.
+ *     the landing page's demo story, nothing from another patient or facility.
  *   - Asking for a patient outside the caller's accessible set is a 404.
  *   - A delegate sees only the data classes shared with them.
  *   - A clinician's context is the one chart they were authorized for.
@@ -21,7 +21,7 @@ import { resolveReadScope, type PatientAccessScope, type PatientContext } from "
 import { listMedications } from "../src/lib/patient/experience/medications";
 import { patientAssistantContext, clinicianAssistantContext } from "../src/lib/ai/assistantContext";
 import { MockAIProvider } from "../src/lib/ai/mockProvider";
-import { patient as mockPatient } from "../src/lib/mock-data";
+import { landingStoryTimeline } from "../src/content/marketing/landingDemo";
 
 // Mirrors src/lib/patient/experience/medications.ts (what the portal calls "active").
 const ACTIVE_MED_STATUSES = ["ORDERED", "VERIFIED", "DISPENSED", "ACTIVE"] as const;
@@ -69,7 +69,7 @@ async function main() {
     const medLines = (context.split("ACTIVE MEDICINES\n")[1] ?? "").split("\n\n")[0].split("\n").filter((l) => l.startsWith("- "));
     report("Patient context stays capped at 8 medicines", medLines.length === 8, `${medLines.length} shown of ${activeMeds.length} active`);
   }
-  report("Patient context contains nothing from mock-data.ts", !context.includes(mockPatient.name) && !context.includes(mockPatient.patientId));
+  report("Patient context contains nothing from the landing demo story", landingStoryTimeline.every((e) => !context.includes(e.title) && !context.includes(e.description)));
   const others = await prisma.patient.findMany({ where: { id: { not: target.id } }, select: { fullName: true }, take: 200, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
   const leaked = others.map((o) => o.fullName).filter((n) => n && n !== target.fullName && context.includes(n));
   report("Patient context names no other patient", leaked.length === 0, leaked.slice(0, 3).join(", "));
