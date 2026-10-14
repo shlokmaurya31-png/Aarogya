@@ -14,6 +14,7 @@
  * notification rows. Purely additive.
  */
 import { prisma } from "@/lib/db";
+import { NotFoundError } from "@/lib/auth/rbac";
 import type { Prisma, Notification } from "@prisma/client";
 
 export const NOTIFICATION_CATEGORIES = ["CLINICAL", "OPERATIONAL", "ADMINISTRATIVE", "SYSTEM"] as const;
@@ -143,6 +144,12 @@ export async function markRead(recipientStaffId: string, notificationId: string)
     where: { id: notificationId, recipientStaffId, readAt: null },
     data: { readAt: new Date() },
   });
+  if (res.count === 0) {
+    // Idempotent for the caller's own, already-read notification; anything
+    // else (unknown, or someone else's) is the same 404.
+    const own = await prisma.notification.findFirst({ where: { id: notificationId, recipientStaffId }, select: { id: true } });
+    if (!own) throw new NotFoundError("Notification not found.");
+  }
   return { updated: res.count };
 }
 

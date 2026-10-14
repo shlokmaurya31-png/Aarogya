@@ -250,7 +250,9 @@ export async function assertFacilityAdmin(m: ActorMemberships, facilityId: strin
   if (m.adminOrgIds.has(fac.organizationId)) return { organizationId: fac.organizationId };
   const facMem = m.facilityMemberships.get(facilityId);
   if (facMem?.isAdmin) return { organizationId: fac.organizationId };
-  // Not a member at all → 404; a member but not an admin → 403.
-  if (!facMem && !m.orgMemberships.has(fac.organizationId)) throw new NotFoundError();
+  // Not a member of THIS facility → 404, even within the same organization:
+  // a sibling facility is another tenant and is reported like an unknown id.
+  // A member of the facility who isn't its admin → 403.
+  if (!facMem) throw new NotFoundError();
   throw new TenantAccessError("Facility administration is required.");
 }

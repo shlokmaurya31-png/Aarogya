@@ -4,6 +4,7 @@ import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import {
   type ActorMemberships,
   assertOrganizationAdmin,
+  assertOrganizationAccess,
   assertFacilityAdmin,
   TenantAccessError,
 } from "@/lib/auth/tenantContext";
@@ -123,6 +124,8 @@ export async function transitionFacility(
 
 /** Facilities under an organization that the caller can actually reach. */
 export async function listFacilitiesForActor(m: ActorMemberships, organizationId: string) {
+  // Unknown organization and someone else's organization: the same 404.
+  assertOrganizationAccess(m, organizationId);
   const all = await prisma.facility.findMany({
     where: { organizationId },
     orderBy: { createdAt: "asc" },

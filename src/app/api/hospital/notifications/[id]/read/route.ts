@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { requireHospitalStaffSelf } from "@/lib/auth/hospitalRbac";
-import { withApiErrors, BadRequestError } from "@/lib/auth/rbac";
+import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { markRead } from "@/lib/hospital/notifications";
 
 /**
@@ -13,7 +13,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     const { id } = await params;
     if (!id) throw new BadRequestError("Missing notification id.");
     const { staff } = await requireHospitalStaffSelf();
-    if (!staff) return { updated: 0 };
+    if (!staff) throw new NotFoundError("Notification not found.");
     return markRead(staff.id, id);
   });
 }
