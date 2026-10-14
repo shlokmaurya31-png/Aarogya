@@ -25,7 +25,7 @@ function freePort(): Promise<number> {
  * Builds (unless --no-build and a build exists) and starts the app. `env` is
  * added to the server's environment (e.g. SMS_PROVIDER=outbox).
  */
-export async function startServer(env: Record<string, string> = {}): Promise<{ base: string; child: ChildProcess }> {
+export async function startServer(env: Record<string, string> = {}): Promise<{ base: string; child: ChildProcess; serverLog: () => string }> {
   if (!process.argv.includes("--no-build") || !existsSync(path.join(ROOT, ".next", "BUILD_ID"))) {
     console.log("Building the app (next build)…");
     const b = spawnSync(NEXT, ["build"], { cwd: ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" });
@@ -41,7 +41,7 @@ export async function startServer(env: Record<string, string> = {}): Promise<{ b
     if (child.exitCode !== null) throw new Error(`next start exited early:\n${log.slice(-2000)}`);
     try {
       await fetch(base + "/api/hospital/patients");
-      return { base, child };
+      return { base, child, serverLog: () => log };
     } catch {
       await new Promise((r) => setTimeout(r, 500));
     }

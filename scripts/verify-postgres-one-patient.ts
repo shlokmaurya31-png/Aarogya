@@ -38,9 +38,12 @@ async function main() {
   const person = { fullName: `Asha OnePatient ${run}`, sex: "F", phone, bloodGroup: "B+", ageYears: 34 };
   await rm(OUTBOX, { force: true });
 
-  const { base, child } = await startServer({ SMS_PROVIDER: "outbox" });
+  const { base, child, serverLog } = await startServer({ SMS_PROVIDER: "outbox" });
+  // Diagnostics for the one unexplained failure (2026-10-14, /api/patient/me): every call's status and time.
+  const calls: string[] = [];
   try {
     const call = async (cookie: string, method: string, url: string, body?: unknown, ip?: string) => {
+      const started = Date.now();
       const res = await fetch(base + url, {
         method,
         headers: { cookie, ...(body && !(body instanceof FormData) ? { "content-type": "application/json" } : {}), ...(ip ? { "x-forwarded-for": ip } : {}) },
@@ -49,6 +52,7 @@ async function main() {
       const text = await res.text();
       let json: Record<string, unknown> = {};
       try { json = JSON.parse(text); } catch { /* not JSON */ }
+      calls.push(`${new Date(started).toISOString()} ${method} ${url} -> ${res.status} in ${Date.now() - started}ms${res.status >= 400 ? ` ${text.slice(0, 300)}` : ""}`);
       return { status: res.status, json, setCookie: res.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ") };
     };
     const frontDesk = await loginAs(base, "frontdesk@amc-demo.aarogya", STAFF_PASSWORD);
@@ -139,6 +143,11 @@ async function main() {
     const byAbha = ((abhaSearch.json.patients as { id: string }[]) ?? []).map((p) => p.id);
     report("API: searching the ABHA finds exactly this patient", byAbha.length === 1 && byAbha[0] === P, byAbha.join(","));
   } finally {
+    // Diagnostics: on any failure, show what the server logged (errors, pool timeouts).
+    if (fail > 0) {
+      console.log(`\n--- HTTP calls ---\n${calls.join("\n")}\n--- end HTTP calls ---`);
+      console.log(`\n--- server log (last 4000 chars) ---\n${serverLog().slice(-4000)}\n--- end server log ---`);
+    }
     child.kill("SIGTERM");
     await prisma.$disconnect();
   }
