@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { ageInYears } from "@/lib/patient/age";
 
 /**
  * Generalized queue engine (brief §8-10). One `QueueEntry` table serves
@@ -84,7 +85,7 @@ export async function enterQueue(input: {
     accessSource: encounter?.accessSource ?? null,
     encounterType: encounter?.type ?? null,
     triageAcuity: input.triageAcuity ?? null,
-    ageYears: patient.ageYears,
+    ageYears: ageInYears(patient.dob),
     enteredAt: new Date(),
   });
 
@@ -118,7 +119,7 @@ export async function recomputeQueuePriority(queueEntryId: string, byUserId: str
       accessSource: entry.encounter?.accessSource ?? null,
       encounterType: entry.encounter?.type ?? null,
       triageAcuity: extra?.triageAcuity ?? null,
-      ageYears: entry.patient.ageYears,
+      ageYears: ageInYears(entry.patient.dob),
       enteredAt: entry.enteredAt,
     });
     const updated = await tx.queueEntry.update({ where: { id: queueEntryId }, data: { priorityScore: score, priorityReason: reason } });

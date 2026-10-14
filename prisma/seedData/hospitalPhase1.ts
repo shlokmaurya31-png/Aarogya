@@ -11,6 +11,7 @@ import { PrismaClient, WardType, BedStatus, EncounterType, EncounterStatus, Role
 import { hashPassword } from "../../src/lib/auth/password";
 import { ensurePrimaryMembership } from "./staffMembership";
 import { staffAtFacilityWhere } from "../../src/lib/auth/staffFacility";
+import { estimatedDobFromAge } from "../../src/lib/patient/age";
 
 export async function seedPhase1Extensions(prisma: PrismaClient) {
   const alreadySeeded = await prisma.episodeOfCare.count();
@@ -100,7 +101,7 @@ export async function seedPhase1Extensions(prisma: PrismaClient) {
         facilityId: noida.id,
         fullName: noidaPatientNames[i],
         sex: i % 2 === 0 ? "male" : "female",
-        ageYears: 20 + (i * 6),
+        dob: estimatedDobFromAge(20 + (i * 6)), dobEstimated: true,
         phone: `+91 97${String(300000 + i * 41).padStart(6, "0")}`,
       },
     });
@@ -240,7 +241,7 @@ export async function seedPhase1Extensions(prisma: PrismaClient) {
     update: {},
     create: {
       uhid: "UHID-AMC-DUP1", facilityId: primaryFacility.id, fullName: dupSource.fullName,
-      sex: dupSource.sex, phone: dupSource.phone ?? undefined, ageYears: dupSource.ageYears,
+      sex: dupSource.sex, phone: dupSource.phone ?? undefined, dob: dupSource.dob, dobEstimated: dupSource.dobEstimated,
     },
   });
 

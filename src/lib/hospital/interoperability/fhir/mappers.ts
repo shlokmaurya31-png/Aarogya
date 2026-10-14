@@ -86,7 +86,7 @@ export interface PatientSource {
   preferredName?: string | null;
   sex: string;
   dob?: Date | null;
-  dobPrecision?: string | null;
+  dobEstimated?: boolean | null;
   phone?: string | null;
   address?: string | null;
   language?: string | null;
@@ -111,9 +111,10 @@ export function mapPatientToFhir(
     gender: SEX_TO_FHIR[patient.sex] ?? "unknown",
   };
 
-  // An APPROXIMATE or UNKNOWN date of birth is deliberately NOT emitted as a
-  // precise birthDate — that would present a guess as a fact.
-  if (patient.dob && (!patient.dobPrecision || patient.dobPrecision === "EXACT")) {
+  // An estimated date of birth (e.g. from an age given at registration) is
+  // deliberately NOT emitted as a precise birthDate — that would present a
+  // guess as a fact.
+  if (patient.dob && !patient.dobEstimated) {
     resource.birthDate = isoDate(patient.dob);
   }
   if (patient.deceasedAt) resource.deceasedDateTime = iso(patient.deceasedAt);

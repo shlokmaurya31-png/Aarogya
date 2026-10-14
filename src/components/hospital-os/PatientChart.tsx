@@ -13,11 +13,12 @@ import { HandoffComposer } from "@/components/hospital-os/shared/HandoffComposer
 import { HandoffInbox } from "@/components/hospital-os/shared/HandoffInbox";
 import { PatientIdentityPanel } from "@/components/hospital-os/PatientIdentityPanel";
 import { PatientDocumentsPanel } from "@/components/hospital-os/PatientDocumentsPanel";
+import { ageLabel } from "@/lib/patient/age";
 
 interface TimelineEntry { id: string; timestamp: string; type: string; summary: string; department?: string | null }
 
 interface ChartData {
-  patient: { id: string; uhid: string; fullName: string; sex: string; ageYears: number | null; bloodGroup: string | null };
+  patient: { id: string; uhid: string; fullName: string; sex: string; dob: string | null; dobEstimated?: boolean; bloodGroup: string | null };
   allergies: { id: string; substance: string; severity: string; reaction: string | null }[];
   problems: { id: string; diagnosis: string; status: string }[];
   diagnoses: { id: string; diagnosis: string; type: string; status: string }[];
@@ -210,7 +211,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-[20px] font-semibold tracking-tight">{data.patient.fullName}</h1>
-          <p className="mt-1 text-[12.5px] text-text-secondary">{data.patient.uhid} · {data.patient.ageYears}{data.patient.sex[0]?.toUpperCase()} · {data.patient.bloodGroup ?? "Blood group unknown"}</p>
+          <p className="mt-1 text-[12.5px] text-text-secondary">{data.patient.uhid} · {ageLabel(data.patient)}{data.patient.sex[0]?.toUpperCase()} · {data.patient.bloodGroup ?? "Blood group unknown"}</p>
         </div>
         {!encounterId && <StatusPill label="Read-only — open from an active encounter to order" tone="amber" className="rounded-md" />}
         {encounterId && (

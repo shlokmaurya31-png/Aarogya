@@ -22,7 +22,7 @@ const AT = new Date("2026-03-01T10:00:00.000Z");
 
 const patient = {
   id: "pat-1", uhid: "UH-0001", fullName: "Asha Devi", sex: "FEMALE",
-  dob: new Date("1990-05-14T00:00:00.000Z"), dobPrecision: "EXACT",
+  dob: new Date("1990-05-14T00:00:00.000Z"), dobEstimated: false,
   phone: "+919000000000", address: "12 MG Road", language: "hi",
   registrationStatus: "ACTIVE", deceasedAt: null, facilityId: "fac-1",
 };
@@ -52,10 +52,10 @@ describe("mapPatientToFhir", () => {
     expect(r.identifier).toHaveLength(1);
   });
 
-  it("does NOT emit a birthDate when the date of birth is only approximate", () => {
-    const approx = mapPatientToFhir({ ...patient, dobPrecision: "APPROXIMATE" });
+  it("does NOT emit a birthDate when the date of birth is only an estimate", () => {
+    const approx = mapPatientToFhir({ ...patient, dobEstimated: true });
     expect(approx.birthDate).toBeUndefined();
-    const unknown = mapPatientToFhir({ ...patient, dob: null, dobPrecision: null });
+    const unknown = mapPatientToFhir({ ...patient, dob: null, dobEstimated: false });
     expect(unknown.birthDate).toBeUndefined();
   });
 

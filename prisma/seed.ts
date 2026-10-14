@@ -78,13 +78,13 @@ async function seedUsers() {
     academicYear: number,
     verified: boolean
   ) {
+    // The name lives on the User (legalName + preferred displayName).
+    await prisma.user.update({ where: { id: userId }, data: { legalName: fullLegalName, displayName: fullLegalName.split(" ")[0] } });
     await prisma.studentProfile.upsert({
       where: { userId },
       update: {},
       create: {
         userId,
-        fullLegalName,
-        preferredName: fullLegalName.split(" ")[0],
         institutionId: institution.id,
         institutionNameFreeText: institution.name,
         course,

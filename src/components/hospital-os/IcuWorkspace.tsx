@@ -7,11 +7,12 @@ import { Card, CardLabel } from "@/components/ui/Card";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
+import { ageLabel } from "@/lib/patient/age";
 
 interface Vital { id: string; hr: number | null; sbp: number | null; dbp: number | null; rr: number | null; spo2: number | null; tempC: number | null; recordedAt: string }
 interface Observation { id: string; type: string; values: Record<string, unknown>; recordedAt: string; recordedByStaffId: string }
 interface Rounding {
-  encounter: { id: string; registeredAt: string; patient: { fullName: string; uhid: string; sex: string; ageYears: number | null }; attendingStaff: { user: { displayName: string } } | null };
+  encounter: { id: string; registeredAt: string; patient: { fullName: string; uhid: string; sex: string; dob: string | null; dobEstimated?: boolean }; attendingStaff: { user: { displayName: string } } | null };
   location: { bed: { label: string; ward: { name: string }; icuUnit: { name: string } | null } | null } | null;
   admission: { id: string; admittedAt: string; admissionType: string | null } | null;
   los: { icuStayHours: number | null; encounterStayHours: number; admittedAt: string | null; icuSince: string | null };
@@ -117,7 +118,7 @@ export function IcuWorkspace({ encounterId }: { encounterId: string }) {
             <div>
               <h1 className="text-[20px] font-semibold tracking-tight">{data.encounter.patient.fullName}</h1>
               <p className="text-[12px] text-text-secondary">
-                {data.encounter.patient.uhid} · {data.encounter.patient.ageYears}{data.encounter.patient.sex[0]?.toUpperCase()}
+                {data.encounter.patient.uhid} · {ageLabel(data.encounter.patient)}{data.encounter.patient.sex[0]?.toUpperCase()}
                 {data.location?.bed ? ` · ${data.location.bed.icuUnit?.name ?? data.location.bed.ward.name} · Bed ${data.location.bed.label}` : " · No active ICU location"}
                 {data.encounter.attendingStaff ? ` · ${data.encounter.attendingStaff.user.displayName}` : ""}
               </p>

@@ -9,6 +9,7 @@ import { facilityOrganizationId } from "@/lib/events/tenant";
 import { createPatientWithUhid } from "@/lib/hospital/uhid";
 import { patientSearchWhere } from "@/lib/hospital/patientSearch";
 import { patientIdsByExternalIdentifier } from "@/lib/patient/identifiers";
+import { estimatedDobFromAge } from "@/lib/patient/age";
 
 export async function GET(req: NextRequest) {
   return withApiErrors(async () => {
@@ -53,7 +54,8 @@ export async function POST(req: NextRequest) {
             facilityId,
             fullName: parsed.data.fullName,
             sex: parsed.data.sex,
-            ageYears: parsed.data.ageYears,
+            // An age given at registration is recorded as an estimated dob; age is always calculated from dob.
+            ...(parsed.data.ageYears !== undefined ? { dob: estimatedDobFromAge(parsed.data.ageYears), dobEstimated: true } : {}),
             phone: parsed.data.phone,
             bloodGroup: parsed.data.bloodGroup,
           },

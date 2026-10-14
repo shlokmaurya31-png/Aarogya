@@ -52,8 +52,8 @@ editing them.
 
 | Model | Field | Duplicates | Note |
 |---|---|---|---|
-| `Patient` | `ageYears` | `dob` | Both stored; an age entered at registration goes stale and can disagree with `dob`. |
-| `User` / `Patient` / `StudentProfile` | `displayName` / `fullName`, `preferredName` / `fullLegalName`, `preferredName` | each other | A person's name is held per model; a correction in one doesn't reach the others. |
+| `Patient` | ~~`ageYears`~~ | `dob` | **Resolved:** `ageYears` dropped; age is calculated from `dob` (`src/lib/patient/age.ts`). An age given at registration is stored as an estimated dob (`dobEstimated`, which also replaced `dobPrecision`). |
+| `User` / `Patient` / `StudentProfile` | `displayName` / `fullName`, `preferredName` / `fullLegalName`, `preferredName` | each other | A person's name is held per model; a correction in one doesn't reach the others. **Partly resolved:** `StudentProfile` no longer stores a name; it reads `User.legalName` / `User.displayName`. Patient names stay on `Patient` (a patient record may have no account). |
 
 | `BloodRequest` | productName | product | Copied at write time; goes stale if the source is renamed. |
 | `GeneratedDocument` | issuedByName | clinicalDocument.author | Deliberate snapshot: the issuer as printed on the document at issue time. |

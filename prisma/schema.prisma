@@ -75,6 +75,8 @@ model User {
   tokenVersion Int      @default(0)
   role         Role
   displayName  String
+  /// Legal name where one is needed (students, for verification); displayName is the preferred name.
+  legalName    String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -210,8 +212,7 @@ model StudentProfile {
   id                      String        @id @default(cuid())
   user                    User          @relation(fields: [userId], references: [id])
   userId                  String        @unique
-  fullLegalName           String
-  preferredName           String?
+  // The student's name is the User's: legalName (legal) and displayName (preferred).
   institution             Institution?  @relation(fields: [institutionId], references: [id])
   institutionId           String?
   institutionNameFreeText String? // used before an Institution row is matched/created
@@ -2135,8 +2136,9 @@ model Patient {
   preferredName           String?
   sex                     String
   dob                     DateTime?
-  dobPrecision            String? // "EXACT" | "APPROXIMATE" | "UNKNOWN" — null means EXACT for legacy rows
-  ageYears                Int?
+  /// The date of birth is an estimate (e.g. derived from an age given at
+  /// registration). Age is always calculated from dob; it is never stored.
+  dobEstimated            Boolean   @default(false)
   phone                   String?
   address                 String?
   language                String?   @default("en")

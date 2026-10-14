@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { requireVerifiedStudent } from "@/lib/auth/currentStudent";
 import { withApiErrors } from "@/lib/auth/rbac";
 import { getActiveCaseProvider } from "@/lib/clinical/gateway";
+import { studentNames } from "@/lib/student/name";
 
 export async function GET() {
   return withApiErrors(async () => {
@@ -51,8 +52,7 @@ export async function GET() {
 
     return {
       profile: {
-        fullLegalName: profile.fullLegalName,
-        preferredName: profile.preferredName,
+        ...studentNames(await prisma.user.findUniqueOrThrow({ where: { id: session.userId }, select: { legalName: true, displayName: true } })),
         course: profile.course,
         learningTrack: profile.learningTrack,
         academicYear: profile.academicYear,

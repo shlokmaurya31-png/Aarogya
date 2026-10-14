@@ -19,6 +19,7 @@ import path from "node:path";
 import { PDFDocument } from "pdf-lib";
 import { prisma } from "../src/lib/db";
 import { startServer, loginAs } from "./lib/appServer";
+import { ageInYears } from "../src/lib/patient/age";
 
 const OUTBOX = path.resolve(__dirname, "..", ".data", "outbox", "sms.jsonl");
 const STAFF_PASSWORD = "Hospital@123";
@@ -71,6 +72,10 @@ async function main() {
     report("The code went to the phone on the hospital record", Boolean(code));
     const link = await call(patientCookie, "POST", "/api/patient/link", { code });
     report("Entering the code links the account to the front desk's record", link.status === 200 && link.json.status === "LINKED" && link.json.patientId === P, JSON.stringify(link.json));
+    const patientCols = (await prisma.$queryRaw<{ column_name: string }[]>`SELECT column_name FROM information_schema.columns WHERE table_name = 'Patient'`).map((c) => c.column_name);
+    report("Patient stores no age (ageYears dropped; dobEstimated present)", !patientCols.includes("ageYears") && patientCols.includes("dobEstimated"));
+    const studentCols = (await prisma.$queryRaw<{ column_name: string }[]>`SELECT column_name FROM information_schema.columns WHERE table_name = 'StudentProfile'`).map((c) => c.column_name);
+    report("StudentProfile holds no name (it is read from User)", !studentCols.includes("fullLegalName") && !studentCols.includes("preferredName"));
     const sameName = await prisma.patient.count({ where: { fullName: person.fullName } });
     report("Exactly one Patient exists for this person", sameName === 1, `${sameName}`);
 
@@ -104,6 +109,9 @@ async function main() {
 
     const chart = await call(doctor, "GET", `/api/hospital/patients/${P}/chart`);
     const chartPatient = chart.json.patient as Record<string, unknown> | undefined;
+    // Age is calculated from dob: the age given at registration became an estimated dob.
+    report("Hospital OS chart: an age given at registration is an estimated dob, and age is calculated from it",
+      chartPatient?.dobEstimated === true && ageInYears(chartPatient?.dob as string) === person.ageYears, `${chartPatient?.dob}`);
     report("Hospital OS chart: same patient ID", chartPatient?.id === P, `HTTP ${chart.status}`);
     report("Hospital OS chart: same demographics", same(chartPatient));
     report("Hospital OS chart: the encounter", ((chart.json.encounters as { id: string }[]) ?? []).some((e) => e.id === E));

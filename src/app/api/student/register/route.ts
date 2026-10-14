@@ -65,14 +65,13 @@ export async function POST(req: NextRequest) {
       passwordHash,
       role: Role.STUDENT,
       displayName: input.preferredName || input.fullLegalName,
+      legalName: input.fullLegalName,
     },
   });
 
   const studentProfile = await prisma.studentProfile.create({
     data: {
       userId: user.id,
-      fullLegalName: input.fullLegalName,
-      preferredName: input.preferredName,
       institutionNameFreeText: input.institutionName,
       course: input.course,
       learningTrack: input.learningTrack,

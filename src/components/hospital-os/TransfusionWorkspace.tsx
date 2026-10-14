@@ -6,13 +6,14 @@ import { Card, CardLabel } from "@/components/ui/Card";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
+import { ageLabel } from "@/lib/patient/age";
 
 interface Unit { id: string; unitNumber: string; aboGroup: string | null; rhStatus: string | null; status: string; expiresAt: string | null; recalled: boolean }
 interface Workspace {
   request: {
     id: string; facilityId: string; patientId: string; encounterId: string; productName: string; quantity: number; priority: string; status: string;
     indication: string | null; emergencyRelease: boolean; emergencyReason: string | null;
-    patient: { fullName: string; uhid: string; sex: string; ageYears: number | null };
+    patient: { fullName: string; uhid: string; sex: string; dob: string | null; dobEstimated?: boolean };
     compatibilityTests: { id: string; unitId: string | null; status: string; crossmatchResult: string | null; verifiedByStaffId: string | null; unit: Unit | null }[];
     reservations: { id: string; status: string; unit: Unit }[];
     issues: { id: string; status: string; unit: Unit; emergencyRelease: boolean }[];
@@ -81,7 +82,7 @@ export function TransfusionWorkspace({ requestId }: { requestId: string }) {
             <Droplet size={18} className="mt-0.5 text-red" />
             <div>
               <p className="text-[18px] font-semibold leading-tight">{r.patient.fullName}</p>
-              <p className="text-[12px] text-text-tertiary">UHID {r.patient.uhid} · {r.patient.sex}{r.patient.ageYears != null ? ` · ${r.patient.ageYears}y` : ""}{data.location?.bed ? ` · ${data.location.bed.ward.name} / ${data.location.bed.label}` : ""}</p>
+              <p className="text-[12px] text-text-tertiary">UHID {r.patient.uhid} · {r.patient.sex}{r.patient.dob ? ` · ${ageLabel(r.patient)}y` : ""}{data.location?.bed ? ` · ${data.location.bed.ward.name} / ${data.location.bed.label}` : ""}</p>
               <p className="mt-1 text-[13px]">{r.productName} · {r.quantity} unit(s){r.indication ? ` · ${r.indication}` : ""}</p>
             </div>
           </div>

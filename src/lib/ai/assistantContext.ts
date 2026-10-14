@@ -20,6 +20,7 @@ import { listAppointments } from "@/lib/patient/experience/appointments";
 import { listReports } from "@/lib/patient/experience/reports";
 import { billingSummary } from "@/lib/patient/experience/billing";
 import { buildPatientSummary } from "@/lib/patient/summary";
+import { ageInYears } from "@/lib/patient/age";
 
 const day = (iso: string | Date | null | undefined) => (iso ? new Date(iso).toISOString().slice(0, 10) : "date unknown");
 
@@ -79,7 +80,7 @@ export async function clinicianAssistantContext(patientId: string): Promise<stri
   const s = await buildPatientSummary(patientId);
   if (!s.patient) return "No patient chart is open.";
   const p = s.patient;
-  const age = p.ageYears ?? (p.dob ? Math.floor((Date.now() - p.dob.getTime()) / 31_557_600_000) : null);
+  const age = ageInYears(p.dob);
   const ok = <T,>(data: T[]): SectionState<T[]> => ({ status: "OK", data });
   return [
     `CHART: ${p.fullName}, ${p.sex}${age !== null ? `, ${age}y` : ""}${p.bloodGroup ? `, ${p.bloodGroup}` : ""} (UHID ${p.uhid})`,

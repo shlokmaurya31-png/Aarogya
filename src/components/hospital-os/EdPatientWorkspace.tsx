@@ -9,6 +9,7 @@ import { ToastViewport } from "@/components/shared/ToastViewport";
 
 import type { ApiResult } from "@/lib/types/api";
 import type { getEdWorkspace, buildEdTimeline } from "@/lib/hospital/emergency";
+import { ageLabel } from "@/lib/patient/age";
 
 type Workspace = NonNullable<ApiResult<typeof getEdWorkspace>>;
 type TimelineEntry = ApiResult<typeof buildEdTimeline>[number];
@@ -61,7 +62,7 @@ export function EdPatientWorkspace({ encounterId }: { encounterId: string }) {
             <Siren size={18} className="mt-0.5 text-red" />
             <div>
               <p className="text-[18px] font-semibold leading-tight">{w.patient.fullName}</p>
-              <p className="text-[12px] text-text-tertiary">UHID {w.patient.uhid} · {w.patient.sex}{w.patient.ageYears != null ? ` · ${w.patient.ageYears}y` : ""}{currentLocation ? ` · ${currentLocation.bed ? currentLocation.bed.label : currentLocation.areaLabel}` : ""}</p>
+              <p className="text-[12px] text-text-tertiary">UHID {w.patient.uhid} · {w.patient.sex}{w.patient.dob ? ` · ${ageLabel(w.patient)}y` : ""}{currentLocation ? ` · ${currentLocation.bed ? currentLocation.bed.label : currentLocation.areaLabel}` : ""}</p>
               <p className="mt-1 text-[13px]">{w.chiefComplaint ?? "No chief complaint recorded"}</p>
             </div>
           </div>
