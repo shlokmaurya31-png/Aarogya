@@ -23,7 +23,7 @@ Aarogya AI is a prototype health-record and clinical-workflow platform connectin
 - [Next.js 16](https://nextjs.org) (App Router) + React 19 + TypeScript
 - [Tailwind CSS 4](https://tailwindcss.com) with a custom design-token system (light theme)
 - [Framer Motion](https://www.framer.com/motion/) for animation, [Lenis](https://github.com/darkroomengineering/lenis) for smooth scroll
-- [Zustand](https://github.com/pmndrs/zustand) for shared client state (UI mode, records, prescriptions, toasts, language) — used by the original Patient/Doctor prototype
+- [Zustand](https://github.com/pmndrs/zustand) for a few client-only UI preferences (toasts, theme, language)
 - [Prisma](https://www.prisma.io) + PostgreSQL 16 (with pgvector) as the single database for every environment; see [`docs/adr/0001-postgres-single-database.md`](docs/adr/0001-postgres-single-database.md)
 - [Recharts](https://recharts.org) for vitals/competency charts, [lucide-react](https://lucide.dev) for icons
 - [Vitest](https://vitest.dev) for unit tests (RBAC, de-identification, scoring, case engine, RxLab rules)
@@ -45,7 +45,6 @@ below, and the 25 synthetic teaching cases. The seed is idempotent: running it
 again changes nothing.
 
 Open [http://localhost:3000](http://localhost:3000) for the landing page,
-[http://localhost:3000/dashboard](http://localhost:3000/dashboard) for the Patient/Doctor prototype,
 [http://localhost:3000/student](http://localhost:3000/student) for **Aarogya Scholar**,
 [http://localhost:3000/hospital-os/login](http://localhost:3000/hospital-os/login) for **Aarogya Hospital OS**, or
 [http://localhost:3000/patient/login](http://localhost:3000/patient/login) for the **patient self-service portal**.
@@ -102,7 +101,7 @@ A real, database-backed hospital operations platform under `/hospital-os` — te
 Full design, phasing, and what's deliberately deferred: [`docs/ENTERPRISE_HOSPITAL_ARCHITECTURE.md`](docs/ENTERPRISE_HOSPITAL_ARCHITECTURE.md).
 Threat model: [`docs/HOSPITAL_THREAT_MODEL.md`](docs/HOSPITAL_THREAT_MODEL.md).
 
-**Important**: this lives at `/hospital-os`, not `/hospital` — the existing `/hospital` route is a separate, working, client-side (Zustand) hospital-admin portal for the original `hospital` auth role, left untouched. See the architecture doc §1.1 for why.
+**Important**: this lives at `/hospital-os`. The old `/hospital` prototype route (and `/dashboard`, `/lab`, `/settings`, `/onboarding`, `/prescriptions`, the `/admin` console) has been removed; those URLs only redirect through the real session (patients to `/patient`, doctors to `/hospital-os/doctor`).
 
 Demo login: [http://localhost:3000/hospital-os/login](http://localhost:3000/hospital-os/login) — accounts below, password `Hospital@123` for all. Two facilities exist under one demo `Organization`, each independently tenant-isolated (verified: a Pune account gets a `404`, not another facility's data, on every cross-facility patient lookup — see [`docs/CLINICAL_CORE.md`](docs/CLINICAL_CORE.md) §6/Phase 1 final report):
 
@@ -212,8 +211,8 @@ src/
     verification/             # verification-document storage boundary
     hospital/                 # bed + encounter state machines, admission/transfer/discharge transactions, clinical safety checks, alert engine, command-center aggregation
     patient/                  # duplicate detection, logical merge, longitudinal timeline + summary aggregation (unified clinical core)
-    i18n.ts, mock-data.ts, ...   # original Patient/Doctor helpers
-  store/                    # Zustand stores (original Patient/Doctor client state — untouched)
+    i18n.ts, mock-data.ts, ...   # shared helpers (mock-data.ts: landing-page demo content, and /api/chat until it moves to real records)
+  store/                    # Zustand stores for client-only UI preferences (toasts, theme, language)
   types/                    # shared TypeScript types (clinicalCase.ts added for Scholar)
 prisma/
   schema.prisma              # shared persistence layer for Scholar + Hospital OS (PostgreSQL)
@@ -223,6 +222,6 @@ docs/                       # architecture, privacy, threat model, future-integr
 
 ## Notes
 
-The original Patient/Doctor prototype is built on mock data with **no backend**: all "records," "prescriptions," and "AI analysis" are simulated client-side via Zustand, and translations are hand-written. Both should be reviewed before any real clinical or production use.
+The original Patient/Doctor prototype (mock data and a client-side Zustand "login" that accepted any email) has been removed. Its URLs redirect through the real session to the patient portal and Hospital OS. Translations are hand-written and should be reviewed before production use.
 
 Aarogya Scholar, added alongside it, introduces this repository's **first real backend** (Prisma + PostgreSQL, hashed passwords, signed sessions, server-side RBAC) — but only for the student/educator/admin surfaces described above. The two systems currently run side by side rather than being unified; see `docs/STUDENT_PLATFORM_ARCHITECTURE.md` §2.10 for the migration path.

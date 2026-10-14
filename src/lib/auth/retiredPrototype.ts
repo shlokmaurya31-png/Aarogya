@@ -4,13 +4,17 @@ import { resolveLoginDestination } from "./roleDestination";
 
 /**
  * The original prototype (/dashboard, /lab, /hospital, /settings,
- * /onboarding, /prescriptions, /admin console) ran on a client-only
- * localStorage "login" that accepted any email, over mock data. It is
- * retired: its routes now resolve through the REAL session — signed-in users
- * land in their real portal, everyone else at /login. The page code is kept
- * (not deleted) but is no longer reachable.
+ * /onboarding, /prescriptions, the /admin console) ran on a client-only
+ * Zustand "login" that accepted any email, over mock data. It has been
+ * removed. Its URLs only redirect through the REAL session, so old links
+ * and bookmarks still land somewhere sensible:
+ *   - patients → /patient
+ *   - doctors  → /hospital-os/doctor (their workspace)
+ *   - every other signed-in role → its normal portal (resolveLoginDestination)
+ *   - signed out → /login
  */
 export async function redirectRetiredPrototype(): Promise<never> {
   const user = await getCurrentUser();
-  redirect(user ? resolveLoginDestination(user.role) : "/login");
+  if (!user) redirect("/login");
+  redirect(user.role === "DOCTOR" ? "/hospital-os/doctor" : resolveLoginDestination(user.role));
 }
