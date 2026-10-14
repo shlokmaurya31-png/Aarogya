@@ -96,6 +96,7 @@ const ORDER = [
   "verify-postgres-generated-documents",
   "verify-postgres-location-history",
   "verify-postgres-bookability",
+  "verify-postgres-walk-ins",
   "verify-postgres-problem-list",
   // Runs last among the gates: checks every row the earlier gates created.
   "verify-postgres-facility-consistency",
