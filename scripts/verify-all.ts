@@ -80,6 +80,9 @@ const ORDER = [
   "verify-postgres-d11-patient-experience",
   // Postgres cutover — dialect behaviour SQLite used to hide
   "verify-postgres-search",
+  // Every hospital list/search/lookup endpoint over HTTP, as every role:
+  // no other facility's rows (builds and starts the app itself)
+  "verify-postgres-tenancy-sweep",
 ];
 const LAST = "verify-postgres-phase-b-final";
 
