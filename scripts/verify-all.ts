@@ -93,6 +93,7 @@ const ORDER = [
   // Week 2 duplicate merges (docs/DATA_DICTIONARY.md §1)
   "verify-postgres-consent-revocation",
   "verify-postgres-patient-identifiers",
+  "verify-postgres-generated-documents",
   // Runs late: its whole-database check covers every earlier gate's orders.
   "verify-postgres-order-status",
 ];

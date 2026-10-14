@@ -35,7 +35,7 @@ editing them.
 | D1 | `PatientIdentifier` ↔ `ExternalIdentifier` (entityType `PATIENT`) | Both store a patient's identifiers (type/system, value, status). `ExternalIdentifier` adds verification/sync state and covers non-patient entities. | An ABHA number or other ID can be recorded in one and missed by readers of the other; the FHIR export and the NHCX bundle read `ExternalIdentifier`, while the patient API (`/api/hospital/patients/[id]`) returns `PatientIdentifier`. **Resolved:** `PatientIdentifier` holds only Aarogya-issued types (UHID, MRN; CHECK `PatientIdentifier_aarogya_issued_only`); ABHA number/address, insurer member IDs and other external IDs were moved to `ExternalIdentifier`. The patient API, FHIR export and NHCX bundle read them through `src/lib/patient/identifiers.ts`. Gate: `verify-postgres-patient-identifiers`. |
 | D2 | `Consent` ↔ `InteropConsent` | Both are patient consents with purpose, status, grant/revoke/expiry. `InteropConsent` is the ABDM/HIE one (recipient, external ref, facility). | A revocation recorded in one isn't seen by code that checks the other. **Resolved:** `Consent` was migrated into `InteropConsent` (recipient = the facility for staff-recorded consents) and dropped; every check goes through `src/lib/consent`. Gate: `verify-postgres-consent-revocation`. |
 | D3 | `Problem` ↔ `Diagnosis` | Both are a patient's conditions (`diagnosis` text, status, onset). `Diagnosis` is per encounter and coded (`codeSystem`, `code`); `Problem` is the longitudinal list, uncoded. | The problem list and encounter diagnoses drift; summaries read `Problem`, the chart reads both. |
-| D4 | `GeneratedDocument` ↔ `ClinicalDocument` | Both are documents about a patient with a stored file (`storageRef`, `sha256`). Generated PDFs (prescriptions, discharge summaries, invoices) live only in `GeneratedDocument`, whose `patientId` has no foreign key. | Generated PDFs don't appear in the portal's reports or the Hospital OS document list, which read `ClinicalDocument` only. |
+| D4 | `GeneratedDocument` ↔ `ClinicalDocument` | Both are documents about a patient with a stored file (`storageRef`, `sha256`). Generated PDFs (prescriptions, discharge summaries, invoices) live only in `GeneratedDocument`, whose `patientId` has no foreign key. | Generated PDFs don't appear in the portal's reports or the Hospital OS document list, which read `ClinicalDocument` only. **Resolved:** generating a document creates a linked `ClinicalDocument` (`generatedDocumentId`) in the same transaction; `GeneratedDocument` keeps render, hash and verify-token metadata (its `patientId`/`issuedByUserId` moved to the ClinicalDocument's patient/author). Its `storageRef`/`sha256` equal the ClinicalDocument's and are immutable. Existing rows with a patient were backfilled. Gate: `verify-postgres-generated-documents`. |
 | D5 | `Transfer` ↔ `EncounterLocation` | Both record where an admitted patient is (bed moves): `Transfer` from→to bed per admission, `EncounterLocation` bed assignment intervals per encounter. | Bed history can disagree between the two. |
 | D6 | `Task` ↔ `WorkflowTask` | Two task systems (clinical tasks vs workflow-engine tasks), both with assignee, status, due date, facility. | Two worklists for staff; a task can exist in one and be invisible in the other. |
 | D7 | `DoctorScheduleBlock` ↔ `StaffShift` | Both say when a staff member works (`staffId`, facility, department, time window). One drives appointment slots, the other workforce rostering. | A doctor can be on leave in one and bookable in the other. |
@@ -56,7 +56,7 @@ editing them.
 | `User` / `Patient` / `StudentProfile` | `displayName` / `fullName`, `preferredName` / `fullLegalName`, `preferredName` | each other | A person's name is held per model; a correction in one doesn't reach the others. |
 
 | `BloodRequest` | productName | product | Copied at write time; goes stale if the source is renamed. |
-| `GeneratedDocument` | issuedByName | issuedByUserId | Deliberate snapshot: the issuer as printed on the document at issue time. |
+| `GeneratedDocument` | issuedByName | clinicalDocument.author | Deliberate snapshot: the issuer as printed on the document at issue time. |
 | `PatientAccessSession` | doctorName | doctorUserId | Snapshot of the doctor's name for the patient's view. |
 | `Surgery` | procedureName | procedure | Copied at write time; goes stale if the source is renamed. |
 | `PatientLinkRequest` | `claimedName`, `claimedPhone`, `claimedDob`, `claimedSex` | the matched `Patient` | Deliberate: what the registrant typed, kept for the reviewer. |
@@ -287,7 +287,7 @@ consistency gate could check that they agree.
 |---|---|---|---|
 | `CarePlan` | facility · patient | PHI | §1.3 |
 | `CarePlanIntervention` | facility · patient (via CarePlan) | PHI | — |
-| `ClinicalDocument` | facility · patient | PHI | §1.1 D4, §1.3 |
+| `ClinicalDocument` | facility · patient | PHI | §1.1 D4 (resolved; includes generated documents), §1.3 |
 | `ClinicalHandoff` | facility · patient | PHI | §1.3 |
 | `ClinicalNote` | facility · patient (via Encounter) | PHI | — |
 | `Diagnosis` | facility · patient (via Patient) | PHI | §1.1 D3, §1.3 |
@@ -354,7 +354,7 @@ consistency gate could check that they agree.
 
 | Model | Scope | PHI | Duplicates |
 |---|---|---|---|
-| `GeneratedDocument` | facility · patient | PHI | §1.1 D4, §1.2 |
+| `GeneratedDocument` | facility · patient (via ClinicalDocument) | PHI | §1.1 D4 (resolved), §1.2 |
 
 ### emergency (src/lib/hospital/emergency)
 

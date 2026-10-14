@@ -31,7 +31,8 @@ const ENUMS = new Map<string, string[]>(Prisma.dmmf.datamodel.enums.map((e) => [
 const MAX_DEPTH = 8;
 /**
  * Optional relations a CHECK constraint makes mandatory in practice (the DMMF
- * can't see CHECK constraints): ClinicalDocument needs exactly one uploader.
+ * can't see CHECK constraints): ClinicalDocument needs exactly one source (an
+ * uploader here).
  */
 const FILL_OPTIONAL: Record<string, string[]> = {
   ClinicalDocument: ["uploadedBy"],

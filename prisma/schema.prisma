@@ -3791,35 +3791,40 @@ model Task {
  * path is built (src/lib/verification/provider.ts) — never inline bytes.
  */
 model ClinicalDocument {
-  id                String                @id @default(cuid())
-  facility          Facility              @relation(fields: [facilityId], references: [id])
-  facilityId        String
-  patient           Patient               @relation(fields: [patientId], references: [id])
-  patientId         String
-  encounter         Encounter?            @relation(fields: [encounterId], references: [id])
-  encounterId       String?
-  type              String // "CONSENT_FORM" | "ID_PROOF" | "REPORT" | "REFERRAL_LETTER" | "OTHER"
-  title             String
-  storageRef        String? // nullable — metadata can exist before a file is actually attached
-  version           Int                   @default(1)
+  id                  String                @id @default(cuid())
+  facility            Facility              @relation(fields: [facilityId], references: [id])
+  facilityId          String
+  patient             Patient               @relation(fields: [patientId], references: [id])
+  patientId           String
+  encounter           Encounter?            @relation(fields: [encounterId], references: [id])
+  encounterId         String?
+  type                String // "CONSENT_FORM" | "ID_PROOF" | "REPORT" | "REFERRAL_LETTER" | "OTHER"
+  title               String
+  storageRef          String? // nullable — metadata can exist before a file is actually attached
+  version             Int                   @default(1)
   // Phase 6.9 — non-destructive versioning. A "new version" of a clinical
   // document supersedes the prior row (which is kept, marked SUPERSEDED)
   // rather than overwriting it, so finalized clinical documents are never
   // silently lost. Null for an original (v1) document.
-  supersedesId      String?
-  status            String                @default("CURRENT") // "CURRENT" | "SUPERSEDED"
-  accessPolicy      String                @default("CLINICAL_STAFF") // "CLINICAL_STAFF" | "PATIENT_VISIBLE" | "RESTRICTED"
-  author            HospitalStaffProfile? @relation("DocumentAuthor", fields: [authorStaffId], references: [id])
-  authorStaffId     String?
-  /// Exactly one uploader: a staff member, or the patient's own account (a
-  /// patient upload through the portal). A CHECK constraint enforces it.
-  uploadedBy        HospitalStaffProfile? @relation("DocumentUploadedBy", fields: [uploadedByStaffId], references: [id])
-  uploadedByStaffId String?
-  uploadedByUser    User?                 @relation("PatientUploadedDocuments", fields: [uploadedByUserId], references: [id])
-  uploadedByUserId  String?
-  /// sha256 of the stored file (patient uploads record it; staff uploads may not).
-  sha256            String?
-  createdAt         DateTime              @default(now())
+  supersedesId        String?
+  status              String                @default("CURRENT") // "CURRENT" | "SUPERSEDED" | "DRAFT" (a generated draft; listed nowhere by default)
+  accessPolicy        String                @default("CLINICAL_STAFF") // "CLINICAL_STAFF" | "PATIENT_VISIBLE" | "RESTRICTED"
+  author              HospitalStaffProfile? @relation("DocumentAuthor", fields: [authorStaffId], references: [id])
+  authorStaffId       String?
+  /// Who put the file here: a staff member, or the patient's own account (a
+  /// patient upload through the portal), or neither for a generated document.
+  uploadedBy          HospitalStaffProfile? @relation("DocumentUploadedBy", fields: [uploadedByStaffId], references: [id])
+  uploadedByStaffId   String?
+  uploadedByUser      User?                 @relation("PatientUploadedDocuments", fields: [uploadedByUserId], references: [id])
+  uploadedByUserId    String?
+  /// sha256 of the stored file (patient uploads and generated documents record it; staff uploads may not).
+  sha256              String?
+  /// D4: set when Aarogya generated this document (render/verify metadata
+  /// lives there). A CHECK makes exactly one of uploadedByStaffId,
+  /// uploadedByUserId, generatedDocumentId non-null.
+  generatedDocument   GeneratedDocument?    @relation(fields: [generatedDocumentId], references: [id], onDelete: Restrict)
+  generatedDocumentId String?               @unique
+  createdAt           DateTime              @default(now())
 
   @@index([patientId])
   @@index([facilityId])
@@ -9126,27 +9131,30 @@ model Notification {
 // facility ONLY — never any PHI. Facility-scoped; type is TEXT enforced in code
 // (DocumentType in src/lib/documents/templates.ts), per the D5–E1 convention.
 model GeneratedDocument {
-  id                 String   @id @default(cuid())
-  facility           Facility @relation(fields: [facilityId], references: [id])
+  /// D4: the render, hash and verify-token metadata of a generated PDF. The
+  /// document itself (patient, encounter, author, visibility, status) is the
+  /// linked ClinicalDocument, created in the same transaction, so generated
+  /// PDFs appear wherever clinical documents are listed. Rows from before D4
+  /// that had no patient have no ClinicalDocument.
+  id                 String            @id @default(cuid())
+  facility           Facility          @relation(fields: [facilityId], references: [id])
   facilityId         String
   type               String
+  /// The title printed on the PDF (and shown by /verify).
   title              String
   documentNumber     String
+  /// Immutable: the rendered PDF. ClinicalDocument.storageRef/sha256 hold the same values.
   storageRef         String
   sha256             String
-  verifyToken        String   @unique
-  // Printed author identity + the staff user who generated it.
-  issuedByUserId     String?
+  verifyToken        String            @unique
+  // Printed author identity.
   issuedByName       String?
   authorRegistration String?
-  // Optional patient anchor for scoping/audit (plain string, no relation,
-  // matching the Notification convention). Never exposed by /verify.
-  patientId          String?
-  isDraft            Boolean  @default(false)
-  createdAt          DateTime @default(now())
+  isDraft            Boolean           @default(false)
+  createdAt          DateTime          @default(now())
+  clinicalDocument   ClinicalDocument?
 
   @@index([facilityId, type])
-  @@index([facilityId, patientId])
 }
 
 /// A self-registered patient account that likely matches an existing hospital
