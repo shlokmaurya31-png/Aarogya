@@ -87,6 +87,7 @@ const ORDER = [
   "verify-postgres-ai-assistant",
   "verify-postgres-verification-uploads",
   "verify-postgres-patient-self-registration",
+  "verify-postgres-patient-documents",
 ];
 const LAST = "verify-postgres-phase-b-final";
 

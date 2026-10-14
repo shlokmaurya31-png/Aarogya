@@ -99,6 +99,7 @@ model User {
   // grantor side lives on Patient.delegationsGranted.
   patientDelegationsHeld PatientDelegation[] @relation("DelegateUser")
   patientLinkRequests    PatientLinkRequest[]
+  patientUploadedDocuments ClinicalDocument[] @relation("PatientUploadedDocuments")
 
   @@index([role])
 }
@@ -3813,8 +3814,14 @@ model ClinicalDocument {
   accessPolicy      String                @default("CLINICAL_STAFF") // "CLINICAL_STAFF" | "PATIENT_VISIBLE" | "RESTRICTED"
   author            HospitalStaffProfile? @relation("DocumentAuthor", fields: [authorStaffId], references: [id])
   authorStaffId     String?
-  uploadedBy        HospitalStaffProfile  @relation("DocumentUploadedBy", fields: [uploadedByStaffId], references: [id])
-  uploadedByStaffId String
+  /// Exactly one uploader: a staff member, or the patient's own account (a
+  /// patient upload through the portal). A CHECK constraint enforces it.
+  uploadedBy        HospitalStaffProfile? @relation("DocumentUploadedBy", fields: [uploadedByStaffId], references: [id])
+  uploadedByStaffId String?
+  uploadedByUser    User?                 @relation("PatientUploadedDocuments", fields: [uploadedByUserId], references: [id])
+  uploadedByUserId  String?
+  /// sha256 of the stored file (patient uploads record it; staff uploads may not).
+  sha256            String?
   createdAt         DateTime              @default(now())
 
   @@index([patientId])

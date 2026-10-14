@@ -29,6 +29,13 @@ type Model = Prisma.DMMF.Model;
 const MODELS = new Map<string, Model>(Prisma.dmmf.datamodel.models.map((m) => [m.name, m]));
 const ENUMS = new Map<string, string[]>(Prisma.dmmf.datamodel.enums.map((e) => [e.name, e.values.map((v) => v.name)]));
 const MAX_DEPTH = 8;
+/**
+ * Optional relations a CHECK constraint makes mandatory in practice (the DMMF
+ * can't see CHECK constraints): ClinicalDocument needs exactly one uploader.
+ */
+const FILL_OPTIONAL: Record<string, string[]> = {
+  ClinicalDocument: ["uploadedBy"],
+};
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const delegate = (db: PrismaClient, model: string): any => (db as any)[model[0].toLowerCase() + model.slice(1)];
@@ -92,7 +99,7 @@ export async function ensureFixture(db: PrismaClient, model: string, tenant: Ten
       // ensured inside the same tenant; optional parents stay empty.
       if (f.type === "Facility") data[fk] = tenant.facilityId;
       else if (f.type === "Organization") data[fk] = tenant.organizationId;
-      else if (f.isRequired) data[fk] = await ensureFixture(db, f.type, tenant, depth + 1);
+      else if (f.isRequired || FILL_OPTIONAL[model]?.includes(f.name)) data[fk] = await ensureFixture(db, f.type, tenant, depth + 1);
       continue;
     }
     if (fkFields.has(f.name) || f.isGenerated || f.isUpdatedAt || f.isReadOnly) continue;

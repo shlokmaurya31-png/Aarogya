@@ -20,7 +20,8 @@ const SIZE_LIMITS: Record<StorageBucket, number> = {
   "clinical-documents": 25 * MB,
   verification: 15 * MB,
   reports: 25 * MB,
-  "patient-uploads": 20 * MB,
+  // Patient uploads get the same ceiling as verification documents.
+  "patient-uploads": 15 * MB,
   "generated-pdf": 25 * MB,
 };
 
