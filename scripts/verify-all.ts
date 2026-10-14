@@ -95,6 +95,7 @@ const ORDER = [
   "verify-postgres-patient-identifiers",
   "verify-postgres-generated-documents",
   "verify-postgres-location-history",
+  "verify-postgres-bookability",
   // Runs late: its whole-database check covers every earlier gate's orders.
   "verify-postgres-order-status",
 ];

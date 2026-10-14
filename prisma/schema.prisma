@@ -1011,6 +1011,7 @@ model Facility {
   documents                 ClinicalDocument[]
   appointments              Appointment[]
   scheduleBlocks            DoctorScheduleBlock[]
+  staffAbsences             StaffAbsence[]
   queueEntries              QueueEntry[]
   triageAssessments         TriageAssessment[]
   encounterLocations        EncounterLocation[]
@@ -2101,6 +2102,7 @@ model HospitalStaffProfile {
   patientMerges              PatientMergeRecord[]
   appointmentsAsDoctor       Appointment[]              @relation("AppointmentDoctor")
   scheduleBlocks             DoctorScheduleBlock[]
+  staffAbsences              StaffAbsence[]
   queueEntriesAsPractitioner QueueEntry[]               @relation("QueuePractitioner")
   triageAssessments          TriageAssessment[]
   admissionRequestsMade      AdmissionRequest[]         @relation("AdmissionRequestedBy")
@@ -3993,19 +3995,40 @@ model DoctorScheduleBlock {
   facilityId                String
   department                Department?          @relation(fields: [departmentId], references: [id])
   departmentId              String?
-  type                      String // "CLINIC_SESSION" | "BLOCKED" | "LEAVE" | "HOLIDAY"
-  dayOfWeek                 Int? // 0 (Sun) - 6 (Sat); null when specificDate is a one-off override
-  specificDate              DateTime? // date-only one-off (leave/holiday/single block); time part ignored
-  startMinute               Int? // minutes from midnight; null for a whole-day LEAVE/HOLIDAY
-  endMinute                 Int?
-  slotDurationMinutes       Int?                 @default(15) // only meaningful for CLINIC_SESSION
+  /// D7: a clinic session only. Leave, holidays and blocked time are StaffAbsence rows.
+  dayOfWeek                 Int? // 0 (Sun) - 6 (Sat); null when specificDate is a one-off session
+  specificDate              DateTime? // date-only one-off session; time part ignored
+  startMinute               Int // minutes from midnight
+  endMinute                 Int
+  slotDurationMinutes       Int?                 @default(15)
   maxConcurrentAppointments Int                  @default(1) // overbooking policy — 1 = no overbooking
   roomLabel                 String?
-  reason                    String? // for BLOCKED/LEAVE
   createdAt                 DateTime             @default(now())
 
   @@index([staffId])
   @@index([facilityId])
+}
+
+/// D7: the one source of leave and absence — leave, holidays, blocked time and
+/// operational unavailability, as time intervals. A doctor is bookable only
+/// inside a DoctorScheduleBlock session, outside every StaffAbsence and not off
+/// shift (src/lib/hospital/bookability.ts).
+model StaffAbsence {
+  id                String               @id @default(cuid())
+  facility          Facility             @relation(fields: [facilityId], references: [id])
+  facilityId        String
+  staff             HospitalStaffProfile @relation(fields: [staffId], references: [id])
+  staffId           String
+  kind              String // LEAVE | HOLIDAY | BLOCKED | UNAVAILABLE | OFF_DUTY | SUSPENDED
+  startAt           DateTime
+  endAt             DateTime? // null = until further notice
+  reason            String?
+  recordedByStaffId String?
+  cancelledAt       DateTime?
+  createdAt         DateTime             @default(now())
+
+  @@index([staffId, startAt])
+  @@index([facilityId, startAt])
 }
 
 /**
@@ -7742,22 +7765,6 @@ model WorkforceAssignment {
   @@index([facilityId, staffId, status])
   @@index([facilityId, departmentId])
   @@index([supervisorStaffId])
-}
-
-model StaffAvailability {
-  id            String    @id @default(cuid())
-  facilityId    String
-  staffId       String    @unique // one current-availability record per staff
-  availability  String    @default("AVAILABLE") // AVAILABLE|UNAVAILABLE|ON_LEAVE|SUSPENDED|OFF_DUTY
-  reason        String?
-  effectiveFrom DateTime  @default(now())
-  effectiveTo   DateTime?
-  version       Int       @default(1) // optimistic single-winner guard for concurrent changes
-  setByStaffId  String
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-
-  @@index([facilityId, availability])
 }
 
 model StaffShift {

@@ -94,7 +94,7 @@ async function seed() {
   await ensurePrimaryMembership(prisma, ID.uStaff, ID.fac);
   // Clinic session tomorrow-agnostic: a recurring session every day, 09:00-17:00, 30-min slots.
   for (let d = 0; d < 7; d++) {
-    await prisma.doctorScheduleBlock.create({ data: { staffId: ID.staff, facilityId: ID.fac, type: "CLINIC_SESSION", dayOfWeek: d, startMinute: 540, endMinute: 1020, slotDurationMinutes: 30, maxConcurrentAppointments: 1 } });
+    await prisma.doctorScheduleBlock.create({ data: { staffId: ID.staff, facilityId: ID.fac, dayOfWeek: d, startMinute: 540, endMinute: 1020, slotDurationMinutes: 30, maxConcurrentAppointments: 1 } });
   }
 
   // Encounters + invoices for A and B.

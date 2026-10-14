@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import type { Prisma } from "@prisma/client";
 import { isStaffInFacility } from "@/lib/auth/staffFacility";
+import { absenceInEffectWhere } from "@/lib/hospital/bookability";
 
 /**
  * Phase B10 credential-aware authorization FOUNDATION. This does NOT replace
@@ -63,11 +64,10 @@ export async function isStaffOperationallyActive(db: Db, staffId: string, facili
   return !!staff && staff.status === "ACTIVE" && (await isStaffInFacility(db, staff.id, facilityId));
 }
 
-/** Availability defaults to available when no record exists (roster is a foundation, not mandatory). */
+/** Available unless an absence (D7: StaffAbsence) is in effect now at this facility. */
 export async function isStaffAvailable(db: Db, staffId: string, facilityId: string): Promise<boolean> {
-  const rec = await db.staffAvailability.findUnique({ where: { staffId } });
-  if (!rec || rec.facilityId !== facilityId) return true;
-  return rec.availability === "AVAILABLE" || rec.availability === "OFF_DUTY" ? rec.availability === "AVAILABLE" : false;
+  const n = await db.staffAbsence.count({ where: { staffId, facilityId, ...absenceInEffectWhere(new Date()) } });
+  return n === 0;
 }
 
 export async function hasActiveCredential(db: Db, staffId: string, facilityId: string, credentialType: string): Promise<boolean> {

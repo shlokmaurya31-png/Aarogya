@@ -14,6 +14,7 @@
 import { PrismaClient } from "@prisma/client";
 import { bookAppointment, SlotConflictError } from "../src/lib/hospital/appointment";
 import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
+import { ensurePrimaryMembership } from "../prisma/seedData/staffMembership";
 
 const prisma = new PrismaClient();
 
@@ -30,8 +31,21 @@ async function main() {
   const facility = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
   const patient1 = await prisma.patient.findFirstOrThrow({ where: { facilityId: facility.id } });
   const patient2 = await prisma.patient.findFirstOrThrow({ where: { facilityId: facility.id }, skip: 1 });
-  const doctor = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "DOCTOR" } } });
   const staff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facility.id) } });
+  // D7: only times inside a clinic session are bookable, so this gate's two
+  // doctors get an all-day session every day (one booking per slot).
+  const run = Date.now().toString(36);
+  const gateDoctor = async (tag: string) => {
+    const user = await prisma.user.create({ data: { email: `appt-race-${tag}-${run}@verify.aarogya`, passwordHash: "x", role: "DOCTOR", displayName: `Race ${tag}` } });
+    const profile = await prisma.hospitalStaffProfile.create({ data: { userId: user.id, displayRole: "Physician", status: "ACTIVE" } });
+    await ensurePrimaryMembership(prisma, user.id, facility.id);
+    await prisma.doctorScheduleBlock.createMany({
+      data: [0, 1, 2, 3, 4, 5, 6].map((dayOfWeek) => ({ staffId: profile.id, facilityId: facility.id, dayOfWeek, startMinute: 0, endMinute: 1440, maxConcurrentAppointments: 1 })),
+    });
+    return profile;
+  };
+  const doctor = await gateDoctor("a");
+  const otherDoctor = await gateDoctor("b");
 
   const base = new Date("2027-02-01T09:00:00.000Z"); // fixed, far-future-enough anchor for deterministic re-runs
   const at = (hh: number, mm: number) => new Date(base.getTime() + (hh * 60 + mm) * 60_000);
@@ -65,7 +79,6 @@ async function main() {
 
   // 4. Different doctor, same time — both allowed.
   {
-    const otherDoctor = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "DOCTOR" } }, skip: 1 });
     const r1 = await book(doctor.id, patient1.id, at(4, 0), at(4, 30));
     const r2 = await book(otherDoctor.id, patient2.id, at(4, 0), at(4, 30));
     report("Different doctor, same time, both allowed", r1.ok && r2.ok);
@@ -106,7 +119,6 @@ async function main() {
 
   // 7. Genuine parallel race, different doctors — both must succeed (the advisory lock is keyed per-doctor, so it must not serialize unrelated doctors into a false conflict).
   {
-    const otherDoctor = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "DOCTOR" } }, skip: 1 });
     const [r1, r2] = await Promise.all([book(doctor.id, patient1.id, at(12, 0), at(12, 30)), book(otherDoctor.id, patient2.id, at(12, 0), at(12, 30))]);
     report("Genuine parallel race, different doctors: both commit (no false cross-doctor conflict)", r1.ok && r2.ok);
   }

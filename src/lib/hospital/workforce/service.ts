@@ -60,23 +60,34 @@ export async function endAssignment(input: { facilityId: string; assignmentId: s
   });
 }
 
-// ══ AVAILABILITY (version-guarded single-winner) ═══════════════════════════════
+// ══ AVAILABILITY (D7: recorded as StaffAbsence intervals) ═══════════════════════
+/**
+ * Set a staff member's operational availability from now. AVAILABLE ends any
+ * open-ended absence; anything else starts an absence (until effectiveTo, or
+ * until further notice). Serialized per staff member with a transaction-scoped
+ * advisory lock, so two concurrent changes apply one after the other.
+ */
 export async function setAvailability(input: { facilityId: string; staffId: string; availability: string; reason?: string; effectiveTo?: Date; setByStaffId: string; byUserId: string }) {
-  const valid = ["AVAILABLE", "UNAVAILABLE", "ON_LEAVE", "SUSPENDED", "OFF_DUTY"];
-  if (!valid.includes(input.availability)) throw new BadRequestError("Unknown availability state.");
+  const kinds: Record<string, string | null> = { AVAILABLE: null, UNAVAILABLE: "UNAVAILABLE", ON_LEAVE: "LEAVE", SUSPENDED: "SUSPENDED", OFF_DUTY: "OFF_DUTY" };
+  if (!(input.availability in kinds)) throw new BadRequestError("Unknown availability state.");
   await assertStaffInFacility(prisma, input.staffId, input.facilityId);
+  const now = new Date();
+  if (input.effectiveTo && input.effectiveTo <= now) throw new BadRequestError("effectiveTo must be in the future.");
   return prisma.$transaction(async (tx) => {
-    const existing = await tx.staffAvailability.findUnique({ where: { staffId: input.staffId } });
-    if (!existing) {
-      const created = await tx.staffAvailability.create({ data: { facilityId: input.facilityId, staffId: input.staffId, availability: input.availability, reason: input.reason, effectiveTo: input.effectiveTo, setByStaffId: input.setByStaffId } });
-      await tx.auditEvent.create({ data: { type: "hospital.workforce.availabilityChanged", userId: input.byUserId, detail: { staffId: input.staffId, availability: input.availability }, facilityId: input.facilityId } });
-      return created;
-    }
-    if (existing.facilityId !== input.facilityId) throw new NotFoundError("Staff availability not found in this facility.");
-    const r = await tx.staffAvailability.updateMany({ where: { id: existing.id, version: existing.version }, data: { availability: input.availability, reason: input.reason, effectiveFrom: new Date(), effectiveTo: input.effectiveTo, setByStaffId: input.setByStaffId, version: { increment: 1 } } });
-    if (r.count !== 1) throw new WorkforceConcurrencyError();
-    await tx.auditEvent.create({ data: { type: "hospital.workforce.availabilityChanged", userId: input.byUserId, detail: { staffId: input.staffId, from: existing.availability, to: input.availability }, facilityId: input.facilityId } });
-    return tx.staffAvailability.findUniqueOrThrow({ where: { id: existing.id } });
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"staff-availability:" + input.staffId}))`;
+    // Whatever was in effect ends now; the new state (if not AVAILABLE) starts now.
+    await tx.staffAbsence.updateMany({
+      where: { staffId: input.staffId, facilityId: input.facilityId, cancelledAt: null, startAt: { lte: now }, OR: [{ endAt: null }, { endAt: { gt: now } }] },
+      data: { endAt: now },
+    });
+    const kind = kinds[input.availability];
+    const absence = kind
+      ? await tx.staffAbsence.create({
+          data: { facilityId: input.facilityId, staffId: input.staffId, kind, startAt: now, endAt: input.effectiveTo, reason: input.reason, recordedByStaffId: input.setByStaffId },
+        })
+      : null;
+    await tx.auditEvent.create({ data: { type: "hospital.workforce.availabilityChanged", userId: input.byUserId, detail: { staffId: input.staffId, availability: input.availability }, facilityId: input.facilityId } });
+    return { staffId: input.staffId, availability: input.availability, absence };
   });
 }
 

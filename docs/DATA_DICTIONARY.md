@@ -38,7 +38,7 @@ editing them.
 | D4 | `GeneratedDocument` ↔ `ClinicalDocument` | Both are documents about a patient with a stored file (`storageRef`, `sha256`). Generated PDFs (prescriptions, discharge summaries, invoices) live only in `GeneratedDocument`, whose `patientId` has no foreign key. | Generated PDFs don't appear in the portal's reports or the Hospital OS document list, which read `ClinicalDocument` only. **Resolved:** generating a document creates a linked `ClinicalDocument` (`generatedDocumentId`) in the same transaction; `GeneratedDocument` keeps render, hash and verify-token metadata (its `patientId`/`issuedByUserId` moved to the ClinicalDocument's patient/author). Its `storageRef`/`sha256` equal the ClinicalDocument's and are immutable. Existing rows with a patient were backfilled. Gate: `verify-postgres-generated-documents`. |
 | D5 | `Transfer` ↔ `EncounterLocation` | Both record where an admitted patient is (bed moves): `Transfer` from→to bed per admission, `EncounterLocation` bed assignment intervals per encounter. | Bed history can disagree between the two. **Resolved:** `EncounterLocation` is the only location history. `Transfer` keeps who/why/request and points at the location it closed (`fromLocationId`) and opened (`toLocationId`); its bed and time columns were backfilled into those links and dropped. Completing a transfer request is one transaction. Gate: `verify-postgres-location-history`. |
 | D6 | `Task` ↔ `WorkflowTask` | Two task systems (clinical tasks vs workflow-engine tasks), both with assignee, status, due date, facility. | Two worklists for staff; a task can exist in one and be invisible in the other. |
-| D7 | `DoctorScheduleBlock` ↔ `StaffShift` | Both say when a staff member works (`staffId`, facility, department, time window). One drives appointment slots, the other workforce rostering. | A doctor can be on leave in one and bookable in the other. |
+| D7 | `DoctorScheduleBlock` ↔ `StaffShift` | Both say when a staff member works (`staffId`, facility, department, time window). One drives appointment slots, the other workforce rostering. | A doctor can be on leave in one and bookable in the other. **Resolved:** `StaffAbsence` is the one source of leave and absence (migrated from DoctorScheduleBlock LEAVE/HOLIDAY/BLOCKED rows and the retired `StaffAvailability`); `DoctorScheduleBlock` holds clinic sessions only; `StaffShift` stays the roster. Bookability = inside a session ∧ no absence ∧ not off shift, one function (`src/lib/hospital/bookability.ts`) for slot listing and booking. Gate: `verify-postgres-bookability`. |
 | D8 | `HospitalStaffProfile.facilityId` ↔ `FacilityMembership` | The staff profile's home facility duplicates a facility membership; tenancy resolution reads both (`primaryFacilityId` plus memberships). | Removing a membership doesn't change the home facility, and the other way round. **Resolved:** `HospitalStaffProfile.facilityId` is gone; the home facility is the one membership with `isPrimary` (partial unique index `FacilityMembership_one_primary_per_user`), and staff-at-facility checks use `src/lib/auth/staffFacility.ts`. |
 | D9 | `Order` ↔ `MedicationOrder` / `LabOrder` / `ImagingOrder` / `Referral` | `Order` is a generic parent (optional link from each specific order) and repeats `patientId`, `encounterId`, `status`, `priority`, ordering staff and timestamps the specific orders also hold. | Two statuses per order that can disagree. **Resolved:** the specific order's lifecycle is authoritative; `Order.status` is derived (`deriveOrderStatus`) and written only by `syncOrderStatus` in the same transaction as the specific change. Existing rows were recomputed. Gate: `verify-postgres-order-status`. |
 
@@ -500,7 +500,7 @@ consistency gate could check that they agree.
 | `Bed` | facility | no | §1.3 |
 | `BedStateEvent` | facility · patient (via Bed) | PHI | — |
 | `Discharge` | patient | PHI | — |
-| `DoctorScheduleBlock` | facility | no | §1.1 D7, §1.3 |
+| `DoctorScheduleBlock` | facility | no | §1.1 D7 (resolved; clinic sessions only), §1.3 |
 | `Encounter` | facility · patient | PHI | §1.3 |
 | `EncounterLocation` | facility · patient | PHI | §1.1 D5 (resolved; the only location history), §1.3 |
 | `QueueEntry` | facility · patient | PHI | §1.3 |
@@ -614,9 +614,9 @@ consistency gate could check that they agree.
 |---|---|---|---|
 | `Credential` | facility | PII | — |
 | `HospitalStaffProfile` | user (facility via `FacilityMembership`) | PII | §1.1 D8 (resolved) |
-| `StaffAvailability` | facility | no | — |
+| `StaffAbsence` | facility | no | §1.1 D7 (resolved; the one source of leave and absence; replaces `StaffAvailability`) |
 | `StaffPrivilege` | facility | PII | — |
-| `StaffShift` | facility | no | §1.1 D7 |
+| `StaffShift` | facility | no | §1.1 D7 (resolved; the roster — off shift blocks booking) |
 | `StaffingRequirement` | facility | no | — |
 | `WorkforceAssignment` | facility | no | — |
 

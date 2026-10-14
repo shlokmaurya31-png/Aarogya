@@ -53,16 +53,17 @@ export async function seedPhase2PatientFlow(prisma: PrismaClient) {
       await prisma.doctorScheduleBlock.create({
         data: {
           staffId: doc.id, facilityId: facility.id, departmentId: doc.departmentId ?? undefined,
-          type: "CLINIC_SESSION", dayOfWeek: dow, startMinute: 540, endMinute: 780, // 09:00-13:00
+          dayOfWeek: dow, startMinute: 540, endMinute: 780, // 09:00-13:00
           slotDurationMinutes: 15, maxConcurrentAppointments: 1, roomLabel: `OPD-${doc.displayRole.slice(0, 4)}`,
         },
       });
     }
   }
-  // One doctor has a leave day today, to prove LEAVE overrides a recurring session (brief §7).
+  // One doctor has a leave day today, to prove leave overrides a recurring session (brief §7; D7: a StaffAbsence).
   if (opdDoctors[0]) {
-    await prisma.doctorScheduleBlock.create({
-      data: { staffId: opdDoctors[0].id, facilityId: facility.id, type: "LEAVE", specificDate: startOfToday(), reason: "Annual leave" },
+    const day = startOfToday();
+    await prisma.staffAbsence.create({
+      data: { staffId: opdDoctors[0].id, facilityId: facility.id, kind: "LEAVE", startAt: day, endAt: new Date(day.getTime() + 24 * 3_600_000), reason: "Annual leave" },
     });
   }
 
