@@ -5,7 +5,7 @@ import {
   grantConsent,
   revokeConsent,
   listConsents,
-} from "@/lib/hospital/interoperability/consent";
+} from "@/lib/consent";
 import { patientLanguage as L } from "./language";
 import { assertClass, type PatientAccessScope } from "../context";
 

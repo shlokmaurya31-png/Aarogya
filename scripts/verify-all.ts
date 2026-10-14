@@ -90,6 +90,8 @@ const ORDER = [
   "verify-postgres-patient-documents",
   // Gate 2: one patient, one record, everywhere (HTTP; builds the app)
   "verify-postgres-one-patient",
+  // Week 2 duplicate merges (docs/DATA_DICTIONARY.md §1)
+  "verify-postgres-consent-revocation",
 ];
 const LAST = "verify-postgres-phase-b-final";
 

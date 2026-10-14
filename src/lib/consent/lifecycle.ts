@@ -5,12 +5,13 @@ import { emitDomainEvent } from "@/lib/events/emit";
 import { facilityOrganizationId } from "@/lib/events/tenant";
 import {
   CONSENT_PURPOSES, CONSENT_SCOPES, CONSENT_RECIPIENT_TYPES, CONSENT_TRANSITIONS,
-  assertOneOf, isTransitionAllowed, isConsentUsable, consentCoversAllScopes,
+  assertOneOf, isTransitionAllowed,
   assertPatientInFacility, assertStaffInFacility,
-} from "./shared";
+} from "@/lib/hospital/interoperability/shared";
+import { decideConsent } from "./evaluate";
 
 /**
- * Phase C1 — health information exchange consent.
+ * Phase C1 — consent lifecycle (D2: the single consent model, src/lib/consent).
  *
  * This is the LOCAL consent domain. It is not an implementation of any external
  * consent-manager protocol, and it does not pretend to be one: `externalConsentRef`
@@ -47,6 +48,7 @@ export async function requestConsent(input: {
   recipientIdentifier: string;
   recipientSystem?: string;
   recipientName?: string;
+  description?: string;
   expiresAt?: Date;
   externalConsentRef?: string;
   createdByStaffId?: string;
@@ -71,6 +73,7 @@ export async function requestConsent(input: {
       recipientIdentifier: input.recipientIdentifier.trim(),
       recipientSystem: input.recipientSystem,
       recipientName: input.recipientName,
+      description: input.description?.slice(0, 500),
       expiresAt: input.expiresAt,
       externalConsentRef: input.externalConsentRef,
       createdByStaffId: input.createdByStaffId,
@@ -295,26 +298,13 @@ export async function assertExchangeAuthorized(req: ExchangeAuthorizationRequest
   });
   // Facility mismatch is reported as not-found so the endpoint does not confirm
   // that a consent exists in another facility.
-  if (!consent || consent.facilityId !== req.facilityId) throw new NotFoundError("Consent not found.");
-
-  if (consent.patientId !== req.patientId) {
-    throw new BadRequestError("That consent belongs to a different patient.");
-  }
-  if (!isConsentUsable(consent)) {
-    const why = consent.revokedAt ? "has been revoked" : consent.expiresAt && consent.expiresAt <= new Date() ? "has expired" : `is ${consent.status}`;
-    throw new BadRequestError(`Consent ${why}; this exchange is not authorized.`);
-  }
-  if (consent.purpose !== req.purpose) {
-    throw new BadRequestError(`Consent was granted for ${consent.purpose}, not ${req.purpose}.`);
-  }
-  if (req.recipientIdentifier && consent.recipientIdentifier !== req.recipientIdentifier) {
-    throw new BadRequestError("Consent was granted for a different recipient.");
-  }
-  const granted = consent.scopes.map((s) => s.scope);
-  if (!consentCoversAllScopes(granted, scopes)) {
-    const missing = scopes.filter((s) => !consentCoversAllScopes(granted, [s]));
-    throw new BadRequestError(`Consent does not cover the requested data scope(s): ${missing.join(", ")}.`);
-  }
+  if (!consent) throw new NotFoundError("Consent not found.");
+  // One decision for every consent check (src/lib/consent/evaluate.ts).
+  const d = decideConsent(consent, { ...req, scopes });
+  // Another facility's consent is reported as not-found, so the endpoint
+  // does not confirm that it exists.
+  if (!d.usable && d.notFound) throw new NotFoundError("Consent not found.");
+  if (!d.usable) throw new BadRequestError(`${d.reason.replace(/\.$/, "")}; this exchange is not authorized.`);
 
   return { consent, scopes, basis: "CONSENT" as const };
 }

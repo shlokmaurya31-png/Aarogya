@@ -25,12 +25,12 @@ import {
   activateBreakGlass, completeBreakGlass, revokeBreakGlass,
   expireLapsedBreakGlass, breakGlassAbuseReport,
 } from "../src/lib/auth/authorize/breakGlass";
-import { evaluateConsent, canSharePatientData } from "../src/lib/auth/authorize/consent";
+import { evaluateConsent, canSharePatientData } from "../src/lib/consent";
 import {
   createPrivacyRequest, transitionPrivacyRequest, listPrivacyRequests, setLegalHold,
 } from "../src/lib/auth/authorize/privacy";
 import { revokeAllSessions, currentTokenVersion, getMfaProvider } from "../src/lib/auth/authorize/sessionControl";
-import { requestConsent, grantConsent, revokeConsent } from "../src/lib/hospital/interoperability/consent";
+import { requestConsent, grantConsent, revokeConsent } from "../src/lib/consent";
 import type { AuthorizationActor } from "../src/lib/auth/authorize/types";
 
 const prisma = new PrismaClient();

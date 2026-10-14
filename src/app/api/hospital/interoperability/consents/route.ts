@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError } from "@/lib/auth/rbac";
-import { requestConsent, listConsents } from "@/lib/hospital/interoperability/consent";
+import { requestConsent, listConsents } from "@/lib/consent";
 
 /** Phase C1 — health information exchange consent. */
 export async function GET(req: NextRequest) {

@@ -326,7 +326,7 @@ const SEGMENT_MODELS: Record<string, string> = {
   "stocktakes/[id]": "StockTake",
   "tariffs/[id]": "Tariff",
   "beds/[id]": "Bed",
-  "consents/[id]": "Consent",
+  "consents/[id]": "InteropConsent",
   "patient-link-requests/[id]": "PatientLinkRequest",
 };
 

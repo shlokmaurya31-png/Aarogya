@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
 import { BadRequestError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
-import { assertExchangeAuthorized } from "../consent";
+import { assertExchangeAuthorized } from "@/lib/consent";
 import { recordProvenance } from "../provenance";
 import { assertPatientInFacility, consentCoversScope } from "../shared";
 import {

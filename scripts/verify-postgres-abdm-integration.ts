@@ -23,7 +23,7 @@ import { recordProtocolTransition } from "../src/lib/hospital/interoperability/a
 import { isProtocolTransitionAllowed, protocolPermitsDataFetch } from "../src/lib/hospital/interoperability/abdm/protocolState";
 import { createExchange, authorizeExchange, dispatchExchange } from "../src/lib/hospital/interoperability/exchange";
 import { StubExchangeAdapter } from "../src/lib/hospital/interoperability/adapters/abdm";
-import { requestConsent, grantConsent, revokeConsent } from "../src/lib/hospital/interoperability/consent";
+import { requestConsent, grantConsent, revokeConsent } from "../src/lib/consent";
 import { resetRateLimiter } from "../src/lib/hospital/interoperability/abdm/rateLimit";
 
 const prisma = new PrismaClient();

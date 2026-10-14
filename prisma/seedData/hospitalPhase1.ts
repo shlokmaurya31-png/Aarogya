@@ -207,8 +207,14 @@ export async function seedPhase1Extensions(prisma: PrismaClient) {
       authorStaffId: pick(doctors, 3).id, uploadedByStaffId: pick(doctors, 3).id,
     },
   });
-  await prisma.consent.create({
-    data: { patientId: scenarioC.id, purpose: "TREATMENT", scope: "Chronic disease management program", status: "GRANTED", grantedAt: new Date(), actorStaffId: pick(doctors, 3).id },
+  // A staff-recorded treatment consent, in the single consent model (D2).
+  await prisma.interopConsent.create({
+    data: {
+      facilityId: primaryFacility.id, patientId: scenarioC.id, purpose: "TREATMENT", description: "Chronic disease management program",
+      status: "GRANTED", grantedAt: new Date(), grantedBy: "STAFF_RECORDED", createdByStaffId: pick(doctors, 3).id,
+      recipientType: "FACILITY", recipientIdentifier: primaryFacility.id, recipientName: primaryFacility.name,
+      scopes: { create: [{ scope: "ALL_CLINICAL" }] },
+    },
   });
 
   // Department membership example (brief §5: "Dr. Sharma: Cardiology + Emergency").

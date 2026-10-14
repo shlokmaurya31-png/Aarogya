@@ -26,7 +26,7 @@ import {
 } from "../src/lib/hospital/interoperability/externalIdentity";
 import {
   requestConsent, grantConsent, revokeConsent, getConsent, assertExchangeAuthorized, expireLapsedConsents,
-} from "../src/lib/hospital/interoperability/consent";
+} from "../src/lib/consent";
 import {
   createExchange, authorizeExchange, dispatchExchange, retryExchange, getExchange, buildIdempotencyKey,
 } from "../src/lib/hospital/interoperability/exchange";

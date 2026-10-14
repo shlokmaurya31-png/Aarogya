@@ -32,7 +32,7 @@ import { createMockAbdmFetch } from "../src/lib/hospital/interoperability/adapte
 import { reconcileConsentStatus } from "../src/lib/hospital/interoperability/abdm/mapping";
 import { createExchange, authorizeExchange, dispatchExchange } from "../src/lib/hospital/interoperability/exchange";
 import { StubExchangeAdapter } from "../src/lib/hospital/interoperability/adapters/abdm";
-import { requestConsent, grantConsent, revokeConsent } from "../src/lib/hospital/interoperability/consent";
+import { requestConsent, grantConsent, revokeConsent } from "../src/lib/consent";
 import { linkExternalIdentifier } from "../src/lib/hospital/interoperability/externalIdentity";
 import { importFhirPayload } from "../src/lib/hospital/interoperability/fhir/import";
 import { IDENTIFIER_SYSTEMS } from "../src/lib/hospital/interoperability/shared";

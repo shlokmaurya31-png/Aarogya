@@ -2,7 +2,7 @@ import { createHash } from "crypto";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError, ConflictError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
-import { assertExchangeAuthorized } from "./consent";
+import { assertExchangeAuthorized } from "@/lib/consent";
 import { recordProvenance } from "./provenance";
 import { getExchangeAdapter } from "./adapters/abdm";
 import { exportPatientToFhir } from "./fhir/export";

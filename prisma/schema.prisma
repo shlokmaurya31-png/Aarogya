@@ -2097,7 +2097,6 @@ model HospitalStaffProfile {
   notificationsReceived      Notification[]             @relation("NotificationRecipient")
   documentsAuthored          ClinicalDocument[]         @relation("DocumentAuthor")
   documentsUploaded          ClinicalDocument[]         @relation("DocumentUploadedBy")
-  consentsRecorded           Consent[]
   referralsMade              Referral[]                 @relation("ReferralFromStaff")
   referralsReceived          Referral[]                 @relation("ReferralToStaff")
   patientMerges              PatientMergeRecord[]
@@ -2176,7 +2175,6 @@ model Patient {
   charges                   Charge[]
   tasks                     Task[]
   documents                 ClinicalDocument[]
-  consents                  Consent[]
   referrals                 Referral[]
   mergeRecordsAsSource      PatientMergeRecord[]       @relation("MergeSource")
   mergeRecordsAsTarget      PatientMergeRecord[]       @relation("MergeTarget")
@@ -3835,23 +3833,6 @@ model ClinicalDocument {
  * workflow that will enforce it, matching this repository's established
  * "architecture before enforcement, never enforcement theater" pattern.
  */
-model Consent {
-  id           String                @id @default(cuid())
-  patient      Patient               @relation(fields: [patientId], references: [id])
-  patientId    String
-  purpose      String // e.g. "TREATMENT" | "DATA_SHARING" | "RESEARCH" | "PROCEDURE"
-  scope        String?
-  status       String                @default("REQUESTED") // REQUESTED | GRANTED | DENIED | REVOKED | EXPIRED
-  version      Int                   @default(1)
-  grantedAt    DateTime?
-  revokedAt    DateTime?
-  expiresAt    DateTime?
-  actor        HospitalStaffProfile? @relation(fields: [actorStaffId], references: [id])
-  actorStaffId String?
-  createdAt    DateTime              @default(now())
-
-  @@index([patientId])
-}
 
 /**
  * Referral (brief §22/§161) — uses the target generalized order lifecycle
@@ -7931,12 +7912,18 @@ model ExternalIdentifier {
 /// scope. Collapsing the two would conflate "the patient agreed to this
 /// operation" with "the patient agreed that this recipient may receive this
 /// class of their records until this date".
+/// The single consent model (D2): every patient consent, local or for an
+/// exchange, with purpose, structured scopes, a named recipient, a validity
+/// period and revocation. All checks go through src/lib/consent.
 model InteropConsent {
   id         String @id @default(cuid())
   facilityId String
   patientId  String
 
   purpose String // TREATMENT | REFERRAL | SECOND_OPINION | INSURANCE | PATIENT_ACCESS | RESEARCH | OTHER
+  /// Free-text detail of what was consented to (e.g. a staff-recorded
+  /// treatment consent's "Chronic disease management program").
+  description String?
   status  String @default("REQUESTED") // REQUESTED | GRANTED | ACTIVE | EXPIRED | REVOKED | DECLINED | CANCELLED
 
   // Who the patient is sharing WITH. Required, so consent can never degrade

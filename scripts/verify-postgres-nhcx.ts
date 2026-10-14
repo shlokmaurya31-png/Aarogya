@@ -44,7 +44,7 @@ import { NHCX_CLAIM_BUNDLE_TYPE } from "../src/lib/hospital/nhcx/contract";
 import { activateBreakGlass } from "../src/lib/auth/authorize/breakGlass";
 import { authorizeAccess } from "../src/lib/auth/authorize/engine";
 import { getActionPolicy } from "../src/lib/auth/authorize/policies";
-import { requestConsent, grantConsent, revokeConsent } from "../src/lib/hospital/interoperability/consent";
+import { requestConsent, grantConsent, revokeConsent } from "../src/lib/consent";
 import type { AuthorizationActor } from "../src/lib/auth/authorize/types";
 
 const prisma = new PrismaClient();
