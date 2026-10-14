@@ -319,5 +319,7 @@ export async function computeAlerts(facilityId: string): Promise<HospitalAlert[]
   }
 
   const severityOrder = { critical: 0, watch: 1, info: 2 };
-  return alerts.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
+  // Severity, then oldest first, then id: alerts of equal severity must not
+  // come out in whatever order the database happened to return them.
+  return alerts.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity] || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
 }

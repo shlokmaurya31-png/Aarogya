@@ -22,7 +22,7 @@ export async function GET() {
       include: { case: true },
     });
 
-    const competencies = await prisma.studentCompetency.findMany({ where: { userId: session.userId } });
+    const competencies = await prisma.studentCompetency.findMany({ where: { userId: session.userId }, orderBy: [{ domain: "asc" }, { id: "asc" }] });
     const achievements = await prisma.studentAchievement.findMany({
       where: { userId: session.userId },
       include: { achievement: true },

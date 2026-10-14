@@ -290,6 +290,7 @@ export async function receiveCallback(args: {
       facilityId,
       OR: [{ correlationId: externalRequestId }, { externalRequestId }],
     },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
 
   const baseData = {

@@ -87,10 +87,12 @@ export async function exportPatientToFhir(req: ExportRequest): Promise<ExportRes
   const externalIds = await prisma.externalIdentifier.findMany({
     where: { facilityId: req.facilityId, entityType: "PATIENT", entityId: req.patientId, status: "ACTIVE" },
     select: { system: true, value: true, use: true, status: true },
+    orderBy: [{ system: "asc" }, { id: "asc" }],
   });
   const facilityIds = await prisma.externalIdentifier.findMany({
     where: { facilityId: req.facilityId, entityType: "FACILITY", entityId: req.facilityId, status: "ACTIVE" },
     select: { system: true, value: true, use: true, status: true },
+    orderBy: [{ system: "asc" }, { id: "asc" }],
   });
 
   const subject = mapPatientToFhir(patientRow, {
@@ -215,6 +217,7 @@ export async function exportPatientToFhir(req: ExportRequest): Promise<ExportRes
   if (practitionerIds.size) {
     const staff = await prisma.hospitalStaffProfile.findMany({
       where: { id: { in: [...practitionerIds] }, facilityId: req.facilityId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     if (staff.length) {
       sections.push({ title: "Practitioners", resources: staff.map((s) => mapPractitionerToFhir({ ...s, displayName: null })) });

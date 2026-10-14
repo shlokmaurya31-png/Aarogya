@@ -81,6 +81,7 @@ export async function buildFlowsheet(encounterId: string): Promise<FlowsheetEntr
     });
   }
 
-  entries.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+  // Ties on timestamp fall back to type and source row id, never database order.
+  entries.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime() || a.type.localeCompare(b.type) || a.refId.localeCompare(b.refId));
   return entries;
 }

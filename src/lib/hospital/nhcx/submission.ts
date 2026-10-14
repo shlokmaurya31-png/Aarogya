@@ -129,6 +129,7 @@ export async function buildSubmission(input: BuildSubmissionInput) {
   const patientExternalIds = await prisma.externalIdentifier.findMany({
     where: { facilityId: input.facilityId, entityType: "PATIENT", entityId: pkg.patient.id, status: "ACTIVE" },
     select: { system: true, value: true, use: true, status: true },
+    orderBy: [{ system: "asc" }, { id: "asc" }],
   });
 
   const bundleId = `${claim.id}-v${version}`;

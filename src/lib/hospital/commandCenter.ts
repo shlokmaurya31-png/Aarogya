@@ -43,7 +43,7 @@ export async function getCommandCenterSnapshot(facilityId: string) {
     diagnostics,
   ] = await Promise.all([
     prisma.bed.groupBy({ by: ["status"], where: { facilityId }, _count: true }),
-    prisma.bed.findMany({ where: { facilityId }, include: { ward: true } }),
+    prisma.bed.findMany({ where: { facilityId }, include: { ward: true }, orderBy: [{ label: "asc" }, { id: "asc" }] }),
     prisma.admission.count({ where: { admittedAt: { gte: today }, encounter: { facilityId } } }),
     prisma.discharge.count({ where: { dischargedAt: { gte: today }, admission: { encounter: { facilityId } } } }),
     prisma.encounter.count({ where: { facilityId, type: "ED", registeredAt: { gte: today } } }),

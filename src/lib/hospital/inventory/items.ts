@@ -98,6 +98,7 @@ export async function getItemDetail(tx: Tx, itemId: string, facilityId: string) 
   const pendingLines = await tx.purchaseOrderLine.findMany({
     where: { itemId, purchaseOrder: { facilityId, status: { in: ["APPROVED", "SENT", "PARTIALLY_RECEIVED"] } } },
     include: { purchaseOrder: { select: { id: true, orderNumber: true, status: true, expectedDeliveryDate: true } } },
+    orderBy: [{ purchaseOrderId: "asc" }, { id: "asc" }],
   });
 
   const totalOnHand = balances.reduce((sum, b) => sum + b.onHandQty, 0);

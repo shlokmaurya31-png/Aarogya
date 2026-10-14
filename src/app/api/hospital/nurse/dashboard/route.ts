@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
     const assignments = await prisma.nursingAssignment.findMany({
       where: { facilityId, endAt: null, ...(staffId ? { nurseStaffId: staffId } : {}) },
       include: { patient: true, bed: { include: { ward: true } }, encounter: true },
+      orderBy: [{ startAt: "asc" }, { id: "asc" }],
     });
     const assignedPatientIds = assignments.map((a) => a.patientId);
 

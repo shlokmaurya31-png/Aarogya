@@ -32,7 +32,7 @@ export async function getDrillDown(fctx: FacilityContext, kind: string, params: 
 
   switch (kind) {
     case "ward-occupancy": {
-      const beds = await prisma.bed.findMany({ where: { facilityId: f }, select: { status: true, ward: { select: { name: true, wardType: true } } } });
+      const beds = await prisma.bed.findMany({ where: { facilityId: f }, select: { status: true, ward: { select: { name: true, wardType: true } } }, orderBy: [{ label: "asc" }, { id: "asc" }] });
       const map = new Map<string, { ward: string; wardType: string; total: number; occupied: number; available: number }>();
       for (const b of beds) {
         const k = b.ward.name;
@@ -43,7 +43,7 @@ export async function getDrillDown(fctx: FacilityContext, kind: string, params: 
       return { kind, asOf, rows: [...map.values()].sort((a, b) => b.occupied / b.total - a.occupied / a.total) };
     }
     case "blocked-beds": {
-      const rows = await prisma.bed.findMany({ where: { facilityId: f, status: { in: ["BLOCKED", "MAINTENANCE"] } }, select: { label: true, status: true, ward: { select: { name: true } } }, take: TAKE });
+      const rows = await prisma.bed.findMany({ where: { facilityId: f, status: { in: ["BLOCKED", "MAINTENANCE"] } }, select: { label: true, status: true, ward: { select: { name: true } } }, take: TAKE, orderBy: [{ label: "asc" }, { id: "asc" }] });
       return { kind, asOf, rows: rows.map((r) => ({ bed: r.label, ward: r.ward.name, status: r.status })) };
     }
     case "icu-beds": {

@@ -18,7 +18,7 @@ export class PriceNotFoundError extends NotFoundError {
 
 /** The seeded self-pay sentinel — every Tariff/Invoice needs a real Payer row, never payerId: null (see Tariff's doc comment). */
 export async function getCashPayerId(tx: Tx | typeof prisma = prisma): Promise<string> {
-  const cash = await tx.payer.findFirst({ where: { type: "CASH" } });
+  const cash = await tx.payer.findFirst({ where: { type: "CASH" }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
   if (!cash) throw new Error("Seeded CASH payer not found — run the seed script.");
   return cash.id;
 }

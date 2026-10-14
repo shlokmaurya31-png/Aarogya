@@ -43,6 +43,7 @@ export async function outstandingByPayer(facilityId: string) {
   const invoices = await prisma.invoice.findMany({
     where: { facilityId, status: { in: ["ISSUED", "PARTIALLY_PAID"] } },
     select: { payerId: true, payer: { select: { name: true } }, totalMinor: true, allocations: { select: { amountMinor: true } } },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
 
   const byPayer = new Map<string, { payerName: string; outstandingMinor: number }>();

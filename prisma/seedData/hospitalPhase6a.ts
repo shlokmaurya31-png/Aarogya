@@ -100,7 +100,7 @@ export async function seedPhase6aInventory(prisma: PrismaClient) {
       return approvePurchaseOrder(tx, submitted.id, { approvedByStaffId: secondApprover.id });
     });
 
-    const poLine = await prisma.purchaseOrderLine.findFirstOrThrow({ where: { purchaseOrderId: po.id } });
+    const poLine = await prisma.purchaseOrderLine.findFirstOrThrow({ where: { purchaseOrderId: po.id }, orderBy: [{ id: "asc" }] });
     const receiptResult = await prisma.$transaction(async (tx) => {
       const recorded = await recordGoodsReceipt(tx, {
         facilityId: facility.id,
@@ -125,7 +125,7 @@ export async function seedPhase6aInventory(prisma: PrismaClient) {
       return approveGoodsReceipt(tx, recorded.receipt.id, { approvedByStaffId: secondApprover.id, actorUserId: secondApprover.userId });
     });
 
-    const receivedLot = await prisma.itemLot.findFirstOrThrow({ where: { itemId: requisitionItem.itemId, facilityId: facility.id } });
+    const receivedLot = await prisma.itemLot.findFirstOrThrow({ where: { itemId: requisitionItem.itemId, facilityId: facility.id }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
     await prisma.$transaction((tx) =>
       initiateTransfer(tx, {
         facilityId: facility.id,

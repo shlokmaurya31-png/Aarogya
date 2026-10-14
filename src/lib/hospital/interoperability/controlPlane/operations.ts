@@ -147,11 +147,13 @@ export async function sweepDeadExchanges(facilityId: string) {
       where: { facilityId, status: "FAILED" },
       select: { id: true, retryCount: true, maxRetries: true },
       take: 1000,
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     }),
     prisma.nhcxExchange.findMany({
       where: { facilityId, protocolState: "FAILED" },
       select: { id: true, attemptCount: true, maxAttempts: true },
       take: 1000,
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     }),
   ]);
   const abdmDead = abdmRows.filter((r) => r.retryCount >= r.maxRetries);
@@ -225,6 +227,7 @@ export async function collectMetrics(facilityId: string): Promise<Interoperabili
       where: { facilityId, status: "FAILED" },
       select: { abdmErrorCode: true, failureReason: true, lastError: true },
       take: 500,
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     }),
     prisma.nhcxExchange.groupBy({
       by: ["errorCategory"], where: { facilityId, protocolState: "FAILED" }, _count: true,

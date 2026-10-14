@@ -280,5 +280,5 @@ export async function buildPatientTimeline(patientId: string): Promise<TimelineE
     });
   }
 
-  return entries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  return entries.sort((a, b) => b.timestamp.localeCompare(a.timestamp) || a.id.localeCompare(b.id));
 }

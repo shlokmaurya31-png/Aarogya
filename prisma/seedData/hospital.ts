@@ -285,8 +285,8 @@ export async function seedHospital(prisma: PrismaClient) {
   await upsertStaffUser("pharmacist@amc-demo.aarogya", "Divya Iyer", Role.PHARMACIST, "Pharmacist");
   await upsertStaffUser("billing@amc-demo.aarogya", "Suresh Naik", Role.BILLING_STAFF, "Billing Officer");
 
-  const doctorProfiles = await prisma.hospitalStaffProfile.findMany({ where: { userId: { in: doctorUsers.map((u) => u.id) } } });
-  const nurseProfiles = await prisma.hospitalStaffProfile.findMany({ where: { userId: { in: nurseUsers.map((u) => u.id) } } });
+  const doctorProfiles = await prisma.hospitalStaffProfile.findMany({ where: { userId: { in: doctorUsers.map((u) => u.id) } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+  const nurseProfiles = await prisma.hospitalStaffProfile.findMany({ where: { userId: { in: nurseUsers.map((u) => u.id) } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
   const labTechProfile = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { user: { email: "labtech@amc-demo.aarogya" } } });
   const radTechProfile = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { user: { email: "radtech@amc-demo.aarogya" } } });
 

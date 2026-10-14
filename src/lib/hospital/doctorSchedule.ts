@@ -30,6 +30,7 @@ export async function getAvailableSlots(staffId: string, date: Date): Promise<Av
       staffId,
       OR: [{ dayOfWeek }, { specificDate: { gte: dayStart, lt: dayEnd } }],
     },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
 
   // A one-off LEAVE/HOLIDAY/BLOCKED override for this specific date cancels any recurring session that day.

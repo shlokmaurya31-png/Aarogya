@@ -106,7 +106,7 @@ export async function atomicConvertReservedToIssued(tx: Tx, balanceId: string, q
  * the cache blindly.
  */
 export async function reconcileBalances(tx: Tx, facilityId: string) {
-  const balances = await tx.stockBalance.findMany({ where: { facilityId } });
+  const balances = await tx.stockBalance.findMany({ where: { facilityId }, orderBy: [{ itemId: "asc" }, { id: "asc" }] });
   const ledgerSums = await tx.stockLedgerEntry.groupBy({
     by: ["itemId", "lotId", "locationId"],
     where: { facilityId },

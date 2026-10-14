@@ -15,6 +15,7 @@ export async function findApplicableReferenceRange(
 ): Promise<LabReferenceRange | null> {
   const ranges = await prisma.labReferenceRange.findMany({
     where: { catalogTestId, effectiveTo: null },
+    orderBy: [{ effectiveFrom: "desc" }, { id: "asc" }],
   });
   const now = new Date();
   const matching = ranges.filter((r) => {

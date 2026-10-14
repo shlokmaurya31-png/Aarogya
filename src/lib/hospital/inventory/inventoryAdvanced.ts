@@ -27,6 +27,7 @@ export async function getInventoryValuation(facilityId: string, opts?: { locatio
     where: { facilityId, onHandQty: { gt: 0 }, ...(opts?.locationId ? { locationId: opts.locationId } : {}), ...(opts?.category ? { item: { category: opts.category as never } } : {}) },
     include: { item: { select: { id: true, name: true, category: true } }, lot: { select: { unitCostMinor: true, status: true, expiresAt: true } }, location: { select: { id: true, name: true } } },
     take: 5000,
+    orderBy: [{ itemId: "asc" }, { id: "asc" }],
   });
   let totalQty = 0, totalValueMinor = 0, uncostedLots = 0, quarantinedValueMinor = 0, expiringValueMinor = 0;
   const byCategory = new Map<string, { quantity: number; valueMinor: number }>();
@@ -53,7 +54,7 @@ export async function getInventoryValuation(facilityId: string, opts?: { locatio
 
 /** Reorder SUGGESTIONS only (brief §62) — never an automatic PO. Items whose total on-hand is at/below their configured reorder point. */
 export async function getReorderSuggestions(facilityId: string) {
-  const items = await prisma.item.findMany({ where: { facilityId, active: true, reorderPoint: { not: null } }, select: { id: true, name: true, sku: true, category: true, reorderPoint: true, reorderQuantity: true, preferredSupplierId: true } });
+  const items = await prisma.item.findMany({ where: { facilityId, active: true, reorderPoint: { not: null } }, select: { id: true, name: true, sku: true, category: true, reorderPoint: true, reorderQuantity: true, preferredSupplierId: true }, orderBy: [{ name: "asc" }, { id: "asc" }] });
   const suggestions = [];
   for (const item of items) {
     const agg = await prisma.stockBalance.aggregate({ where: { facilityId, itemId: item.id }, _sum: { onHandQty: true, reservedQty: true } });

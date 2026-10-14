@@ -42,6 +42,7 @@ export async function listCollections(m: ActorMemberships, opts?: { onlyAttentio
 
   const subs = await prisma.organizationSubscription.findMany({
     select: { organizationId: true, status: true, gracePeriodEndsAt: true, organization: { select: { name: true } } },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
   const openInvoices = await prisma.billingInvoice.findMany({
     where: { status: { in: OPEN_INVOICE_STATES } },

@@ -96,6 +96,7 @@ export async function findDuplicateCandidates(
       ...(excludePatientId ? { id: { not: excludePatientId } } : {}),
     },
     select: { id: true, uhid: true, fullName: true, phone: true, dob: true, sex: true },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
 
   const results: DuplicateCandidate[] = [];

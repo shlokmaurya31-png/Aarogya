@@ -353,7 +353,7 @@ export async function buildIcuRounding(encounterId: string) {
     prisma.task.findMany({ where: { encounterId, status: { notIn: ["COMPLETED", "CANCELLED"] } }, orderBy: { createdAt: "desc" }, take: 30 }),
     prisma.clinicalNote.findMany({ where: { encounterId }, orderBy: { createdAt: "desc" }, take: 5, include: { author: { include: { user: true } } } }),
     prisma.clinicalHandoff.findMany({ where: { encounterId }, orderBy: { createdAt: "desc" }, take: 5, include: { fromStaff: { include: { user: true } }, toStaff: { include: { user: true } } } }),
-    prisma.problem.findMany({ where: { patientId: encounter.patientId, status: "active" } }),
+    prisma.problem.findMany({ where: { patientId: encounter.patientId, status: "active" }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] }),
     prisma.carePlan.findMany({ where: { encounterId, status: "ACTIVE" }, include: { interventions: true }, orderBy: { createdAt: "desc" } }),
     prisma.nursingAssessment.findFirst({ where: { encounterId, isCurrent: true }, orderBy: { createdAt: "desc" } }),
     prisma.labOrder.findMany({ where: { encounterId }, include: { results: { where: { isCurrent: true } } }, orderBy: { orderedAt: "desc" }, take: 10 }),
@@ -433,7 +433,7 @@ export async function buildIcuTimeline(encounterId: string): Promise<IcuTimeline
   for (const r of imagingReports) e.push({ id: `img-${r.id}`, timestamp: r.reportedAt.toISOString(), type: "ImagingReport", summary: `Imaging report${r.isCritical ? " — CRITICAL" : ""}: ${r.impression}`, sourceType: "ImagingReport", sourceId: r.id });
   for (const cp of carePlans) e.push({ id: `cp-${cp.id}`, timestamp: cp.createdAt.toISOString(), type: "CarePlan", summary: `Care plan: ${cp.problem} (${cp.status})`, sourceType: "CarePlan", sourceId: cp.id });
 
-  return e.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  return e.sort((a, b) => b.timestamp.localeCompare(a.timestamp) || a.id.localeCompare(b.id));
 }
 
 /** ICU patient board — occupied ICU-capable beds with a latest-vital summary. */

@@ -59,6 +59,8 @@ export async function resolveItemForDrugName(db: Db, facilityId: string, drugNam
   const drugNameKey = normalizeDrugName(drugName);
   const facilityLink = await db.medicationItemLink.findFirst({ where: { facilityId, drugNameKey }, include: { item: true } });
   if (facilityLink) return facilityLink.item;
-  const globalLink = await db.medicationItemLink.findFirst({ where: { facilityId: null, drugNameKey }, include: { item: true } });
+  // facilityId is NULL here, and Postgres unique constraints treat NULLs as
+  // distinct, so several global links can share a key: take the oldest.
+  const globalLink = await db.medicationItemLink.findFirst({ where: { facilityId: null, drugNameKey }, orderBy: [{ createdAt: "asc" }, { id: "asc" }], include: { item: true } });
   return globalLink?.item ?? null;
 }

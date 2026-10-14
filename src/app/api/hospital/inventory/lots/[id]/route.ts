@@ -13,7 +13,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const lot = await prisma.itemLot.findUnique({ where: { id }, include: { item: true } });
     if (!lot || lot.facilityId !== facilityId) throw new NotFoundError("Lot not found.");
 
-    const balances = await prisma.stockBalance.findMany({ where: { lotId: id }, include: { location: true } });
+    const balances = await prisma.stockBalance.findMany({ where: { lotId: id }, include: { location: true }, orderBy: [{ locationId: "asc" }, { id: "asc" }] });
     const movements = await prisma.stockLedgerEntry.findMany({ where: { lotId: id }, orderBy: { postedAt: "desc" }, take: 50 });
 
     return { lot, balances: balances.map((b) => ({ ...b, available: computeAvailable(b) })), movements };

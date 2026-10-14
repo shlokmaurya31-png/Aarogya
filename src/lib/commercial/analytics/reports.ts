@@ -60,7 +60,7 @@ export async function revenueReport(m: ActorMemberships, opts?: { fromISO?: stri
 export async function arAgingReport(m: ActorMemberships, opts?: { now?: Date }) {
   requirePlatform(m);
   const now = opts?.now ?? new Date();
-  const invoices = await prisma.billingInvoice.findMany({ where: { status: { in: OPEN_INVOICE_STATES } }, select: { id: true, invoiceNumber: true, organizationId: true, currency: true, status: true, totalMinor: true, amountPaidMinor: true, dueAt: true } });
+  const invoices = await prisma.billingInvoice.findMany({ where: { status: { in: OPEN_INVOICE_STATES } }, select: { id: true, invoiceNumber: true, organizationId: true, currency: true, status: true, totalMinor: true, amountPaidMinor: true, dueAt: true }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
   const names = await orgNames(invoices.map((i) => i.organizationId));
   const rows = invoices
     .map((i) => ({ i, out: invoiceOutstandingMinor(i) }))

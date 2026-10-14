@@ -177,7 +177,7 @@ export async function reviewSupplierInvoice(input: { invoiceId: string; facility
 
 // ── Supplier performance (DERIVED from procurement transactions) ─────────────
 export async function getSupplierPerformance(facilityId: string) {
-  const suppliers = await prisma.supplier.findMany({ where: { facilityId }, select: { id: true, name: true, code: true } });
+  const suppliers = await prisma.supplier.findMany({ where: { facilityId }, select: { id: true, name: true, code: true }, orderBy: [{ name: "asc" }, { id: "asc" }] });
   const out = [];
   for (const s of suppliers) {
     const [poCount, receipts] = await Promise.all([

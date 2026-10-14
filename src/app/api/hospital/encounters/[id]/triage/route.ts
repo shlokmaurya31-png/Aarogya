@@ -54,7 +54,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     });
 
     // If this encounter has an active queue entry, recompute its priority now that acuity is known (brief §23 — never silently reordered without a recorded reason).
-    const activeEntry = await prisma.queueEntry.findFirst({ where: { encounterId: id, status: { in: ["WAITING", "CALLED"] } } });
+    const activeEntry = await prisma.queueEntry.findFirst({ where: { encounterId: id, status: { in: ["WAITING", "CALLED"] } }, orderBy: [{ enteredAt: "desc" }, { id: "desc" }] });
     if (activeEntry) await recomputeQueuePriority(activeEntry.id, session.userId, { triageAcuity: parsed.data.acuity });
 
     return { assessment };

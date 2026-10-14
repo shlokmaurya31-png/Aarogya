@@ -105,6 +105,9 @@ export async function bookAppointment(input: {
         type: "CLINIC_SESSION",
         OR: [{ dayOfWeek: input.scheduledStart.getDay() }, { specificDate: { gte: dayStart, lt: dayEnd } }],
       },
+      // A weekly block and a date-specific block can both match; the
+      // date-specific one wins, then oldest, so the capacity is deterministic.
+      orderBy: [{ specificDate: { sort: "desc", nulls: "last" } }, { createdAt: "asc" }, { id: "asc" }],
     });
     const block =
       candidateBlock && (!candidateBlock.specificDate || isSameCalendarDate(candidateBlock.specificDate, input.scheduledStart))

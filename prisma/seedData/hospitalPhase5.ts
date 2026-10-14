@@ -91,7 +91,7 @@ export async function seedPhase5Billing(prisma: PrismaClient) {
   const amc = await prisma.facility.findFirst({ where: { name: "Aarogya Medical Centre" } });
   const amcBillingActor = amc ? billingStaffByFacility.get(amc.id) : undefined;
   if (amc && amcBillingActor) {
-    const coveredPatients = await prisma.patient.findMany({ where: { facilityId: amc.id }, take: 2 });
+    const coveredPatients = await prisma.patient.findMany({ where: { facilityId: amc.id }, take: 2, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
     for (const [idx, patient] of coveredPatients.entries()) {
       await prisma.$transaction((tx) =>
         addPatientCoverage(tx, {
@@ -114,6 +114,7 @@ export async function seedPhase5Billing(prisma: PrismaClient) {
     const chargedEncounter = await prisma.encounter.findFirst({
       where: { facilityId: amc.id, charges: { some: { status: "POSTED" } }, invoices: { none: {} } },
       include: { charges: { where: { status: "POSTED" } } },
+      orderBy: [{ registeredAt: "asc" }, { id: "asc" }],
     });
     if (chargedEncounter) {
       const invoiceChain = await prisma.$transaction(async (tx) => {
@@ -140,8 +141,9 @@ export async function seedPhase5Billing(prisma: PrismaClient) {
     const secondEncounter = await prisma.encounter.findFirst({
       where: { facilityId: amc.id, patientId: coveredPatients[0]?.id, charges: { some: { status: "POSTED" } }, invoices: { none: {} } },
       include: { charges: { where: { status: "POSTED" } } },
+      orderBy: [{ registeredAt: "asc" }, { id: "asc" }],
     });
-    const coverage = coveredPatients[0] ? await prisma.patientCoverage.findFirst({ where: { patientId: coveredPatients[0].id, payerId: insurer.id } }) : null;
+    const coverage = coveredPatients[0] ? await prisma.patientCoverage.findFirst({ where: { patientId: coveredPatients[0].id, payerId: insurer.id }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] }) : null;
     if (secondEncounter && coverage) {
       await prisma.$transaction(async (tx) => {
         await getOrCreateBillingAccount(tx, { encounterId: secondEncounter.id, patientId: secondEncounter.patientId, facilityId: amc.id });

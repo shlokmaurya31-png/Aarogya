@@ -117,6 +117,7 @@ async function resolveFacilityForCallback(rawBody: string, headerRequestId: stri
 
   const exchange = await prisma.healthInformationExchange.findFirst({
     where: { OR: [{ correlationId: externalRequestId }, { externalRequestId }] },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     select: { facilityId: true },
   });
   return exchange?.facilityId ?? null;
