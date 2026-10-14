@@ -17,6 +17,7 @@ import { patientSearchWhere } from "../src/lib/hospital/patientSearch";
 import { listItems } from "../src/lib/hospital/inventory/items";
 import { SyntheticCaseProvider } from "../src/lib/clinical/providers/syntheticCaseProvider";
 import { textContains } from "../src/lib/search";
+import { invoiceListWhere } from "../src/lib/hospital/billing/invoices";
 
 const prisma = new PrismaClient();
 
@@ -71,6 +72,16 @@ async function main() {
   const findInvoices = async (q: string) =>
     (await prisma.invoice.findMany({ where: { facilityId: facility.id, invoiceNumber: textContains(q) }, select: { id: true } })).map((i) => i.id);
   await caseInsensitive("Invoice number search", invoice.invoiceNumber!, findInvoices);
+
+  // The invoice list's `total` must count what the page lists, search included
+  // (it once ignored invoiceNumber and counted every invoice in the facility).
+  const where = invoiceListWhere(facility.id, { invoiceNumber: invoice.invoiceNumber!.toLowerCase() });
+  const [listed, total, all] = await Promise.all([
+    prisma.invoice.findMany({ where, select: { id: true } }),
+    prisma.invoice.count({ where }),
+    prisma.invoice.count({ where: { facilityId: facility.id } }),
+  ]);
+  report("Invoice list total counts only invoices matching the number search", total === listed.length && total < all, `listed=${listed.length} total=${total} facility=${all}`);
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();

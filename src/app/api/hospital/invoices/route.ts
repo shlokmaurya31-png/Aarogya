@@ -3,8 +3,7 @@ import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
-import { draftInvoiceForAccount } from "@/lib/hospital/billing/invoices";
-import { textContains } from "@/lib/search";
+import { draftInvoiceForAccount, invoiceListWhere } from "@/lib/hospital/billing/invoices";
 
 const MAX_PAGE_SIZE = 100;
 
@@ -20,15 +19,16 @@ export async function GET(req: NextRequest) {
     const take = Math.min(Number(searchParams.get("limit") ?? 25) || 25, MAX_PAGE_SIZE);
     const skip = Math.max(Number(searchParams.get("offset") ?? 0) || 0, 0);
 
+    const where = invoiceListWhere(facilityId, { status, patientId, encounterId, invoiceNumber });
     const [invoices, total] = await Promise.all([
       prisma.invoice.findMany({
-        where: { facilityId, status: status as never, patientId, encounterId, invoiceNumber: invoiceNumber ? textContains(invoiceNumber) : undefined },
+        where,
         include: { patient: { select: { fullName: true, uhid: true } }, payer: { select: { name: true } } },
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         take,
         skip,
       }),
-      prisma.invoice.count({ where: { facilityId, status: status as never, patientId, encounterId } }),
+      prisma.invoice.count({ where }),
     ]);
     return { invoices, total, limit: take, offset: skip };
   });

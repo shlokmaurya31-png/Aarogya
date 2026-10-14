@@ -4,6 +4,7 @@ import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { sumMinor } from "./money";
 import { getOrCreateBillingAccount } from "./billingAccount";
 import { nextSequence, formatSequenceNumber } from "./sequence";
+import { textContains } from "@/lib/search";
 
 type Tx = Prisma.TransactionClient;
 
@@ -148,4 +149,22 @@ export async function findInvoiceInFacility(invoiceId: string, facilityId: strin
   const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId }, include: { lines: true } });
   if (!invoice || invoice.facilityId !== facilityId) throw new NotFoundError("Invoice not found.");
   return invoice;
+}
+
+/**
+ * The invoice list filter (GET /api/hospital/invoices). One builder for both
+ * the page query and its count, so `total` always counts what the page lists,
+ * including the invoice-number search.
+ */
+export function invoiceListWhere(
+  facilityId: string,
+  filters: { status?: string; patientId?: string; encounterId?: string; invoiceNumber?: string }
+): Prisma.InvoiceWhereInput {
+  return {
+    facilityId,
+    status: filters.status as Prisma.InvoiceWhereInput["status"],
+    patientId: filters.patientId,
+    encounterId: filters.encounterId,
+    invoiceNumber: filters.invoiceNumber ? textContains(filters.invoiceNumber) : undefined,
+  };
 }
