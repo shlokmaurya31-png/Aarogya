@@ -1,44 +1,53 @@
 /**
- * Tenancy sweep: no hospital list, search or lookup endpoint returns another
- * facility's rows.
+ * Tenancy sweep: every hospital route, over real HTTP, as every role, never
+ * returns or touches another tenant's records.
  *
- * Runs against the REAL HTTP surface: it builds the app (unless --no-build),
- * starts `next start` on a free port against DATABASE_URL, and logs in as a
- * dedicated user for EVERY hospital role in each of two facilities (Pune /
- * Noida, same organization; each user is a member of exactly one facility
- * and is not an organization admin). Permissions differ by role, so every
- * request below is made as every role; a role that gets 403 simply doesn't
- * cover that endpoint. Then, for each facility's users:
+ * Builds the app (unless --no-build), starts `next start` on a free port
+ * against DATABASE_URL, and logs in as:
+ *   - one user per hospital role in each of two facilities (Pune / Noida, one
+ *     organization; each a member of exactly one facility, not an org admin),
+ *   - an organization admin of that organization (sees both facilities, must
+ *     never see a third organization),
+ *   - a platform admin (sees every tenant by design: coverage only).
+ * A third tenant, a facility in a separate organization, holds the rows an
+ * organization admin must never see.
  *
- *   1. every static GET route under src/app/api/hospital is called
- *      - plainly,
- *      - with every search-like query parameter the route reads set to a
- *        term that matches marker rows seeded in BOTH facilities,
- *      - with ?facilityId=<the other facility> (must not be honoured);
- *   2. every dynamic GET route (/[id]/...) is called with IDs that belong to
- *      the OTHER facility (IDOR probe);
- *   3. idempotency keys: a payment / refund key already used by the other
- *      facility must be refused (409), never replay the other facility's row;
- *   4. medication-link scopes, per role: GLOBAL = platform admin, ORGANIZATION
- *      = org admin, FACILITY = that facility's inventory manager; changes to
- *      GLOBAL / ORGANIZATION links are audited.
+ * Data: prisma/seedData/tenancyFixtures.ts guarantees a row of every model a
+ * route addresses in each of the three tenants, so no route is skipped for
+ * lack of data. Ownership is derived from the schema (facilityId, else
+ * organizationId, else a required tenant-owned parent).
  *
- * The assertion is data-driven, not per-endpoint: every row id in every table
- * with a facilityId column is loaded per facility, and a response passes only
- * if it contains no id owned by the other facility. A dropped or overridden
- * facility filter anywhere (spread, OR, optional filter, missing filter)
- * surfaces as a foreign id in some response.
+ * Checks:
+ *   1. Every static GET route: plain; with every query parameter it reads
+ *      filled with own-tenant values (every enumerated value of kind/view/...);
+ *      with id parameters set to the other tenant's ids; with
+ *      ?facilityId=<other facility>. No response may contain an id the other
+ *      tenant owns. Every route must answer 2xx to at least one actor.
+ *   2. Every dynamic route, every method: the 404 rule. An unknown id and the
+ *      other tenant's id get the identical answer: 404 (or a 400 / the role's
+ *      missing-permission 403 that comes before the lookup); never 2xx, 500 or
+ *      a record-level 403. Own-tenant GETs are leak-checked too.
+ *   3. Idempotency keys can't replay another facility's payment or refund.
+ *   4. Medication-link scopes per role (GLOBAL / ORGANIZATION / FACILITY),
+ *      audited.
+ * A route that is not probed and not on the documented allowlist fails the
+ * gate.
  *
- * Seeds only its own marker rows and users (idempotent). Usage:
- *   DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-tenancy-sweep.ts [--no-build]
+ * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-tenancy-sweep.ts [--no-build]
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
-import { ItemCategory, Role, UnitOfMeasure } from "@prisma/client";
+import { ItemCategory, Prisma, Role, UnitOfMeasure } from "@prisma/client";
 import { prisma } from "../src/lib/db";
 import { hashPassword } from "../src/lib/auth/password";
+import { ALL_SECTIONS } from "../src/lib/hospital-os/command-center/authz";
+import { DRILLDOWN_KINDS } from "../src/lib/hospital-os/command-center/drilldowns";
+import { ABDM_CALLBACK_PATHS } from "../src/lib/hospital/interoperability/abdm/contract";
+import { WORKFLOW_TEMPLATES } from "../src/lib/workflow-builder/templates";
+import { listRegistry } from "../src/lib/config/registry";
+import { ensureFixture, ownershipWhere, type Tenant } from "../prisma/seedData/tenancyFixtures";
 
 const ROOT = path.resolve(__dirname, "..");
 const NEXT = path.join(ROOT, "node_modules", ".bin", "next");
@@ -67,6 +76,7 @@ const ORG_ADMIN_EMAIL = "tenancy-sweep-org-admin@sweep.aarogya";
 const OTHER_ORG_ADMIN_EMAIL = "tenancy-sweep-other-org-admin@sweep.aarogya";
 const PLATFORM_ADMIN_EMAIL = "tenancy-sweep-platform-admin@sweep.aarogya";
 const OTHER_ORG_ID = "org-tenancy-sweep-other";
+const OTHER_FACILITY_ID = "fac-tenancy-sweep-other";
 const GLOBAL_MED_SKU = "SWEEP-GLOBAL-MED";
 
 /** Users for the medication-link scope checks, plus a global catalog item. */
@@ -79,6 +89,21 @@ async function seedLinkActors(password: string) {
   await prisma.organizationMembership.upsert({
     where: { userId_organizationId: { userId: orgAdmin.id, organizationId: org } },
     update: { isAdmin: true }, create: { userId: orgAdmin.id, organizationId: org, isAdmin: true },
+  });
+  // The org admin works at Pune (a staff profile gives facility routes a home
+  // facility) and administers the whole organization.
+  await prisma.hospitalStaffProfile.upsert({
+    where: { userId: orgAdmin.id }, update: { facilityId: FACILITIES.pune, status: "ACTIVE" },
+    create: { userId: orgAdmin.id, facilityId: FACILITIES.pune, displayRole: "Tenancy sweep org admin", status: "ACTIVE" },
+  });
+  await prisma.facilityMembership.upsert({
+    where: { userId_facilityId: { userId: orgAdmin.id, facilityId: FACILITIES.pune } },
+    update: { isAdmin: true }, create: { userId: orgAdmin.id, facilityId: FACILITIES.pune, isAdmin: true },
+  });
+  // The third tenant: a facility in a separate organization.
+  await prisma.facility.upsert({
+    where: { id: OTHER_FACILITY_ID }, update: {},
+    create: { id: OTHER_FACILITY_ID, name: "Tenancy Sweep Other Facility", organizationId: other.id },
   });
   const otherAdmin = await upsertUser(OTHER_ORG_ADMIN_EMAIL, Role.HOSPITAL_ADMIN);
   await prisma.organizationMembership.upsert({
@@ -136,41 +161,34 @@ async function seedSweepData() {
   }
 }
 
-/**
- * id → table for every row the facility owns: rows of every table with a
- * facilityId column, plus rows of tables scoped through a parent
- * (encounterId / patientId / admissionId / surgeryCaseId ...), resolved
- * by following that foreign key to a table that has facilityId.
- */
-async function ownedIds(facilityId: string): Promise<Map<string, string>> {
-  const cols = await prisma.$queryRaw<{ table_name: string; column_name: string }[]>`
-    SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public'`;
-  const fks = await prisma.$queryRaw<{ table_name: string; column_name: string; ref_table: string }[]>`
-    SELECT kcu.table_name, kcu.column_name, ccu.table_name AS ref_table
-    FROM information_schema.table_constraints tc
-    JOIN information_schema.key_column_usage kcu ON kcu.constraint_name = tc.constraint_name AND kcu.table_schema = tc.table_schema
-    JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
-    WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public' AND ccu.column_name = 'id'`;
-  const columns = new Map<string, Set<string>>();
-  for (const c of cols) columns.set(c.table_name, (columns.get(c.table_name) ?? new Set()).add(c.column_name));
-  const direct = [...columns].filter(([, c]) => c.has("id") && c.has("facilityId")).map(([t]) => t);
-  const owned = new Map<string, string>();
-  for (const t of direct) {
-    const rows = await prisma.$queryRawUnsafe<{ id: string }[]>(`SELECT id::text AS id FROM "${t}" WHERE "facilityId" = $1`, facilityId);
-    for (const r of rows) owned.set(r.id, t);
+type TenantKey = "pune" | "noida" | "other";
+const MODEL_NAMES = Prisma.dmmf.datamodel.models
+  .filter((m) => m.fields.some((f) => f.name === "id" && f.type === "String"))
+  .map((m) => m.name);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const delegate = (model: string): any => (prisma as any)[model[0].toLowerCase() + model.slice(1)];
+
+interface Owned {
+  /** Rows the tenant's FACILITY owns (facilityId, or a facility-owned parent). */
+  facility: Map<string, string>;
+  /** Rows the tenant's ORGANIZATION owns (organizationId, no facilityId). */
+  org: Map<string, string>;
+  /** Probe ids per model, including the Facility and Organization rows themselves. */
+  byModel: Map<string, string[]>;
+}
+
+async function ownedRows(t: Tenant): Promise<Owned> {
+  const out: Owned = { facility: new Map(), org: new Map(), byModel: new Map([["Facility", [t.facilityId]], ["Organization", [t.organizationId]]]) };
+  for (const model of MODEL_NAMES) {
+    if (model === "Facility" || model === "Organization") continue;
+    const where = ownershipWhere(model, t);
+    if (!where) continue;
+    const rows: { id: string }[] = await delegate(model).findMany({ where, select: { id: true }, orderBy: { id: "asc" } });
+    const orgLevel = "organizationId" in where;
+    for (const r of rows) (orgLevel ? out.org : out.facility).set(r.id, model);
+    if (rows.length) out.byModel.set(model, rows.map((r) => r.id));
   }
-  // One hop through a required parent that carries facilityId.
-  const directSet = new Set(direct);
-  for (const fk of fks) {
-    const c = columns.get(fk.table_name)!;
-    if (directSet.has(fk.table_name) || !c.has("id") || !directSet.has(fk.ref_table) || fk.column_name === "facilityId") continue;
-    const rows = await prisma.$queryRawUnsafe<{ id: string }[]>(
-      `SELECT t.id::text AS id FROM "${fk.table_name}" t JOIN "${fk.ref_table}" p ON p.id = t."${fk.column_name}" WHERE p."facilityId" = $1`,
-      facilityId
-    );
-    for (const r of rows) if (!owned.has(r.id)) owned.set(r.id, fk.table_name);
-  }
-  return owned;
+  return out;
 }
 
 // ── routes ──────────────────────────────────────────────────────────────
@@ -188,46 +206,181 @@ function getAllRoutes(dir = API_ROOT): Route[] {
       const methods = ["GET", "POST", "PUT", "PATCH", "DELETE"].filter((m) => new RegExp(`export (async function|const) ${m}\\b`).test(src));
       if (methods.length === 0) continue;
       const rel = path.relative(path.join(ROOT, "src", "app"), path.dirname(p)).split(path.sep);
-      const params = [...new Set([...src.matchAll(/searchParams\.get\(\s*["'`](\w+)["'`]/g)].map((m) => m[1]))];
+      const params = [...new Set([...src.matchAll(/\b(?:searchParams|sp|q)\.get\(\s*["'`](\w+)["'`]/g)].map((m) => m[1]))];
       out.push({ urlPath: "/" + rel.join("/"), segments: rel, params, methods });
     }
   }
   return out.sort((a, b) => a.urlPath.localeCompare(b.urlPath));
 }
-const getRoutes = () => getAllRoutes().filter((r) => r.methods.includes("GET"));
 
-/** A route segment that carries a record ID ([id], [encounterId], …), as opposed to [kind]/[key]. */
-const isRecordIdSegment = (seg: string) => /^\[(id|\w+Id)\]$/.test(seg);
 const UNKNOWN_ID = "cmtenancysweepunknown00000";
 
-const singular = (s: string) => s.replace(/-/g, "").replace(/ies$/, "y").replace(/(ses|xes)$/, (m) => m.slice(0, -2)).replace(/s$/, "").toLowerCase();
+/** Dynamic segments that are not record ids: probed with every valid value. */
+const STATIC_SEGMENTS: Record<string, string[]> = {
+  "section/[key]": [...ALL_SECTIONS],
+  "callback/[kind]": Object.keys(ABDM_CALLBACK_PATHS),
+  "webhooks/[provider]": ["FAKE", "RAZORPAY"],
+  "templates/[id]": WORKFLOW_TEMPLATES.map((t) => t.id),
+};
 
-/** For /a/b/[id]/c: pick an id of the other facility from the table best matching "b". */
-function fillDynamic(route: Route, byTable: Map<string, string[]>, allTables: Set<string>): string | null {
-  const parts: string[] = [];
-  for (let i = 0; i < route.segments.length; i++) {
-    const seg = route.segments[i];
-    const m = /^\[(\w+)\]$/.exec(seg);
-    if (!m) { parts.push(seg); continue; }
-    // [encounterId] names its table; [id] is named by the segment(s) before it:
-    // blood/requests/[id] → BloodRequest, then Request, then *Request.
-    const prev = route.segments[i - 1] ?? "";
-    const prev2 = route.segments[i - 2] ?? "";
-    const wants = m[1] !== "id" && m[1].endsWith("Id")
-      ? [singular(m[1].replace(/Id$/, ""))]
-      : [singular(prev2) + singular(prev), singular(prev)];
-    // An exactly named table with no rows of the other facility means "no
-    // data to probe with": skip rather than guess a different table.
-    if (wants.some((w) => allTables.has(w) && ![...byTable.keys()].some((t) => t.toLowerCase() === w))) return null;
-    const tables = [...byTable.keys()];
-    const table =
-      wants.map((w) => tables.find((t) => t.toLowerCase() === w)).find(Boolean) ??
-      wants.map((w) => tables.find((t) => t.toLowerCase().endsWith(w))).find(Boolean);
-    const id = table ? byTable.get(table)![0] : undefined;
-    if (!id) return null;
-    parts.push(id);
+/**
+ * The model a record-id segment addresses, keyed by the most specific path
+ * suffix first ("a/b/[id]", then "b/[id]"). Curated: the URL makes each one
+ * unambiguous to a reader, while guessing from names was wrong for several
+ * (inventory/locations, enterprise/events).
+ */
+const SEGMENT_MODELS: Record<string, string> = {
+  "facilities/[facilityId]/members/[membershipId]": "FacilityMembership",
+  "organizations/[organizationId]/members/[membershipId]": "OrganizationMembership",
+  "commercial/billing/invoices/[id]": "BillingInvoice",
+  "procurement/invoices/[id]": "SupplierInvoice",
+  "interoperability/consents/[id]": "InteropConsent",
+  "inventory/requests/[id]": "DepartmentSupplyRequest",
+  "pharmacy/requests/[id]": "PharmacyRequest",
+  "blood/requests/[id]": "BloodRequest",
+  "orders/lab/[id]": "LabOrder",
+  "orders/imaging/[id]": "ImagingOrder",
+  "orders/medication/[id]": "MedicationOrder",
+  "lab/calibration/[id]": "LabCalibrationRecord",
+  "lab/external/[id]": "ExternalLabReferral",
+  "lab/qc/[id]": "LabQcRecord",
+  "trace/lot/[lotId]": "ItemLot",
+  "trace/patient/[patientId]": "Patient",
+  "billing/[encounterId]": "Encounter",
+  "charges/[chargeId]": "Charge",
+  "packages/[id]": "PackageDefinition",
+  "adjustments/[id]": "FinancialAdjustment",
+  "compatibility/[id]": "BloodCompatibilityTest",
+  "issues/[id]": "BloodIssue",
+  "reactions/[id]": "TransfusionReaction",
+  "reservations/[id]": "BloodReservation",
+  "transfusions/[id]": "Transfusion",
+  "units/[id]": "BloodUnit",
+  "resuscitations/[id]": "EdResuscitation",
+  "events/[eventId]": "DomainEventOutbox",
+  "organization/[organizationId]": "Organization",
+  "organizations/[organizationId]": "Organization",
+  "facilities/[facilityId]": "Facility",
+  "drafts/[id]": "WorkflowBuilderDraft",
+  "workflow-instances/[instanceId]": "WorkflowInstance",
+  "workflows/[workflowId]": "WorkflowDefinition",
+  "plans/[planId]": "SubscriptionPlan",
+  "invoices/[id]": "Invoice",
+  "exchanges/[id]": "HealthInformationExchange",
+  "identifiers/[id]": "ExternalIdentifier",
+  "serials/[id]": "InventorySerial",
+  "notifications/[id]": "Notification",
+  "ambulance-trips/[id]": "AmbulanceTrip",
+  "ambulances/[id]": "Ambulance",
+  "diet-orders/[id]": "DietOrder",
+  "downtime/[id]": "AssetDowntime",
+  "equipment/[id]": "BiomedicalEquipment",
+  "housekeeping/[id]": "HousekeepingRequest",
+  "infection/[id]": "InfectionIncident",
+  "maintenance/[id]": "MaintenanceRequest",
+  "meals/[id]": "Meal",
+  "preventive/[id]": "PreventiveMaintenance",
+  "transport/[id]": "PatientTransportRequest",
+  "report/[reportId]": "ImagingReport",
+  "result/[resultId]": "LabResult",
+  "surgeries/[id]": "Surgery",
+  "formulary/[id]": "FormularyEntry",
+  "recall/[id]": "MedicationRecall",
+  "returns/[id]": "MedicationReturn",
+  "contracts/[id]": "SupplierContract",
+  "quotations/[id]": "RfqQuotation",
+  "rfq/[id]": "Rfq",
+  "requisitions/[id]": "PurchaseRequisition",
+  "incidents/[id]": "QualityIncident",
+  "rca/[id]": "RootCauseAnalysis",
+  "claims/[id]": "Claim",
+  "payments/[id]": "Payment",
+  "refunds/[id]": "Refund",
+  "queue/[id]": "QueueEntry",
+  "patient-access/[id]": "PatientAccessSession",
+  "doctors/[staffId]": "HospitalStaffProfile",
+  "handoffs/[id]": "ClinicalHandoff",
+  "documents/[id]": "ClinicalDocument",
+  "medication-safety-warnings/[id]": "MedicationSafetyWarning",
+  "assignments/[id]": "NursingAssignment",
+  "coverage/[id]": "PatientCoverage",
+  "preauth/[id]": "PreAuthorization",
+  "payers/[id]": "Payer",
+  "locations/[id]": "StockLocation",
+  "lots/[id]": "ItemLot",
+  "devices/[id]": "IcuDevice",
+  "infusions/[id]": "IcuInfusion",
+  "encounters/[id]": "Encounter",
+  "patients/[id]": "Patient",
+  "admissions/[id]": "Admission",
+  "items/[id]": "Item",
+  "suppliers/[id]": "Supplier",
+  "purchase-orders/[id]": "PurchaseOrder",
+  "goods-receipts/[id]": "GoodsReceipt",
+  "transfers/[id]": "StockTransfer",
+  "waste/[id]": "WasteRecord",
+  "appointments/[id]": "Appointment",
+  "referrals/[id]": "Referral",
+  "care-plans/[id]": "CarePlan",
+  "tasks/[id]": "Task",
+  "transfer-requests/[id]": "TransferRequest",
+  "admission-requests/[id]": "AdmissionRequest",
+  "stocktakes/[id]": "StockTake",
+  "tariffs/[id]": "Tariff",
+  "beds/[id]": "Bed",
+  "consents/[id]": "Consent",
+};
+
+type SegmentTarget = { kind: "record"; model: string } | { kind: "static"; values: string[] } | { kind: "unmapped" };
+
+/** What segment `i` of `route` addresses. */
+function segmentTarget(route: Route, i: number): SegmentTarget {
+  const segs = route.segments;
+  for (const n of [4, 3, 2]) {
+    if (i - n + 1 < 0) continue;
+    const key = segs.slice(i - n + 1, i + 1).join("/");
+    if (STATIC_SEGMENTS[key]) return { kind: "static", values: STATIC_SEGMENTS[key] };
+    if (SEGMENT_MODELS[key]) return { kind: "record", model: SEGMENT_MODELS[key] };
   }
-  return "/" + parts.join("/");
+  const m = /^\[(\w+)\]$/.exec(segs[i])!;
+  const byName = MODEL_NAMES.find((x) => x.toLowerCase() === m[1].replace(/Id$/, "").toLowerCase());
+  if (m[1] !== "id" && byName) return { kind: "record", model: byName };
+  return { kind: "unmapped" };
+}
+
+/** Routes that genuinely can't be probed the normal way, with the reason. */
+const ALLOWLIST: Record<string, string> = {
+  "GET /api/hospital/interoperability/abdm/callback/[kind]":
+    "GET deliberately answers 405: ABDM callbacks are POSTs from the gateway. The POST is probed for every callback kind.",
+  "GET /api/hospital/interoperability/fhir/export":
+    "GET deliberately answers 405: an export is an authorization decision and must be a POST. The POST is covered by the leak checks.",
+};
+
+/** Query-parameter models: own-tenant values, or the other tenant's for the foreign variant. */
+const PARAM_MODELS: Record<string, string> = {
+  patientId: "Patient", encounterId: "Encounter", admissionId: "Admission", staffId: "HospitalStaffProfile",
+  doctorStaffId: "HospitalStaffProfile", nurseStaffId: "HospitalStaffProfile", itemId: "Item", locationId: "StockLocation",
+  supplierId: "Supplier", organizationId: "Organization", departmentId: "Department", workflowId: "WorkflowDefinition",
+  specimenId: "Specimen", wardId: "Ward", bedId: "Bed", lotId: "ItemLot", claimId: "Claim", invoiceId: "Invoice",
+  payerId: "Payer", unitId: "BloodUnit", requestId: "BloodRequest", surgeryId: "Surgery", operatingTheatreId: "OperatingTheatre",
+};
+const TODAY = new Date().toISOString().slice(0, 10);
+const DATE_PARAMS: Record<string, string> = {
+  from: "2000-01-01", to: "2100-01-01", dateFrom: "2000-01-01", dateTo: "2100-01-01", fromISO: "2000-01-01T00:00:00Z",
+  toISO: "2100-01-01T00:00:00Z", since: "2000-01-01", until: "2100-01-01", start: "2000-01-01", end: "2100-01-01",
+  date: TODAY, day: TODAY,
+};
+
+/** Values an enumerated parameter can take: its route's `case "..."` labels, or a known list. */
+function enumValues(route: Route, param: string): string[] {
+  if (param === "kind" && route.urlPath.endsWith("/drilldown")) return [...DRILLDOWN_KINDS];
+  if (param === "key") return listRegistry().exact.slice(0, 3).map((e) => e.key);
+  if (param === "scope") return ["ORGANIZATION", "FACILITY"];
+  const src = readFileSync(path.join(ROOT, "src", "app", ...route.segments, "route.ts"), "utf8");
+  const v = new RegExp(`const (\\w+) = \\w+\\.get\\("${param}"\\)`).exec(src)?.[1];
+  if (!v) return [];
+  const sw = new RegExp(`switch \\(${v}\\) \\{([\\s\\S]*?)\\n\\s{4}\\}`).exec(src);
+  return sw ? [...sw[1].matchAll(/case "([^"]+)"/g)].map((x) => x[1]) : [];
 }
 
 // ── server ──────────────────────────────────────────────────────────────
@@ -421,130 +574,279 @@ async function idempotencySection(base: string, owned: Record<Site, Map<string, 
   }
 }
 
-async function main() {
-  const routes = getRoutes();
-  await seedSweepData();
-  const owned: Record<Site, Map<string, string>> = { pune: await ownedIds(FACILITIES.pune), noida: await ownedIds(FACILITIES.noida) };
-  console.log(`Owned row ids: pune=${owned.pune.size} noida=${owned.noida.size}; GET routes: ${routes.length}`);
+interface Actor {
+  name: string;
+  cookie: string;
+  /** The tenant whose rows are "own" for parameters and own-record probes. */
+  home: TenantKey;
+  /** Ids this actor must never receive; null = platform admin (sees every tenant by design). */
+  foreign: Map<string, string> | null;
+  /** The tenant whose ids the 404-rule probes use. */
+  foreignTenant: TenantKey | null;
+  /** Appended as ?facilityId= (a platform admin has no home facility). */
+  facilityParam?: string;
+}
 
-  const allTables = new Set(
-    (await prisma.$queryRaw<{ t: string }[]>`SELECT lower(tablename) AS t FROM pg_tables WHERE schemaname = 'public'`).map((r) => r.t)
-  );
+const merge = (...maps: Map<string, string>[]) => new Map(maps.flatMap((m) => [...m]));
+const isFacilityLevel = (model: string, t: Tenant) => {
+  const w = ownershipWhere(model, t);
+  return w !== null && !("organizationId" in w) && model !== "Facility" && model !== "Organization";
+};
+const withParam = (url: string, key: string, value: string) => `${url}${url.includes("?") ? "&" : "?"}${key}=${encodeURIComponent(value)}`;
+
+async function main() {
+  const allRoutes = getAllRoutes();
+  await seedSweepData();
+  const orgId = (await prisma.facility.findUniqueOrThrow({ where: { id: FACILITIES.pune } })).organizationId;
+  const tenants: Record<TenantKey, Tenant> = {
+    pune: { facilityId: FACILITIES.pune, organizationId: orgId },
+    noida: { facilityId: FACILITIES.noida, organizationId: orgId },
+    other: { facilityId: OTHER_FACILITY_ID, organizationId: OTHER_ORG_ID },
+  };
+
+  // Every dynamic segment must resolve to a model or a known value list.
+  const needed = new Set<string>(Object.values(PARAM_MODELS).concat("Specimen"));
+  for (const r of allRoutes) {
+    r.segments.forEach((seg, i) => {
+      if (!seg.startsWith("[")) return;
+      const t = segmentTarget(r, i);
+      if (t.kind === "record") needed.add(t.model);
+      else if (t.kind === "unmapped") bad(`route segment has no model mapping: ${r.urlPath} ${seg} (add it to SEGMENT_MODELS)`);
+    });
+  }
+
+  // Fixtures: a row of every needed model in every tenant (untenanted models: one shared row).
+  const untenanted = new Map<string, string>();
+  for (const model of needed) {
+    for (const key of Object.keys(tenants) as TenantKey[]) {
+      try {
+        const id = await ensureFixture(prisma, model, tenants[key]);
+        if (ownershipWhere(model, tenants[key]) === null) untenanted.set(model, id);
+      } catch (e) {
+        bad(`fixture ${model} in ${key}: ${(e as Error).message}`);
+      }
+    }
+  }
+  const owned: Record<TenantKey, Owned> = { pune: await ownedRows(tenants.pune), noida: await ownedRows(tenants.noida), other: await ownedRows(tenants.other) };
+  console.log(`Owned rows: pune=${owned.pune.facility.size} noida=${owned.noida.facility.size} other=${owned.other.facility.size + owned.other.org.size}; routes: ${allRoutes.length}; models probed: ${needed.size}`);
+
+  // Ids per tenant for one model: the tenant's own rows, or the shared row of an untenanted model.
+  const idFor = (model: string, key: TenantKey): string | undefined => owned[key].byModel.get(model)?.[0] ?? untenanted.get(model);
+  // Every tenant-owned model a route addresses must have a row in every tenant.
+  for (const model of needed) {
+    if (untenanted.has(model)) continue;
+    for (const key of Object.keys(tenants) as TenantKey[]) {
+      if (!owned[key].byModel.get(model)?.length) bad(`fixture: no ${model} row owned by ${key}`);
+    }
+  }
+  const specimenCode = async (key: TenantKey) => {
+    const s = await prisma.specimen.findFirst({ where: { facilityId: tenants[key].facilityId }, orderBy: { id: "asc" } });
+    return s?.barcode ?? s?.accessionNumber ?? s?.id ?? MARKER;
+  };
+  // Exports need a workflow with a version: the seeded global templates.
+  const versionedWorkflow = (await prisma.workflowDefinition.findFirst({ where: { organizationId: null, currentVersionId: { not: null } }, orderBy: { key: "asc" } }))?.id;
+  const codes: Record<TenantKey, string> = { pune: await specimenCode("pune"), noida: await specimenCode("noida"), other: await specimenCode("other") };
+
   const { base, child } = await startServer();
   const statuses: Record<string, number> = {};
   const serverErrors = new Set<string>();
   const covered = new Set<string>();
-  const allRoutes = getAllRoutes();
-  const recordIdProbed = new Set<string>();
-  const recordIdSkipped = new Set<string>();
-  const recordIdStatuses: Record<string, number> = {};
-  const dynamicProbed = new Set<string>();
-  const dynamicSkipped: string[] = [];
+  const recordProbed = new Set<string>();
+  const ownGetOk = new Set<string>();
+  const recordStatuses: Record<string, number> = {};
   try {
-    for (const site of ["noida", "pune"] as Site[]) {
+    // ── actors ──
+    const actors: Actor[] = [];
+    for (const site of ["pune", "noida"] as Site[]) {
       const other: Site = site === "pune" ? "noida" : "pune";
-      const cookies = new Map<Role, string>();
-      for (const role of HOSPITAL_ROLES) cookies.set(role, await login(base, site, role));
-      const foreign = owned[other];
-      const byTable = new Map<string, string[]>();
-      for (const [id, t] of foreign) byTable.set(t, [...(byTable.get(t) ?? []), id]);
-      console.log(`\nAs ${site} users, ${HOSPITAL_ROLES.length} roles (other facility: ${other}, ${foreign.size} foreign ids):`);
-
-      // One probe = one URL, made as every role.
-      const probes: { kind: string; url: string; route: string }[] = [];
-      for (const route of routes) {
-        if (route.segments.some((s) => s.startsWith("["))) {
-          const url = fillDynamic(route, byTable, allTables);
-          if (url) probes.push({ kind: "IDOR", url, route: route.urlPath });
-          else if (site === "noida") dynamicSkipped.push(route.urlPath);
-          continue;
-        }
-        probes.push({ kind: "list", url: route.urlPath, route: route.urlPath });
-        const searchable = route.params.filter((p) => SEARCH_PARAMS.test(p));
-        if (searchable.length) probes.push({ kind: "search", url: `${route.urlPath}?${new URLSearchParams(searchable.map((p) => [p, MARKER]))}`, route: route.urlPath });
-        probes.push({ kind: "cross-facility", url: `${route.urlPath}?facilityId=${FACILITIES[other]}`, route: route.urlPath });
+      for (const role of HOSPITAL_ROLES) {
+        actors.push({
+          name: `${site}/${role}`, cookie: await login(base, site, role), home: site, foreignTenant: other,
+          foreign: merge(owned[other].facility, owned.other.facility, owned.other.org),
+        });
       }
+    }
+    actors.push({ name: "org admin", cookie: await loginEmail(base, ORG_ADMIN_EMAIL), home: "pune", foreignTenant: "other", foreign: merge(owned.other.facility, owned.other.org) });
+    actors.push({ name: "platform admin", cookie: await loginEmail(base, PLATFORM_ADMIN_EMAIL), home: "pune", foreignTenant: null, foreign: null, facilityParam: FACILITIES.pune });
 
-      const tasks = probes.flatMap((probe) =>
-        HOSPITAL_ROLES.map((role) => async () => {
-          const res = await fetch(base + probe.url, { headers: { cookie: cookies.get(role)! } });
-          const text = await res.text();
-          statuses[res.status] = (statuses[res.status] ?? 0) + 1;
-          if (res.status >= 500) serverErrors.add(`${res.status} ${probe.url} (${role})`);
-          if (res.ok) {
-            covered.add(`${probe.kind} ${probe.route}`);
-            if (probe.kind === "IDOR") dynamicProbed.add(probe.route);
+    const send = async (actor: Actor, method: string, url: string) => {
+      const target = actor.facilityParam ? withParam(url, "facilityId", actor.facilityParam) : url;
+      const res = await fetch(base + target, {
+        method,
+        headers: { cookie: actor.cookie, ...(method === "GET" ? {} : { "content-type": "application/json" }) },
+        ...(method === "GET" || method === "DELETE" ? {} : { body: "{}" }),
+      });
+      const text = await res.text();
+      statuses[res.status] = (statuses[res.status] ?? 0) + 1;
+      if (res.status >= 500) serverErrors.add(`${res.status} ${method} ${url} (${actor.name})`);
+      let error = "";
+      try { error = String(JSON.parse(text).error ?? ""); } catch { /* not JSON */ }
+      return { status: res.status, ok: res.ok, text, permission: res.status === 403 && error.startsWith("Missing permission") };
+    };
+    const leakCheck = (actor: Actor, label: string, r: { ok: boolean; status: number; text: string }) => {
+      if (!actor.foreign || !r.ok) return ok();
+      const found = leaks(r.text, actor.foreign);
+      if (found.length) bad(`${label} as ${actor.name} → HTTP ${r.status} returned ${found.length} foreign row(s): ${found.slice(0, 5).join(", ")}`);
+      else ok();
+    };
+
+    // ── URL expansion ──
+    /** Concrete URLs for a route with record segments filled by `pick` (null if a model has no id). */
+    const expand = (route: Route, pick: (model: string) => string | undefined): string[] | null => {
+      let urls = [""];
+      for (let i = 0; i < route.segments.length; i++) {
+        const seg = route.segments[i];
+        if (!seg.startsWith("[")) { urls = urls.map((u) => `${u}/${seg}`); continue; }
+        const t = segmentTarget(route, i);
+        if (t.kind === "static") { urls = urls.flatMap((u) => t.values.map((v) => `${u}/${encodeURIComponent(v)}`)); continue; }
+        if (t.kind === "unmapped") return null;
+        const id = pick(t.model);
+        if (!id) return null;
+        urls = urls.map((u) => `${u}/${id}`);
+      }
+      return urls;
+    };
+    const paramVariants = (route: Route, url: string, key: TenantKey, idTenant: TenantKey): string[] => {
+      const fixed: [string, string][] = [];
+      const enums: [string, string[]][] = [];
+      for (const p of route.params) {
+        if (p === "facilityId") continue;
+        if (p === "workflowId" && idTenant === key && versionedWorkflow) { fixed.push([p, versionedWorkflow]); continue; }
+        if (PARAM_MODELS[p]) { const id = idFor(PARAM_MODELS[p], idTenant); if (id) fixed.push([p, id]); continue; }
+        if (DATE_PARAMS[p]) { fixed.push([p, DATE_PARAMS[p]]); continue; }
+        if (p === "code") { fixed.push([p, codes[idTenant]]); continue; }
+        if (SEARCH_PARAMS.test(p)) { fixed.push([p, MARKER]); continue; }
+        const values = enumValues(route, p);
+        if (values.length) enums.push([p, values]);
+      }
+      if (fixed.length === 0 && enums.length === 0) return [];
+      const head = enums[0];
+      const rest = enums.slice(1).map(([p, v]) => [p, v[0]] as [string, string]);
+      const combos = head ? head[1].map((v) => [[head[0], v] as [string, string], ...rest]) : [rest];
+      return combos.map((c) => `${url}?${new URLSearchParams([...fixed, ...c])}`);
+    };
+
+    // ── 1. static (non-record) GET routes ──
+    const staticTasks: (() => Promise<void>)[] = [];
+    for (const route of allRoutes.filter((r) => r.methods.includes("GET"))) {
+      const hasRecord = route.segments.some((s, i) => s.startsWith("[") && segmentTarget(route, i).kind !== "static");
+      if (hasRecord) continue;
+      for (const url of expand(route, () => undefined) ?? []) {
+        for (const actor of actors) {
+          const variants: [string, string][] = [["list", url], ...paramVariants(route, url, actor.home, actor.home).map((u) => ["params", u] as [string, string])];
+          if (actor.foreignTenant) {
+            variants.push(...paramVariants(route, url, actor.home, actor.foreignTenant).map((u) => ["params-foreign", u] as [string, string]));
+            variants.push(["cross-facility", withParam(url, "facilityId", tenants[actor.foreignTenant].facilityId)]);
           }
-          const found = res.ok ? leaks(text, foreign) : [];
-          if (found.length) bad(`${probe.kind} ${probe.url} as ${site}/${role} → HTTP ${res.status} returned ${found.length} ${other} row(s): ${found.slice(0, 5).join(", ")}`);
-          else ok();
-        })
-      );
-      await pool(tasks, 8);
-      console.log(`  ${tasks.length} requests`);
-
-      // 404 rule: a record-ID route answers an unknown ID and another facility's
-      // ID identically, with 404 (or a 400 both hit before the lookup), never
-      // a 2xx, a 500 or a record-level 403. A role's missing-permission 403
-      // comes before the lookup and is the same for both.
-      const recordTasks: (() => Promise<void>)[] = [];
-      for (const route of allRoutes) {
-        const dyn = route.segments.filter((x) => x.startsWith("["));
-        if (dyn.length === 0 || !dyn.every(isRecordIdSegment)) continue;
-        const foreignUrl = fillDynamic(route, byTable, allTables);
-        if (!foreignUrl) { if (site === "noida") recordIdSkipped.add(route.urlPath); continue; }
-        const unknownUrl = "/" + route.segments.map((x) => (x.startsWith("[") ? UNKNOWN_ID : x)).join("/");
-        recordIdProbed.add(route.urlPath);
-        for (const method of route.methods) {
-          for (const role of HOSPITAL_ROLES) {
-            recordTasks.push(async () => {
-              const call = async (url: string) => {
-                const res = await fetch(base + url, {
-                  method,
-                  headers: { cookie: cookies.get(role)!, ...(method === "GET" ? {} : { "content-type": "application/json" }) },
-                  ...(method === "GET" || method === "DELETE" ? {} : { body: "{}" }),
-                });
-                const text = await res.text();
-                let error = "";
-                try { error = String(JSON.parse(text).error ?? ""); } catch { /* not JSON */ }
-                return { status: res.status, permission: res.status === 403 && error.startsWith("Missing permission"), text };
-              };
-              const [u, f] = [await call(unknownUrl), await call(foreignUrl)];
-              const label = `${method} ${route.urlPath} as ${site}/${role}`;
-              const allowed = (r: typeof u) => r.status === 404 || r.permission || (r.status === 400 && method !== "GET") || r.status === 405;
-              const problems: string[] = [];
-              if (!allowed(u)) problems.push(`unknown id → ${u.status} ${u.text.slice(0, 80)}`);
-              if (!allowed(f)) problems.push(`other facility's id → ${f.status} ${f.text.slice(0, 80)}`);
-              if (u.status !== f.status) problems.push(`unknown ${u.status} ≠ other facility's ${f.status}`);
-              if (problems.length) bad(`404 rule: ${label}: ${problems.join("; ")}`);
-              else ok();
-              recordIdStatuses[`${u.status}`] = (recordIdStatuses[`${u.status}`] ?? 0) + 1;
+          for (const [kind, u] of variants) {
+            staticTasks.push(async () => {
+              const r = await send(actor, "GET", u);
+              if (r.ok && kind !== "params-foreign" && kind !== "cross-facility") covered.add(route.urlPath);
+              leakCheck(actor, `${kind} ${u}`, r);
             });
           }
         }
       }
-      await pool(recordTasks, 8);
-      console.log(`  404 rule: ${recordTasks.length} unknown/other-facility pairs`);
     }
-    await idempotencySection(base, owned);
+    await pool(staticTasks, 16);
+    console.log(`\nStatic routes: ${staticTasks.length} requests`);
+
+    // ── 2. record routes: the 404 rule + own-record leak check ──
+    const recordTasks: (() => Promise<void>)[] = [];
+    for (const route of allRoutes) {
+      const hasRecord = route.segments.some((s, i) => s.startsWith("[") && segmentTarget(route, i).kind === "record");
+      if (!hasRecord) continue;
+      for (const actor of actors) {
+        // Required query parameters (e.g. slots?date=) so the lookup is reached.
+        const qs = (urls: string[] | null) => urls && urls.map((u) => paramVariants(route, u, actor.home, actor.home)[0] ?? u);
+        const own = qs(expand(route, (m) => idFor(m, actor.home)));
+        const unknown = qs(expand(route, () => UNKNOWN_ID));
+        const foreignTenant = actor.foreignTenant;
+        const foreign = foreignTenant
+          ? qs(expand(route, (m) => (isFacilityLevel(m, tenants[actor.home]) ? idFor(m, foreignTenant) : untenanted.has(m) ? undefined : idFor(m, "other"))))
+          : null;
+        for (const method of route.methods) {
+          // Untenanted models (a global plan, a payer) have no "other tenant's
+          // id": only the unknown-id half of the rule applies.
+          if (actor.foreign && unknown && !foreign) {
+            for (const uUrl of unknown) {
+              recordTasks.push(async () => {
+                const u = await send(actor, method, uUrl);
+                recordProbed.add(route.urlPath);
+                const fine = u.status === 404 || u.permission || (u.status === 400 && method !== "GET") || u.status === 405;
+                if (!fine) bad(`404 rule: ${method} ${route.urlPath} as ${actor.name}: unknown id → ${u.status} ${u.text.slice(0, 80)}`);
+                else ok();
+              });
+            }
+          }
+          if (actor.foreign && unknown && foreign) {
+            unknown.forEach((uUrl, k) => {
+              recordTasks.push(async () => {
+                const [u, f] = [await send(actor, method, uUrl), await send(actor, method, foreign[k])];
+                recordProbed.add(route.urlPath);
+                const allowed = (r: typeof u) => r.status === 404 || r.permission || (r.status === 400 && method !== "GET") || r.status === 405;
+                // An identical 403 for both (e.g. the actor lacks a clinical
+                // credential) is decided before the lookup and reveals nothing.
+                const actorLevel = u.status === 403 && f.status === 403 && u.text === f.text;
+                const problems: string[] = [];
+                if (!allowed(u) && !actorLevel) problems.push(`unknown id → ${u.status} ${u.text.slice(0, 80)}`);
+                if (!allowed(f) && !actorLevel) problems.push(`other tenant's id → ${f.status} ${f.text.slice(0, 80)}`);
+                if (u.status !== f.status) problems.push(`unknown ${u.status} ≠ other tenant's ${f.status}`);
+                if (problems.length) bad(`404 rule: ${method} ${route.urlPath} as ${actor.name}: ${problems.join("; ")} [unknown: ${u.status} ${u.text.slice(0, 80)} | other tenant's: ${f.status} ${f.text.slice(0, 80)}]`);
+                else ok();
+                recordStatuses[`${u.status}`] = (recordStatuses[`${u.status}`] ?? 0) + 1;
+              });
+            });
+          }
+          if (method === "GET" && own) {
+            for (const oUrl of own) {
+              recordTasks.push(async () => {
+                const r = await send(actor, "GET", oUrl);
+                if (r.ok) ownGetOk.add(route.urlPath);
+                leakCheck(actor, `own-record ${oUrl}`, r);
+              });
+            }
+          }
+        }
+      }
+    }
+    await pool(recordTasks, 16);
+    console.log(`Record routes: ${recordTasks.length} requests`);
+
+    await idempotencySection(base, { pune: owned.pune.facility, noida: owned.noida.facility });
     await medicationLinkSection(base);
   } finally {
     child.kill("SIGTERM");
     await prisma.$disconnect();
   }
 
+  // ── coverage ──
+  const getRoutesAll = allRoutes.filter((r) => r.methods.includes("GET"));
+  const staticGet = getRoutesAll.filter((r) => !r.segments.some((s, i) => s.startsWith("[") && segmentTarget(r, i).kind !== "static"));
+  const recordRoutes = allRoutes.filter((r) => r.segments.some((s, i) => s.startsWith("[") && segmentTarget(r, i).kind === "record"));
+  const notCovered = staticGet.filter((r) => !covered.has(r.urlPath));
+  const notProbed = recordRoutes.filter((r) => !recordProbed.has(r.urlPath));
   console.log(`\nHTTP statuses seen: ${Object.entries(statuses).map(([s, n]) => `${s}×${n}`).join(" ")}`);
-  if (serverErrors.size) console.log(`Server errors (not tenancy failures, listed for follow-up): ${[...serverErrors].join(", ")}`);
-  const staticRoutes = routes.filter((r) => !r.segments.some((s) => s.startsWith("[")));
-  const listCovered = staticRoutes.filter((r) => covered.has(`list ${r.urlPath}`)).length;
-  console.log(`Static routes answered 2xx to at least one role: ${listCovered}/${staticRoutes.length}`);
-  console.log(`Dynamic routes probed with the other facility's ids: ${routes.length - staticRoutes.length - dynamicSkipped.length} (2xx for ${dynamicProbed.size}, i.e. the rest refused them); skipped (no matching table/data): ${dynamicSkipped.length}`);
-  if (dynamicSkipped.length) console.log(`  skipped: ${dynamicSkipped.join(", ")}`);
-  console.log(`404 rule: ${recordIdProbed.size} record-ID routes probed (statuses for unknown ids: ${Object.entries(recordIdStatuses).map(([k, v]) => `${k}×${v}`).join(" ")}); skipped (no data): ${recordIdSkipped.size}${recordIdSkipped.size ? ` — ${[...recordIdSkipped].join(", ")}` : ""}`);
+  if (serverErrors.size) {
+    for (const e of serverErrors) bad(`server error: ${e}`);
+  }
+  console.log(`Static GET routes answering 2xx to at least one actor: ${staticGet.length - notCovered.length}/${staticGet.length}`);
+  for (const r of notCovered) {
+    const reason = ALLOWLIST[`GET ${r.urlPath}`];
+    if (reason) console.log(`  allowlisted: GET ${r.urlPath} — ${reason}`);
+    else bad(`coverage: GET ${r.urlPath} returned no data to any actor`);
+  }
+  console.log(`Record-ID routes probed by the 404 rule: ${recordRoutes.length - notProbed.length}/${recordRoutes.length} (unknown-id statuses: ${Object.entries(recordStatuses).map(([k, v]) => `${k}×${v}`).join(" ")}); own-record GETs with data: ${ownGetOk.size}`);
+  for (const r of notProbed) {
+    const reason = ALLOWLIST[`ROUTE ${r.urlPath}`];
+    if (reason) console.log(`  allowlisted: ${r.urlPath} — ${reason}`);
+    else bad(`coverage: ${r.urlPath} was never probed`);
+  }
   console.log(`\n${pass} passed, ${fail} failed.`);
   if (fail) {
     console.log("\nFailures:");
-    for (const f of failures) console.log(`  - ${f}`);
+    for (const f of failures.slice(0, 200)) console.log(`  - ${f}`);
+    if (failures.length > 200) console.log(`  … and ${failures.length - 200} more`);
   }
   process.exit(fail === 0 ? 0 : 1);
 }
