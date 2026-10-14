@@ -19,7 +19,7 @@ import {
   AdministrationNotDueError,
   MedicationOrderNotActiveError,
 } from "../src/lib/hospital/medicationLifecycle";
-import { linkMedicationToItem } from "../src/lib/hospital/inventory/itemMedicationLink";
+import { linkMedicationToItem, SYSTEM_ACTOR } from "../src/lib/hospital/inventory/itemMedicationLink";
 import { createAdjustment } from "../src/lib/hospital/inventory/adjustment";
 import { generateAdministrationSchedule } from "../src/lib/hospital/medicationSchedule";
 
@@ -46,7 +46,7 @@ async function main() {
   // genuine dispensed order, not a synthetic administration row).
   const drugName = `P0CRaceDrug${runId}`;
   const item = await prisma.item.create({ data: { facilityId: facility.id, sku: `P0C-RACE-${runId}`, name: drugName, category: "MEDICATION", baseUnit: "TABLET" } });
-  await prisma.$transaction((tx) => linkMedicationToItem(tx, { facilityId: facility.id, drugName, itemId: item.id }));
+  await prisma.$transaction((tx) => linkMedicationToItem(tx, SYSTEM_ACTOR, { target: { scope: "FACILITY", facilityId: facility.id }, drugName, itemId: item.id }));
   const lot = await prisma.itemLot.create({ data: { itemId: item.id, facilityId: facility.id, lotNumber: `P0C-RACE-LOT-${runId}`, status: "ACTIVE", expiresAt: new Date("2028-01-01") } });
   await prisma.$transaction((tx) =>
     createAdjustment(tx, { facilityId: facility.id, itemId: item.id, lotId: lot.id, locationId: pharmacy.id, quantityDelta: 20, reason: "FOUND", requestedByStaffId: pharmacist.id, actorUserId: pharmacist.userId, idempotencyKey: `p0c-seed-${runId}` })
@@ -111,7 +111,7 @@ async function main() {
   {
     const otherDrug = `P0CIllegalStateDrug${runId}`;
     const otherItem = await prisma.item.create({ data: { facilityId: facility.id, sku: `P0C-ILLEGAL-${runId}`, name: otherDrug, category: "MEDICATION", baseUnit: "TABLET" } });
-    await prisma.$transaction((tx) => linkMedicationToItem(tx, { facilityId: facility.id, drugName: otherDrug, itemId: otherItem.id }));
+    await prisma.$transaction((tx) => linkMedicationToItem(tx, SYSTEM_ACTOR, { target: { scope: "FACILITY", facilityId: facility.id }, drugName: otherDrug, itemId: otherItem.id }));
     const otherOrder = await createMedicationOrder({
       facilityId: facility.id,
       encounterId: encounter.id,

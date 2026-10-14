@@ -11,7 +11,7 @@
 import { PrismaClient } from "@prisma/client";
 import { createItem } from "../../src/lib/hospital/inventory/items";
 import { createStockLocation } from "../../src/lib/hospital/inventory/locations";
-import { linkMedicationToItem } from "../../src/lib/hospital/inventory/itemMedicationLink";
+import { linkMedicationToItem, SYSTEM_ACTOR } from "../../src/lib/hospital/inventory/itemMedicationLink";
 import { createSupplier } from "../../src/lib/hospital/procurement/suppliers";
 import { createRequisitionDraft, addRequisitionLine, submitRequisition, approveRequisition } from "../../src/lib/hospital/procurement/requisitions";
 import { createPurchaseOrderDraft, addPurchaseOrderLine, submitForApproval, approvePurchaseOrder } from "../../src/lib/hospital/procurement/purchaseOrders";
@@ -60,7 +60,7 @@ export async function seedPhase6aInventory(prisma: PrismaClient) {
       const item = await prisma.$transaction((tx) =>
         createItem(tx, { facilityId: facility.id, sku: `${drug.sku}-${facility.id}`, name: drug.drugName, category: "MEDICATION", baseUnit: "TABLET", reorderPoint: 20, reorderQuantity: 200 })
       );
-      await prisma.$transaction((tx) => linkMedicationToItem(tx, { facilityId: facility.id, drugName: drug.drugName, itemId: item.id }));
+      await prisma.$transaction((tx) => linkMedicationToItem(tx, SYSTEM_ACTOR, { target: { scope: "FACILITY", facilityId: facility.id }, drugName: drug.drugName, itemId: item.id }));
       items.push({ itemId: item.id, drugName: drug.drugName });
     }
     await prisma.$transaction((tx) =>

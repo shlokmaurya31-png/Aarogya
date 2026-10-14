@@ -1,6 +1,9 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { BadRequestError } from "@/lib/auth/rbac";
+import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
+import { recordAuditEvent } from "@/lib/auth/audit";
+import { roleHasPermission } from "@/lib/auth/permissions";
+import { TenantAccessError, type ActorMemberships } from "@/lib/auth/tenantContext";
 import { assertItemInFacility } from "./facilityScope";
 
 type Tx = Prisma.TransactionClient;
@@ -26,49 +29,147 @@ function isDuplicateLinkError(err: unknown): boolean {
 }
 
 /**
- * `facilityId` here is the caller's OWN facility (server-derived by the
- * route via requireFacilityStaff, never client-trusted) — it is the scope
- * the new link is created at (or the global scope, if input.facilityId is
- * explicitly null), NOT necessarily the item's facilityId. assertItemInFacility
- * separately proves itemId actually belongs to that same facility (or is a
- * global item), closing the same class of IDOR gap Phase 6A's own
- * facilityScope.ts was built to close for every other inventory mutation.
+ * Where a link applies. Resolution is facility → organization → global.
+ *   FACILITY      one facility; created by that facility's inventory manager
+ *   ORGANIZATION  every facility of one organization; created by its org admin
+ *   GLOBAL        every facility; created by a platform admin
+ */
+export type MedicationLinkTarget =
+  | { scope: "FACILITY"; facilityId: string }
+  | { scope: "ORGANIZATION"; organizationId: string }
+  | { scope: "GLOBAL" };
+
+/**
+ * Seed and test fixtures create links without a request. They pass this
+ * explicitly; a request path always passes the caller's memberships, so the
+ * scope authorization below can never be skipped by accident.
+ */
+export const SYSTEM_ACTOR = { system: true } as const;
+export type MedicationLinkActor = ActorMemberships | typeof SYSTEM_ACTOR;
+
+/**
+ * Who may create a link at each scope. A caller outside the scope's tenant
+ * gets 404 (existence is not confirmed); a member without the right gets 403.
+ */
+export function assertCanManageLinkScope(actor: ActorMemberships, target: MedicationLinkTarget): void {
+  if (target.scope === "GLOBAL") {
+    if (!actor.isPlatformAdmin) throw new TenantAccessError("Global medication links can only be created by a platform administrator.");
+    return;
+  }
+  if (target.scope === "ORGANIZATION") {
+    if (!actor.orgMemberships.has(target.organizationId)) throw new NotFoundError();
+    if (!actor.adminOrgIds.has(target.organizationId)) {
+      throw new TenantAccessError("Organization medication links can only be created by an administrator of that organization.");
+    }
+    return;
+  }
+  const member = actor.facilityMemberships.has(target.facilityId) || actor.primaryFacilityId === target.facilityId;
+  if (!member) throw new NotFoundError();
+  if (!roleHasPermission(actor.role, "inventory:item:manage")) {
+    throw new TenantAccessError("Facility medication links can only be created by that facility's inventory manager.");
+  }
+}
+
+function scopeColumns(target: MedicationLinkTarget) {
+  if (target.scope === "FACILITY") return { scope: target.scope, scopeRef: target.facilityId, facilityId: target.facilityId, organizationId: null };
+  if (target.scope === "ORGANIZATION") return { scope: target.scope, scopeRef: target.organizationId, facilityId: null, organizationId: target.organizationId };
+  return { scope: target.scope, scopeRef: "GLOBAL", facilityId: null, organizationId: null };
+}
+
+/**
+ * Creates a drug-name → item link at `target`'s scope, after authorizing
+ * `actor` for that scope. A FACILITY link may point at that facility's own
+ * item or a global catalog item (assertItemInFacility). GLOBAL and
+ * ORGANIZATION links are resolved by many facilities, so they may only point
+ * at a global catalog item: one facility's own item must never be shown to,
+ * or dispensed at, another facility. Every link change is audited in the same
+ * transaction, with the scope in the detail.
  */
 export async function linkMedicationToItem(
   tx: Tx,
-  input: { facilityId: string; global?: boolean; drugName: string; itemId: string }
+  actor: MedicationLinkActor,
+  input: { target: MedicationLinkTarget; drugName: string; itemId: string }
 ) {
-  const linkFacilityId = input.global ? null : input.facilityId;
-  const item = await assertItemInFacility(tx, input.itemId, input.facilityId);
+  const { target } = input;
+  if (!("system" in actor)) assertCanManageLinkScope(actor, target);
+
+  const item =
+    target.scope === "FACILITY"
+      ? await assertItemInFacility(tx, input.itemId, target.facilityId)
+      : await tx.item.findUnique({ where: { id: input.itemId } });
+  if (!item) throw new NotFoundError("Item not found.");
+  if (target.scope !== "FACILITY" && item.facilityId !== null) {
+    throw new BadRequestError(`A ${target.scope.toLowerCase()} link must point at a global catalog item, not one facility's item.`);
+  }
   if (!item.active) throw new BadRequestError("Cannot link a drug name to an inactive item.");
   if (item.category !== "MEDICATION") throw new BadRequestError(`Item category is ${item.category}, not MEDICATION.`);
-  // A global link is visible to, and resolved by, EVERY facility, so it may only
-  // point at a global catalog item. Linking one facility's own item globally
-  // would show that item to every other facility and dispense it there.
-  if (input.global && item.facilityId !== null) {
-    throw new BadRequestError("A global link must point at a global catalog item, not one facility's item.");
+  if (target.scope === "ORGANIZATION") {
+    const org = await tx.organization.findUnique({ where: { id: target.organizationId }, select: { id: true } });
+    if (!org) throw new NotFoundError();
   }
 
   const drugNameKey = normalizeDrugName(input.drugName);
-  const existing = await tx.medicationItemLink.findFirst({ where: { facilityId: linkFacilityId, drugNameKey } });
+  const columns = scopeColumns(target);
+  const existing = await tx.medicationItemLink.findUnique({ where: { scopeRef_drugNameKey: { scopeRef: columns.scopeRef, drugNameKey } } });
   if (existing) throw new BadRequestError(`"${input.drugName}" is already linked to an item at this scope.`);
+  let link;
   try {
-    return await tx.medicationItemLink.create({ data: { facilityId: linkFacilityId, drugNameKey, itemId: input.itemId } });
+    link = await tx.medicationItemLink.create({ data: { ...columns, drugNameKey, itemId: input.itemId } });
   } catch (err) {
     if (isDuplicateLinkError(err)) throw new BadRequestError(`"${input.drugName}" is already linked to an item at this scope.`);
     throw err;
   }
+  await recordAuditEvent(
+    "hospital.inventory.medicationLinked",
+    "system" in actor ? null : actor.userId,
+    { linkId: link.id, scope: target.scope, scopeRef: columns.scopeRef, drugNameKey, itemId: input.itemId },
+    { facilityId: columns.facilityId ?? undefined, organizationId: columns.organizationId ?? undefined },
+    tx
+  );
+  return link;
 }
 
-/** Facility-scoped link takes precedence over a global (facilityId=null) one. Returns null (not a thrown error) when unmapped — the caller (dispenseMedication) decides whether that's fatal. */
+/** The scope keys a facility resolves through, most specific first. */
+async function scopeChainFor(db: Db, facilityId: string): Promise<string[]> {
+  const facility = await db.facility.findUnique({ where: { id: facilityId }, select: { organizationId: true } });
+  return facility ? [facilityId, facility.organizationId, "GLOBAL"] : [facilityId, "GLOBAL"];
+}
+
+/**
+ * Links visible at a facility: its own, its organization's and global ones.
+ * Organization and global links only ever count when they point at a global
+ * catalog item (defense in depth against rows written before that rule).
+ */
+function visibleAt(chain: string[], facilityId: string): Prisma.MedicationItemLinkWhereInput {
+  return {
+    OR: [
+      { scope: "FACILITY", scopeRef: facilityId },
+      { scope: { in: ["ORGANIZATION", "GLOBAL"] }, scopeRef: { in: chain.slice(1) }, item: { facilityId: null } },
+    ],
+  };
+}
+
+export async function listMedicationLinksForFacility(db: Db, facilityId: string) {
+  const chain = await scopeChainFor(db, facilityId);
+  return db.medicationItemLink.findMany({
+    where: visibleAt(chain, facilityId),
+    include: { item: true },
+    orderBy: [{ drugNameKey: "asc" }, { scope: "desc" }, { id: "asc" }],
+  });
+}
+
+/** Most specific link wins: facility, then organization, then global. Returns null (not a thrown error) when unmapped — the caller (dispenseMedication) decides whether that's fatal. */
 export async function resolveItemForDrugName(db: Db, facilityId: string, drugName: string) {
   const drugNameKey = normalizeDrugName(drugName);
-  const facilityLink = await db.medicationItemLink.findFirst({ where: { facilityId, drugNameKey }, include: { item: true } });
-  if (facilityLink) return facilityLink.item;
-  // facilityId is NULL here, and Postgres unique constraints treat NULLs as
-  // distinct, so several global links can share a key: take the oldest.
-  // Only global links to global items: a stray global link to one facility's
-  // item must never resolve at another facility.
-  const globalLink = await db.medicationItemLink.findFirst({ where: { facilityId: null, drugNameKey, item: { facilityId: null } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }], include: { item: true } });
-  return globalLink?.item ?? null;
+  const chain = await scopeChainFor(db, facilityId);
+  const links = await db.medicationItemLink.findMany({
+    where: { drugNameKey, ...visibleAt(chain, facilityId) },
+    include: { item: true },
+  });
+  // scopeRef + drugNameKey is unique, so there is at most one link per scope.
+  for (const ref of chain) {
+    const link = links.find((l) => l.scopeRef === ref);
+    if (link) return link.item;
+  }
+  return null;
 }

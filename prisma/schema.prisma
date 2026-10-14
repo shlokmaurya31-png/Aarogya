@@ -968,6 +968,7 @@ model Organization {
   collectionActivities CollectionActivity[]
   // Phase D6 — transactional domain-event outbox rows scoped to this org.
   domainEvents         DomainEventOutbox[]
+  medicationItemLinks  MedicationItemLink[]
 
   @@index([status])
 }
@@ -5385,16 +5386,38 @@ model ItemUnitConversion {
  * medicationLifecycle.ts already applies for its Phase 5 charge code, so
  * there is one normalization convention, not two.
  */
-model MedicationItemLink {
-  id          String    @id @default(cuid())
-  facility    Facility? @relation(fields: [facilityId], references: [id])
-  facilityId  String?
-  drugNameKey String
-  item        Item      @relation(fields: [itemId], references: [id])
-  itemId      String
-  createdAt   DateTime  @default(now())
+/// Who a drug-name → item mapping applies to, and who may create it:
+/// GLOBAL (every facility; platform admin), ORGANIZATION (every facility of
+/// one organization; that organization's admin), FACILITY (one facility; that
+/// facility's inventory manager). Resolution is facility → organization →
+/// global. GLOBAL and ORGANIZATION links may only point at global catalog
+/// items (Item.facilityId NULL), so no facility's own item crosses a tenant.
+enum MedicationLinkScope {
+  GLOBAL
+  ORGANIZATION
+  FACILITY
+}
 
-  @@unique([facilityId, drugNameKey])
+model MedicationItemLink {
+  id             String              @id @default(cuid())
+  scope          MedicationLinkScope @default(FACILITY)
+  /// facilityId, organizationId or "GLOBAL": the uniqueness namespace. It is
+  /// never NULL, so a second GLOBAL link for the same drug is a real unique
+  /// violation (Postgres treats NULLs as distinct). A CHECK constraint in the
+  /// migration keeps scope, scopeRef and the two ids consistent.
+  scopeRef       String
+  facility       Facility?           @relation(fields: [facilityId], references: [id])
+  facilityId     String?
+  organization   Organization?       @relation(fields: [organizationId], references: [id])
+  organizationId String?
+  drugNameKey    String
+  item           Item                @relation(fields: [itemId], references: [id])
+  itemId         String
+  createdAt      DateTime            @default(now())
+
+  @@unique([scopeRef, drugNameKey])
+  @@index([facilityId])
+  @@index([organizationId])
 }
 
 /**

@@ -18,7 +18,10 @@
  *   2. every dynamic GET route (/[id]/...) is called with IDs that belong to
  *      the OTHER facility (IDOR probe);
  *   3. idempotency keys: a payment / refund key already used by the other
- *      facility must be refused (409), never replay the other facility's row.
+ *      facility must be refused (409), never replay the other facility's row;
+ *   4. medication-link scopes, per role: GLOBAL = platform admin, ORGANIZATION
+ *      = org admin, FACILITY = that facility's inventory manager; changes to
+ *      GLOBAL / ORGANIZATION links are audited.
  *
  * The assertion is data-driven, not per-endpoint: every row id in every table
  * with a facilityId column is loaded per facility, and a response passes only
@@ -60,8 +63,38 @@ function bad(label: string) { fail++; failures.push(label); console.log(`  ✗ $
 
 const sweepEmail = (site: Site, role: Role) => `tenancy-sweep-${site}-${role.toLowerCase().replace(/_/g, "-")}@sweep.aarogya`;
 
+const ORG_ADMIN_EMAIL = "tenancy-sweep-org-admin@sweep.aarogya";
+const OTHER_ORG_ADMIN_EMAIL = "tenancy-sweep-other-org-admin@sweep.aarogya";
+const PLATFORM_ADMIN_EMAIL = "tenancy-sweep-platform-admin@sweep.aarogya";
+const OTHER_ORG_ID = "org-tenancy-sweep-other";
+const GLOBAL_MED_SKU = "SWEEP-GLOBAL-MED";
+
+/** Users for the medication-link scope checks, plus a global catalog item. */
+async function seedLinkActors(password: string) {
+  const org = (await prisma.facility.findUniqueOrThrow({ where: { id: FACILITIES.pune } })).organizationId;
+  const other = await prisma.organization.upsert({ where: { id: OTHER_ORG_ID }, update: {}, create: { id: OTHER_ORG_ID, name: "Tenancy Sweep Other Org" } });
+  const upsertUser = (email: string, role: Role) =>
+    prisma.user.upsert({ where: { email }, update: { passwordHash: password, role }, create: { email, displayName: email, role, passwordHash: password } });
+  const orgAdmin = await upsertUser(ORG_ADMIN_EMAIL, Role.HOSPITAL_ADMIN);
+  await prisma.organizationMembership.upsert({
+    where: { userId_organizationId: { userId: orgAdmin.id, organizationId: org } },
+    update: { isAdmin: true }, create: { userId: orgAdmin.id, organizationId: org, isAdmin: true },
+  });
+  const otherAdmin = await upsertUser(OTHER_ORG_ADMIN_EMAIL, Role.HOSPITAL_ADMIN);
+  await prisma.organizationMembership.upsert({
+    where: { userId_organizationId: { userId: otherAdmin.id, organizationId: other.id } },
+    update: { isAdmin: true }, create: { userId: otherAdmin.id, organizationId: other.id, isAdmin: true },
+  });
+  await upsertUser(PLATFORM_ADMIN_EMAIL, Role.AAROGYA_ADMIN);
+  await prisma.item.upsert({
+    where: { sku: GLOBAL_MED_SKU }, update: { active: true },
+    create: { sku: GLOBAL_MED_SKU, facilityId: null, name: `${MARKER} Global Medication`, category: ItemCategory.MEDICATION, baseUnit: UnitOfMeasure.TABLET },
+  });
+}
+
 async function seedSweepData() {
   const password = await hashPassword(PASSWORD);
+  await seedLinkActors(password);
   for (const site of Object.keys(FACILITIES) as Site[]) {
     const facilityId = FACILITIES[site];
     const facility = await prisma.facility.findUniqueOrThrow({ where: { id: facilityId } });
@@ -229,18 +262,19 @@ async function startServer(): Promise<{ base: string; child: ChildProcess }> {
 }
 
 let loginCount = 0;
-async function login(base: string, site: Site, role: Role): Promise<string> {
+async function loginEmail(base: string, email: string): Promise<string> {
   loginCount++;
   const res = await fetch(base + "/api/scholar-auth/login", {
     method: "POST",
     // A distinct client address per login keeps the per-IP login limit out of the way.
-    headers: { "content-type": "application/json", "x-forwarded-for": `10.77.0.${loginCount}` },
-    body: JSON.stringify({ email: sweepEmail(site, role), password: PASSWORD }),
+    headers: { "content-type": "application/json", "x-forwarded-for": `10.77.${Math.floor(loginCount / 250)}.${loginCount % 250}` },
+    body: JSON.stringify({ email, password: PASSWORD }),
   });
   const cookies = res.headers.getSetCookie().map((c) => c.split(";")[0]);
-  if (res.status !== 200 || cookies.length === 0) throw new Error(`login as ${site}/${role} failed: HTTP ${res.status} ${await res.text()}`);
+  if (res.status !== 200 || cookies.length === 0) throw new Error(`login as ${email} failed: HTTP ${res.status} ${await res.text()}`);
   return cookies.join("; ");
 }
+const login = (base: string, site: Site, role: Role) => loginEmail(base, sweepEmail(site, role));
 
 /** Runs `tasks` with at most `limit` in flight. */
 async function pool<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
@@ -267,6 +301,77 @@ function leaks(text: string, foreign: Map<string, string>): string[] {
     if (table) hits.add(`${table}:${token}`);
   }
   return [...hits];
+}
+
+/**
+ * Medication-link scopes: GLOBAL = platform admin only, ORGANIZATION = that
+ * org's admin only, FACILITY = that facility's inventory manager. Outside the
+ * scope's tenant → 404; inside it without the right → 403. Every GLOBAL and
+ * ORGANIZATION link writes an audit event.
+ */
+async function medicationLinkSection(base: string) {
+  console.log("\nMedication link scopes:");
+  const run = Date.now().toString(36);
+  const org = (await prisma.facility.findUniqueOrThrow({ where: { id: FACILITIES.pune } })).organizationId;
+  const globalItem = await prisma.item.findUniqueOrThrow({ where: { sku: GLOBAL_MED_SKU } });
+  const noidaItem = await prisma.item.findFirstOrThrow({ where: { facilityId: FACILITIES.noida, category: "MEDICATION", active: true }, orderBy: [{ name: "asc" }, { id: "asc" }] }).catch(() =>
+    prisma.item.create({ data: { sku: `SWEEP-NOIDA-MED-${run}`, facilityId: FACILITIES.noida, name: `${MARKER} Noida Medication`, category: ItemCategory.MEDICATION, baseUnit: UnitOfMeasure.TABLET } })
+  );
+  const actors = {
+    "noida inventory manager": await login(base, "noida", Role.HOSPITAL_ADMIN),
+    "noida doctor": await login(base, "noida", Role.DOCTOR),
+    "org admin": await loginEmail(base, ORG_ADMIN_EMAIL),
+    "other org's admin": await loginEmail(base, OTHER_ORG_ADMIN_EMAIL),
+    "platform admin": await loginEmail(base, PLATFORM_ADMIN_EMAIL),
+  };
+  type Actor = keyof typeof actors;
+  let n = 0;
+  const attempt = async (actor: Actor, body: Record<string, unknown>, want: number, label: string) => {
+    const res = await fetch(base + "/api/hospital/inventory/medication-links", {
+      method: "POST",
+      headers: { cookie: actors[actor], "content-type": "application/json" },
+      body: JSON.stringify({ drugName: `SweepLinkDrug-${run}-${++n}`, ...body }),
+    });
+    const text = await res.text();
+    if (res.status === want) { ok(); console.log(`  ✓ ${actor}: ${label} → ${want}`); }
+    else bad(`medication link: ${actor} ${label} → HTTP ${res.status}, expected ${want} (${text.slice(0, 120)})`);
+    return res.status === 200 ? (JSON.parse(text).link as { id: string }) : null;
+  };
+
+  // FACILITY
+  await attempt("noida inventory manager", { scope: "FACILITY", facilityId: FACILITIES.noida, itemId: noidaItem.id }, 200, "FACILITY link at own facility");
+  await attempt("noida inventory manager", { scope: "FACILITY", facilityId: FACILITIES.pune, itemId: globalItem.id }, 404, "FACILITY link at another facility");
+  await attempt("noida doctor", { scope: "FACILITY", facilityId: FACILITIES.noida, itemId: noidaItem.id }, 403, "FACILITY link without inventory:item:manage");
+  // ORGANIZATION
+  await attempt("noida inventory manager", { scope: "ORGANIZATION", organizationId: org, itemId: globalItem.id }, 403, "ORGANIZATION link as a non-admin member");
+  await attempt("other org's admin", { scope: "ORGANIZATION", organizationId: org, itemId: globalItem.id }, 404, "ORGANIZATION link for an org it doesn't belong to");
+  await attempt("org admin", { scope: "ORGANIZATION", organizationId: org, itemId: noidaItem.id }, 400, "ORGANIZATION link to one facility's item");
+  const orgLink = await attempt("org admin", { scope: "ORGANIZATION", organizationId: org, itemId: globalItem.id }, 200, "ORGANIZATION link to a global item");
+  // GLOBAL
+  await attempt("noida inventory manager", { scope: "GLOBAL", itemId: globalItem.id }, 403, "GLOBAL link");
+  await attempt("org admin", { scope: "GLOBAL", itemId: globalItem.id }, 403, "GLOBAL link");
+  await attempt("platform admin", { scope: "GLOBAL", itemId: noidaItem.id }, 400, "GLOBAL link to one facility's item");
+  const globalLink = await attempt("platform admin", { scope: "GLOBAL", itemId: globalItem.id }, 200, "GLOBAL link to a global item");
+
+  // Every GLOBAL / ORGANIZATION link change is audited.
+  for (const [label, link, scope] of [["ORGANIZATION", orgLink, "ORGANIZATION"], ["GLOBAL", globalLink, "GLOBAL"]] as const) {
+    if (!link) continue;
+    const audit = await prisma.auditEvent.findFirst({ where: { type: "hospital.inventory.medicationLinked", detail: { path: ["linkId"], equals: link.id } } });
+    const okAudit = audit !== null && (audit.detail as { scope?: string } | null)?.scope === scope;
+    if (okAudit) { ok(); console.log(`  ✓ ${label} link wrote an audit event`); }
+    else bad(`medication link: the ${label} link wrote no audit event with scope ${scope}`);
+  }
+
+  // Both facilities resolve through the org and global links.
+  for (const site of ["pune", "noida"] as Site[]) {
+    const res = await fetch(base + "/api/hospital/inventory/medication-links", { headers: { cookie: await login(base, site, Role.PHARMACIST) } }); // PHARMACIST holds inventory:item:view
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !Array.isArray(json.links)) { bad(`medication link: ${site} list → HTTP ${res.status} ${JSON.stringify(json).slice(0, 160)}`); continue; }
+    const ids = (json.links as { id: string }[]).map((l) => l.id);
+    const visible = [orgLink, globalLink].every((l) => !l || ids.includes(l.id));
+    if (visible) { ok(); console.log(`  ✓ ${site} sees the organization and global links`); }
+    else bad(`medication link: ${site} does not see the organization/global links`);
+  }
 }
 
 /** Idempotency keys are client-supplied and globally unique; replay must stay in-facility. */
@@ -368,6 +473,7 @@ async function main() {
       console.log(`  ${tasks.length} requests`);
     }
     await idempotencySection(base, owned);
+    await medicationLinkSection(base);
   } finally {
     child.kill("SIGTERM");
     await prisma.$disconnect();
