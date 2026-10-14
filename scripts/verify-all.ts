@@ -88,6 +88,8 @@ const ORDER = [
   "verify-postgres-verification-uploads",
   "verify-postgres-patient-self-registration",
   "verify-postgres-patient-documents",
+  // Gate 2: one patient, one record, everywhere (HTTP; builds the app)
+  "verify-postgres-one-patient",
 ];
 const LAST = "verify-postgres-phase-b-final";
 
