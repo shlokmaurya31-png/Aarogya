@@ -86,6 +86,7 @@ const ORDER = [
   // Week 2: identity and records
   "verify-postgres-ai-assistant",
   "verify-postgres-verification-uploads",
+  "verify-postgres-patient-self-registration",
 ];
 const LAST = "verify-postgres-phase-b-final";
 

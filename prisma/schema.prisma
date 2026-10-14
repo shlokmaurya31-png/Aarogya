@@ -98,6 +98,7 @@ model User {
   // patients' records (family/caregiver). This is the DELEGATE side; the
   // grantor side lives on Patient.delegationsGranted.
   patientDelegationsHeld PatientDelegation[] @relation("DelegateUser")
+  patientLinkRequests    PatientLinkRequest[]
 
   @@index([role])
 }
@@ -1086,6 +1087,7 @@ model Facility {
   goodsReceiptSequences  GoodsReceiptSequence[]
   medicationItemLinks    MedicationItemLink[]
   formularyEntries       FormularyEntry[]
+  patientLinkRequests    PatientLinkRequest[]
 
   @@unique([organizationId, slug])
   @@index([organizationId])
@@ -2213,6 +2215,7 @@ model Patient {
   // Phase D11 — Patient Experience. Family/caregiver delegations this patient
   // has granted over their own record (grantor side).
   delegationsGranted PatientDelegation[] @relation("PatientDelegations")
+  linkRequests       PatientLinkRequest[]
 
   @@index([facilityId])
   @@index([mergedIntoId])
@@ -9152,3 +9155,48 @@ model GeneratedDocument {
   @@index([facilityId, type])
   @@index([facilityId, patientId])
 }
+
+/// A self-registered patient account that likely matches an existing hospital
+/// record. Never auto-merged: the account is linked to the record only after
+/// the person proves control of the phone already on that record (OTP), or a
+/// front-desk reviewer decides. See src/lib/patient/selfRegistration.ts.
+enum PatientLinkStatus {
+  OTP_SENT
+  FRONT_DESK_REVIEW
+  LINKED
+  CREATED_NEW
+  REJECTED
+}
+
+model PatientLinkRequest {
+  id                 String            @id @default(cuid())
+  user               User              @relation(fields: [userId], references: [id])
+  userId             String
+  facility           Facility          @relation(fields: [facilityId], references: [id])
+  facilityId         String
+  /// The best-matching existing record (never shown to the registrant).
+  candidatePatient   Patient?          @relation(fields: [candidatePatientId], references: [id])
+  candidatePatientId String?
+  status             PatientLinkStatus
+  matchConfidence    String
+  matchScore         Int
+  matchedOn          String[]
+  /// What the registrant typed, for the reviewer (the record is not changed).
+  claimedName        String
+  claimedPhone       String?
+  claimedDob         DateTime?
+  claimedSex         String
+  /// sha256 of the one-time code; the code itself is never stored.
+  otpHash            String?
+  otpExpiresAt       DateTime?
+  otpAttempts        Int               @default(0)
+  reviewReason       String?
+  resolvedByUserId   String?
+  resolvedAt         DateTime?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  @@index([facilityId, status])
+  @@index([userId])
+}
+
