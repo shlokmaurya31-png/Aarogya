@@ -2034,8 +2034,6 @@ model Bed {
 
   stateEvents        BedStateEvent[]
   admissions         Admission[]
-  transfersFrom      Transfer[]          @relation("TransferFromBed")
-  transfersTo        Transfer[]          @relation("TransferToBed")
   admissionRequests  AdmissionRequest[]
   transferRequests   TransferRequest[]
   encounterLocations EncounterLocation[]
@@ -2440,17 +2438,21 @@ model Admission {
   @@index([bedId])
 }
 
+/// D5: the record of a completed bed move (who, why, from which request).
+/// Where the patient was, and when, is EncounterLocation: the move closes
+/// `fromLocation` and opens `toLocation` in the same transaction.
 model Transfer {
-  id            String    @id @default(cuid())
-  admission     Admission @relation(fields: [admissionId], references: [id])
-  admissionId   String
-  fromBed       Bed       @relation("TransferFromBed", fields: [fromBedId], references: [id])
-  fromBedId     String
-  toBed         Bed       @relation("TransferToBed", fields: [toBedId], references: [id])
-  toBedId       String
-  reason        String
-  byUserId      String
-  transferredAt DateTime  @default(now())
+  id             String             @id @default(cuid())
+  admission      Admission          @relation(fields: [admissionId], references: [id])
+  admissionId    String
+  reason         String
+  byUserId       String
+  /// The location the move closed (absent only if the encounter had none open).
+  fromLocation   EncounterLocation? @relation("TransferFromLocation", fields: [fromLocationId], references: [id])
+  fromLocationId String?            @unique
+  /// The location the move opened; its assignedAt is when the move happened.
+  toLocation     EncounterLocation  @relation("TransferToLocation", fields: [toLocationId], references: [id])
+  toLocationId   String             @unique
 
   transferRequest TransferRequest?
 
@@ -4103,6 +4105,8 @@ model TriageAssessment {
  * location. Deliberately lighter-weight than `Admission` — an ED patient
  * is not admitted, so this does not touch `Bed.status`/occupancy.
  */
+/// D5: the only location history. Bed moves (Transfer) and every other
+/// placement write here.
 model EncounterLocation {
   id                String    @id @default(cuid())
   encounter         Encounter @relation(fields: [encounterId], references: [id])
@@ -4115,6 +4119,8 @@ model EncounterLocation {
   assignedByStaffId String?
   assignedAt        DateTime  @default(now())
   releasedAt        DateTime?
+  transferOut       Transfer? @relation("TransferFromLocation")
+  transferIn        Transfer? @relation("TransferToLocation")
 
   @@index([encounterId])
   @@index([bedId])

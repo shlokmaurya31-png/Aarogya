@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { BedStatus, EncounterStatus } from "@prisma/client";
+import { BedStatus, EncounterStatus, type Prisma } from "@prisma/client";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { emitDomainEvent } from "@/lib/events/emit";
 import { facilityOrganizationId } from "@/lib/events/tenant";
@@ -112,14 +112,23 @@ export async function admitPatient(input: {
   return admission;
 }
 
+type TransferInput = { admissionId: string; toBedId: string; reason: string; byUserId: string };
+
 /** Transfer: releases the old bed to CLEANING, occupies the new one, all in one transaction. */
-export async function transferPatient(input: {
-  admissionId: string;
-  toBedId: string;
-  reason: string;
-  byUserId: string;
-}) {
-  const { transfer, auditContext } = await prisma.$transaction(async (tx) => {
+export async function transferPatient(input: TransferInput) {
+  const { transfer, auditContext } = await prisma.$transaction((tx) => transferPatientInTx(tx, input));
+  await recordAuditEvent("hospital.admission.transferred", input.byUserId, { admissionId: input.admissionId, toBedId: input.toBedId }, auditContext);
+  return transfer;
+}
+
+/**
+ * The bed move inside the caller's transaction (completeTransferRequest uses
+ * it so the request completes in the same transaction). D5: the location
+ * history is EncounterLocation; the Transfer points at the row it closed and
+ * the row it opened.
+ */
+export async function transferPatientInTx(tx: Prisma.TransactionClient, input: TransferInput) {
+  {
     const admission = await tx.admission.findUniqueOrThrow({ where: { id: input.admissionId }, include: { encounter: true } });
     const toBed = await tx.bed.findUniqueOrThrow({ where: { id: input.toBedId } });
     // Same reasoning as admitPatient() above — a bed this transfer itself reserved is legal.
@@ -139,39 +148,54 @@ export async function transferPatient(input: {
       data: { bedId: toBed.id, fromStatus: toBed.status, toStatus: BedStatus.OCCUPIED, reason: `Transfer in: ${input.reason}`, byUserId: input.byUserId },
     });
 
-    const created = await tx.transfer.create({
-      data: {
-        admissionId: input.admissionId,
-        fromBedId: fromBed.id,
-        toBedId: toBed.id,
-        reason: input.reason,
-        byUserId: input.byUserId,
-      },
-    });
-
     await tx.admission.update({ where: { id: input.admissionId }, data: { bedId: toBed.id } });
 
     // Location history: close the current open location, open one at the
     // destination bed — so the encounter never shows two simultaneous
     // active locations.
+    const now = new Date();
+    const open = await tx.encounterLocation.findFirst({
+      where: { encounterId: admission.encounterId, releasedAt: null },
+      orderBy: [{ assignedAt: "desc" }, { id: "desc" }],
+    });
     await tx.encounterLocation.updateMany({
       where: { encounterId: admission.encounterId, releasedAt: null },
-      data: { releasedAt: new Date() },
+      data: { releasedAt: now },
     });
-    await tx.encounterLocation.create({
+    const opened = await tx.encounterLocation.create({
       data: {
         encounterId: admission.encounterId,
         facilityId: toBed.facilityId,
         bedId: toBed.id,
         assignedByStaffId: admission.admittingStaffId,
+        assignedAt: now,
+      },
+    });
+
+    const created = await tx.transfer.create({
+      data: {
+        admissionId: input.admissionId,
+        reason: input.reason,
+        byUserId: input.byUserId,
+        fromLocationId: open?.id,
+        toLocationId: opened.id,
       },
     });
 
     return { transfer: created, auditContext: { facilityId: admission.encounter.facilityId, patientId: admission.encounter.patientId, encounterId: admission.encounterId } };
-  });
+  }
+}
 
-  await recordAuditEvent("hospital.admission.transferred", input.byUserId, { admissionId: input.admissionId, toBedId: input.toBedId }, auditContext);
-  return transfer;
+/** Include for reading a Transfer's from/to beds and time (from its EncounterLocation rows). */
+export const TRANSFER_WITH_LOCATIONS = {
+  fromLocation: { include: { bed: true } },
+  toLocation: { include: { bed: true } },
+} as const satisfies Prisma.TransferInclude;
+
+/** "Bed A → Bed B" for a transfer read with TRANSFER_WITH_LOCATIONS. */
+export function transferRouteLabel(t: Prisma.TransferGetPayload<{ include: typeof TRANSFER_WITH_LOCATIONS }>): string {
+  const label = (l: { bed: { label: string } | null; areaLabel: string | null } | null) => l?.bed?.label ?? l?.areaLabel ?? "unknown";
+  return `${label(t.fromLocation)} → ${label(t.toLocation)}`;
 }
 
 /** Initiates the discharge workflow (brief §36) — creates a Discharge row with readiness flags, all false initially. Does NOT free the bed yet; that happens at finalizeDischarge(). */

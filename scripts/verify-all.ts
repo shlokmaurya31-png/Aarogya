@@ -94,6 +94,7 @@ const ORDER = [
   "verify-postgres-consent-revocation",
   "verify-postgres-patient-identifiers",
   "verify-postgres-generated-documents",
+  "verify-postgres-location-history",
   // Runs late: its whole-database check covers every earlier gate's orders.
   "verify-postgres-order-status",
 ];

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { resolvePatientIdsForRead } from "./merge";
+import { TRANSFER_WITH_LOCATIONS, transferRouteLabel } from "@/lib/hospital/admission";
 
 /**
  * The longitudinal timeline (brief §32) is built by reading every typed
@@ -56,7 +57,7 @@ export async function buildPatientTimeline(patientId: string): Promise<TimelineE
       prisma.labResult.findMany({ where: { labOrder: { patientId: { in: patientIds } } }, orderBy: { resultedAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
       prisma.imagingStudy.findMany({ where: { patientId: { in: patientIds } }, orderBy: { createdAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
       prisma.imagingReport.findMany({ where: { imagingOrder: { patientId: { in: patientIds } } }, orderBy: { reportedAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
-      prisma.transfer.findMany({ where: { admission: { encounter: { patientId: { in: patientIds } } } }, include: { fromBed: true, toBed: true }, orderBy: { transferredAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
+      prisma.transfer.findMany({ where: { admission: { encounter: { patientId: { in: patientIds } } } }, include: TRANSFER_WITH_LOCATIONS, orderBy: { toLocation: { assignedAt: "desc" } }, take: TIMELINE_ROW_LIMIT }),
       prisma.clinicalDocument.findMany({ where: { patientId: { in: patientIds } }, include: { uploadedBy: { include: { user: true } } }, orderBy: { createdAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
     ]);
 
@@ -261,9 +262,9 @@ export async function buildPatientTimeline(patientId: string): Promise<TimelineE
   for (const t of transfers) {
     entries.push({
       id: `transfer-${t.id}`,
-      timestamp: t.transferredAt.toISOString(),
+      timestamp: t.toLocation.assignedAt.toISOString(),
       type: "Transfer",
-      summary: `Transferred ${t.fromBed.label} → ${t.toBed.label}: ${t.reason}`,
+      summary: `Transferred ${transferRouteLabel(t)}: ${t.reason}`,
       sourceType: "Transfer",
       sourceId: t.id,
     });

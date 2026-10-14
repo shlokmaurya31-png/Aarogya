@@ -1,7 +1,8 @@
 import { prisma } from "@/lib/db";
 import { BedStatus } from "@prisma/client";
 import { transitionBed, InvalidBedTransitionError } from "./bed";
-import { transferPatient } from "./admission";
+import { transferPatientInTx } from "./admission";
+import { recordAuditEvent } from "@/lib/auth/audit";
 
 /**
  * Internal-transfer request layer (brief §34-36) — sits on top of the
@@ -93,28 +94,34 @@ export async function markPatientInTransit(requestId: string) {
   return prisma.transferRequest.update({ where: { id: requestId }, data: { status: "PATIENT_IN_TRANSIT" } });
 }
 
-/** Executes the transfer: calls the EXISTING transferPatient(), then links the resulting Transfer row. */
+/**
+ * Executes the transfer and completes the request in ONE transaction: the bed
+ * move, the EncounterLocation rows (D5: the location history), the Transfer
+ * and the request's COMPLETED status commit together or not at all.
+ */
 export async function completeTransferRequest(requestId: string, byUserId: string) {
-  const request = await prisma.transferRequest.findUniqueOrThrow({ where: { id: requestId } });
-  if (!["BED_RESERVED", "PATIENT_IN_TRANSIT"].includes(request.status) || !request.reservedBedId) {
-    throw new TransferRequestNotActionableError(request.status);
-  }
-
-  const transfer = await transferPatient({
-    admissionId: request.admissionId,
-    toBedId: request.reservedBedId,
-    reason: request.reason,
-    byUserId,
-  });
-
-  return prisma.$transaction(async (tx) => {
-    const updated = await tx.transferRequest.update({
-      where: { id: requestId },
+  const { updated, transfer, auditContext } = await prisma.$transaction(async (tx) => {
+    const request = await tx.transferRequest.findUniqueOrThrow({ where: { id: requestId } });
+    if (!["BED_RESERVED", "PATIENT_IN_TRANSIT"].includes(request.status) || !request.reservedBedId) {
+      throw new TransferRequestNotActionableError(request.status);
+    }
+    const { transfer, auditContext } = await transferPatientInTx(tx, {
+      admissionId: request.admissionId,
+      toBedId: request.reservedBedId,
+      reason: request.reason,
+      byUserId,
+    });
+    // Compare-and-set on the status read above, so two completions can't both win.
+    const cas = await tx.transferRequest.updateMany({
+      where: { id: requestId, status: request.status },
       data: { status: "COMPLETED", transferId: transfer.id, completedAt: new Date() },
     });
+    if (cas.count !== 1) throw new TransferRequestNotActionableError("COMPLETED");
     await tx.auditEvent.create({ data: { type: "hospital.transferRequest.completed", userId: byUserId, detail: { requestId, transferId: transfer.id } } });
-    return { request: updated, transfer };
+    return { updated: await tx.transferRequest.findUniqueOrThrow({ where: { id: requestId } }), transfer, auditContext };
   });
+  await recordAuditEvent("hospital.admission.transferred", byUserId, { admissionId: updated.admissionId, toBedId: updated.reservedBedId }, auditContext);
+  return { request: updated, transfer };
 }
 
 export async function cancelTransferRequest(requestId: string, byUserId: string) {
