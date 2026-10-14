@@ -40,7 +40,7 @@ editing them.
 | D6 | `Task` ↔ `WorkflowTask` | Two task systems (clinical tasks vs workflow-engine tasks), both with assignee, status, due date, facility. | Two worklists for staff; a task can exist in one and be invisible in the other. |
 | D7 | `DoctorScheduleBlock` ↔ `StaffShift` | Both say when a staff member works (`staffId`, facility, department, time window). One drives appointment slots, the other workforce rostering. | A doctor can be on leave in one and bookable in the other. |
 | D8 | `HospitalStaffProfile.facilityId` ↔ `FacilityMembership` | The staff profile's home facility duplicates a facility membership; tenancy resolution reads both (`primaryFacilityId` plus memberships). | Removing a membership doesn't change the home facility, and the other way round. **Resolved:** `HospitalStaffProfile.facilityId` is gone; the home facility is the one membership with `isPrimary` (partial unique index `FacilityMembership_one_primary_per_user`), and staff-at-facility checks use `src/lib/auth/staffFacility.ts`. |
-| D9 | `Order` ↔ `MedicationOrder` / `LabOrder` / `ImagingOrder` / `Referral` | `Order` is a generic parent (optional link from each specific order) and repeats `patientId`, `encounterId`, `status`, `priority`, ordering staff and timestamps the specific orders also hold. | Two statuses per order that can disagree. |
+| D9 | `Order` ↔ `MedicationOrder` / `LabOrder` / `ImagingOrder` / `Referral` | `Order` is a generic parent (optional link from each specific order) and repeats `patientId`, `encounterId`, `status`, `priority`, ordering staff and timestamps the specific orders also hold. | Two statuses per order that can disagree. **Resolved:** the specific order's lifecycle is authoritative; `Order.status` is derived (`deriveOrderStatus`) and written only by `syncOrderStatus` in the same transaction as the specific change. Existing rows were recomputed. Gate: `verify-postgres-order-status`. |
 
 **Same name, different domain (listed so they aren't mistaken for duplicates):**
 - `Invoice`, `Payment`, `Refund` and `Claim` are patient billing; `BillingInvoice`, `BillingPayment` and `BillingRefund` are the SaaS subscription.
@@ -141,10 +141,10 @@ consistency gate could check that they agree.
 | `Invoice` | `facilityId` = billingAccount.facilityId = encounter.facilityId = patient.facilityId |
 | `Payment` | `facilityId` = billingAccount.facilityId = patient.facilityId |
 | `Claim` | `facilityId` = invoice.facilityId |
-| `Task` | `facilityId` = createdBy.facilityId |
+| `Task` | createdBy has an ACTIVE membership at `facilityId` |
 | `ClinicalDocument` | `facilityId` = patient.facilityId |
-| `Appointment` | `facilityId` = doctor.facilityId = patient.facilityId |
-| `DoctorScheduleBlock` | `facilityId` = staff.facilityId |
+| `Appointment` | `facilityId` = patient.facilityId; doctor has an ACTIVE membership there |
+| `DoctorScheduleBlock` | staff has an ACTIVE membership at `facilityId` |
 | `QueueEntry` | `facilityId` = patient.facilityId |
 | `TriageAssessment` | `facilityId` = encounter.facilityId = recordedBy.facilityId |
 | `EncounterLocation` | `facilityId` = encounter.facilityId |
@@ -157,10 +157,10 @@ consistency gate could check that they agree.
 | `SurgerySchedule` | `facilityId` = surgery.facilityId = operatingTheatre.facilityId |
 | `SurgicalSpecimen` | `facilityId` = surgery.facilityId |
 | `SurgeryItemUsage` | `facilityId` = surgery.facilityId |
-| `Order` | `facilityId` = encounter.facilityId = patient.facilityId = orderingStaff.facilityId |
+| `Order` | `facilityId` = encounter.facilityId = patient.facilityId ; orderingStaff has an ACTIVE membership there |
 | `CarePlan` | `facilityId` = patient.facilityId |
 | `NursingAssessment` | `facilityId` = patient.facilityId = encounter.facilityId = nurse.facilityId |
-| `ClinicalHandoff` | `facilityId` = patient.facilityId = fromStaff.facilityId |
+| `ClinicalHandoff` | `facilityId` = patient.facilityId ; fromStaff has an ACTIVE membership there |
 | `NursingAssignment` | `facilityId` = nurse.facilityId = patient.facilityId |
 | `IntakeOutputRecord` | `facilityId` = encounter.facilityId |
 | `MedicationReconciliation` | `facilityId` = encounter.facilityId = patient.facilityId |

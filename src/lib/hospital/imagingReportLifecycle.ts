@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { emitDomainEvent } from "@/lib/events/emit";
 import { facilityOrganizationId } from "@/lib/events/tenant";
+import { syncOrderStatus } from "./orderEnvelope";
 
 type Tx = Prisma.TransactionClient;
 
@@ -70,6 +71,7 @@ export async function enterReport(tx: Tx, input: EnterReportInput) {
   }
 
   await tx.imagingOrder.updateMany({ where: { id: input.imagingOrderId, status: "ACQUIRED" }, data: { status: "REPORTED" } });
+  await syncOrderStatus(tx, "IMAGING", input.imagingOrderId);
   return report;
 }
 

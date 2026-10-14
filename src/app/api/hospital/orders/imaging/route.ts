@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
-import { createOrderEnvelope } from "@/lib/hospital/orderEnvelope";
+import { createOrderEnvelope, syncOrderStatus } from "@/lib/hospital/orderEnvelope";
 import { mapDiagnosticPriorityToOrderPriority } from "@/lib/hospital/diagnosticsLifecycle";
 import { createPricedChargeIfNotExists } from "@/lib/hospital/billing/chargeCapture";
 import { PriceNotFoundError } from "@/lib/hospital/billing/pricing";
@@ -96,6 +96,7 @@ export async function POST(req: NextRequest) {
           catalogStudyId: catalogStudyId ?? undefined,
         },
       });
+      await syncOrderStatus(tx, "IMAGING", createdOrder.id);
 
       // First automatic charge hook for imaging (brief §18) — same idempotent
       // pattern Milestone B introduced for lab, reusing createChargeIfNotExists,

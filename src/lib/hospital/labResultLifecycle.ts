@@ -3,6 +3,7 @@ import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { emitDomainEvent } from "@/lib/events/emit";
 import { facilityOrganizationId } from "@/lib/events/tenant";
 import { findApplicableReferenceRange, computeAbnormalFlag } from "./labCatalog";
+import { syncOrderStatus } from "./orderEnvelope";
 
 type Tx = Prisma.TransactionClient;
 
@@ -93,9 +94,11 @@ export async function enterResult(tx: Tx, input: EnterResultInput) {
     ]);
     if (currentResultCount >= memberCount) {
       await tx.labOrder.updateMany({ where: { id: input.labOrderId, status: "IN_PROGRESS" }, data: { status: "RESULTED" } });
+    await syncOrderStatus(tx, "LAB", input.labOrderId);
     }
   } else {
     await tx.labOrder.updateMany({ where: { id: input.labOrderId, status: "IN_PROGRESS" }, data: { status: "RESULTED" } });
+    await syncOrderStatus(tx, "LAB", input.labOrderId);
   }
 
   return result;

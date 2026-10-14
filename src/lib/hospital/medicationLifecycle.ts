@@ -4,7 +4,7 @@ import { emitDomainEvent } from "@/lib/events/emit";
 import { facilityOrganizationId } from "@/lib/events/tenant";
 import { checkMedicationSafety, writeSafetyWarnings, type SafetyFlag } from "./clinicalSafety";
 import { generateAdministrationSchedule } from "./medicationSchedule";
-import { createOrderEnvelope, closeOrderEnvelope } from "./orderEnvelope";
+import { createOrderEnvelope, syncOrderStatus } from "./orderEnvelope";
 import { createPricedChargeIfNotExists } from "./billing/chargeCapture";
 import { PriceNotFoundError } from "./billing/pricing";
 import { resolveItemForDrugName } from "./inventory/itemMedicationLink";
@@ -69,6 +69,7 @@ async function transition(tx: Parameters<Parameters<typeof prisma.$transaction>[
     throw new InvalidMedicationOrderTransitionError(order.status, to);
   }
   const updated = await tx.medicationOrder.update({ where: { id: orderId }, data: { status: to, ...extra } });
+  await syncOrderStatus(tx, "MEDICATION", orderId);
   await tx.auditEvent.create({ data: { type: "hospital.medication.statusChanged", userId: byUserId, detail: { orderId, from: order.status, to } } });
   return updated;
 }
@@ -173,6 +174,7 @@ export async function createMedicationOrder(input: {
 
     // Auto-submit to pharmacy — every order is reviewed by default (brief §16/§28's end-to-end flow).
     const submitted = await tx.medicationOrder.update({ where: { id: created.id }, data: { status: "PHARMACY_REVIEW" } });
+    await syncOrderStatus(tx, "MEDICATION", created.id);
     return submitted;
   });
 
@@ -349,7 +351,6 @@ export async function dispenseMedication(input: {
 export async function cancelMedicationOrder(orderId: string, reason: string, cancelledByStaffId: string, byUserId: string) {
   return prisma.$transaction(async (tx) => {
     const updated = await transition(tx, orderId, "CANCELLED", byUserId, { cancelledAt: new Date(), cancelledReason: reason, cancelledByStaffId });
-    await closeOrderEnvelope(tx, updated.orderId, "CANCELLED", { reason });
     await tx.auditEvent.create({ data: { type: "hospital.medication.cancelled", userId: byUserId, detail: { orderId, reason } } });
     return updated;
   });
@@ -366,7 +367,7 @@ export async function discontinueMedicationOrder(orderId: string, reason: string
       where: { id: orderId },
       data: { status: "DISCONTINUED", discontinuedAt: new Date(), discontinuedReason: reason, discontinuedByStaffId },
     });
-    await closeOrderEnvelope(tx, order.orderId, "DISCONTINUED");
+    await syncOrderStatus(tx, "MEDICATION", orderId);
     await tx.auditEvent.create({ data: { type: "hospital.medication.discontinued", userId: byUserId, detail: { orderId, reason } } });
     return updated;
   });
