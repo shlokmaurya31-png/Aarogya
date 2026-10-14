@@ -57,7 +57,7 @@ export async function updateItem(tx: Tx, itemId: string, input: Partial<Omit<Cre
 
 export async function listItems(
   tx: Tx,
-  filters: { facilityId?: string; category?: ItemCategory; active?: boolean; search?: string; cursor?: string; take?: number }
+  filters: { facilityId: string; category?: ItemCategory; active?: boolean; search?: string; cursor?: string; take?: number }
 ) {
   return tx.item.findMany({
     where: {
@@ -65,9 +65,10 @@ export async function listItems(
       active: filters.active,
       // Facility scope and search are both OR-groups, so they must be ANDed:
       // as two `OR` keys on one object, the search silently replaced the
-      // facility scope and returned other facilities' items.
+      // facility scope and returned other facilities' items. facilityId is
+      // required: an optional scope would list every facility's items.
       AND: [
-        filters.facilityId ? { OR: [{ facilityId: filters.facilityId }, { facilityId: null }] } : {},
+        { OR: [{ facilityId: filters.facilityId }, { facilityId: null }] },
         filters.search ? { OR: [{ name: textContains(filters.search) }, { sku: textContains(filters.search) }] } : {},
       ],
     },
