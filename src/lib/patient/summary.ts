@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { resolvePatientIdsForRead } from "./merge";
+import { activePatientExternalIdentifiers } from "./identifiers";
 
 /**
  * Server-side patient summary (brief §31) — aggregates only entities that
@@ -63,8 +64,11 @@ export async function buildPatientSummary(patientId: string) {
       }),
     ]);
 
+  // D1: ABHA, insurer member IDs and other external identifiers live in ExternalIdentifier.
+  const externalIdentifiers = patient ? await activePatientExternalIdentifiers(prisma, patient.facilityId, patient.id) : [];
+
   return {
-    patient,
+    patient: patient ? { ...patient, externalIdentifiers } : patient,
     mergedPatientIds: patientIds.filter((id) => id !== patientId),
     activeProblems,
     activeAllergies,

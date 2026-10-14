@@ -3,19 +3,18 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
-import { recordAuditEvent } from "@/lib/auth/audit";
+import { addPatientIdentifier, listPatientIdentifiers } from "@/lib/patient/identifiers";
 
-const IDENTIFIER_TYPES = ["ABHA", "MRN", "EXTERNAL_MRN", "INSURANCE_MEMBER_ID", "LEGACY", "OTHER"];
-
+/** Aarogya-issued identifiers (UHID/MRN) and external mappings (ABHA, insurer member IDs, …) — D1. */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return withApiErrors(async () => {
     const { id } = await params;
     const { searchParams } = new URL(req.url);
     const { facilityId } = await requireFacilityStaff("patient:read", searchParams.get("facilityId") ?? undefined);
 
-    const patient = await prisma.patient.findUnique({ where: { id }, include: { identifiers: true } });
+    const patient = await prisma.patient.findUnique({ where: { id }, select: { facilityId: true } });
     if (!patient || patient.facilityId !== facilityId) throw new NotFoundError("Patient not found.");
-    return { identifiers: patient.identifiers };
+    return listPatientIdentifiers(facilityId, id);
   });
 }
 
@@ -26,7 +25,11 @@ const AddSchema = z.object({
   facilityId: z.string().optional(),
 });
 
-/** Add a patient identifier — ABHA/MRN/insurance/etc. (brief §4/§6). */
+/**
+ * Add a patient identifier (brief §4/§6). MRN is stored as an Aarogya
+ * identifier; ABHA, insurer member IDs and other external identifiers become
+ * unverified ExternalIdentifier mappings.
+ */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return withApiErrors(async () => {
     const { id } = await params;
@@ -34,23 +37,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const { session, facilityId } = await requireFacilityStaff("patient:write", body?.facilityId);
     const parsed = AddSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestError("Invalid identifier data.");
-    if (!IDENTIFIER_TYPES.includes(parsed.data.type)) {
-      throw new BadRequestError(`type must be one of ${IDENTIFIER_TYPES.join(", ")}.`);
-    }
-
-    const patient = await prisma.patient.findUnique({ where: { id } });
-    if (!patient || patient.facilityId !== facilityId) throw new NotFoundError("Patient not found.");
-
-    const identifier = await prisma.patientIdentifier.create({
-      data: { patientId: id, type: parsed.data.type, value: parsed.data.value, issuer: parsed.data.issuer },
-    });
-
-    await recordAuditEvent(
-      "hospital.patient.identifierAdded",
-      session.userId,
-      { patientId: id, identifierId: identifier.id, type: identifier.type },
-      { facilityId, patientId: id }
-    );
-    return { identifier };
+    const result = await addPatientIdentifier({ facilityId, patientId: id, ...parsed.data, byUserId: session.userId });
+    return { kind: result.kind, identifier: result.identifier };
   });
 }

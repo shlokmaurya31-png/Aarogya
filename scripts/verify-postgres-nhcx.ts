@@ -47,6 +47,8 @@ import { getActionPolicy } from "../src/lib/auth/authorize/policies";
 import { requestConsent, grantConsent, revokeConsent } from "../src/lib/consent";
 import type { AuthorizationActor } from "../src/lib/auth/authorize/types";
 import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
+import { addPatientIdentifier, externalSystemFor } from "../src/lib/patient/identifiers";
+import { IDENTIFIER_SYSTEMS } from "../src/lib/hospital/interoperability/shared";
 
 const prisma = new PrismaClient();
 let pass = 0, fail = 0;
@@ -348,7 +350,23 @@ async function main() {
   // ══ 4. SUBMISSION VERSIONING AND IMMUTABILITY ════════════════════════════
   console.log("\n── Submission versioning ──");
 
+  // D1: the claim bundle's Patient carries the insurer member ID and ABHA from ExternalIdentifier.
+  const memberId = `${tag}-MEM`;
+  const abhaNo = `${tag}-ABHA-NHCX`;
+  await addPatientIdentifier({ facilityId: facA.id, patientId: patA.id, type: "INSURANCE_MEMBER_ID", value: memberId, issuer: "Verify Insurer", byUserId: adminA.userId });
+  await addPatientIdentifier({ facilityId: facA.id, patientId: patA.id, type: "ABHA", value: abhaNo, byUserId: adminA.userId })
+    .catch(() => undefined); // patA may already hold an ABHA from an earlier run; the member ID is the new one
   const built1 = await buildSubmission({ claimId: claim1.id, facilityId: facA.id, actor: A });
+  {
+    const stored = await prisma.claimSubmission.findUniqueOrThrow({ where: { id: built1.submission.id } });
+    const bundle = (stored.snapshot as { bundle: { entry: { resource: { resourceType: string; identifier?: { system: string; value: string }[] } }[] } }).bundle;
+    const ids = bundle.entry.find((e) => e.resource.resourceType === "Patient")?.resource.identifier ?? [];
+    report("The submitted bundle's Patient carries the insurer member ID from ExternalIdentifier",
+      ids.some((i) => i.value === memberId && i.system === externalSystemFor("INSURANCE_MEMBER_ID", memberId, "Verify Insurer")));
+    report("…and an ABHA number", ids.some((i) => i.system === IDENTIFIER_SYSTEMS.ABHA_NUMBER));
+    report("No PatientIdentifier row holds an external identifier",
+      (await prisma.patientIdentifier.count({ where: { patientId: patA.id, type: { notIn: ["UHID", "MRN"] } } })) === 0);
+  }
   report("The first submission is version 1 and type ORIGINAL",
     built1.submission.version === 1 && built1.submission.submissionType === "ORIGINAL");
   report("The submission records the server-derived amount, not the tampered header",

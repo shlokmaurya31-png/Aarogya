@@ -97,9 +97,9 @@ model User {
   // Phase D11 — Patient Experience. A user may hold delegated access to other
   // patients' records (family/caregiver). This is the DELEGATE side; the
   // grantor side lives on Patient.delegationsGranted.
-  patientDelegationsHeld PatientDelegation[] @relation("DelegateUser")
-  patientLinkRequests    PatientLinkRequest[]
-  patientUploadedDocuments ClinicalDocument[] @relation("PatientUploadedDocuments")
+  patientDelegationsHeld   PatientDelegation[]  @relation("DelegateUser")
+  patientLinkRequests      PatientLinkRequest[]
+  patientUploadedDocuments ClinicalDocument[]   @relation("PatientUploadedDocuments")
 
   @@index([role])
 }
@@ -2212,7 +2212,7 @@ model Patient {
 
   // Phase D11 — Patient Experience. Family/caregiver delegations this patient
   // has granted over their own record (grantor side).
-  delegationsGranted PatientDelegation[] @relation("PatientDelegations")
+  delegationsGranted PatientDelegation[]  @relation("PatientDelegations")
   linkRequests       PatientLinkRequest[]
 
   @@index([facilityId])
@@ -2235,7 +2235,7 @@ model PatientIdentifier {
   id        String   @id @default(cuid())
   patient   Patient  @relation(fields: [patientId], references: [id])
   patientId String
-  type      String // "ABHA" | "INSURANCE_MEMBER_ID" | "EXTERNAL_MRN"
+  type      String // Aarogya-issued only: "UHID" | "MRN" (CHECK PatientIdentifier_aarogya_issued_only). External IDs are ExternalIdentifier rows (D1).
   value     String
   issuer    String?
   status    String   @default("ACTIVE") // "ACTIVE" | "INVALID" | "SUPERSEDED"
@@ -7919,11 +7919,11 @@ model InteropConsent {
   facilityId String
   patientId  String
 
-  purpose String // TREATMENT | REFERRAL | SECOND_OPINION | INSURANCE | PATIENT_ACCESS | RESEARCH | OTHER
+  purpose     String // TREATMENT | REFERRAL | SECOND_OPINION | INSURANCE | PATIENT_ACCESS | RESEARCH | OTHER
   /// Free-text detail of what was consented to (e.g. a staff-recorded
   /// treatment consent's "Chronic disease management program").
   description String?
-  status  String @default("REQUESTED") // REQUESTED | GRANTED | ACTIVE | EXPIRED | REVOKED | DECLINED | CANCELLED
+  status      String  @default("REQUESTED") // REQUESTED | GRANTED | ACTIVE | EXPIRED | REVOKED | DECLINED | CANCELLED
 
   // Who the patient is sharing WITH. Required, so consent can never degrade
   // into "this patient data is shareable with anyone".
@@ -9049,15 +9049,15 @@ model PatientAccessSession {
   doctorName    String?
   facilityId    String?
 
-  expiresAt  DateTime // the code is only redeemable before this (PENDING window)
+  expiresAt       DateTime // the code is only redeemable before this (PENDING window)
   // Once ACTIVE, the consult auto-logs-off at this time unless the doctor
   // "continues" the session. Default 15 min (typical India OPD consult), each
   // continue extends it; on expiry the patient must issue a fresh code.
   activeExpiresAt DateTime?
   extensionCount  Int       @default(0)
-  redeemedAt DateTime?
-  endedAt    DateTime?
-  endedBy    String? // "DOCTOR" | "PATIENT" | "SYSTEM"
+  redeemedAt      DateTime?
+  endedAt         DateTime?
+  endedBy         String? // "DOCTOR" | "PATIENT" | "SYSTEM"
 
   version   Int      @default(1)
   createdAt DateTime @default(now())
@@ -9082,32 +9082,32 @@ model PatientAccessSession {
 // the D5–D9 convention. patientId/encounterId are plain nullable strings
 // (like Task.encounterId) so this model needs no back-relation on Patient.
 model Notification {
-  id               String    @id @default(cuid())
-  facility         Facility  @relation(fields: [facilityId], references: [id])
+  id               String               @id @default(cuid())
+  facility         Facility             @relation(fields: [facilityId], references: [id])
   facilityId       String
   recipient        HospitalStaffProfile @relation("NotificationRecipient", fields: [recipientStaffId], references: [id])
   recipientStaffId String
   // Taxonomy — free-text codes enforced in code, e.g.
   // "CRITICAL_RESULT" | "TASK_ASSIGNED" | "APPROVAL_REQUEST" | "SLA_BREACH" | ...
-  type       String
-  category   String  @default("OPERATIONAL") // CLINICAL | OPERATIONAL | ADMINISTRATIVE | SYSTEM
-  priority   String  @default("ROUTINE")     // ROUTINE | URGENT | CRITICAL
-  title      String
-  body       String?
+  type             String
+  category         String               @default("OPERATIONAL") // CLINICAL | OPERATIONAL | ADMINISTRATIVE | SYSTEM
+  priority         String               @default("ROUTINE") // ROUTINE | URGENT | CRITICAL
+  title            String
+  body             String?
   // Optional deep-link into the app (e.g. "/hospital-os/diagnostics") so a
   // notification can carry the user straight to the actionable surface.
-  linkHref   String?
+  linkHref         String?
   // Optional canonical-graph anchors (plain strings, no relation) so a
   // notification can be filtered by patient/encounter without new joins.
-  patientId   String?
-  encounterId String?
+  patientId        String?
+  encounterId      String?
   // Free-form provenance, e.g. the source order/result id that produced it.
-  sourceType String?
-  sourceId   String?
+  sourceType       String?
+  sourceId         String?
   // Who/what raised it. Nullable: system-generated notifications have no staff author.
   createdByStaffId String?
-  readAt    DateTime?
-  createdAt DateTime  @default(now())
+  readAt           DateTime?
+  createdAt        DateTime             @default(now())
 
   @@index([recipientStaffId])
   @@index([facilityId])
@@ -9192,4 +9192,3 @@ model PatientLinkRequest {
   @@index([facilityId, status])
   @@index([userId])
 }
-

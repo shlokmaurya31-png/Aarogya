@@ -7,15 +7,18 @@ import { StatusPill } from "@/components/ui/StatusPill";
 import { useToastStore } from "@/store/useToastStore";
 
 interface Identifier { id: string; type: string; value: string; issuer: string | null; status: string }
+interface ExternalIdentifier { id: string; label: string; value: string; status: string; verificationStatus: string }
 interface EmergencyContact { id: string; name: string; relation: string; phone: string; priority: number }
 interface PatientIdentity {
   id: string;
   deceasedAt: string | null;
   mergedIntoId: string | null;
   identifiers: Identifier[];
+  externalIdentifiers: ExternalIdentifier[];
   emergencyContacts: EmergencyContact[];
 }
 
+// MRN is stored as an Aarogya identifier; the rest become external mappings (D1).
 const IDENTIFIER_TYPES = ["ABHA", "MRN", "EXTERNAL_MRN", "INSURANCE_MEMBER_ID", "LEGACY", "OTHER"];
 
 /**
@@ -30,6 +33,7 @@ export function PatientIdentityPanel({ patientId }: { patientId: string }) {
   const [addingId, setAddingId] = useState(false);
   const [idType, setIdType] = useState("ABHA");
   const [idValue, setIdValue] = useState("");
+  const [idIssuer, setIdIssuer] = useState("");
   const [addingContact, setAddingContact] = useState(false);
   const [cName, setCName] = useState("");
   const [cRelation, setCRelation] = useState("guardian");
@@ -44,10 +48,10 @@ export function PatientIdentityPanel({ patientId }: { patientId: string }) {
     if (!idValue.trim()) { push("Identifier value is required.", "amber"); return; }
     const res = await fetch(`/api/hospital/patients/${patientId}/identifiers`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: idType, value: idValue.trim() }),
+      body: JSON.stringify({ type: idType, value: idValue.trim(), ...(idIssuer.trim() ? { issuer: idIssuer.trim() } : {}) }),
     });
     if (!res.ok) { push((await res.json()).error ?? "Failed.", "red"); return; }
-    push("Identifier added.", "emerald"); setIdValue(""); setAddingId(false); load();
+    push("Identifier added.", "emerald"); setIdValue(""); setIdIssuer(""); setAddingId(false); load();
   }
 
   async function addContact() {
@@ -109,7 +113,14 @@ export function PatientIdentityPanel({ patientId }: { patientId: string }) {
           {data.identifiers.map((i) => (
             <p key={i.id} className="text-[11.5px]"><span className="font-medium">{i.type}</span>: {i.value}{i.issuer ? ` (${i.issuer})` : ""}</p>
           ))}
-          {data.identifiers.length === 0 && <p className="text-[11px] text-text-tertiary">None recorded.</p>}
+          {data.externalIdentifiers.map((i) => (
+            <p key={i.id} className="text-[11.5px]">
+              <span className="font-medium">{i.label}</span>: {i.value}
+              {i.status !== "ACTIVE" ? ` · ${i.status.toLowerCase()}` : ""}
+              <span className="text-text-tertiary"> · {i.verificationStatus === "VERIFIED" ? "verified" : "unverified"}</span>
+            </p>
+          ))}
+          {data.identifiers.length === 0 && data.externalIdentifiers.length === 0 && <p className="text-[11px] text-text-tertiary">None recorded.</p>}
         </div>
         {addingId && (
           <div className="mt-1.5 flex gap-1.5">
@@ -117,6 +128,9 @@ export function PatientIdentityPanel({ patientId }: { patientId: string }) {
               {IDENTIFIER_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
             <input value={idValue} onChange={(e) => setIdValue(e.target.value)} placeholder="Value" className="flex-1 rounded-md border border-hairline bg-white px-2 py-1 text-[11px] outline-none" />
+            {idType !== "ABHA" && idType !== "MRN" && (
+              <input value={idIssuer} onChange={(e) => setIdIssuer(e.target.value)} placeholder={idType === "INSURANCE_MEMBER_ID" ? "Insurer" : "Issuer"} className="w-24 rounded-md border border-hairline bg-white px-2 py-1 text-[11px] outline-none" />
+            )}
             <button onClick={addIdentifier} className="rounded-md bg-cyan px-2 py-1 text-[11px] font-medium text-ink">Add</button>
           </div>
         )}

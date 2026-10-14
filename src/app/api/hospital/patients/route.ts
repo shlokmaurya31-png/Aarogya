@@ -8,6 +8,7 @@ import { emitDomainEvent } from "@/lib/events/emit";
 import { facilityOrganizationId } from "@/lib/events/tenant";
 import { createPatientWithUhid } from "@/lib/hospital/uhid";
 import { patientSearchWhere } from "@/lib/hospital/patientSearch";
+import { patientIdsByExternalIdentifier } from "@/lib/patient/identifiers";
 
 export async function GET(req: NextRequest) {
   return withApiErrors(async () => {
@@ -15,8 +16,9 @@ export async function GET(req: NextRequest) {
     const { facilityId } = await requireFacilityStaff("patient:read", searchParams.get("facilityId") ?? undefined);
     const q = searchParams.get("q")?.trim();
 
+    const externalMatchIds = q ? await patientIdsByExternalIdentifier(facilityId, q) : [];
     const patients = await prisma.patient.findMany({
-      where: patientSearchWhere(facilityId, q),
+      where: patientSearchWhere(facilityId, q, externalMatchIds),
       orderBy: { createdAt: "desc" },
       take: 50,
     });

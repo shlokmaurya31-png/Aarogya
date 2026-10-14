@@ -92,6 +92,7 @@ const ORDER = [
   "verify-postgres-one-patient",
   // Week 2 duplicate merges (docs/DATA_DICTIONARY.md §1)
   "verify-postgres-consent-revocation",
+  "verify-postgres-patient-identifiers",
 ];
 const LAST = "verify-postgres-phase-b-final";
 

@@ -12,6 +12,7 @@ import {
 import { buildDocumentBundle, hashBundle, countResources, type DocumentBundleType } from "./bundle";
 import type { FhirBundle, FhirResource } from "./types";
 import { isStaffInFacility, staffAtFacilityWhere } from "@/lib/auth/staffFacility";
+import { activePatientExternalIdentifiers } from "@/lib/patient/identifiers";
 
 /**
  * Phase C1 — controlled FHIR export.
@@ -85,11 +86,7 @@ export async function exportPatientToFhir(req: ExportRequest): Promise<ExportRes
 
   // External identifiers are scoped to this facility, so an export can never
   // leak a mapping another facility holds for the same person.
-  const externalIds = await prisma.externalIdentifier.findMany({
-    where: { facilityId: req.facilityId, entityType: "PATIENT", entityId: req.patientId, status: "ACTIVE" },
-    select: { system: true, value: true, use: true, status: true },
-    orderBy: [{ system: "asc" }, { id: "asc" }],
-  });
+  const externalIds = await activePatientExternalIdentifiers(prisma, req.facilityId, req.patientId);
   const facilityIds = await prisma.externalIdentifier.findMany({
     where: { facilityId: req.facilityId, entityType: "FACILITY", entityId: req.facilityId, status: "ACTIVE" },
     select: { system: true, value: true, use: true, status: true },

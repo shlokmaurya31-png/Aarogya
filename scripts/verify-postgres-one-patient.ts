@@ -116,6 +116,16 @@ async function main() {
     const search = await call(frontDesk, "GET", `/api/hospital/patients?q=${encodeURIComponent(hospitalPatient.uhid)}`);
     const found = ((search.json.patients as { id: string }[]) ?? []).map((p) => p.id);
     report("API: searching the UHID finds exactly this patient", found.length === 1 && found[0] === P, found.join(","));
+
+    // D1: an ABHA added through the patient API is an ExternalIdentifier, and the API reads it back from there.
+    const abha = `91-${run}-${phone.slice(-4)}`;
+    const added = await call(frontDesk, "POST", `/api/hospital/patients/${P}/identifiers`, { type: "ABHA", value: abha });
+    report("API: adding an ABHA stores an external identifier", added.status === 200 && added.json.kind === "EXTERNAL", `HTTP ${added.status}`);
+    const withAbha = ((await call(frontDesk, "GET", `/api/hospital/patients/${P}`)).json.patient ?? {}) as { identifiers?: unknown[]; externalIdentifiers?: { value: string; label: string }[] };
+    report("API: the patient shows the ABHA from ExternalIdentifier", Boolean(withAbha.externalIdentifiers?.some((e) => e.value === abha && e.label === "ABHA number")));
+    const abhaSearch = await call(frontDesk, "GET", `/api/hospital/patients?q=${encodeURIComponent(abha)}`);
+    const byAbha = ((abhaSearch.json.patients as { id: string }[]) ?? []).map((p) => p.id);
+    report("API: searching the ABHA finds exactly this patient", byAbha.length === 1 && byAbha[0] === P, byAbha.join(","));
   } finally {
     child.kill("SIGTERM");
     await prisma.$disconnect();

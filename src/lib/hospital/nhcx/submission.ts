@@ -13,6 +13,7 @@ import {
   canonicalStatusForSubmission, type SubmissionStatus, type ProtocolState,
 } from "./stateMachines";
 import { nextRetryDelayMs, type NhcxErrorCategory } from "./errors";
+import { activePatientExternalIdentifiers } from "@/lib/patient/identifiers";
 
 /**
  * Phase C5 — claim submission lifecycle.
@@ -126,11 +127,7 @@ export async function buildSubmission(input: BuildSubmissionInput) {
 
   const participantCode = await resolveParticipantCode(input.facilityId, pkg.coverage.payerId);
   const facility = await prisma.facility.findUniqueOrThrow({ where: { id: input.facilityId } });
-  const patientExternalIds = await prisma.externalIdentifier.findMany({
-    where: { facilityId: input.facilityId, entityType: "PATIENT", entityId: pkg.patient.id, status: "ACTIVE" },
-    select: { system: true, value: true, use: true, status: true },
-    orderBy: [{ system: "asc" }, { id: "asc" }],
-  });
+  const patientExternalIds = await activePatientExternalIdentifiers(prisma, input.facilityId, pkg.patient.id);
 
   const bundleId = `${claim.id}-v${version}`;
   const bundle = buildClaimBundle(pkg, {

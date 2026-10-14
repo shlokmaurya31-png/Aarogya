@@ -32,7 +32,7 @@ editing them.
 
 | # | Models | What overlaps | Risk while both exist |
 |---|---|---|---|
-| D1 | `PatientIdentifier` ↔ `ExternalIdentifier` (entityType `PATIENT`) | Both store a patient's identifiers (type/system, value, status). `ExternalIdentifier` adds verification/sync state and covers non-patient entities. | An ABHA number or other ID can be recorded in one and missed by readers of the other; the FHIR export and the NHCX bundle read `ExternalIdentifier`, while the patient API (`/api/hospital/patients/[id]`) returns `PatientIdentifier`. |
+| D1 | `PatientIdentifier` ↔ `ExternalIdentifier` (entityType `PATIENT`) | Both store a patient's identifiers (type/system, value, status). `ExternalIdentifier` adds verification/sync state and covers non-patient entities. | An ABHA number or other ID can be recorded in one and missed by readers of the other; the FHIR export and the NHCX bundle read `ExternalIdentifier`, while the patient API (`/api/hospital/patients/[id]`) returns `PatientIdentifier`. **Resolved:** `PatientIdentifier` holds only Aarogya-issued types (UHID, MRN; CHECK `PatientIdentifier_aarogya_issued_only`); ABHA number/address, insurer member IDs and other external IDs were moved to `ExternalIdentifier`. The patient API, FHIR export and NHCX bundle read them through `src/lib/patient/identifiers.ts`. Gate: `verify-postgres-patient-identifiers`. |
 | D2 | `Consent` ↔ `InteropConsent` | Both are patient consents with purpose, status, grant/revoke/expiry. `InteropConsent` is the ABDM/HIE one (recipient, external ref, facility). | A revocation recorded in one isn't seen by code that checks the other. **Resolved:** `Consent` was migrated into `InteropConsent` (recipient = the facility for staff-recorded consents) and dropped; every check goes through `src/lib/consent`. Gate: `verify-postgres-consent-revocation`. |
 | D3 | `Problem` ↔ `Diagnosis` | Both are a patient's conditions (`diagnosis` text, status, onset). `Diagnosis` is per encounter and coded (`codeSystem`, `code`); `Problem` is the longitudinal list, uncoded. | The problem list and encounter diagnoses drift; summaries read `Problem`, the chart reads both. |
 | D4 | `GeneratedDocument` ↔ `ClinicalDocument` | Both are documents about a patient with a stored file (`storageRef`, `sha256`). Generated PDFs (prescriptions, discharge summaries, invoices) live only in `GeneratedDocument`, whose `patientId` has no foreign key. | Generated PDFs don't appear in the portal's reports or the Hospital OS document list, which read `ClinicalDocument` only. |
@@ -409,7 +409,7 @@ consistency gate could check that they agree.
 | Model | Scope | PHI | Duplicates |
 |---|---|---|---|
 | `AbdmCallbackEvent` | facility | no | — |
-| `ExternalIdentifier` | facility | no | §1.1 D1 |
+| `ExternalIdentifier` | facility | no | §1.1 D1 (resolved; every externally issued identifier) |
 | `ExternalParticipant` | facility | no | — |
 | `HealthInformationExchange` | facility · patient | PHI | — |
 | `ImportedResource` | facility | no | — |
@@ -486,7 +486,7 @@ consistency gate could check that they agree.
 | `EpisodeOfCare` | facility · patient | PHI | §1.3 |
 | `Patient` | facility · patient | PHI | §1.2 |
 | `PatientEmergencyContact` | facility · patient (via Patient) | PHI | — |
-| `PatientIdentifier` | facility · patient (via Patient) | PHI | §1.1 D1 |
+| `PatientIdentifier` | facility · patient (via Patient) | PHI | §1.1 D1 (resolved; UHID/MRN only) |
 | `PatientMergeRecord` | facility · patient (via Patient) | PHI | — |
 | `Problem` | facility · patient (via Patient) | PHI | §1.1 D3 |
 
