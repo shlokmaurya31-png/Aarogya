@@ -34,3 +34,14 @@ describe("MockAIProvider", () => {
     expect(feedback).toContain("AI Tutor unavailable");
   });
 });
+
+describe("MockAIProvider.assistantReply", () => {
+  it("says plainly that the assistant isn't connected, and repeats nothing from the record", async () => {
+    const provider = new MockAIProvider();
+    for (const audience of ["patient", "clinician"] as const) {
+      const reply = await provider.assistantReply({ audience, context: "ALLERGIES\n- Penicillin", message: "What am I allergic to?" });
+      expect(reply).toMatch(/isn't connected/);
+      expect(reply).not.toContain("Penicillin");
+    }
+  });
+});

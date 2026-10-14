@@ -16,6 +16,21 @@ export interface CaseFactSheet {
   knownInvestigationResults: string[];
 }
 
+/**
+ * The portal assistant (/api/chat). `context` is the ONLY record the model
+ * may use, already authorized and minimized server-side; it is never the
+ * client's word. "patient": the signed-in patient (or a delegate) about their
+ * own record. "clinician": hospital staff, optionally with one authorized
+ * chart; Scholar users get no patient record at all.
+ */
+export interface AssistantInput {
+  audience: "patient" | "clinician";
+  context: string;
+  /** The portal section the user is on, as a hint for open questions. */
+  page?: string;
+  message: string;
+}
+
 export interface AIProvider {
   readonly id: "anthropic" | "mock";
   /** Simulated patient answering an ad-hoc free-text question, constrained to CaseFactSheet only. */
@@ -34,6 +49,8 @@ export interface AIProvider {
     scoreSummary: string;
     weakDimension?: string;
   }): Promise<string>;
+  /** One portal-assistant reply, grounded only in input.context. */
+  assistantReply(input: AssistantInput): Promise<string>;
 }
 
 export class AIUnavailableError extends Error {}
