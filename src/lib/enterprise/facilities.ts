@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/auth/audit";
-import { BadRequestError } from "@/lib/auth/rbac";
+import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import {
   type ActorMemberships,
   assertOrganizationAdmin,
@@ -24,7 +24,7 @@ export async function createFacility(
 ) {
   assertOrganizationAdmin(m, organizationId);
   const org = await prisma.organization.findUnique({ where: { id: organizationId }, select: { status: true } });
-  if (!org) throw new BadRequestError("Organization not found.");
+  if (!org) throw new NotFoundError("Organization not found.");
   if (org.status !== "ACTIVE") throw new BadRequestError("Cannot create a facility under a non-active organization.");
 
   const name = input.name.trim();
@@ -95,7 +95,7 @@ export async function transitionFacility(
 ) {
   const { organizationId } = await assertFacilityAdmin(m, facilityId);
   const facility = await prisma.facility.findUnique({ where: { id: facilityId }, select: { status: true } });
-  if (!facility) throw new BadRequestError("Facility not found.");
+  if (!facility) throw new NotFoundError("Facility not found.");
   if (facility.status === to) throw new BadRequestError(`Facility is already ${to}.`);
 
   const transition = findFacilityTransition(facility.status, to);

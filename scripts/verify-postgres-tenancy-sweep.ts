@@ -175,23 +175,30 @@ async function ownedIds(facilityId: string): Promise<Map<string, string>> {
 
 // ── routes ──────────────────────────────────────────────────────────────
 
-interface Route { urlPath: string; segments: string[]; params: string[] }
+interface Route { urlPath: string; segments: string[]; params: string[]; methods: string[] }
 
-function getRoutes(dir = API_ROOT): Route[] {
+/** Every hospital route file, with the HTTP methods it exports. */
+function getAllRoutes(dir = API_ROOT): Route[] {
   const out: Route[] = [];
   for (const name of readdirSync(dir)) {
     const p = path.join(dir, name);
-    if (statSync(p).isDirectory()) out.push(...getRoutes(p));
+    if (statSync(p).isDirectory()) out.push(...getAllRoutes(p));
     else if (name === "route.ts") {
       const src = readFileSync(p, "utf8");
-      if (!/export (async function|const) GET\b/.test(src)) continue;
+      const methods = ["GET", "POST", "PUT", "PATCH", "DELETE"].filter((m) => new RegExp(`export (async function|const) ${m}\\b`).test(src));
+      if (methods.length === 0) continue;
       const rel = path.relative(path.join(ROOT, "src", "app"), path.dirname(p)).split(path.sep);
       const params = [...new Set([...src.matchAll(/searchParams\.get\(\s*["'`](\w+)["'`]/g)].map((m) => m[1]))];
-      out.push({ urlPath: "/" + rel.join("/"), segments: rel, params });
+      out.push({ urlPath: "/" + rel.join("/"), segments: rel, params, methods });
     }
   }
   return out.sort((a, b) => a.urlPath.localeCompare(b.urlPath));
 }
+const getRoutes = () => getAllRoutes().filter((r) => r.methods.includes("GET"));
+
+/** A route segment that carries a record ID ([id], [encounterId], …), as opposed to [kind]/[key]. */
+const isRecordIdSegment = (seg: string) => /^\[(id|\w+Id)\]$/.test(seg);
+const UNKNOWN_ID = "cmtenancysweepunknown00000";
 
 const singular = (s: string) => s.replace(/-/g, "").replace(/ies$/, "y").replace(/(ses|xes)$/, (m) => m.slice(0, -2)).replace(/s$/, "").toLowerCase();
 
@@ -427,6 +434,10 @@ async function main() {
   const statuses: Record<string, number> = {};
   const serverErrors = new Set<string>();
   const covered = new Set<string>();
+  const allRoutes = getAllRoutes();
+  const recordIdProbed = new Set<string>();
+  const recordIdSkipped = new Set<string>();
+  const recordIdStatuses: Record<string, number> = {};
   const dynamicProbed = new Set<string>();
   const dynamicSkipped: string[] = [];
   try {
@@ -471,6 +482,49 @@ async function main() {
       );
       await pool(tasks, 8);
       console.log(`  ${tasks.length} requests`);
+
+      // 404 rule: a record-ID route answers an unknown ID and another facility's
+      // ID identically, with 404 (or a 400 both hit before the lookup), never
+      // a 2xx, a 500 or a record-level 403. A role's missing-permission 403
+      // comes before the lookup and is the same for both.
+      const recordTasks: (() => Promise<void>)[] = [];
+      for (const route of allRoutes) {
+        const dyn = route.segments.filter((x) => x.startsWith("["));
+        if (dyn.length === 0 || !dyn.every(isRecordIdSegment)) continue;
+        const foreignUrl = fillDynamic(route, byTable, allTables);
+        if (!foreignUrl) { if (site === "noida") recordIdSkipped.add(route.urlPath); continue; }
+        const unknownUrl = "/" + route.segments.map((x) => (x.startsWith("[") ? UNKNOWN_ID : x)).join("/");
+        recordIdProbed.add(route.urlPath);
+        for (const method of route.methods) {
+          for (const role of HOSPITAL_ROLES) {
+            recordTasks.push(async () => {
+              const call = async (url: string) => {
+                const res = await fetch(base + url, {
+                  method,
+                  headers: { cookie: cookies.get(role)!, ...(method === "GET" ? {} : { "content-type": "application/json" }) },
+                  ...(method === "GET" || method === "DELETE" ? {} : { body: "{}" }),
+                });
+                const text = await res.text();
+                let error = "";
+                try { error = String(JSON.parse(text).error ?? ""); } catch { /* not JSON */ }
+                return { status: res.status, permission: res.status === 403 && error.startsWith("Missing permission"), text };
+              };
+              const [u, f] = [await call(unknownUrl), await call(foreignUrl)];
+              const label = `${method} ${route.urlPath} as ${site}/${role}`;
+              const allowed = (r: typeof u) => r.status === 404 || r.permission || (r.status === 400 && method !== "GET") || r.status === 405;
+              const problems: string[] = [];
+              if (!allowed(u)) problems.push(`unknown id → ${u.status} ${u.text.slice(0, 80)}`);
+              if (!allowed(f)) problems.push(`other facility's id → ${f.status} ${f.text.slice(0, 80)}`);
+              if (u.status !== f.status) problems.push(`unknown ${u.status} ≠ other facility's ${f.status}`);
+              if (problems.length) bad(`404 rule: ${label}: ${problems.join("; ")}`);
+              else ok();
+              recordIdStatuses[`${u.status}`] = (recordIdStatuses[`${u.status}`] ?? 0) + 1;
+            });
+          }
+        }
+      }
+      await pool(recordTasks, 8);
+      console.log(`  404 rule: ${recordTasks.length} unknown/other-facility pairs`);
     }
     await idempotencySection(base, owned);
     await medicationLinkSection(base);
@@ -486,6 +540,7 @@ async function main() {
   console.log(`Static routes answered 2xx to at least one role: ${listCovered}/${staticRoutes.length}`);
   console.log(`Dynamic routes probed with the other facility's ids: ${routes.length - staticRoutes.length - dynamicSkipped.length} (2xx for ${dynamicProbed.size}, i.e. the rest refused them); skipped (no matching table/data): ${dynamicSkipped.length}`);
   if (dynamicSkipped.length) console.log(`  skipped: ${dynamicSkipped.join(", ")}`);
+  console.log(`404 rule: ${recordIdProbed.size} record-ID routes probed (statuses for unknown ids: ${Object.entries(recordIdStatuses).map(([k, v]) => `${k}×${v}`).join(" ")}); skipped (no data): ${recordIdSkipped.size}${recordIdSkipped.size ? ` — ${[...recordIdSkipped].join(", ")}` : ""}`);
   console.log(`\n${pass} passed, ${fail} failed.`);
   if (fail) {
     console.log("\nFailures:");

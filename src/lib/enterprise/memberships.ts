@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/auth/audit";
-import { BadRequestError } from "@/lib/auth/rbac";
+import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import {
   type ActorMemberships,
   assertOrganizationAdmin,
@@ -123,7 +123,7 @@ export async function setOrganizationMembershipScope(
   changes: { isAdmin?: boolean; status?: "ACTIVE" | "SUSPENDED" }
 ) {
   const membership = await prisma.organizationMembership.findUnique({ where: { id: membershipId } });
-  if (!membership) throw new BadRequestError("Membership not found.");
+  if (!membership) throw new NotFoundError("Membership not found.");
   assertOrganizationAdmin(m, membership.organizationId);
 
   // Self-grant guard: cannot elevate own membership.
@@ -156,7 +156,7 @@ export async function setFacilityMembershipScope(
     where: { id: membershipId },
     include: { facility: { select: { organizationId: true } } },
   });
-  if (!membership) throw new BadRequestError("Membership not found.");
+  if (!membership) throw new NotFoundError("Membership not found.");
   await assertFacilityAdmin(m, membership.facilityId);
 
   if (membership.userId === m.userId && changes.isAdmin === true && !m.isPlatformAdmin) {
@@ -180,7 +180,7 @@ export async function setFacilityMembershipScope(
 
 export async function removeOrganizationMembership(m: ActorMemberships, membershipId: string) {
   const membership = await prisma.organizationMembership.findUnique({ where: { id: membershipId } });
-  if (!membership) throw new BadRequestError("Membership not found.");
+  if (!membership) throw new NotFoundError("Membership not found.");
   assertOrganizationAdmin(m, membership.organizationId);
   if (membership.isAdmin && membership.status === "ACTIVE") {
     await assertNotLastOrgAdmin(membership.organizationId, membershipId);
@@ -199,7 +199,7 @@ export async function removeFacilityMembership(m: ActorMemberships, membershipId
     where: { id: membershipId },
     include: { facility: { select: { organizationId: true } } },
   });
-  if (!membership) throw new BadRequestError("Membership not found.");
+  if (!membership) throw new NotFoundError("Membership not found.");
   await assertFacilityAdmin(m, membership.facilityId);
   await prisma.facilityMembership.delete({ where: { id: membershipId } });
   await recordAuditEvent(

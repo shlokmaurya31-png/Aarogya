@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/auth/audit";
-import { BadRequestError, ForbiddenError } from "@/lib/auth/rbac";
+import { BadRequestError, ForbiddenError, NotFoundError } from "@/lib/auth/rbac";
 import {
   type ActorMemberships,
   assertOrganizationAccess,
@@ -79,7 +79,7 @@ export async function transitionOrganization(
   // all org-admin (or platform) actions.
   assertOrganizationAdmin(m, organizationId);
   const org = await prisma.organization.findUnique({ where: { id: organizationId }, select: { status: true } });
-  if (!org) throw new BadRequestError("Organization not found.");
+  if (!org) throw new NotFoundError("Organization not found.");
   if (org.status === to) throw new BadRequestError(`Organization is already ${to}.`);
 
   const transition = findOrganizationTransition(org.status, to);

@@ -61,6 +61,16 @@ function isRetryableConcurrencyError(err: unknown): boolean {
   return /deadlock detected|could not serialize access|database is locked|SQLITE_BUSY/i.test(message);
 }
 
+/**
+ * Prisma's "record not found" (P2025): findUniqueOrThrow / update / delete on
+ * an id that doesn't exist. A route that takes a record ID must answer 404 for
+ * an unknown ID, never 500 (and identically for another facility's ID, which
+ * routes report as NotFoundError).
+ */
+function isRecordNotFoundError(err: unknown): boolean {
+  return Boolean(err && typeof err === "object" && (err as { code?: unknown }).code === "P2025");
+}
+
 /** Verifies the session cookie AND that the user still exists. Never trusts client-sent role. */
 export async function requireSession(): Promise<SessionPayload> {
   const session = await getSession();
@@ -120,6 +130,10 @@ export async function withApiErrors<T>(fn: () => Promise<T>): Promise<NextRespon
     }
     if (err instanceof ConflictError) {
       return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    // Fixed message: same body as an unknown ID anywhere, no Prisma internals.
+    if (isRecordNotFoundError(err)) {
+      return NextResponse.json({ error: "Not found." }, { status: 404 });
     }
     // A lost database-level race is a retryable conflict, not an internal error.
     // Mapped before the generic fallthrough and before the 500, and deliberately

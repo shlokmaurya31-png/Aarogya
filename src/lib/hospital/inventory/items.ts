@@ -1,5 +1,6 @@
 import type { Prisma, ItemCategory, UnitOfMeasure } from "@prisma/client";
-import { BadRequestError } from "@/lib/auth/rbac";
+import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
+import { TenantAccessError } from "@/lib/auth/tenantContext";
 import { computeAvailable } from "./stockBalance";
 import { clampPageSize } from "./expiry";
 import { textContains } from "@/lib/search";
@@ -51,9 +52,19 @@ export async function createItem(tx: Tx, input: CreateItemInput) {
   });
 }
 
-export async function updateItem(tx: Tx, itemId: string, input: Partial<Omit<CreateItemInput, "sku">>) {
-  await tx.item.findUniqueOrThrow({ where: { id: itemId } });
-  return tx.item.update({ where: { id: itemId }, data: input });
+/**
+ * Updates the caller's own facility item. Another facility's item is a 404,
+ * identical to an unknown ID. A global catalog item is shared by every
+ * facility, so one facility may not change it (403). Ownership and SKU are
+ * never changed here: `facilityId` and `sku` are dropped from the input, so an
+ * update can't move an item into another tenant.
+ */
+export async function updateItem(tx: Tx, itemId: string, facilityId: string, input: Partial<Omit<CreateItemInput, "sku">> & { sku?: unknown }) {
+  const item = await tx.item.findUnique({ where: { id: itemId } });
+  if (!item || (item.facilityId !== null && item.facilityId !== facilityId)) throw new NotFoundError("Item not found.");
+  if (item.facilityId === null) throw new TenantAccessError("Global catalog items can't be changed from a facility.");
+  const { facilityId: _ignoredFacility, sku: _ignoredSku, ...data } = input;
+  return tx.item.update({ where: { id: itemId }, data });
 }
 
 export async function listItems(
