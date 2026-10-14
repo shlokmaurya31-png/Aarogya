@@ -2,7 +2,8 @@
 
 Every Prisma model (257), with its owner module, tenancy scope, whether it holds
 PHI, and any fields that duplicate data held elsewhere. **Duplicates are listed
-for decision; resolved ones say how they were resolved.**
+for decision; resolved ones say how they were resolved.** D1–D5 and D7–D9 were
+resolved on 2026-10-14; D6 (`Task` ↔ `WorkflowTask`) waits for Week 3.
 
 Generated from the schema (Prisma DMMF) and the code on 2026-10-14, then
 reviewed by hand. The conceptual duplicates in §1.1 are hand-written; the
@@ -55,10 +56,10 @@ editing them.
 | `Patient` | ~~`ageYears`~~ | `dob` | **Resolved:** `ageYears` dropped; age is calculated from `dob` (`src/lib/patient/age.ts`). An age given at registration is stored as an estimated dob (`dobEstimated`, which also replaced `dobPrecision`). |
 | `User` / `Patient` / `StudentProfile` | `displayName` / `fullName`, `preferredName` / `fullLegalName`, `preferredName` | each other | A person's name is held per model; a correction in one doesn't reach the others. **Partly resolved:** `StudentProfile` no longer stores a name; it reads `User.legalName` / `User.displayName`. Patient names stay on `Patient` (a patient record may have no account). |
 
-| `BloodRequest` | productName | product | Copied at write time; goes stale if the source is renamed. |
+| `BloodRequest` | productName | product | **Deliberate snapshot:** the product as named when requested, kept for the request record; the `product` FK stays the reference. |
 | `GeneratedDocument` | issuedByName | clinicalDocument.author | Deliberate snapshot: the issuer as printed on the document at issue time. |
 | `PatientAccessSession` | doctorName | doctorUserId | Snapshot of the doctor's name for the patient's view. |
-| `Surgery` | procedureName | procedure | Copied at write time; goes stale if the source is renamed. |
+| `Surgery` | procedureName | procedure | **Deliberate snapshot:** the procedure as named when booked (what consent and the OT list showed); the `procedure` catalogue FK stays the reference. |
 | `PatientLinkRequest` | `claimedName`, `claimedPhone`, `claimedDob`, `claimedSex` | the matched `Patient` | Deliberate: what the registrant typed, kept for the reviewer. |
 
 ### 1.3 Keys copied from a parent
@@ -68,8 +69,11 @@ codebase: every row carries its own scope key so tenant filters and indexes stay
 single-table, and clinical rows carry `patientId`/`encounterId` for direct reads.
 The risk is drift if a parent is ever corrected (for example, an encounter
 moved to the right patient) without updating its children. Patient merges are
-logical and rewrite nothing, so they don't cause drift. Listed so the merge decision can include them; a
-consistency gate could check that they agree.
+logical and rewrite nothing, so they don't cause drift. Listed so the merge decision can include them.
+**Tenant keys are checked:** `verify-postgres-facility-consistency` derives every
+facility-scoped child→parent foreign key from the schema (161 pairs) and fails if
+any row's `facilityId` differs from its parent's. It runs last in `verify:all`, so it
+covers the seed and every gate's rows.
 
 **Patient / encounter keys** (42 models):
 
@@ -146,10 +150,10 @@ consistency gate could check that they agree.
 | `Appointment` | `facilityId` = patient.facilityId; doctor has an ACTIVE membership there |
 | `DoctorScheduleBlock` | staff has an ACTIVE membership at `facilityId` |
 | `QueueEntry` | `facilityId` = patient.facilityId |
-| `TriageAssessment` | `facilityId` = encounter.facilityId = recordedBy.facilityId |
+| `TriageAssessment` | `facilityId` = encounter.facilityId; recordedBy has an ACTIVE membership there |
 | `EncounterLocation` | `facilityId` = encounter.facilityId |
-| `AdmissionRequest` | `facilityId` = patient.facilityId = encounter.facilityId = requestedBy.facilityId |
-| `TransferRequest` | `facilityId` = patient.facilityId = requestedBy.facilityId |
+| `AdmissionRequest` | `facilityId` = patient.facilityId = encounter.facilityId; requestedBy has an ACTIVE membership there |
+| `TransferRequest` | `facilityId` = patient.facilityId; requestedBy has an ACTIVE membership there |
 | `IcuObservation` | `facilityId` = patient.facilityId = encounter.facilityId |
 | `IcuDevice` | `facilityId` = patient.facilityId = encounter.facilityId |
 | `IcuInfusion` | `facilityId` = patient.facilityId = encounter.facilityId |
@@ -157,11 +161,11 @@ consistency gate could check that they agree.
 | `SurgerySchedule` | `facilityId` = surgery.facilityId = operatingTheatre.facilityId |
 | `SurgicalSpecimen` | `facilityId` = surgery.facilityId |
 | `SurgeryItemUsage` | `facilityId` = surgery.facilityId |
-| `Order` | `facilityId` = encounter.facilityId = patient.facilityId ; orderingStaff has an ACTIVE membership there |
+| `Order` | `facilityId` = encounter.facilityId = patient.facilityId; orderingStaff has an ACTIVE membership there |
 | `CarePlan` | `facilityId` = patient.facilityId |
-| `NursingAssessment` | `facilityId` = patient.facilityId = encounter.facilityId = nurse.facilityId |
-| `ClinicalHandoff` | `facilityId` = patient.facilityId ; fromStaff has an ACTIVE membership there |
-| `NursingAssignment` | `facilityId` = nurse.facilityId = patient.facilityId |
+| `NursingAssessment` | `facilityId` = patient.facilityId = encounter.facilityId; nurse has an ACTIVE membership there |
+| `ClinicalHandoff` | `facilityId` = patient.facilityId; fromStaff has an ACTIVE membership there |
+| `NursingAssignment` | `facilityId` = patient.facilityId; nurse has an ACTIVE membership there |
 | `IntakeOutputRecord` | `facilityId` = encounter.facilityId |
 | `MedicationReconciliation` | `facilityId` = encounter.facilityId = patient.facilityId |
 | `MedicationItemLink` | `facilityId` = item.facilityId |

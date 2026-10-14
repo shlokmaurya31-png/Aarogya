@@ -97,6 +97,8 @@ const ORDER = [
   "verify-postgres-location-history",
   "verify-postgres-bookability",
   "verify-postgres-problem-list",
+  // Runs last among the gates: checks every row the earlier gates created.
+  "verify-postgres-facility-consistency",
   // Runs late: its whole-database check covers every earlier gate's orders.
   "verify-postgres-order-status",
 ];
