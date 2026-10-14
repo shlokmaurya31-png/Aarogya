@@ -61,7 +61,14 @@ async function main() {
   const allergies = target.allergies.map((a) => a.substance);
   report("Patient context lists the patient's real allergies", allergies.every((a) => context.includes(a)), allergies.join(", "));
   const activeMeds = (await listMedications(scope)).filter((m) => m.isActive).map((m) => m.drug);
-  report("Patient context lists the patient's active medicines", activeMeds.length > 0 && activeMeds.every((d) => context.includes(d)), activeMeds.join(", "));
+  // The context is deliberately small: each section shows its 8 most recent
+  // entries (listMedications is newest first).
+  const shown = activeMeds.slice(0, 8);
+  report("Patient context lists the patient's most recent active medicines", shown.length > 0 && shown.every((d) => context.includes(d)), shown.join(", "));
+  if (activeMeds.length > 8) {
+    const medLines = (context.split("ACTIVE MEDICINES\n")[1] ?? "").split("\n\n")[0].split("\n").filter((l) => l.startsWith("- "));
+    report("Patient context stays capped at 8 medicines", medLines.length === 8, `${medLines.length} shown of ${activeMeds.length} active`);
+  }
   report("Patient context contains nothing from mock-data.ts", !context.includes(mockPatient.name) && !context.includes(mockPatient.patientId));
   const others = await prisma.patient.findMany({ where: { id: { not: target.id } }, select: { fullName: true }, take: 200, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
   const leaked = others.map((o) => o.fullName).filter((n) => n && n !== target.fullName && context.includes(n));
