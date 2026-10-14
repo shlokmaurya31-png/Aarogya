@@ -17,7 +17,8 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const { facilityId } = await requireFacilityStaff("inventory:item:view", searchParams.get("facilityId") ?? undefined);
     const links = await prisma.medicationItemLink.findMany({
-      where: { OR: [{ facilityId }, { facilityId: null }] },
+      // The facility's own links, plus global links to global items only.
+      where: { OR: [{ facilityId }, { facilityId: null, item: { facilityId: null } }] },
       include: { item: true },
       orderBy: { drugNameKey: "asc" },
     });

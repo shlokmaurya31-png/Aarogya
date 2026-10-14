@@ -42,6 +42,12 @@ export async function linkMedicationToItem(
   const item = await assertItemInFacility(tx, input.itemId, input.facilityId);
   if (!item.active) throw new BadRequestError("Cannot link a drug name to an inactive item.");
   if (item.category !== "MEDICATION") throw new BadRequestError(`Item category is ${item.category}, not MEDICATION.`);
+  // A global link is visible to, and resolved by, EVERY facility, so it may only
+  // point at a global catalog item. Linking one facility's own item globally
+  // would show that item to every other facility and dispense it there.
+  if (input.global && item.facilityId !== null) {
+    throw new BadRequestError("A global link must point at a global catalog item, not one facility's item.");
+  }
 
   const drugNameKey = normalizeDrugName(input.drugName);
   const existing = await tx.medicationItemLink.findFirst({ where: { facilityId: linkFacilityId, drugNameKey } });
@@ -61,6 +67,8 @@ export async function resolveItemForDrugName(db: Db, facilityId: string, drugNam
   if (facilityLink) return facilityLink.item;
   // facilityId is NULL here, and Postgres unique constraints treat NULLs as
   // distinct, so several global links can share a key: take the oldest.
-  const globalLink = await db.medicationItemLink.findFirst({ where: { facilityId: null, drugNameKey }, orderBy: [{ createdAt: "asc" }, { id: "asc" }], include: { item: true } });
+  // Only global links to global items: a stray global link to one facility's
+  // item must never resolve at another facility.
+  const globalLink = await db.medicationItemLink.findFirst({ where: { facilityId: null, drugNameKey, item: { facilityId: null } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }], include: { item: true } });
   return globalLink?.item ?? null;
 }

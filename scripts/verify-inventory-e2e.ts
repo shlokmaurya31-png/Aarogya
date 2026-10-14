@@ -87,8 +87,18 @@ async function main() {
       .catch((err) => ({ ok: false as const, err }));
     report("Linking an inactive item is rejected", !inactiveAttempt.ok && inactiveAttempt.err instanceof BadRequestError);
 
-    const globalLink = await prisma.$transaction((tx) => linkMedicationToItem(tx, { facilityId: facility.id, global: true, drugName: `E2EGlobalLinkDrug${runId}`, itemId: item.id }));
+    const globalItem = await prisma.item.create({ data: { facilityId: null, sku: `E2E-GLOBAL-${runId}`, name: "E2E Global Drug", category: "MEDICATION", baseUnit: "TABLET" } });
+    const globalLink = await prisma.$transaction((tx) => linkMedicationToItem(tx, { facilityId: facility.id, global: true, drugName: `E2EGlobalLinkDrug${runId}`, itemId: globalItem.id }));
     report("A global link (facilityId=null) can be created and resolves from any facility scope", globalLink.facilityId === null);
+
+    // A global link is resolved by every facility, so it must never point at
+    // one facility's own item (that item would leak to, and be dispensed at,
+    // every other facility).
+    const globalToFacilityItem = await prisma
+      .$transaction((tx) => linkMedicationToItem(tx, { facilityId: facility.id, global: true, drugName: `E2EGlobalFacilityItem${runId}`, itemId: item.id }))
+      .then(() => ({ ok: true as const }))
+      .catch((err) => ({ ok: false as const, err }));
+    report("A global link to a facility-scoped item is rejected", !globalToFacilityItem.ok && globalToFacilityItem.err instanceof BadRequestError);
 
     // Genuine concurrency gate (brief §8, gate #4): two truly concurrent
     // linkMedicationToItem calls for the SAME (facility, drugName) —
