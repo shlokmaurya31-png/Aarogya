@@ -11,3 +11,4 @@ File names are `NNNN-short-title.md`, numbered in order.
 | [0001](0001-postgres-single-database.md) | Postgres is the single database and migration history | Accepted | 2026-10-13 |
 | [0002](0002-supabase-mumbai-staging.md) | Supabase (Mumbai, ap-south-1) for the staging database | Accepted | 2026-10-14 |
 | [0003](0003-adapters-for-external-services.md) | Every external service sits behind an adapter, switched on by env | Accepted | 2026-10-14 |
+| [0004](0004-events-over-direct-calls.md) | Modules sync through transactional domain events, not direct calls | Accepted | 2026-10-14 |

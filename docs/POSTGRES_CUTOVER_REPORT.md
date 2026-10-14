@@ -259,6 +259,17 @@ stays at exit 0.
 | New, out of scope: `GET /api/hospital/invoices` | The `total` count ignores the `invoiceNumber` filter, so `total` can exceed the filtered rows. It was found while fixing F2. It is pre-existing and unrelated to Postgres, and should be fixed separately. |
 | `verify-abdm-sandbox` | Still excluded from `verify:all`. It needs real ABDM sandbox credentials. |
 
+**Status update (2026-10-14, later):**
+- **Fixed:**
+  - The F3 runtime URL setup (`d0306b2`).
+  - The CI drift fix, now confirmed on GitHub.
+  - The invoice `total` (`ebe87a4`).
+  - Every row-order-dependent `findFirst`/`findMany` (`50c00ab`).
+- **The JSON and text-enum columns are now inventoried column by column** in
+  §8 (Week 2 schema audit). The earlier "8 text enums" counted only obvious
+  status columns; the systematic scan finds 156, including every status,
+  priority and type column. They are still unchanged by design.
+
 ## 7. CI on Postgres (prompt 8)
 
 CI now runs every job against a `pgvector/pgvector:pg16` service:
@@ -281,3 +292,307 @@ The first CI run of the gates job found one more real bug:
 **Lesson:** CI's small connection pool is a useful stress setting. A local run
 with `?connection_limit=5` on `DATABASE_URL` reproduces it.
 
+
+## 8. Week 2 schema audit (recorded 2026-10-14; nothing changed yet)
+
+This is an inventory for Week 2. **No column has been changed.** Each entry
+says whether today's representation is deliberate, or should become `jsonb`,
+a Postgres array or a native enum.
+
+**How the columns were found.**
+- **JSON stored as text:** `String` columns documented as JSON, defaulting
+  to `"[]"`/`"{}"`, or read with `JSON.parse`/written with `JSON.stringify`
+  in code.
+- **Enums stored as text:** `String` columns with an upper-case constant
+  default or a comment listing `A | B | C` values.
+
+There are already 29 real `Json` columns and many native enums (for example
+`EncounterStatus`, `PaymentMethod`), so the mix is a leftover, not a policy.
+The heuristic can miss a status column that has neither a default nor a
+value comment; Week 2 should grep `status String` once more before
+migrating.
+
+### 8.1 JSON stored as text
+
+| Column | Holds | Verdict |
+|---|---|---|
+| `StudentProfile.clinicalInterests` | JSON-encoded `string[]` | **Should become `String[]`** (Postgres `text[]`). A flat list of strings needs no `jsonb`. |
+| `ClinicalCase.learningObjectives` | JSON `string[]` | **Should become `String[]`.** |
+| `NotebookEntry.tags` | JSON `string[]` | **Should become `String[]`.** This also enables `has`/`hasSome` tag filters in Postgres instead of parsing in memory. |
+| `LearningRecommendation.caseIds` | JSON `string[]` of `ClinicalCase` ids | **Should become `String[]`**, or a join table if referential integrity to `ClinicalCase` matters. |
+| `ClinicalCase.learnerTracks` | JSON-encoded `LearningTrack[]` | **Should become a native enum array** (`LearningTrack[]`) if the track set is closed in code; otherwise `String[]`. |
+| `ConfigurationOverride.value`, `OrgConfigValue.value`, `FacilityConfigValue.value`, `DepartmentConfigValue.value` | A serialized value whose type is set by `valueType` (BOOLEAN / NUMBER / STRING / ENUM / DURATION / JSON) | **Deliberate text.** The value is polymorphic, `src/lib/config/registry.ts` validates and parses it per type, and text is its canonical, auditable form. `jsonb` would add nothing for the 5 scalar types. |
+
+Each change is a migration with
+`USING (SELECT array_agg(x) FROM json_array_elements_text(col::json) x)`
+plus code changes at every `JSON.parse`/`JSON.stringify` site. Those sites
+are all in the Scholar (student) module.
+
+### 8.2 Enums stored as text
+
+156 columns: **136 should become native enums, and 20 are deliberately
+text.**
+
+**Deliberately text:**
+- **ISO 4217 currency codes** (13 columns): an external, open code set.
+  Keep text and add a 3-letter `CHECK`.
+- **Open, organization-extensible taxonomies:**
+  - `StaffPrivilege.privilegeType`;
+  - `QualityIncident.category`;
+  - `BillingInvoiceSequence.scope`.
+- **Vocabularies owned by an external spec:**
+  - ABDM consent purpose and HI-type scope;
+  - ABDM and NHCX protocol states (the NHCX contract isn't verified yet).
+
+**Things to plan for when migrating:**
+
+- **Shared value sets.** `ROUTINE | URGENT | STAT` repeats across 9 tables:
+  `LabOrder`, `ImagingOrder`, `Referral`, `Task`, `WorkflowTask`,
+  `HousekeepingRequest`, `MaintenanceRequest`, `PatientTransportRequest` and
+  `DepartmentSupplyRequest`. It should be one `Priority` enum.
+  `Notification.priority` differs (`CRITICAL`, not `STAT`) and stays
+  separate. Severity sets (`LOW | MODERATE | HIGH | CRITICAL` and
+  `INFO | WARNING | CRITICAL`) should likewise each be one enum.
+- **Raw SQL.** Postgres won't implicitly cast a bound text parameter to an
+  enum in an `INSERT` (error 42804; see `src/lib/hospital/billing/
+  payments.ts`). Every `$executeRaw` that writes a converted column needs a
+  `Prisma.raw` literal or an explicit `::"EnumName"` cast. The idempotent
+  billing, inventory and procurement inserts are the ones to check.
+- **Data check first.** Before each `ALTER COLUMN … TYPE … USING col::"Enum"`,
+  run `SELECT DISTINCT col` on staging to prove no stray values exist; the
+  migration fails on the first one.
+- **"Defined in code" rows** have no value comment in the schema. Their
+  value set must be taken from the module's TypeScript union or state
+  machine, which is the source of truth.
+- **Order of work.** Go module by module, one migration each, and keep that
+  module's integrity gate green. Start with the platform tables (events,
+  workflows), whose state machines are fully closed.
+
+**Platform: events, workflows, configuration**
+
+| Column | Default | Values | Verdict |
+|---|---|---|---|
+| `DomainEventOutbox.status` | `PENDING` | PENDING \| PROCESSING \| PROCESSED \| RETRY \| DEAD_LETTER | Native enum |
+| `DomainEventDelivery.status` | `PENDING` | PENDING \| PROCESSED \| FAILED \| DEAD_LETTER | Native enum |
+| `WorkflowDefinition.status` | `ACTIVE` | ACTIVE \| INACTIVE | Native enum |
+| `WorkflowVersion.status` | `DRAFT` | DRAFT \| PUBLISHED \| RETIRED | Native enum |
+| `WorkflowInstance.status` | `RUNNABLE` | RUNNABLE \| RUNNING \| WAITING \| COMPLETED \| FAILED \| CANCELLED | Native enum |
+| `WorkflowStep.stepType` | — | CONDITION \| ACTION \| TASK \| TIMER | Native enum |
+| `WorkflowStep.status` | `PENDING` | PENDING \| RUNNING \| WAITING \| COMPLETED \| SKIPPED \| FAILED | Native enum |
+| `WorkflowTask.priority` | `ROUTINE` | ROUTINE \| URGENT \| STAT | Native enum |
+| `WorkflowTask.status` | `OPEN` | OPEN \| IN_PROGRESS \| COMPLETED \| CANCELLED \| EXPIRED | Native enum |
+| `WorkflowTimer.kind` | — | DELAY \| SLA | Native enum |
+| `WorkflowTimer.status` | `PENDING` | PENDING \| CLAIMED \| COMPLETED \| CANCELLED | Native enum |
+| `ConfigurationOverride.scope` | — | ORGANIZATION \| FACILITY \| DEPARTMENT | Native enum |
+| `ConfigurationOverride.status` | `DRAFT` | DRAFT \| PUBLISHED \| RETIRED | Native enum |
+| `ConfigurationChange.action` | — | SET \| PUBLISH \| RESET \| RETIRE | Native enum |
+| `WorkflowBuilderDraft.status` | `DRAFT` | DRAFT (builder-only lifecycle) | Native enum |
+
+**SaaS billing and commercial**
+
+| Column | Default | Values | Verdict |
+|---|---|---|---|
+| `OrganizationBillingAccount.currency` | `INR` | _defined in code_ | ISO 4217 currency code — an external, open code set. Keep text; add a 3-letter CHECK. |
+| `PlanPrice.currency` | `INR` | _defined in code_ | ISO 4217 currency code — an external, open code set. Keep text; add a 3-letter CHECK. |
+| `BillingInvoice.currency` | `INR` | _defined in code_ | ISO 4217 currency code — an external, open code set. Keep text; add a 3-letter CHECK. |
+| `BillingInvoiceSequence.scope` | `SAAS` | _defined in code_ | Sequence namespace key (`SAAS`, …), not a closed set. Keep text. |
+| `BillingPaymentAttempt.currency` | `INR` | _defined in code_ | ISO 4217 currency code — an external, open code set. Keep text; add a 3-letter CHECK. |
+| `BillingPayment.currency` | `INR` | _defined in code_ | ISO 4217 currency code — an external, open code set. Keep text; add a 3-letter CHECK. |
+| `BillingCredit.currency` | `INR` | _defined in code_ | ISO 4217 currency code — an external, open code set. Keep text; add a 3-letter CHECK. |
+| `BillingReconciliationException.severity` | `MEDIUM` | _defined in code_ | Native enum |
+| `BillingReconciliationException.status` | `OPEN` | _defined in code_ | Native enum |
+| `BillingReconciliationException.source` | `RECONCILIATION` | _defined in code_ | Native enum |
+| `CollectionActivity.type` | — | NOTE \| CONTACT \| PROMISE_TO_PAY \| ESCALATION | Native enum |
+
+**Clinical core**
+
+| Column | Default | Values | Verdict |
+|---|---|---|---|
+| `Patient.registrationStatus` | `ACTIVE` | "ACTIVE" \| "INACTIVE" | Native enum |
+| `PatientIdentifier.status` | `ACTIVE` | "ACTIVE" \| "INVALID" \| "SUPERSEDED" | Native enum |
+| `Allergy.status` | `ACTIVE` | "ACTIVE" \| "INACTIVE" \| "ENTERED_IN_ERROR" | Native enum |
+| `Allergy.verification` | `UNCONFIRMED` | "UNCONFIRMED" \| "CONFIRMED" | Native enum |
+| `EpisodeOfCare.status` | `ACTIVE` | "ACTIVE" \| "CLOSED" | Native enum |
+| `Diagnosis.status` | `ACTIVE` | "ACTIVE" \| "RESOLVED" \| "ENTERED_IN_ERROR" | Native enum |
+| `ClinicalNote.status` | `SIGNED` | "DRAFT" \| "SIGNED" \| "AMENDED" \| "SUPERSEDED" | Native enum |
+| `LabOrder.priority` | `ROUTINE` | ROUTINE \| URGENT \| STAT | Native enum |
+| `ImagingOrder.modality` | — | XRAY \| CT \| MRI \| USG \| MAMMOGRAPHY \| INTERVENTIONAL | Native enum |
+| `ImagingOrder.priority` | `ROUTINE` | _defined in code_ | Native enum |
+| `ImagingStudy.imageAvailability` | `NONE` | _defined in code_ | Native enum |
+| `Task.priority` | `ROUTINE` | "ROUTINE" \| "URGENT" \| "STAT" | Native enum |
+| `Task.status` | `OPEN` | OPEN \| ASSIGNED \| IN_PROGRESS \| COMPLETED \| CANCELLED \| OVERDUE | Native enum |
+| `ClinicalDocument.status` | `CURRENT` | "CURRENT" \| "SUPERSEDED" | Native enum |
+| `ClinicalDocument.accessPolicy` | `CLINICAL_STAFF` | "CLINICAL_STAFF" \| "PATIENT_VISIBLE" \| "RESTRICTED" | Native enum |
+| `Consent.status` | `REQUESTED` | REQUESTED \| GRANTED \| DENIED \| REVOKED \| EXPIRED | Native enum |
+| `Referral.priority` | `ROUTINE` | ROUTINE \| URGENT \| STAT | Native enum |
+| `Referral.status` | `PLACED` | DRAFT \| PLACED \| ACKNOWLEDGED \| IN_PROGRESS \| COMPLETED \| CANCELLED \| REJECTED | Native enum |
+| `Appointment.status` | `REQUESTED` | REQUESTED\|CONFIRMED\|RESCHEDULED\|ARRIVED\|CHECKED_IN\|WAITING\|IN_CONSULTATION\|COMPLETED\|CANCELLED\|NO_SHOW | Native enum |
+| `QueueEntry.status` | `WAITING` | WAITING \| CALLED \| IN_SERVICE \| COMPLETED \| SKIPPED \| CANCELLED | Native enum |
+| `TriageAssessment.status` | `COMPLETED` | "DRAFT" \| "COMPLETED" \| "AMENDED" | Native enum |
+| `AdmissionRequest.status` | `PENDING` | PENDING \| DEFERRED \| BED_RESERVED \| ADMITTED \| REJECTED \| CANCELLED | Native enum |
+| `TransferRequest.status` | `REQUESTED` | REQUESTED \| ACCEPTED \| BED_RESERVED \| PATIENT_IN_TRANSIT \| COMPLETED \| CANCELLED \| REJECTED | Native enum |
+| `IcuDevice.status` | `PLANNED` | "PLANNED" \| "ACTIVE" \| "REMOVED" \| "DISCONTINUED" | Native enum |
+| `IcuInfusion.status` | `RUNNING` | "RUNNING" \| "PAUSED" \| "STOPPED" | Native enum |
+| `Surgery.urgency` | `ELECTIVE` | "ELECTIVE" \| "URGENT" \| "EMERGENCY" | Native enum |
+| `SurgerySchedule.status` | `SCHEDULED` | "SCHEDULED" \| "CANCELLED" | Native enum |
+| `AnesthesiaRecord.status` | `PLANNED` | "PLANNED" \| "IN_PROGRESS" \| "COMPLETED" | Native enum |
+| `SurgicalSpecimen.status` | `COLLECTED` | "COLLECTED" \| "SENT" \| "RECEIVED" | Native enum |
+| `RecoveryRecord.status` | `PENDING` | "PENDING" \| "IN_RECOVERY" \| "READY_FOR_TRANSFER" \| "TRANSFERRED" | Native enum |
+| `NursingAssessment.status` | `DRAFT` | "DRAFT" \| "COMPLETED" \| "SIGNED" \| "SUPERSEDED" | Native enum |
+| `BloodUnit.bloodGroupStatus` | `PENDING` | "PENDING" \| "CONFIRMED" — set only from an authorized typing record | Native enum |
+| `BloodTypingRecord.status` | `PENDING` | "PENDING" \| "RESULTED" \| "VERIFIED" | Native enum |
+| `BloodCompatibilityTest.testType` | `CROSSMATCH` | "TYPE_AND_SCREEN" \| "CROSSMATCH" | Native enum |
+| `BloodIssue.status` | `ISSUED` | "ISSUED" \| "IN_TRANSIT" \| "RECEIVED" \| "RETURNED" | Native enum |
+
+**Hospital billing, supply chain**
+
+| Column | Default | Values | Verdict |
+|---|---|---|---|
+| `Charge.category` | — | CONSULTATION \| BED \| PROCEDURE \| LAB \| IMAGING \| PHARMACY \| NURSING \| PACKAGE \| OTHER | Native enum |
+| `Charge.currency` | `INR` | _defined in code_ | ISO 4217 currency code — an external, open code set. Keep text; add a 3-letter CHECK. |
+| `Tariff.currency` | `INR` | _defined in code_ | ISO 4217 currency code — an external, open code set. Keep text; add a 3-letter CHECK. |
+| `PackageDefinition.currency` | `INR` | _defined in code_ | ISO 4217 currency code — an external, open code set. Keep text; add a 3-letter CHECK. |
+| `Invoice.currency` | `INR` | _defined in code_ | ISO 4217 currency code — an external, open code set. Keep text; add a 3-letter CHECK. |
+| `Payment.currency` | `INR` | _defined in code_ | ISO 4217 currency code — an external, open code set. Keep text; add a 3-letter CHECK. |
+| `PurchaseOrder.currency` | `INR` | _defined in code_ | ISO 4217 currency code — an external, open code set. Keep text; add a 3-letter CHECK. |
+| `SupplierContract.currency` | `INR` | _defined in code_ | ISO 4217 currency code — an external, open code set. Keep text; add a 3-letter CHECK. |
+| `DepartmentSupplyRequest.urgency` | `ROUTINE` | _defined in code_ | Native enum |
+
+**Operations: housekeeping, diet, transport, assets**
+
+| Column | Default | Values | Verdict |
+|---|---|---|---|
+| `HousekeepingRequest.priority` | `ROUTINE` | "ROUTINE" \| "URGENT" \| "STAT" | Native enum |
+| `HousekeepingRequest.status` | `REQUESTED` | REQUESTED\|ASSIGNED\|IN_PROGRESS\|COMPLETED\|INSPECTED\|CLOSED\|CANCELLED | Native enum |
+| `DietOrder.status` | `ACTIVE` | ACTIVE \| DISCONTINUED \| CANCELLED | Native enum |
+| `Meal.status` | `PLANNED` | PLANNED\|PREPARING\|READY\|DELIVERED\|REFUSED\|MISSED\|CANCELLED | Native enum |
+| `PatientTransportRequest.priority` | `ROUTINE` | _defined in code_ | Native enum |
+| `PatientTransportRequest.status` | `REQUESTED` | REQUESTED\|ACCEPTED\|ASSIGNED\|EN_ROUTE_TO_PICKUP\|PATIENT_PICKED_UP\|IN_TRANSIT\|ARRIVED\|COMPLETED\|CANCELLED\|REJECT | Native enum |
+| `Ambulance.status` | `AVAILABLE` | AVAILABLE \| ON_TRIP \| MAINTENANCE \| OUT_OF_SERVICE | Native enum |
+| `AmbulanceTrip.status` | `REQUESTED` | REQUESTED\|DISPATCHED\|EN_ROUTE\|AT_PICKUP\|PATIENT_ONBOARD\|IN_TRANSIT\|ARRIVED\|COMPLETED\|CANCELLED\|FAILED_DISPATCH | Native enum |
+| `MaintenanceRequest.priority` | `ROUTINE` | _defined in code_ | Native enum |
+| `MaintenanceRequest.status` | `REPORTED` | REPORTED\|TRIAGED\|ASSIGNED\|IN_PROGRESS\|RESOLVED\|VERIFIED\|CLOSED\|CANCELLED | Native enum |
+| `PreventiveMaintenance.status` | `SCHEDULED` | SCHEDULED \| DONE \| CANCELLED | Native enum |
+| `AssetDowntime.status` | `ACTIVE` | ACTIVE \| RESOLVED | Native enum |
+| `BiomedicalEquipment.status` | `IN_SERVICE` | IN_SERVICE \| UNDER_MAINTENANCE \| OUT_OF_SERVICE \| RETIRED | Native enum |
+
+**Quality and infection control**
+
+| Column | Default | Values | Verdict |
+|---|---|---|---|
+| `InfectionIncident.status` | `REPORTED` | REPORTED\|UNDER_REVIEW\|INVESTIGATION\|ACTION_REQUIRED\|RESOLVED\|CLOSED\|CANCELLED | Native enum |
+| `InfectionInvestigation.status` | `OPEN` | OPEN \| COMPLETED | Native enum |
+| `ExposureRecord.status` | `DOCUMENTED` | DOCUMENTED \| REVIEWED | Native enum |
+| `QualityIncident.category` | — | documentary: MEDICATION\|FALL\|PRESSURE_INJURY\|DIAGNOSTIC\|SURGICAL\|TRANSFUSION\|INFECTION\|EQUIPMENT\|OPERATIONAL\|S | Documentary taxonomy that organizations extend. Keep text; validate via configuration. |
+| `QualityIncident.severity` | `MODERATE` | LOW\|MODERATE\|HIGH\|CRITICAL (organizational classification, not a computed score) | Native enum |
+| `QualityIncident.confidentiality` | `STANDARD` | STANDARD\|RESTRICTED | Native enum |
+| `QualityIncident.status` | `REPORTED` | REPORTED\|TRIAGED\|UNDER_INVESTIGATION\|ACTION_REQUIRED\|RESOLVED\|CLOSED\|CANCELLED | Native enum |
+| `RootCauseAnalysis.methodology` | `FIVE_WHYS` | FIVE_WHYS\|FISHBONE\|OTHER (documentary — the system stores, does not infer) | Native enum |
+| `RootCauseAnalysis.status` | `DRAFT` | DRAFT\|UNDER_REVIEW\|REVIEWED | Native enum |
+| `CapaAction.actionType` | — | CORRECTIVE\|PREVENTIVE | Native enum |
+| `CapaAction.status` | `OPEN` | OPEN\|IN_PROGRESS\|COMPLETED\|VERIFIED\|CLOSED\|CANCELLED | Native enum |
+| `QualityStandard.status` | `ACTIVE` | ACTIVE\|ARCHIVED | Native enum |
+| `QualityMeasure.status` | `PENDING` | PENDING\|COMPLIANT\|PARTIAL\|NON_COMPLIANT\|NOT_APPLICABLE | Native enum |
+| `ComplianceEvidence.evidenceType`? | — | POLICY\|PROCEDURE\|REPORT\|TRAINING\|RECORD\|INVESTIGATION\|OTHER | Native enum |
+| `QualityFinding.sourceType`? | — | AUDIT\|STANDARD\|MEASURE\|INCIDENT\|OTHER | Native enum |
+| `QualityFinding.severity`? | — | LOW\|MODERATE\|HIGH\|CRITICAL | Native enum |
+| `QualityFinding.status` | `OPEN` | OPEN\|IN_PROGRESS\|CLOSED | Native enum |
+| `QualityAudit.status` | `PLANNED` | PLANNED\|IN_PROGRESS\|COMPLETED\|CLOSED | Native enum |
+
+**Workforce**
+
+| Column | Default | Values | Verdict |
+|---|---|---|---|
+| `WorkforceAssignment.assignmentType` | `PRIMARY` | PRIMARY\|SECONDARY\|TEMPORARY | Native enum |
+| `WorkforceAssignment.status` | `ACTIVE` | ACTIVE\|ENDED | Native enum |
+| `StaffAvailability.availability` | `AVAILABLE` | AVAILABLE\|UNAVAILABLE\|ON_LEAVE\|SUSPENDED\|OFF_DUTY | Native enum |
+| `StaffShift.shiftType`? | — | DAY\|NIGHT\|EVENING\|ON_CALL | Native enum |
+| `StaffShift.status` | `SCHEDULED` | SCHEDULED\|CANCELLED\|COMPLETED | Native enum |
+| `StaffingRequirement.status` | `ACTIVE` | ACTIVE\|ARCHIVED | Native enum |
+| `Credential.credentialType` | — | REGISTRATION\|QUALIFICATION\|CERTIFICATION\|LICENSE\|SPECIALTY\|TRAINING | Native enum |
+| `Credential.status` | `PENDING` | PENDING\|VERIFIED\|EXPIRED\|SUSPENDED\|REVOKED | Native enum |
+| `StaffPrivilege.privilegeType` | — | e.g. SURGERY\|ANESTHESIA\|BLOOD_BANK_VERIFY\|LAB_RESULT_VERIFY\|RADIOLOGY_REPORT_FINALIZE\|ICU_RESPONSIBILITY\|PHARM | Facility-defined privilege catalogue ("e.g. …" in the schema). Keep text; validate against a configured list. |
+| `StaffPrivilege.status` | `ACTIVE` | ACTIVE\|EXPIRED\|SUSPENDED\|REVOKED | Native enum |
+
+**Interoperability: ABDM, NHCX, identifiers**
+
+| Column | Default | Values | Verdict |
+|---|---|---|---|
+| `ExternalIdentifier.entityType` | — | PATIENT \| FACILITY \| STAFF \| ENCOUNTER \| ORGANIZATION \| DOCUMENT | Native enum |
+| `ExternalIdentifier.use` | `OFFICIAL` | OFFICIAL \| SECONDARY \| OLD | Native enum |
+| `ExternalIdentifier.status` | `ACTIVE` | ACTIVE \| SUPERSEDED \| REVOKED \| INVALID | Native enum |
+| `ExternalIdentifier.source` | `LOCAL_ENTRY` | LOCAL_ENTRY \| REGISTRY_LOOKUP \| IMPORTED | Native enum |
+| `ExternalIdentifier.verificationStatus` | `UNVERIFIED` | UNVERIFIED \| VERIFIED \| FAILED | Native enum |
+| `InteropConsent.purpose` | — | TREATMENT \| REFERRAL \| SECOND_OPINION \| INSURANCE \| PATIENT_ACCESS \| RESEARCH \| OTHER | ABDM consent purpose — external vocabulary. Keep text, validated against the contract module. |
+| `InteropConsent.status` | `REQUESTED` | REQUESTED \| GRANTED \| ACTIVE \| EXPIRED \| REVOKED \| DECLINED \| CANCELLED | Native enum |
+| `InteropConsent.recipientType` | — | FACILITY \| ORGANIZATION \| PRACTITIONER \| PATIENT \| EXTERNAL_SYSTEM | Native enum |
+| `InteropConsent.source` | `LOCAL` | _defined in code_ | Native enum |
+| `InteropConsentScope.scope` | — | ALL_CLINICAL \| DIAGNOSIS \| LAB \| IMAGING \| MEDICATION \| DOCUMENTS \| ENCOUNTER \| ALLERGY \| VITALS \| CARE_PLAN \| | Maps to ABDM HI types — external vocabulary that ABDM extends. Keep text. |
+| `HealthInformationExchange.direction` | — | OUTBOUND \| INBOUND | Native enum |
+| `HealthInformationExchange.status` | `REQUESTED` | REQUESTED \| AUTHORIZED \| PROCESSING \| COMPLETED \| REJECTED \| FAILED \| CANCELLED | Native enum |
+| `HealthInformationExchange.abdmProtocolState`? | — | NOT_SUBMITTED \| SUBMITTED \| ACKNOWLEDGED \| GRANTED \| DENIED \| EXPIRED \| ERRORED | Mirrors ABDM protocol states — external spec. Keep text. |
+| `InteropProvenance.direction` | — | OUTBOUND \| INBOUND | Native enum |
+| `InteropProvenance.dataOrigin` | — | LOCAL \| EXTERNAL \| IMPORTED \| MAPPED \| DERIVED | Native enum |
+| `ImportedResource.status` | `RECEIVED` | RECEIVED \| MAPPED \| IMPORTED \| REJECTED \| CONFLICT | Native enum |
+| `TerminologyMapping.domain` | — | DIAGNOSIS \| LAB \| MEDICATION \| OBSERVATION \| PROCEDURE \| UNIT | Native enum |
+| `TerminologyMapping.status` | `ACTIVE` | ACTIVE \| RETIRED | Native enum |
+| `InteropConnection.system` | — | ABDM \| HFR \| HPR \| NHCX | Native enum |
+| `InteropConnection.environment` | `DISABLED` | DISABLED \| SANDBOX \| PRODUCTION | Native enum |
+| `InteropConnection.status` | `NOT_CONFIGURED` | NOT_CONFIGURED \| CONFIGURED \| ERROR | Native enum |
+| `IntegrationCertificate.role`? | `CURRENT` | _defined in code_ | Native enum |
+| `IntegrationCertificate.status` | `NOT_CONFIGURED` | _defined in code_ | Native enum |
+| `ExternalParticipant.environment` | `SANDBOX` | _defined in code_ | Native enum |
+| `ExternalParticipant.status` | `ACTIVE` | _defined in code_ | Native enum |
+| `ExternalParticipant.trustStatus` | `UNVERIFIED` | _defined in code_ | Native enum |
+| `IntegrationAlert.severity` | `WARNING` | INFO \| WARNING \| CRITICAL | Native enum |
+| `IntegrationAlert.status` | `OPEN` | _defined in code_ | Native enum |
+| `AbdmCallbackEvent.status` | `ACCEPTED` | _defined in code_ | Native enum |
+| `ClaimSubmission.submissionType` | `ORIGINAL` | _defined in code_ | Native enum |
+| `ClaimSubmission.status` | `DRAFT` | _defined in code_ | Native enum |
+| `NhcxExchange.direction` | `OUTBOUND` | _defined in code_ | Native enum |
+| `NhcxExchange.protocolState` | `NOT_SUBMITTED` | _defined in code_ | Mirrors NHCX protocol states; the NHCX contract is not yet verified (see nhcx/adapter.ts). Keep text until it is. |
+| `NhcxCallbackEvent.status` | `ACCEPTED` | _defined in code_ | Native enum |
+| `ClaimQuery.status` | `RECEIVED` | _defined in code_ | Native enum |
+| `ClaimSettlement.status` | `NOTIFIED` | _defined in code_ | Native enum |
+| `ReconciliationException.severity` | `WARNING` | INFO \| WARNING \| CRITICAL | Native enum |
+| `ReconciliationException.status` | `OPEN` | _defined in code_ | Native enum |
+
+**Privacy, patient access, notifications**
+
+| Column | Default | Values | Verdict |
+|---|---|---|---|
+| `BreakGlassAccess.status` | `ACTIVE` | _defined in code_ | Native enum |
+| `PrivacyRequest.status` | `REQUESTED` | _defined in code_ | Native enum |
+| `PatientDelegation.relationship` | — | PARENT \| CHILD \| SPOUSE \| GUARDIAN \| CAREGIVER \| OTHER | Native enum |
+| `PatientDelegation.status` | `INVITED` | _defined in code_ | Native enum |
+| `PatientAccessSession.status` | `PENDING` | _defined in code_ | Native enum |
+| `Notification.category` | `OPERATIONAL` | CLINICAL \| OPERATIONAL \| ADMINISTRATIVE \| SYSTEM | Native enum |
+| `Notification.priority` | `ROUTINE` | ROUTINE \| URGENT \| CRITICAL | Native enum |
+
+### 8.3 Student verification uploads → the storage adapter
+
+`src/lib/verification/provider.ts` (`MockVerificationProvider`) predates
+`StorageAdapter` (Phase 1.1) and keeps its own store. ADR 0003 records this
+as a known divergence. The problems:
+
+- **An absolute filesystem path is persisted as `storageRef`.**
+  `VerificationDocument.storageRef` is `path.join(process.cwd(), ".data/
+  verification-uploads", …)`. It breaks if the working directory changes, and
+  on Vercel's ephemeral, per-instance disk, where the file is gone after the
+  request.
+- **No upload validation.** `POST /api/student/register` stores any file
+  type and size. The adapter's `verification` bucket already enforces an
+  allow-list (PDF/JPEG/PNG/WebP), magic-byte sniffing and 15 MB.
+- **It never reaches S3 or Supabase Storage,** so staging and production
+  would lose the documents.
+- **There is no read path.** Nothing reads the files back. A reviewer route
+  is needed anyway, and should use `signedDownloadUrl` with an audit event.
+
+**Plan (Week 2, not done now):**
+1. Implement `VerificationProvider` on top of `getStorageAdapter()`: bucket
+   `verification`, scope `studentProfileId`, through `validateUpload`.
+2. Store the logical `storageRef` (`verification/<scope>/<sha16>-<name>`).
+3. Write a one-off script that re-uploads existing local files and rewrites
+   their refs, verifying the sha256 of each.
+4. Add a gate that rejects a disallowed type, round-trips a PDF and
+   refuses a path-style ref.
