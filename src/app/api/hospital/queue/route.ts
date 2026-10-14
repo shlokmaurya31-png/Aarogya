@@ -1,9 +1,11 @@
+import { $Enums } from "@prisma/client";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError } from "@/lib/auth/rbac";
 import { enterQueue } from "@/lib/hospital/queue";
+import { parseOptionalEnum } from "@/lib/enumValue";
 
 export async function GET(req: NextRequest) {
   return withApiErrors(async () => {
@@ -11,7 +13,7 @@ export async function GET(req: NextRequest) {
     const { facilityId } = await requireFacilityStaff("patient:read", searchParams.get("facilityId") ?? undefined);
     const queueType = searchParams.get("queueType");
     const practitionerStaffId = searchParams.get("practitionerStaffId");
-    const status = searchParams.get("status");
+    const status = parseOptionalEnum($Enums.QueueEntryStatus, searchParams.get("status"), "status");
 
     const entries = await prisma.queueEntry.findMany({
       where: {

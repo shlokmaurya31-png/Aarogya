@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import type { CommandContext } from "./authz";
 import { metric, driver, section } from "./_build";
 import type { CommandSection } from "./types";
+import type { Prisma } from "@prisma/client";
 
 /**
  * INCIDENTS — operational safety/quality incidents (QualityIncident). Aggregate counts
@@ -11,7 +12,7 @@ import type { CommandSection } from "./types";
  */
 export async function getIncidents(ctx: CommandContext): Promise<CommandSection> {
   const f = ctx.facilityId;
-  const open = { facilityId: f, status: { notIn: ["RESOLVED", "CLOSED", "CANCELLED"] } };
+  const open = { facilityId: f, status: { notIn: ["RESOLVED", "CLOSED", "CANCELLED"] } } satisfies Prisma.QualityIncidentWhereInput;
   const overdueBefore = new Date(ctx.now.getTime() - 7 * 86_400_000);
   const [openCount, highOpen, overdueInvestigations, actionRequired, byCategory] = await Promise.all([
     prisma.qualityIncident.count({ where: open }),

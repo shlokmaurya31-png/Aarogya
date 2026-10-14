@@ -38,6 +38,28 @@ const FILL_OPTIONAL: Record<string, string[]> = {
   ClinicalDocument: ["uploadedBy"],
 };
 
+/**
+ * Text columns constrained to a value list by a CHECK (docs/POSTGRES_CUTOVER_REPORT.md
+ * §8.2(b)), read from Postgres because the DMMF can't see CHECKs:
+ * "Model.field" -> allowed values. A fixture uses the first.
+ */
+let checkedValues: Map<string, string[]> | null = null;
+async function loadCheckedValues(db: PrismaClient): Promise<Map<string, string[]>> {
+  if (checkedValues) return checkedValues;
+  const rows = await db.$queryRaw<{ tbl: string; def: string }[]>`
+    SELECT c.conrelid::regclass::text AS tbl, pg_get_constraintdef(c.oid) AS def
+    FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
+    WHERE c.contype = 'c' AND n.nspname = 'public'`;
+  checkedValues = new Map();
+  for (const { tbl, def } of rows) {
+    const m = /^CHECK \(\("?(\w+)"?\)?(?:::text)? = ANY \(\(?ARRAY\[(.*?)\]/.exec(def);
+    if (!m) continue;
+    const values = [...m[2].matchAll(/'([^']*)'/g)].map((v) => v[1]);
+    checkedValues.set(`${tbl.replace(/"/g, "")}.${m[1]}`, values);
+  }
+  return checkedValues;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const delegate = (db: PrismaClient, model: string): any => (db as any)[model[0].toLowerCase() + model.slice(1)];
 const has = (m: Model, field: string) => m.fields.some((f) => f.name === field && f.kind === "scalar");
@@ -111,7 +133,8 @@ export async function ensureFixture(db: PrismaClient, model: string, tenant: Ten
     if (!f.isRequired || f.hasDefaultValue) continue;
     if (f.isList) { data[f.name] = []; continue; }
     if (f.kind === "enum") { data[f.name] = ENUMS.get(f.type)![0]; continue; }
-    data[f.name] = scalarValue(model, f);
+    const allowed = f.type === "String" ? (await loadCheckedValues(db)).get(`${model}.${f.name}`) : undefined;
+    data[f.name] = allowed ? allowed[0] : scalarValue(model, f);
   }
   try {
     const row = await delegate(db, model).create({ data, select: { id: true } });

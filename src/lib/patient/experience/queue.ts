@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { patientLanguage as L } from "./language";
 import { assertClass, type PatientAccessScope } from "../context";
+import type { QueueEntryStatus } from "@prisma/client";
 
 /**
  * Phase D11 — patient-facing queue position (brief §10). Shows ONLY the
@@ -11,7 +12,7 @@ import { assertClass, type PatientAccessScope } from "../context";
  * with a bounded aggregate query.
  */
 
-const AHEAD_STATUSES = ["WAITING", "CALLED"];
+const AHEAD_STATUSES: QueueEntryStatus[] = ["WAITING", "CALLED"];
 
 export interface QueuePositionDTO {
   queueLabel: string;

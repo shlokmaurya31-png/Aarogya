@@ -2135,9 +2135,9 @@ enum DobPrecision {
 }
 
 model Patient {
-  id                      String       @id @default(cuid())
-  uhid                    String       @unique
-  facility                Facility     @relation(fields: [facilityId], references: [id])
+  id                      String                    @id @default(cuid())
+  uhid                    String                    @unique
+  facility                Facility                  @relation(fields: [facilityId], references: [id])
   facilityId              String
   fullName                String // primary/legal display name — kept as the existing field name rather than
   // renamed to "legalName" to avoid a large, purely-cosmetic blast radius
@@ -2147,13 +2147,13 @@ model Patient {
   dob                     DateTime?
   /// How precise dob is. Age is always calculated from dob (never stored) and
   /// shown as "~34" for anything other than DAY.
-  dobPrecision            DobPrecision @default(DAY)
+  dobPrecision            DobPrecision              @default(DAY)
   phone                   String?
   address                 String?
-  language                String?      @default("en")
+  language                String?                   @default("en")
   communicationPreference String? // "SMS" | "EMAIL" | "CALL" | "NONE"
   bloodGroup              String?
-  registrationStatus      String       @default("ACTIVE") // "ACTIVE" | "INACTIVE"
+  registrationStatus      PatientRegistrationStatus @default(ACTIVE) // "ACTIVE" | "INACTIVE"
   deceasedAt              DateTime?
 
   // Self-service portal linkage (Phase 1: Role.PATIENT accounts) — nullable because most
@@ -2243,28 +2243,28 @@ model PatientEmergencyContact {
 }
 
 model PatientIdentifier {
-  id        String   @id @default(cuid())
-  patient   Patient  @relation(fields: [patientId], references: [id])
+  id        String                  @id @default(cuid())
+  patient   Patient                 @relation(fields: [patientId], references: [id])
   patientId String
   type      String // Aarogya-issued only: "UHID" | "MRN" (CHECK PatientIdentifier_aarogya_issued_only). External IDs are ExternalIdentifier rows (D1).
   value     String
   issuer    String?
-  status    String   @default("ACTIVE") // "ACTIVE" | "INVALID" | "SUPERSEDED"
-  createdAt DateTime @default(now())
+  status    PatientIdentifierStatus @default(ACTIVE) // "ACTIVE" | "INVALID" | "SUPERSEDED"
+  createdAt DateTime                @default(now())
 
   @@index([patientId])
 }
 
 model Allergy {
-  id           String   @id @default(cuid())
-  patient      Patient  @relation(fields: [patientId], references: [id])
+  id           String              @id @default(cuid())
+  patient      Patient             @relation(fields: [patientId], references: [id])
   patientId    String
   substance    String
   reaction     String?
   severity     String // "mild" | "moderate" | "severe"
-  status       String   @default("ACTIVE") // "ACTIVE" | "INACTIVE" | "ENTERED_IN_ERROR"
-  verification String   @default("UNCONFIRMED") // "UNCONFIRMED" | "CONFIRMED"
-  recordedAt   DateTime @default(now())
+  status       AllergyStatus       @default(ACTIVE) // "ACTIVE" | "INACTIVE" | "ENTERED_IN_ERROR"
+  verification AllergyVerification @default(UNCONFIRMED) // "UNCONFIRMED" | "CONFIRMED"
+  recordedAt   DateTime            @default(now())
 
   @@index([patientId])
 }
@@ -2277,16 +2277,16 @@ model Allergy {
  * and that's fine; this is additive, not required.
  */
 model EpisodeOfCare {
-  id         String    @id @default(cuid())
-  patient    Patient   @relation(fields: [patientId], references: [id])
+  id         String              @id @default(cuid())
+  patient    Patient             @relation(fields: [patientId], references: [id])
   patientId  String
-  facility   Facility  @relation(fields: [facilityId], references: [id])
+  facility   Facility            @relation(fields: [facilityId], references: [id])
   facilityId String
   title      String
   type       String // "CHRONIC_DISEASE" | "SURGICAL" | "ACUTE" | "MATERNITY" | "ONCOLOGY" | "OTHER"
-  status     String    @default("ACTIVE") // "ACTIVE" | "CLOSED"
+  status     EpisodeOfCareStatus @default(ACTIVE) // "ACTIVE" | "CLOSED"
   reason     String?
-  openedAt   DateTime  @default(now())
+  openedAt   DateTime            @default(now())
   closedAt   DateTime?
 
   encounters Encounter[]
@@ -2310,7 +2310,7 @@ model Diagnosis {
   encounterId        String
   diagnosis          String
   type               String // "PRIMARY" | "SECONDARY" | "PROVISIONAL" | "RULE_OUT" | "FINAL"
-  status             String               @default("ACTIVE") // "ACTIVE" | "RESOLVED" | "ENTERED_IN_ERROR"
+  status             DiagnosisStatus      @default(ACTIVE) // "ACTIVE" | "RESOLVED" | "ENTERED_IN_ERROR"
   onsetDate          DateTime?
   codeSystem         String? // e.g. "ICD-10" — nullable, no terminology integrated yet (see TARGET_DOMAIN_ARCHITECTURE.md §3)
   code               String?
@@ -2520,7 +2520,7 @@ model ClinicalNote {
   // surgicalHistory/familyHistory/socialHistory/examination/assessment/diagnosis/treatmentPlan/
   // investigationPlan/medicationPlan/followUpPlan as optional keys, or just free narrative — never forced into one rigid shape.
   content         Json
-  status          String               @default("SIGNED") // "DRAFT" | "SIGNED" | "AMENDED" | "SUPERSEDED"
+  status          ClinicalNoteStatus   @default(SIGNED) // "DRAFT" | "SIGNED" | "AMENDED" | "SUPERSEDED"
   supersedesId    String?
   authorRole      String? // denormalized at creation time (brief §4 "author role") — a later role change doesn't retroactively alter history
   createdAt       DateTime             @default(now())
@@ -2669,7 +2669,7 @@ model LabOrder {
   patientId        String
   testName         String
   category         String
-  priority         String               @default("ROUTINE") // ROUTINE | URGENT | STAT
+  priority         Priority             @default(ROUTINE) // ROUTINE | URGENT | STAT
   orderedBy        HospitalStaffProfile @relation("LabOrderer", fields: [orderedByStaffId], references: [id])
   orderedByStaffId String
   status           LabOrderStatus       @default(ORDERED)
@@ -2954,7 +2954,7 @@ model ImagingOrder {
   patientId        String
   modality         String // XRAY | CT | MRI | USG | MAMMOGRAPHY | INTERVENTIONAL
   studyDescription String
-  priority         String               @default("ROUTINE")
+  priority         Priority             @default(ROUTINE)
   orderedBy        HospitalStaffProfile @relation("ImagingOrderer", fields: [orderedByStaffId], references: [id])
   orderedByStaffId String
   status           ImagingOrderStatus   @default(ORDERED)
@@ -3033,7 +3033,7 @@ model ImagingStudy {
   seriesUid         String?
   numberOfImages    Int?
   pacsReference     String?
-  imageAvailability String    @default("NONE")
+  imageAvailability ImagingStudyImageAvailability @default(NONE)
   acquisitionAt     DateTime?
   technicalNotes    String?
   dicomMetadata     Json?
@@ -3773,8 +3773,8 @@ model Task {
   title              String
   description        String?
   type               String // "DISCHARGE_PREP" | "PATIENT_EDUCATION" | "WOUND_CARE" | "FOLLOW_UP" | "GENERAL" | ...
-  priority           String                @default("ROUTINE") // "ROUTINE" | "URGENT" | "STAT"
-  status             String                @default("OPEN") // OPEN | ASSIGNED | IN_PROGRESS | COMPLETED | CANCELLED | OVERDUE
+  priority           Priority              @default(ROUTINE) // "ROUTINE" | "URGENT" | "STAT"
+  status             TaskStatus            @default(OPEN) // OPEN | ASSIGNED | IN_PROGRESS | COMPLETED | CANCELLED | OVERDUE
   dueAt              DateTime?
   source             String? // what created this task, e.g. "manual" | "discharge-workflow"
   patient            Patient?              @relation(fields: [patientId], references: [id])
@@ -3819,40 +3819,40 @@ model Task {
  * path is built (src/lib/verification/provider.ts) — never inline bytes.
  */
 model ClinicalDocument {
-  id                  String                @id @default(cuid())
-  facility            Facility              @relation(fields: [facilityId], references: [id])
+  id                  String                       @id @default(cuid())
+  facility            Facility                     @relation(fields: [facilityId], references: [id])
   facilityId          String
-  patient             Patient               @relation(fields: [patientId], references: [id])
+  patient             Patient                      @relation(fields: [patientId], references: [id])
   patientId           String
-  encounter           Encounter?            @relation(fields: [encounterId], references: [id])
+  encounter           Encounter?                   @relation(fields: [encounterId], references: [id])
   encounterId         String?
   type                String // "CONSENT_FORM" | "ID_PROOF" | "REPORT" | "REFERRAL_LETTER" | "OTHER"
   title               String
   storageRef          String? // nullable — metadata can exist before a file is actually attached
-  version             Int                   @default(1)
+  version             Int                          @default(1)
   // Phase 6.9 — non-destructive versioning. A "new version" of a clinical
   // document supersedes the prior row (which is kept, marked SUPERSEDED)
   // rather than overwriting it, so finalized clinical documents are never
   // silently lost. Null for an original (v1) document.
   supersedesId        String?
-  status              String                @default("CURRENT") // "CURRENT" | "SUPERSEDED" | "DRAFT" (a generated draft; listed nowhere by default)
-  accessPolicy        String                @default("CLINICAL_STAFF") // "CLINICAL_STAFF" | "PATIENT_VISIBLE" | "RESTRICTED"
-  author              HospitalStaffProfile? @relation("DocumentAuthor", fields: [authorStaffId], references: [id])
+  status              ClinicalDocumentStatus       @default(CURRENT) // "CURRENT" | "SUPERSEDED" | "DRAFT" (a generated draft; listed nowhere by default)
+  accessPolicy        ClinicalDocumentAccessPolicy @default(CLINICAL_STAFF) // "CLINICAL_STAFF" | "PATIENT_VISIBLE" | "RESTRICTED"
+  author              HospitalStaffProfile?        @relation("DocumentAuthor", fields: [authorStaffId], references: [id])
   authorStaffId       String?
   /// Who put the file here: a staff member, or the patient's own account (a
   /// patient upload through the portal), or neither for a generated document.
-  uploadedBy          HospitalStaffProfile? @relation("DocumentUploadedBy", fields: [uploadedByStaffId], references: [id])
+  uploadedBy          HospitalStaffProfile?        @relation("DocumentUploadedBy", fields: [uploadedByStaffId], references: [id])
   uploadedByStaffId   String?
-  uploadedByUser      User?                 @relation("PatientUploadedDocuments", fields: [uploadedByUserId], references: [id])
+  uploadedByUser      User?                        @relation("PatientUploadedDocuments", fields: [uploadedByUserId], references: [id])
   uploadedByUserId    String?
   /// sha256 of the stored file (patient uploads and generated documents record it; staff uploads may not).
   sha256              String?
   /// D4: set when Aarogya generated this document (render/verify metadata
   /// lives there). A CHECK makes exactly one of uploadedByStaffId,
   /// uploadedByUserId, generatedDocumentId non-null.
-  generatedDocument   GeneratedDocument?    @relation(fields: [generatedDocumentId], references: [id], onDelete: Restrict)
-  generatedDocumentId String?               @unique
-  createdAt           DateTime              @default(now())
+  generatedDocument   GeneratedDocument?           @relation(fields: [generatedDocumentId], references: [id], onDelete: Restrict)
+  generatedDocumentId String?                      @unique
+  createdAt           DateTime                     @default(now())
 
   @@index([patientId])
   @@index([facilityId])
@@ -3890,8 +3890,8 @@ model Referral {
   toStaff          HospitalStaffProfile? @relation("ReferralToStaff", fields: [toStaffId], references: [id])
   toStaffId        String?
   reason           String
-  priority         String                @default("ROUTINE") // ROUTINE | URGENT | STAT
-  status           String                @default("PLACED") // DRAFT | PLACED | ACKNOWLEDGED | IN_PROGRESS | COMPLETED | CANCELLED | REJECTED
+  priority         Priority              @default(ROUTINE) // ROUTINE | URGENT | STAT
+  status           ReferralStatus        @default(PLACED) // DRAFT | PLACED | ACKNOWLEDGED | IN_PROGRESS | COMPLETED | CANCELLED | REJECTED
   notes            String?
   createdAt        DateTime              @default(now())
   respondedAt      DateTime? // terminal-state timestamp (COMPLETED/REJECTED/CANCELLED) — unchanged from Phase 1
@@ -3984,7 +3984,7 @@ model Appointment {
   scheduledStart     DateTime
   scheduledEnd       DateTime
   reason             String?
-  status             String               @default("REQUESTED") // REQUESTED|CONFIRMED|RESCHEDULED|ARRIVED|CHECKED_IN|WAITING|IN_CONSULTATION|COMPLETED|CANCELLED|NO_SHOW
+  status             AppointmentStatus    @default(REQUESTED) // REQUESTED|CONFIRMED|RESCHEDULED|ARRIVED|CHECKED_IN|WAITING|IN_CONSULTATION|COMPLETED|CANCELLED|NO_SHOW
   encounter          Encounter?           @relation(fields: [encounterId], references: [id])
   encounterId        String?
   cancelledReason    String?
@@ -4081,7 +4081,7 @@ model QueueEntry {
   practitionerStaffId String?
   priorityScore       Int                   @default(100) // lower = seen sooner
   priorityReason      String?
-  status              String                @default("WAITING") // WAITING | CALLED | IN_SERVICE | COMPLETED | SKIPPED | CANCELLED
+  status              QueueEntryStatus      @default(WAITING) // WAITING | CALLED | IN_SERVICE | COMPLETED | SKIPPED | CANCELLED
   enteredAt           DateTime              @default(now())
   calledAt            DateTime?
   startedAt           DateTime?
@@ -4123,10 +4123,10 @@ model TriageAssessment {
   // still a clinician-entered value — no ESI/severity algorithm is applied.
   // `amends` links an amendment to the assessment it corrects (provenance);
   // history is never overwritten, an amendment is always a new row.
-  status             String             @default("COMPLETED") // "DRAFT" | "COMPLETED" | "AMENDED"
-  amends             TriageAssessment?  @relation("TriageAmendment", fields: [amendsId], references: [id])
+  status             TriageAssessmentStatus @default(COMPLETED) // "DRAFT" | "COMPLETED" | "AMENDED"
+  amends             TriageAssessment?      @relation("TriageAmendment", fields: [amendsId], references: [id])
   amendsId           String?
-  amendedBy          TriageAssessment[] @relation("TriageAmendment")
+  amendedBy          TriageAssessment[]     @relation("TriageAmendment")
   presentingSymptoms String?
   allergySummary     String? // documentary reference — canonical Allergy remains the source of truth
   currentMedications String?
@@ -4135,8 +4135,8 @@ model TriageAssessment {
   mentalStatus       String? // documentary (e.g. "ALERT" | "DROWSY" | ...) — not a computed GCS
   mobility           String?
   pregnancyStatus    String?
-  isolationRequired  Boolean            @default(false)
-  injuryTrauma       Boolean            @default(false)
+  isolationRequired  Boolean                @default(false)
+  injuryTrauma       Boolean                @default(false)
 
   @@index([encounterId])
   @@index([facilityId])
@@ -4184,33 +4184,33 @@ model EncounterLocation {
  * reserved) — not a new admission path.
  */
 model AdmissionRequest {
-  id                 String                @id @default(cuid())
-  patient            Patient               @relation(fields: [patientId], references: [id])
+  id                 String                 @id @default(cuid())
+  patient            Patient                @relation(fields: [patientId], references: [id])
   patientId          String
-  encounter          Encounter             @relation(fields: [encounterId], references: [id])
+  encounter          Encounter              @relation(fields: [encounterId], references: [id])
   encounterId        String
-  facility           Facility              @relation(fields: [facilityId], references: [id])
+  facility           Facility               @relation(fields: [facilityId], references: [id])
   facilityId         String
-  department         Department?           @relation(fields: [departmentId], references: [id])
+  department         Department?            @relation(fields: [departmentId], references: [id])
   departmentId       String?
-  requestedBy        HospitalStaffProfile  @relation("AdmissionRequestedBy", fields: [requestedByStaffId], references: [id])
+  requestedBy        HospitalStaffProfile   @relation("AdmissionRequestedBy", fields: [requestedByStaffId], references: [id])
   requestedByStaffId String
   requestedWardType  WardType?
-  isolationRequired  Boolean               @default(false)
+  isolationRequired  Boolean                @default(false)
   genderRestriction  String?
-  priority           RequestPriority       @default(ROUTINE)
+  priority           RequestPriority        @default(ROUTINE)
   reason             String
   expectedLosDays    Int?
-  status             String                @default("PENDING") // PENDING | DEFERRED | BED_RESERVED | ADMITTED | REJECTED | CANCELLED
-  reviewedBy         HospitalStaffProfile? @relation("AdmissionReviewedBy", fields: [reviewedByStaffId], references: [id])
+  status             AdmissionRequestStatus @default(PENDING) // PENDING | DEFERRED | BED_RESERVED | ADMITTED | REJECTED | CANCELLED
+  reviewedBy         HospitalStaffProfile?  @relation("AdmissionReviewedBy", fields: [reviewedByStaffId], references: [id])
   reviewedByStaffId  String?
   reviewedAt         DateTime?
   rejectionReason    String?
-  reservedBed        Bed?                  @relation(fields: [reservedBedId], references: [id])
+  reservedBed        Bed?                   @relation(fields: [reservedBedId], references: [id])
   reservedBedId      String?
-  admission          Admission?            @relation(fields: [admissionId], references: [id])
-  admissionId        String?               @unique
-  createdAt          DateTime              @default(now())
+  admission          Admission?             @relation(fields: [admissionId], references: [id])
+  admissionId        String?                @unique
+  createdAt          DateTime               @default(now())
 
   @@index([facilityId])
   @@index([status])
@@ -4241,7 +4241,7 @@ model TransferRequest {
   priority                 RequestPriority       @default(ROUTINE)
   transportRequired        Boolean               @default(false)
   clinicalHandoverRequired Boolean               @default(true)
-  status                   String                @default("REQUESTED") // REQUESTED | ACCEPTED | BED_RESERVED | PATIENT_IN_TRANSIT | COMPLETED | CANCELLED | REJECTED
+  status                   TransferRequestStatus @default(REQUESTED) // REQUESTED | ACCEPTED | BED_RESERVED | PATIENT_IN_TRANSIT | COMPLETED | CANCELLED | REJECTED
   acceptedBy               HospitalStaffProfile? @relation("TransferAcceptedBy", fields: [acceptedByStaffId], references: [id])
   acceptedByStaffId        String?
   reservedBed              Bed?                  @relation(fields: [reservedBedId], references: [id])
@@ -4348,22 +4348,22 @@ model IcuObservation {
  * complication taxonomy is invented (notes are free text).
  */
 model IcuDevice {
-  id                String    @id @default(cuid())
-  facility          Facility  @relation(fields: [facilityId], references: [id])
+  id                String          @id @default(cuid())
+  facility          Facility        @relation(fields: [facilityId], references: [id])
   facilityId        String
-  patient           Patient   @relation(fields: [patientId], references: [id])
+  patient           Patient         @relation(fields: [patientId], references: [id])
   patientId         String
-  encounter         Encounter @relation(fields: [encounterId], references: [id])
+  encounter         Encounter       @relation(fields: [encounterId], references: [id])
   encounterId       String
   deviceType        String // "CENTRAL_LINE" | "ARTERIAL_LINE" | "URINARY_CATHETER" | "DRAIN" | "ETT" | "TRACHEOSTOMY" | ...
   site              String?
-  status            String    @default("PLANNED") // "PLANNED" | "ACTIVE" | "REMOVED" | "DISCONTINUED"
+  status            IcuDeviceStatus @default(PLANNED) // "PLANNED" | "ACTIVE" | "REMOVED" | "DISCONTINUED"
   insertedAt        DateTime?
   removedAt         DateTime?
   notes             String?
   recordedByStaffId String
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
 
   @@index([encounterId])
   @@index([facilityId])
@@ -4378,12 +4378,12 @@ model IcuDevice {
  * dosing recommendation logic.
  */
 model IcuInfusion {
-  id                String    @id @default(cuid())
-  facility          Facility  @relation(fields: [facilityId], references: [id])
+  id                String            @id @default(cuid())
+  facility          Facility          @relation(fields: [facilityId], references: [id])
   facilityId        String
-  patient           Patient   @relation(fields: [patientId], references: [id])
+  patient           Patient           @relation(fields: [patientId], references: [id])
   patientId         String
-  encounter         Encounter @relation(fields: [encounterId], references: [id])
+  encounter         Encounter         @relation(fields: [encounterId], references: [id])
   encounterId       String
   medicationOrderId String? // canonical order, when the infusion is order-backed
   drugName          String
@@ -4391,13 +4391,13 @@ model IcuInfusion {
   concentration     String?
   rate              Float?
   rateUnit          String? // e.g. "mL/hr", "mcg/kg/min" — recorded as entered
-  status            String    @default("RUNNING") // "RUNNING" | "PAUSED" | "STOPPED"
-  startedAt         DateTime  @default(now())
+  status            IcuInfusionStatus @default(RUNNING) // "RUNNING" | "PAUSED" | "STOPPED"
+  startedAt         DateTime          @default(now())
   stoppedAt         DateTime?
   prescriberStaffId String?
   recordedByStaffId String
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
 
   @@index([encounterId])
   @@index([facilityId])
@@ -4478,20 +4478,20 @@ model OperatingTheatre {
 }
 
 model Surgery {
-  id                 String        @id @default(cuid())
-  facility           Facility      @relation(fields: [facilityId], references: [id])
+  id                 String         @id @default(cuid())
+  facility           Facility       @relation(fields: [facilityId], references: [id])
   facilityId         String
-  patient            Patient       @relation(fields: [patientId], references: [id])
+  patient            Patient        @relation(fields: [patientId], references: [id])
   patientId          String
-  encounter          Encounter     @relation(fields: [encounterId], references: [id])
+  encounter          Encounter      @relation(fields: [encounterId], references: [id])
   encounterId        String
-  procedure          Procedure?    @relation(fields: [procedureId], references: [id])
+  procedure          Procedure?     @relation(fields: [procedureId], references: [id])
   procedureId        String?
   procedureName      String // denormalized at request time so history is stable even if the catalog entry changes
   indication         String?
   laterality         String? // "LEFT" | "RIGHT" | "BILATERAL" | "NA"
-  urgency            String        @default("ELECTIVE") // "ELECTIVE" | "URGENT" | "EMERGENCY"
-  status             SurgeryStatus @default(REQUESTED)
+  urgency            SurgeryUrgency @default(ELECTIVE) // "ELECTIVE" | "URGENT" | "EMERGENCY"
+  status             SurgeryStatus  @default(REQUESTED)
   requestedByStaffId String
   requestedDate      DateTime?
   reviewedByStaffId  String?
@@ -4546,19 +4546,19 @@ model Surgery {
  * scheduled at most once at a time).
  */
 model SurgerySchedule {
-  id                 String           @id @default(cuid())
-  surgery            Surgery          @relation(fields: [surgeryId], references: [id])
-  surgeryId          String           @unique
-  operatingTheatre   OperatingTheatre @relation(fields: [operatingTheatreId], references: [id])
+  id                 String                @id @default(cuid())
+  surgery            Surgery               @relation(fields: [surgeryId], references: [id])
+  surgeryId          String                @unique
+  operatingTheatre   OperatingTheatre      @relation(fields: [operatingTheatreId], references: [id])
   operatingTheatreId String
   facilityId         String
   startAt            DateTime
   endAt              DateTime
-  status             String           @default("SCHEDULED") // "SCHEDULED" | "CANCELLED"
+  status             SurgeryScheduleStatus @default(SCHEDULED) // "SCHEDULED" | "CANCELLED"
   schedulerStaffId   String
   notes              String?
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
 
   @@index([operatingTheatreId, startAt])
   @@index([facilityId])
@@ -4595,19 +4595,19 @@ model SurgeryChecklistItem {
 }
 
 model AnesthesiaRecord {
-  id                  String         @id @default(cuid())
-  surgery             Surgery        @relation(fields: [surgeryId], references: [id])
-  surgeryId           String         @unique
+  id                  String                 @id @default(cuid())
+  surgery             Surgery                @relation(fields: [surgeryId], references: [id])
+  surgeryId           String                 @unique
   type                AnesthesiaType
   anesthetistStaffId  String
-  status              String         @default("PLANNED") // "PLANNED" | "IN_PROGRESS" | "COMPLETED"
+  status              AnesthesiaRecordStatus @default(PLANNED) // "PLANNED" | "IN_PROGRESS" | "COMPLETED"
   startAt             DateTime?
   endAt               DateTime?
   preAssessmentNoteId String?
   intraOpNotes        String?
   complications       String?
-  createdAt           DateTime       @default(now())
-  updatedAt           DateTime       @updatedAt
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
 }
 
 /**
@@ -4616,8 +4616,8 @@ model AnesthesiaRecord {
  * Surgery, never client-supplied.
  */
 model SurgicalSpecimen {
-  id                 String   @id @default(cuid())
-  surgery            Surgery  @relation(fields: [surgeryId], references: [id])
+  id                 String                 @id @default(cuid())
+  surgery            Surgery                @relation(fields: [surgeryId], references: [id])
   surgeryId          String
   facilityId         String
   patientId          String
@@ -4626,9 +4626,9 @@ model SurgicalSpecimen {
   site               String?
   label              String?
   destinationLab     String?
-  status             String   @default("COLLECTED") // "COLLECTED" | "SENT" | "RECEIVED"
+  status             SurgicalSpecimenStatus @default(COLLECTED) // "COLLECTED" | "SENT" | "RECEIVED"
   collectedByStaffId String
-  collectedAt        DateTime @default(now())
+  collectedAt        DateTime               @default(now())
   notes              String?
 
   @@index([surgeryId])
@@ -4666,19 +4666,19 @@ model SurgeryItemUsage {
 }
 
 model RecoveryRecord {
-  id                 String    @id @default(cuid())
-  surgery            Surgery   @relation(fields: [surgeryId], references: [id])
-  surgeryId          String    @unique
+  id                 String               @id @default(cuid())
+  surgery            Surgery              @relation(fields: [surgeryId], references: [id])
+  surgeryId          String               @unique
   destination        String? // "PACU" | "ICU" | "WARD"
-  status             String    @default("PENDING") // "PENDING" | "IN_RECOVERY" | "READY_FOR_TRANSFER" | "TRANSFERRED"
+  status             RecoveryRecordStatus @default(PENDING) // "PENDING" | "IN_RECOVERY" | "READY_FOR_TRANSFER" | "TRANSFERRED"
   arrivalAt          DateTime?
   departureAt        DateTime?
   responsibleStaffId String?
   nurseStaffId       String?
   handoffId          String?
   notes              String?
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -4827,25 +4827,25 @@ model CarePlanIntervention {
  * sections) — no invented scoring system or clinical decision logic.
  */
 model NursingAssessment {
-  id                String               @id @default(cuid())
-  facility          Facility             @relation(fields: [facilityId], references: [id])
+  id                String                  @id @default(cuid())
+  facility          Facility                @relation(fields: [facilityId], references: [id])
   facilityId        String
-  patient           Patient              @relation(fields: [patientId], references: [id])
+  patient           Patient                 @relation(fields: [patientId], references: [id])
   patientId         String
-  encounter         Encounter            @relation(fields: [encounterId], references: [id])
+  encounter         Encounter               @relation(fields: [encounterId], references: [id])
   encounterId       String
-  nurse             HospitalStaffProfile @relation("NursingAssessmentNurse", fields: [nurseStaffId], references: [id])
+  nurse             HospitalStaffProfile    @relation("NursingAssessmentNurse", fields: [nurseStaffId], references: [id])
   nurseStaffId      String
-  status            String               @default("DRAFT") // "DRAFT" | "COMPLETED" | "SIGNED" | "SUPERSEDED"
-  version           Int                  @default(1)
-  isCurrent         Boolean              @default(true)
+  status            NursingAssessmentStatus @default(DRAFT) // "DRAFT" | "COMPLETED" | "SIGNED" | "SUPERSEDED"
+  version           Int                     @default(1)
+  isCurrent         Boolean                 @default(true)
   previousVersionId String?
   findings          Json
   completedAt       DateTime?
   signedAt          DateTime?
   amendedAt         DateTime?
   amendmentReason   String?
-  createdAt         DateTime             @default(now())
+  createdAt         DateTime                @default(now())
 
   @@index([facilityId])
   @@index([patientId])
@@ -6129,32 +6129,32 @@ model BloodProduct {
  * explicitly released to AVAILABLE.
  */
 model BloodUnit {
-  id                  String          @id @default(cuid())
-  facility            Facility        @relation(fields: [facilityId], references: [id])
+  id                  String                    @id @default(cuid())
+  facility            Facility                  @relation(fields: [facilityId], references: [id])
   facilityId          String
-  product             BloodProduct    @relation(fields: [productId], references: [id])
+  product             BloodProduct              @relation(fields: [productId], references: [id])
   productId           String
   unitNumber          String // unique traceable identifier within the facility
   aboGroup            AboGroup? // explicit recorded result, never inferred from demographics
   rhStatus            RhStatus?
-  bloodGroupStatus    String          @default("PENDING") // "PENDING" | "CONFIRMED" — set only from an authorized typing record
+  bloodGroupStatus    BloodUnitBloodGroupStatus @default(PENDING) // "PENDING" | "CONFIRMED" — set only from an authorized typing record
   collectedAt         DateTime?
   expiresAt           DateTime? // null = unknown; enforced server-side when present
-  status              BloodUnitStatus @default(QUARANTINED)
-  itemLot             ItemLot?        @relation(fields: [itemLotId], references: [id]) // canonical batch/recall traceability
+  status              BloodUnitStatus           @default(QUARANTINED)
+  itemLot             ItemLot?                  @relation(fields: [itemLotId], references: [id]) // canonical batch/recall traceability
   itemLotId           String?
-  location            StockLocation?  @relation(fields: [locationId], references: [id])
+  location            StockLocation?            @relation(fields: [locationId], references: [id])
   locationId          String?
   donorReference      String? // minimal source reference — NOT a donor CRM
   sourceOrganization  String?
   collectionEventRef  String?
   quarantineReason    String?
-  recalled            Boolean         @default(false)
+  recalled            Boolean                   @default(false)
   recallReason        String?
   notes               String?
   registeredByStaffId String
-  createdAt           DateTime        @default(now())
-  updatedAt           DateTime        @updatedAt
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
 
   typingRecords      BloodTypingRecord[]
   compatibilityTests BloodCompatibilityTest[]
@@ -6175,23 +6175,23 @@ model BloodUnit {
  * fields hold explicitly-provided lab values; interpretation is out of scope.
  */
 model BloodTypingRecord {
-  id                 String     @id @default(cuid())
+  id                 String                  @id @default(cuid())
   facilityId         String
   patientId          String? // recipient typing (from a specimen), plain FK — no parallel patient record
   encounterId        String?
-  unit               BloodUnit? @relation(fields: [unitId], references: [id])
+  unit               BloodUnit?              @relation(fields: [unitId], references: [id])
   unitId             String?
   aboGroup           AboGroup?
   rhStatus           RhStatus?
   antibodyScreen     String? // explicitly-provided result text, not interpreted
   specimenRef        String?
-  status             String     @default("PENDING") // "PENDING" | "RESULTED" | "VERIFIED"
+  status             BloodTypingRecordStatus @default(PENDING) // "PENDING" | "RESULTED" | "VERIFIED"
   performedByStaffId String?
   verifiedByStaffId  String?
   verifiedAt         DateTime?
   notes              String?
-  createdAt          DateTime   @default(now())
-  updatedAt          DateTime   @updatedAt
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
 
   @@index([facilityId])
   @@index([patientId])
@@ -6253,26 +6253,26 @@ model BloodRequest {
  * (or an explicit emergency release), never on raw ABO equality.
  */
 model BloodCompatibilityTest {
-  id                String                   @id @default(cuid())
+  id                String                         @id @default(cuid())
   facilityId        String
-  request           BloodRequest             @relation(fields: [requestId], references: [id])
+  request           BloodRequest                   @relation(fields: [requestId], references: [id])
   requestId         String
   patientId         String // derived from request
   encounterId       String // derived from request
-  unit              BloodUnit?               @relation(fields: [unitId], references: [id])
+  unit              BloodUnit?                     @relation(fields: [unitId], references: [id])
   unitId            String?
-  testType          String                   @default("CROSSMATCH") // "TYPE_AND_SCREEN" | "CROSSMATCH"
+  testType          BloodCompatibilityTestTestType @default(CROSSMATCH) // "TYPE_AND_SCREEN" | "CROSSMATCH"
   aboResult         AboGroup?
   rhResult          RhStatus?
   antibodyScreen    String? // explicitly-provided result text
   crossmatchResult  String? // explicitly-recorded lab result label, not computed
-  status            BloodCompatibilityStatus @default(PENDING)
+  status            BloodCompatibilityStatus       @default(PENDING)
   testedByStaffId   String?
   verifiedByStaffId String?
   verifiedAt        DateTime?
   notes             String?
-  createdAt         DateTime                 @default(now())
-  updatedAt         DateTime                 @updatedAt
+  createdAt         DateTime                       @default(now())
+  updatedAt         DateTime                       @updatedAt
 
   @@index([facilityId])
   @@index([requestId])
@@ -6309,17 +6309,17 @@ model BloodReservation {
  * Issue of a unit from the blood bank to a clinical area, incl. transport/receipt handoff.
  */
 model BloodIssue {
-  id                  String       @id @default(cuid())
+  id                  String           @id @default(cuid())
   facilityId          String
-  unit                BloodUnit    @relation(fields: [unitId], references: [id])
+  unit                BloodUnit        @relation(fields: [unitId], references: [id])
   unitId              String
-  request             BloodRequest @relation(fields: [requestId], references: [id])
+  request             BloodRequest     @relation(fields: [requestId], references: [id])
   requestId           String
   patientId           String // derived
   encounterId         String // derived
   compatibilityTestId String? // verification link
-  emergencyRelease    Boolean      @default(false)
-  status              String       @default("ISSUED") // "ISSUED" | "IN_TRANSIT" | "RECEIVED" | "RETURNED"
+  emergencyRelease    Boolean          @default(false)
+  status              BloodIssueStatus @default(ISSUED) // "ISSUED" | "IN_TRANSIT" | "RECEIVED" | "RETURNED"
   issuedByStaffId     String
   issueLocation       String?
   recipientLocation   String?
@@ -6329,8 +6329,8 @@ model BloodIssue {
   receivedAt          DateTime?
   returnedReason      String?
   returnedAt          DateTime?
-  createdAt           DateTime     @default(now())
-  updatedAt           DateTime     @updatedAt
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
 
   @@index([facilityId])
   @@index([unitId])
@@ -7133,21 +7133,21 @@ model InventorySerial {
  * only becomes AVAILABLE after cleaning is done.
  */
 model HousekeepingRequest {
-  id                  String    @id @default(cuid())
+  id                  String                    @id @default(cuid())
   facilityId          String
   bedId               String?
   wardId              String?
   areaLabel           String?
   requestType         String // "ROUTINE" | "DISCHARGE" | "TERMINAL" | "SPILL" | "ISOLATION" | "URGENT" | "DEEP" | "MAINTENANCE_RELATED"
-  priority            String    @default("ROUTINE") // "ROUTINE" | "URGENT" | "STAT"
+  priority            Priority                  @default(ROUTINE) // "ROUTINE" | "URGENT" | "STAT"
   reason              String?
-  status              String    @default("REQUESTED") // REQUESTED|ASSIGNED|IN_PROGRESS|COMPLETED|INSPECTED|CLOSED|CANCELLED
-  isDischargeCleaning Boolean   @default(false)
+  status              HousekeepingRequestStatus @default(REQUESTED) // REQUESTED|ASSIGNED|IN_PROGRESS|COMPLETED|INSPECTED|CLOSED|CANCELLED
+  isDischargeCleaning Boolean                   @default(false)
   encounterId         String?
   requestedByStaffId  String
   assignedToStaffId   String?
   inspectedByStaffId  String?
-  requestedAt         DateTime  @default(now())
+  requestedAt         DateTime                  @default(now())
   assignedAt          DateTime?
   startedAt           DateTime?
   completedAt         DateTime?
@@ -7157,7 +7157,7 @@ model HousekeepingRequest {
   cancelledReason     String?
   notes               String?
   taskId              String? // optional canonical Task link for the assignment worklist
-  updatedAt           DateTime  @updatedAt
+  updatedAt           DateTime                  @updatedAt
 
   @@index([facilityId, status])
   @@index([bedId])
@@ -7168,19 +7168,19 @@ model HousekeepingRequest {
  * Diet order for a patient (documentary; records the authorized order, no nutrition recommendation).
  */
 model DietOrder {
-  id               String    @id @default(cuid())
+  id               String          @id @default(cuid())
   facilityId       String
   patientId        String
   encounterId      String
   dietType         String // "REGULAR" | "LIQUID" | "SOFT" | "CLEAR_LIQUID" | "NPO" | "THERAPEUTIC" | "OTHER"
   restrictions     String? // documentary reference; canonical Allergy remains the source of truth
-  status           String    @default("ACTIVE") // ACTIVE | DISCONTINUED | CANCELLED
+  status           DietOrderStatus @default(ACTIVE) // ACTIVE | DISCONTINUED | CANCELLED
   orderedByStaffId String
-  effectiveFrom    DateTime  @default(now())
+  effectiveFrom    DateTime        @default(now())
   effectiveTo      DateTime?
   notes            String?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 
   meals Meal[]
 
@@ -7193,15 +7193,15 @@ model DietOrder {
  * A single meal instance in the kitchen->delivery workflow.
  */
 model Meal {
-  id                 String    @id @default(cuid())
+  id                 String     @id @default(cuid())
   facilityId         String
-  dietOrder          DietOrder @relation(fields: [dietOrderId], references: [id])
+  dietOrder          DietOrder  @relation(fields: [dietOrderId], references: [id])
   dietOrderId        String
   patientId          String
   encounterId        String
   mealPeriod         String // "BREAKFAST" | "LUNCH" | "DINNER" | "SNACK"
   plannedFor         DateTime
-  status             String    @default("PLANNED") // PLANNED|PREPARING|READY|DELIVERED|REFUSED|MISSED|CANCELLED
+  status             MealStatus @default(PLANNED) // PLANNED|PREPARING|READY|DELIVERED|REFUSED|MISSED|CANCELLED
   preparedByStaffId  String?
   deliveredByStaffId String?
   preparedAt         DateTime?
@@ -7209,7 +7209,7 @@ model Meal {
   deliveredAt        DateTime?
   refusedAt          DateTime?
   notes              String?
-  updatedAt          DateTime  @updatedAt
+  updatedAt          DateTime   @updatedAt
 
   @@index([facilityId, status])
   @@index([dietOrderId])
@@ -7220,7 +7220,7 @@ model Meal {
  * Generic patient transport request. Pickup/destination reference canonical beds or a location label, validated server-side.
  */
 model PatientTransportRequest {
-  id                 String    @id @default(cuid())
+  id                 String                        @id @default(cuid())
   facilityId         String
   patientId          String
   encounterId        String?
@@ -7229,12 +7229,12 @@ model PatientTransportRequest {
   destinationBedId   String?
   destinationLabel   String?
   transportType      String // "WHEELCHAIR" | "STRETCHER" | "BED" | "WALKING" | "OTHER"
-  priority           String    @default("ROUTINE")
+  priority           Priority                      @default(ROUTINE)
   equipmentNote      String?
-  status             String    @default("REQUESTED") // REQUESTED|ACCEPTED|ASSIGNED|EN_ROUTE_TO_PICKUP|PATIENT_PICKED_UP|IN_TRANSIT|ARRIVED|COMPLETED|CANCELLED|REJECTED
+  status             PatientTransportRequestStatus @default(REQUESTED) // REQUESTED|ACCEPTED|ASSIGNED|EN_ROUTE_TO_PICKUP|PATIENT_PICKED_UP|IN_TRANSIT|ARRIVED|COMPLETED|CANCELLED|REJECTED
   requestedByStaffId String
   assignedToStaffId  String?
-  requestedAt        DateTime  @default(now())
+  requestedAt        DateTime                      @default(now())
   acceptedAt         DateTime?
   assignedAt         DateTime?
   pickedUpAt         DateTime?
@@ -7243,7 +7243,7 @@ model PatientTransportRequest {
   cancelledAt        DateTime?
   cancelledReason    String?
   notes              String?
-  updatedAt          DateTime  @updatedAt
+  updatedAt          DateTime                      @updatedAt
 
   @@index([facilityId, status])
   @@index([patientId])
@@ -7254,15 +7254,15 @@ model PatientTransportRequest {
  * An ambulance in the fleet. status is the fleet-availability control point (guarded AVAILABLE->ON_TRIP prevents double dispatch).
  */
 model Ambulance {
-  id           String   @id @default(cuid())
+  id           String          @id @default(cuid())
   facilityId   String
   registration String
   type         String // "BLS" | "ALS" | "PATIENT_TRANSPORT" | "OTHER" (documentary)
-  status       String   @default("AVAILABLE") // AVAILABLE | ON_TRIP | MAINTENANCE | OUT_OF_SERVICE
+  status       AmbulanceStatus @default(AVAILABLE) // AVAILABLE | ON_TRIP | MAINTENANCE | OUT_OF_SERVICE
   capabilities Json?
-  active       Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  active       Boolean         @default(true)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
 
   trips AmbulanceTrip[]
 
@@ -7274,26 +7274,26 @@ model Ambulance {
  * An ambulance trip transporting a patient (does NOT create a second patient/encounter — reuses canonical ADT).
  */
 model AmbulanceTrip {
-  id                  String     @id @default(cuid())
+  id                  String              @id @default(cuid())
   facilityId          String
-  ambulance           Ambulance? @relation(fields: [ambulanceId], references: [id])
+  ambulance           Ambulance?          @relation(fields: [ambulanceId], references: [id])
   ambulanceId         String?
   patientId           String?
   encounterId         String?
   origin              String
   destination         String
   crewNote            String? // crew are canonical staff; a documentary note references them, no duplicate employee accounts
-  status              String     @default("REQUESTED") // REQUESTED|DISPATCHED|EN_ROUTE|AT_PICKUP|PATIENT_ONBOARD|IN_TRANSIT|ARRIVED|COMPLETED|CANCELLED|FAILED_DISPATCH
+  status              AmbulanceTripStatus @default(REQUESTED) // REQUESTED|DISPATCHED|EN_ROUTE|AT_PICKUP|PATIENT_ONBOARD|IN_TRANSIT|ARRIVED|COMPLETED|CANCELLED|FAILED_DISPATCH
   requestedByStaffId  String
   dispatchedByStaffId String?
-  requestedAt         DateTime   @default(now())
+  requestedAt         DateTime            @default(now())
   dispatchedAt        DateTime?
   arrivedAt           DateTime?
   completedAt         DateTime?
   cancelledAt         DateTime?
   cancelledReason     String?
   notes               String?
-  updatedAt           DateTime   @updatedAt
+  updatedAt           DateTime            @updatedAt
 
   @@index([facilityId, status])
   @@index([ambulanceId])
@@ -7303,19 +7303,19 @@ model AmbulanceTrip {
  * Facilities maintenance request / work order. REPORTED->TRIAGED->ASSIGNED->IN_PROGRESS->RESOLVED->VERIFIED->CLOSED (+ CANCELLED). Optionally references a biomedical asset.
  */
 model MaintenanceRequest {
-  id                 String    @id @default(cuid())
+  id                 String                   @id @default(cuid())
   facilityId         String
   locationLabel      String?
   wardId             String?
   equipmentId        String? // optional BiomedicalEquipment link
   issueType          String // "ELECTRICAL" | "PLUMBING" | "HVAC" | "STRUCTURAL" | "EQUIPMENT" | "OTHER"
   description        String
-  priority           String    @default("ROUTINE")
-  status             String    @default("REPORTED") // REPORTED|TRIAGED|ASSIGNED|IN_PROGRESS|RESOLVED|VERIFIED|CLOSED|CANCELLED
+  priority           Priority                 @default(ROUTINE)
+  status             MaintenanceRequestStatus @default(REPORTED) // REPORTED|TRIAGED|ASSIGNED|IN_PROGRESS|RESOLVED|VERIFIED|CLOSED|CANCELLED
   requestedByStaffId String
   assignedToStaffId  String?
   verifiedByStaffId  String?
-  reportedAt         DateTime  @default(now())
+  reportedAt         DateTime                 @default(now())
   assignedAt         DateTime?
   startedAt          DateTime?
   resolvedAt         DateTime?
@@ -7325,7 +7325,7 @@ model MaintenanceRequest {
   cancelledReason    String?
   resolutionNote     String?
   notes              String?
-  updatedAt          DateTime  @updatedAt
+  updatedAt          DateTime                 @updatedAt
 
   @@index([facilityId, status])
   @@index([equipmentId])
@@ -7336,20 +7336,20 @@ model MaintenanceRequest {
  * Scheduled preventive-maintenance record (documentary; no predictive engine).
  */
 model PreventiveMaintenance {
-  id                 String    @id @default(cuid())
+  id                 String                      @id @default(cuid())
   facilityId         String
   equipmentId        String?
   assetLabel         String?
   maintenanceType    String
   dueAt              DateTime
-  status             String    @default("SCHEDULED") // SCHEDULED | DONE | CANCELLED
+  status             PreventiveMaintenanceStatus @default(SCHEDULED) // SCHEDULED | DONE | CANCELLED
   performedAt        DateTime?
   performedByStaffId String?
   result             String?
   nextDueAt          DateTime?
   notes              String?
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  createdAt          DateTime                    @default(now())
+  updatedAt          DateTime                    @updatedAt
 
   @@index([facilityId, status])
   @@index([equipmentId])
@@ -7359,18 +7359,18 @@ model PreventiveMaintenance {
  * Asset/equipment downtime window.
  */
 model AssetDowntime {
-  id            String    @id @default(cuid())
+  id            String              @id @default(cuid())
   facilityId    String
   equipmentId   String?
   assetLabel    String?
   locationLabel String?
   reason        String
-  status        String    @default("ACTIVE") // ACTIVE | RESOLVED
-  startedAt     DateTime  @default(now())
+  status        AssetDowntimeStatus @default(ACTIVE) // ACTIVE | RESOLVED
+  startedAt     DateTime            @default(now())
   endedAt       DateTime?
   byStaffId     String
   notes         String?
-  updatedAt     DateTime  @updatedAt
+  updatedAt     DateTime            @updatedAt
 
   @@index([facilityId, status])
   @@index([equipmentId])
@@ -7380,7 +7380,7 @@ model AssetDowntime {
  * Biomedical equipment registry (inventory/asset identity + service/calibration status — NO telemetry, NO device protocol integration).
  */
 model BiomedicalEquipment {
-  id                String    @id @default(cuid())
+  id                String                    @id @default(cuid())
   facilityId        String
   assetTag          String
   serialNumber      String?
@@ -7389,14 +7389,14 @@ model BiomedicalEquipment {
   category          String // "MONITOR" | "VENTILATOR" | "INFUSION_PUMP" | "DEFIBRILLATOR" | "IMAGING" | "OTHER"
   departmentId      String?
   locationLabel     String?
-  status            String    @default("IN_SERVICE") // IN_SERVICE | UNDER_MAINTENANCE | OUT_OF_SERVICE | RETIRED
+  status            BiomedicalEquipmentStatus @default(IN_SERVICE) // IN_SERVICE | UNDER_MAINTENANCE | OUT_OF_SERVICE | RETIRED
   calibrationStatus String? // documentary "CALIBRATED" | "DUE" | "OVERDUE"
   warrantyUntil     DateTime?
   nextServiceAt     DateTime?
-  active            Boolean   @default(true)
+  active            Boolean                   @default(true)
   notes             String?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
 
   calibrations BiomedicalCalibrationRecord[]
   maintenance  BiomedicalMaintenanceRecord[]
@@ -7465,7 +7465,7 @@ model EquipmentMovement {
  * over incidents by type/ward/date.
  */
 model InfectionIncident {
-  id                String    @id @default(cuid())
+  id                String                  @id @default(cuid())
   facilityId        String
   patientId         String?
   encounterId       String?
@@ -7473,17 +7473,17 @@ model InfectionIncident {
   locationLabel     String?
   incidentType      String // documentary, e.g. "HAI" | "CLABSI" | "CAUTI" | "SSI" | "MDRO" | "OTHER"
   onsetAt           DateTime?
-  status            String    @default("REPORTED") // REPORTED|UNDER_REVIEW|INVESTIGATION|ACTION_REQUIRED|RESOLVED|CLOSED|CANCELLED
-  isolationRequired Boolean   @default(false)
+  status            InfectionIncidentStatus @default(REPORTED) // REPORTED|UNDER_REVIEW|INVESTIGATION|ACTION_REQUIRED|RESOLVED|CLOSED|CANCELLED
+  isolationRequired Boolean                 @default(false)
   reportedByStaffId String
   reviewedByStaffId String?
-  reportedAt        DateTime  @default(now())
+  reportedAt        DateTime                @default(now())
   reviewedAt        DateTime?
   resolvedAt        DateTime?
   closedAt          DateTime?
   cancelledAt       DateTime?
   notes             String?
-  updatedAt         DateTime  @updatedAt
+  updatedAt         DateTime                @updatedAt
 
   investigations InfectionInvestigation[]
   exposures      ExposureRecord[]
@@ -7494,15 +7494,15 @@ model InfectionIncident {
 }
 
 model InfectionInvestigation {
-  id                  String            @id @default(cuid())
+  id                  String                       @id @default(cuid())
   facilityId          String
-  incident            InfectionIncident @relation(fields: [incidentId], references: [id])
+  incident            InfectionIncident            @relation(fields: [incidentId], references: [id])
   incidentId          String
   investigatorStaffId String
   findings            String?
   actionTaken         String?
-  status              String            @default("OPEN") // OPEN | COMPLETED
-  createdAt           DateTime          @default(now())
+  status              InfectionInvestigationStatus @default(OPEN) // OPEN | COMPLETED
+  createdAt           DateTime                     @default(now())
   completedAt         DateTime?
 
   @@index([incidentId])
@@ -7513,17 +7513,17 @@ model InfectionInvestigation {
  * Documentary exposure/contact record linked to an incident (no speculative contact-tracing inference).
  */
 model ExposureRecord {
-  id                String            @id @default(cuid())
+  id                String               @id @default(cuid())
   facilityId        String
-  incident          InfectionIncident @relation(fields: [incidentId], references: [id])
+  incident          InfectionIncident    @relation(fields: [incidentId], references: [id])
   incidentId        String
   affectedPersonRef String // documentary reference (patient/staff); no second identity table
   locationLabel     String?
   exposureAt        DateTime?
-  status            String            @default("DOCUMENTED") // DOCUMENTED | REVIEWED
+  status            ExposureRecordStatus @default(DOCUMENTED) // DOCUMENTED | REVIEWED
   reviewedByStaffId String?
   notes             String?
-  createdAt         DateTime          @default(now())
+  createdAt         DateTime             @default(now())
 
   @@index([incidentId])
   @@index([facilityId])
@@ -7544,20 +7544,20 @@ model ExposureRecord {
 
 // ══ QUALITY / PATIENT SAFETY ═════════════════════════════════════════════
 model QualityIncident {
-  id                          String    @id @default(cuid())
+  id                          String                         @id @default(cuid())
   facilityId                  String
   patientId                   String? // nullable — not every quality event involves a patient
   encounterId                 String?
   departmentId                String?
   category                    String // documentary: MEDICATION|FALL|PRESSURE_INJURY|DIAGNOSTIC|SURGICAL|TRANSFUSION|INFECTION|EQUIPMENT|OPERATIONAL|SECURITY|OTHER
-  severity                    String    @default("MODERATE") // LOW|MODERATE|HIGH|CRITICAL (organizational classification, not a computed score)
-  confidentiality             String    @default("STANDARD") // STANDARD|RESTRICTED
+  severity                    IncidentSeverity               @default(MODERATE) // LOW|MODERATE|HIGH|CRITICAL (organizational classification, not a computed score)
+  confidentiality             QualityIncidentConfidentiality @default(STANDARD) // STANDARD|RESTRICTED
   title                       String
   description                 String
   immediateAction             String?
-  status                      String    @default("REPORTED") // REPORTED|TRIAGED|UNDER_INVESTIGATION|ACTION_REQUIRED|RESOLVED|CLOSED|CANCELLED
+  status                      QualityIncidentStatus          @default(REPORTED) // REPORTED|TRIAGED|UNDER_INVESTIGATION|ACTION_REQUIRED|RESOLVED|CLOSED|CANCELLED
   occurrenceAt                DateTime?
-  reportedAt                  DateTime  @default(now())
+  reportedAt                  DateTime                       @default(now())
   dueAt                       DateTime? // optional SLA/target
   investigationStartedAt      DateTime?
   resolvedAt                  DateTime?
@@ -7573,8 +7573,8 @@ model QualityIncident {
   relatedEntityId             String?
   infectionIncidentId         String? // B9 InfectionIncident feeding a quality investigation (§42)
   source                      String? // module/workflow that raised it
-  createdAt                   DateTime  @default(now())
-  updatedAt                   DateTime  @updatedAt
+  createdAt                   DateTime                       @default(now())
+  updatedAt                   DateTime                       @updatedAt
 
   transitions QualityIncidentTransition[]
   rca         RootCauseAnalysis?
@@ -7606,41 +7606,41 @@ model QualityIncidentTransition {
 }
 
 model RootCauseAnalysis {
-  id                  String          @id @default(cuid())
+  id                  String                  @id @default(cuid())
   facilityId          String
-  incident            QualityIncident @relation(fields: [incidentId], references: [id])
-  incidentId          String          @unique // one RCA per incident
-  methodology         String          @default("FIVE_WHYS") // FIVE_WHYS|FISHBONE|OTHER (documentary — the system stores, does not infer)
+  incident            QualityIncident         @relation(fields: [incidentId], references: [id])
+  incidentId          String                  @unique // one RCA per incident
+  methodology         String                  @default("FIVE_WHYS") // FIVE_WHYS|FISHBONE|OTHER (documentary — the system stores, does not infer)
   problemStatement    String
   contributingFactors String?
   rootCauses          String?
   findings            String?
   recommendations     String?
-  status              String          @default("DRAFT") // DRAFT|UNDER_REVIEW|REVIEWED
-  version             Int             @default(1)
+  status              RootCauseAnalysisStatus @default(DRAFT) // DRAFT|UNDER_REVIEW|REVIEWED
+  version             Int                     @default(1)
   authoredByStaffId   String
   reviewedByStaffId   String?
   reviewedAt          DateTime?
-  createdAt           DateTime        @default(now())
-  updatedAt           DateTime        @updatedAt
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
 
   @@index([facilityId])
   @@index([status])
 }
 
 model CapaAction {
-  id                 String           @id @default(cuid())
+  id                 String               @id @default(cuid())
   facilityId         String
-  incident           QualityIncident? @relation(fields: [incidentId], references: [id])
+  incident           QualityIncident?     @relation(fields: [incidentId], references: [id])
   incidentId         String?
   findingId          String? // a QualityFinding may generate a CAPA (documentary link)
   title              String
   description        String
-  actionType         String // CORRECTIVE|PREVENTIVE
+  actionType         CapaActionActionType // CORRECTIVE|PREVENTIVE
   ownerStaffId       String?
   departmentId       String?
   dueAt              DateTime?
-  status             String           @default("OPEN") // OPEN|IN_PROGRESS|COMPLETED|VERIFIED|CLOSED|CANCELLED
+  status             CapaActionStatus     @default(OPEN) // OPEN|IN_PROGRESS|COMPLETED|VERIFIED|CLOSED|CANCELLED
   evidenceDocumentId String? // ClinicalDocument ref
   completedAt        DateTime?
   verifiedByStaffId  String?
@@ -7648,8 +7648,8 @@ model CapaAction {
   closedAt           DateTime?
   cancelledAt        DateTime?
   createdByStaffId   String
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
 
   @@index([facilityId, status])
   @@index([incidentId])
@@ -7658,18 +7658,18 @@ model CapaAction {
 }
 
 model QualityStandard {
-  id               String    @id @default(cuid())
+  id               String                @id @default(cuid())
   facilityId       String
   code             String // hospital-configured reference (e.g. its own NABH mapping) — no copyrighted library embedded
   title            String
   description      String?
   category         String?
   ownerStaffId     String?
-  status           String    @default("ACTIVE") // ACTIVE|ARCHIVED
+  status           QualityStandardStatus @default(ACTIVE) // ACTIVE|ARCHIVED
   reviewDueAt      DateTime?
   createdByStaffId String
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
 
   measures QualityMeasure[]
 
@@ -7678,19 +7678,19 @@ model QualityStandard {
 }
 
 model QualityMeasure {
-  id                String          @id @default(cuid())
+  id                String               @id @default(cuid())
   facilityId        String
-  standard          QualityStandard @relation(fields: [standardId], references: [id])
+  standard          QualityStandard      @relation(fields: [standardId], references: [id])
   standardId        String
   code              String
   title             String
   description       String?
-  status            String          @default("PENDING") // PENDING|COMPLIANT|PARTIAL|NON_COMPLIANT|NOT_APPLICABLE
+  status            QualityMeasureStatus @default(PENDING) // PENDING|COMPLIANT|PARTIAL|NON_COMPLIANT|NOT_APPLICABLE
   ownerStaffId      String?
   reviewedByStaffId String?
   reviewedAt        DateTime?
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
 
   @@unique([standardId, code])
   @@index([facilityId, status])
@@ -7724,24 +7724,24 @@ model ComplianceEvidence {
 }
 
 model QualityFinding {
-  id                  String           @id @default(cuid())
+  id                  String               @id @default(cuid())
   facilityId          String
   sourceType          String? // AUDIT|STANDARD|MEASURE|INCIDENT|OTHER
-  audit               QualityAudit?    @relation(fields: [auditId], references: [id])
+  audit               QualityAudit?        @relation(fields: [auditId], references: [id])
   auditId             String?
   standardId          String?
   measureId           String?
-  incident            QualityIncident? @relation(fields: [incidentId], references: [id])
+  incident            QualityIncident?     @relation(fields: [incidentId], references: [id])
   incidentId          String?
   title               String
   description         String
-  severity            String? // LOW|MODERATE|HIGH|CRITICAL
-  status              String           @default("OPEN") // OPEN|IN_PROGRESS|CLOSED
+  severity            IncidentSeverity? // LOW|MODERATE|HIGH|CRITICAL
+  status              QualityFindingStatus @default(OPEN) // OPEN|IN_PROGRESS|CLOSED
   identifiedByStaffId String
   closedByStaffId     String?
   closedAt            DateTime?
-  createdAt           DateTime         @default(now())
-  updatedAt           DateTime         @updatedAt
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
 
   @@index([facilityId, status])
   @@index([auditId])
@@ -7749,21 +7749,21 @@ model QualityFinding {
 }
 
 model QualityAudit {
-  id               String    @id @default(cuid())
+  id               String             @id @default(cuid())
   facilityId       String
   title            String
   scope            String?
   departmentId     String?
   auditorStaffId   String
-  status           String    @default("PLANNED") // PLANNED|IN_PROGRESS|COMPLETED|CLOSED
+  status           QualityAuditStatus @default(PLANNED) // PLANNED|IN_PROGRESS|COMPLETED|CLOSED
   summary          String?
   plannedStartAt   DateTime?
   startedAt        DateTime?
   completedAt      DateTime?
   closedAt         DateTime?
   createdByStaffId String
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
 
   findings QualityFinding[]
 
@@ -7772,19 +7772,19 @@ model QualityAudit {
 
 // ══ WORKFORCE ════════════════════════════════════════════════════════════
 model WorkforceAssignment {
-  id                String    @id @default(cuid())
+  id                String                            @id @default(cuid())
   facilityId        String
   staffId           String // HospitalStaffProfile ref (validated same-facility)
   departmentId      String?
   operationalRole   String? // e.g. "Charge Nurse" | "OT Coordinator" | "Lab Supervisor"
-  assignmentType    String    @default("PRIMARY") // PRIMARY|SECONDARY|TEMPORARY
+  assignmentType    WorkforceAssignmentAssignmentType @default(PRIMARY) // PRIMARY|SECONDARY|TEMPORARY
   supervisorStaffId String? // reporting manager (validated: not self, same facility)
-  startAt           DateTime  @default(now())
+  startAt           DateTime                          @default(now())
   endAt             DateTime?
-  status            String    @default("ACTIVE") // ACTIVE|ENDED
+  status            WorkforceAssignmentStatus         @default(ACTIVE) // ACTIVE|ENDED
   createdByStaffId  String
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  createdAt         DateTime                          @default(now())
+  updatedAt         DateTime                          @updatedAt
 
   @@index([facilityId, staffId, status])
   @@index([facilityId, departmentId])
@@ -7792,19 +7792,19 @@ model WorkforceAssignment {
 }
 
 model StaffShift {
-  id                String    @id @default(cuid())
+  id                String           @id @default(cuid())
   facilityId        String
   staffId           String
   departmentId      String?
   shiftType         String? // DAY|NIGHT|EVENING|ON_CALL
   startAt           DateTime
   endAt             DateTime
-  status            String    @default("SCHEDULED") // SCHEDULED|CANCELLED|COMPLETED
+  status            StaffShiftStatus @default(SCHEDULED) // SCHEDULED|CANCELLED|COMPLETED
   supervisorStaffId String?
   assignedByStaffId String
   cancelledAt       DateTime?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
 
   // Deterministic single-winner for "two users assign the same shift" (brief
   // §32 race #6): identical (staff, start) collides. Broader overlap is checked
@@ -7815,20 +7815,20 @@ model StaffShift {
 }
 
 model StaffingRequirement {
-  id                     String    @id @default(cuid())
+  id                     String                    @id @default(cuid())
   facilityId             String
   departmentId           String?
   wardId                 String?
   role                   String // required role/operational role
   shiftType              String?
-  minCount               Int       @default(1)
+  minCount               Int                       @default(1)
   requiredCredentialType String? // optional skill/credential
-  effectiveFrom          DateTime  @default(now())
+  effectiveFrom          DateTime                  @default(now())
   effectiveTo            DateTime?
-  status                 String    @default("ACTIVE") // ACTIVE|ARCHIVED
+  status                 StaffingRequirementStatus @default(ACTIVE) // ACTIVE|ARCHIVED
   createdByStaffId       String
-  createdAt              DateTime  @default(now())
-  updatedAt              DateTime  @updatedAt
+  createdAt              DateTime                  @default(now())
+  updatedAt              DateTime                  @updatedAt
 
   @@index([facilityId, status])
   @@index([facilityId, departmentId])
@@ -7836,7 +7836,7 @@ model StaffingRequirement {
 
 // ══ CREDENTIALING ════════════════════════════════════════════════════════
 model Credential {
-  id                String    @id @default(cuid())
+  id                String           @id @default(cuid())
   facilityId        String
   staffId           String
   credentialType    String // REGISTRATION|QUALIFICATION|CERTIFICATION|LICENSE|SPECIALTY|TRAINING
@@ -7846,15 +7846,15 @@ model Credential {
   credentialNumber  String?
   issuedAt          DateTime?
   expiresAt         DateTime?
-  status            String    @default("PENDING") // PENDING|VERIFIED|EXPIRED|SUSPENDED|REVOKED
+  status            CredentialStatus @default(PENDING) // PENDING|VERIFIED|EXPIRED|SUSPENDED|REVOKED
   verifiedByStaffId String? // "VERIFIED" == verified by the hospital workflow, NOT an external registry
   verifiedAt        DateTime?
   documentId        String? // ClinicalDocument evidence ref
   notes             String?
-  version           Int       @default(1) // single-winner guard for verify/suspend/revoke
+  version           Int              @default(1) // single-winner guard for verify/suspend/revoke
   createdByStaffId  String
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
 
   @@index([facilityId, staffId])
   @@index([facilityId, status])
@@ -7863,23 +7863,23 @@ model Credential {
 }
 
 model StaffPrivilege {
-  id               String    @id @default(cuid())
+  id               String               @id @default(cuid())
   facilityId       String
   staffId          String
   privilegeType    String // e.g. SURGERY|ANESTHESIA|BLOOD_BANK_VERIFY|LAB_RESULT_VERIFY|RADIOLOGY_REPORT_FINALIZE|ICU_RESPONSIBILITY|PHARMACY_CONTROLLED
   scope            String?
-  status           String    @default("ACTIVE") // ACTIVE|EXPIRED|SUSPENDED|REVOKED
+  status           StaffPrivilegeStatus @default(ACTIVE) // ACTIVE|EXPIRED|SUSPENDED|REVOKED
   grantedByStaffId String
-  grantedAt        DateTime  @default(now())
+  grantedAt        DateTime             @default(now())
   expiresAt        DateTime?
   suspendedAt      DateTime?
   revokedByStaffId String?
   revokedAt        DateTime?
   documentId       String?
   notes            String?
-  version          Int       @default(1) // single-winner guard for suspend/revoke
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  version          Int                  @default(1) // single-winner guard for suspend/revoke
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
 
   @@index([facilityId, staffId, status])
   @@index([privilegeType])
@@ -8568,7 +8568,7 @@ model BreakGlassAccess {
   emergencyContext String
 
   /// ACTIVE | EXPIRED | REVOKED | COMPLETED
-  status String @default("ACTIVE")
+  status BreakGlassAccessStatus @default(ACTIVE)
 
   activatedAt     DateTime  @default(now())
   /// Hard ceiling enforced in the service. There is no indefinite break-glass.
@@ -8619,7 +8619,7 @@ model PrivacyRequest {
   reason String?
 
   /// REQUESTED | UNDER_REVIEW | APPROVED | REJECTED | ACTIONED | CANCELLED
-  status String @default("REQUESTED")
+  status PrivacyRequestStatus @default(REQUESTED)
 
   reviewedByUserId String?
   reviewedAt       DateTime?
@@ -9014,7 +9014,7 @@ model PatientDelegation {
 
   // INVITED -> ACTIVE (on accept) -> REVOKED | EXPIRED. Access is granted ONLY
   // in ACTIVE and only before expiresAt.
-  status String @default("INVITED")
+  status PatientDelegationStatus @default(INVITED)
 
   // Invitation is delivered out of band; we store only a SHA-256 hash of the
   // single-use token (never the token itself), plus the contact it was sent
@@ -9081,7 +9081,7 @@ model PatientAccessSession {
   codeHash String @unique // sha256 of the shared code; plaintext never stored
 
   // PENDING (code issued) -> ACTIVE (doctor redeemed) -> ENDED | EXPIRED | CANCELLED
-  status String @default("PENDING")
+  status PatientAccessSessionStatus @default(PENDING)
 
   purpose String?
 
@@ -9133,7 +9133,7 @@ model Notification {
   // "CRITICAL_RESULT" | "TASK_ASSIGNED" | "APPROVAL_REQUEST" | "SLA_BREACH" | ...
   type             String
   category         String               @default("OPERATIONAL") // CLINICAL | OPERATIONAL | ADMINISTRATIVE | SYSTEM
-  priority         String               @default("ROUTINE") // ROUTINE | URGENT | CRITICAL
+  priority         NotificationPriority @default(ROUTINE) // ROUTINE | URGENT | CRITICAL
   title            String
   body             String?
   // Optional deep-link into the app (e.g. "/hospital-os/diagnostics") so a
@@ -9236,4 +9236,459 @@ model PatientLinkRequest {
 
   @@index([facilityId, status])
   @@index([userId])
+}
+
+// ── Section 8 (clinical): status/priority enums (docs/POSTGRES_CUTOVER_REPORT.md §8.2) ──
+
+enum PatientRegistrationStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum PatientIdentifierStatus {
+  ACTIVE
+  INVALID
+  SUPERSEDED
+}
+
+enum AllergyStatus {
+  ACTIVE
+  INACTIVE
+  ENTERED_IN_ERROR
+}
+
+enum AllergyVerification {
+  UNCONFIRMED
+  CONFIRMED
+}
+
+enum EpisodeOfCareStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum DiagnosisStatus {
+  ACTIVE
+  RESOLVED
+  ENTERED_IN_ERROR
+}
+
+enum ClinicalNoteStatus {
+  DRAFT
+  SIGNED
+  AMENDED
+  SUPERSEDED
+}
+
+enum Priority {
+  ROUTINE
+  URGENT
+  STAT
+}
+
+enum ImagingStudyImageAvailability {
+  NONE
+  PENDING
+  AVAILABLE
+}
+
+enum TaskStatus {
+  OPEN
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  OVERDUE
+}
+
+enum ClinicalDocumentStatus {
+  CURRENT
+  SUPERSEDED
+  DRAFT
+}
+
+enum ClinicalDocumentAccessPolicy {
+  CLINICAL_STAFF
+  PATIENT_VISIBLE
+  RESTRICTED
+}
+
+enum ReferralStatus {
+  DRAFT
+  PLACED
+  ACKNOWLEDGED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  REJECTED
+}
+
+enum AppointmentStatus {
+  REQUESTED
+  CONFIRMED
+  RESCHEDULED
+  ARRIVED
+  CHECKED_IN
+  WAITING
+  IN_CONSULTATION
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum QueueEntryStatus {
+  WAITING
+  CALLED
+  IN_SERVICE
+  COMPLETED
+  SKIPPED
+  CANCELLED
+}
+
+enum TriageAssessmentStatus {
+  DRAFT
+  COMPLETED
+  AMENDED
+}
+
+enum AdmissionRequestStatus {
+  PENDING
+  DEFERRED
+  BED_RESERVED
+  ADMITTED
+  REJECTED
+  CANCELLED
+}
+
+enum TransferRequestStatus {
+  REQUESTED
+  ACCEPTED
+  BED_RESERVED
+  PATIENT_IN_TRANSIT
+  COMPLETED
+  CANCELLED
+  REJECTED
+}
+
+enum IcuDeviceStatus {
+  PLANNED
+  ACTIVE
+  REMOVED
+  DISCONTINUED
+}
+
+enum IcuInfusionStatus {
+  RUNNING
+  PAUSED
+  STOPPED
+}
+
+enum SurgeryUrgency {
+  ELECTIVE
+  URGENT
+  EMERGENCY
+}
+
+enum SurgeryScheduleStatus {
+  SCHEDULED
+  CANCELLED
+}
+
+enum AnesthesiaRecordStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum SurgicalSpecimenStatus {
+  COLLECTED
+  SENT
+  RECEIVED
+}
+
+enum RecoveryRecordStatus {
+  PENDING
+  IN_RECOVERY
+  READY_FOR_TRANSFER
+  TRANSFERRED
+}
+
+enum NursingAssessmentStatus {
+  DRAFT
+  COMPLETED
+  SIGNED
+  SUPERSEDED
+}
+
+enum BloodUnitBloodGroupStatus {
+  PENDING
+  CONFIRMED
+}
+
+enum BloodTypingRecordStatus {
+  PENDING
+  RESULTED
+  VERIFIED
+}
+
+enum BloodCompatibilityTestTestType {
+  TYPE_AND_SCREEN
+  CROSSMATCH
+}
+
+enum BloodIssueStatus {
+  ISSUED
+  IN_TRANSIT
+  RECEIVED
+  RETURNED
+}
+
+enum HousekeepingRequestStatus {
+  REQUESTED
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  INSPECTED
+  CLOSED
+  CANCELLED
+}
+
+enum DietOrderStatus {
+  ACTIVE
+  DISCONTINUED
+  CANCELLED
+}
+
+enum MealStatus {
+  PLANNED
+  PREPARING
+  READY
+  DELIVERED
+  REFUSED
+  MISSED
+  CANCELLED
+}
+
+enum PatientTransportRequestStatus {
+  REQUESTED
+  ACCEPTED
+  ASSIGNED
+  EN_ROUTE_TO_PICKUP
+  PATIENT_PICKED_UP
+  IN_TRANSIT
+  ARRIVED
+  COMPLETED
+  CANCELLED
+  REJECTED
+}
+
+enum AmbulanceStatus {
+  AVAILABLE
+  ON_TRIP
+  MAINTENANCE
+  OUT_OF_SERVICE
+}
+
+enum AmbulanceTripStatus {
+  REQUESTED
+  DISPATCHED
+  EN_ROUTE
+  AT_PICKUP
+  PATIENT_ONBOARD
+  IN_TRANSIT
+  ARRIVED
+  COMPLETED
+  CANCELLED
+  FAILED_DISPATCH
+}
+
+enum MaintenanceRequestStatus {
+  REPORTED
+  TRIAGED
+  ASSIGNED
+  IN_PROGRESS
+  RESOLVED
+  VERIFIED
+  CLOSED
+  CANCELLED
+}
+
+enum PreventiveMaintenanceStatus {
+  SCHEDULED
+  DONE
+  CANCELLED
+}
+
+enum AssetDowntimeStatus {
+  ACTIVE
+  RESOLVED
+}
+
+enum BiomedicalEquipmentStatus {
+  IN_SERVICE
+  UNDER_MAINTENANCE
+  OUT_OF_SERVICE
+  RETIRED
+}
+
+enum InfectionIncidentStatus {
+  REPORTED
+  UNDER_REVIEW
+  INVESTIGATION
+  ACTION_REQUIRED
+  RESOLVED
+  CLOSED
+  CANCELLED
+}
+
+enum InfectionInvestigationStatus {
+  OPEN
+  COMPLETED
+}
+
+enum ExposureRecordStatus {
+  DOCUMENTED
+  REVIEWED
+}
+
+enum IncidentSeverity {
+  LOW
+  MODERATE
+  HIGH
+  CRITICAL
+}
+
+enum QualityIncidentConfidentiality {
+  STANDARD
+  RESTRICTED
+}
+
+enum QualityIncidentStatus {
+  REPORTED
+  TRIAGED
+  UNDER_INVESTIGATION
+  ACTION_REQUIRED
+  RESOLVED
+  CLOSED
+  CANCELLED
+}
+
+enum RootCauseAnalysisStatus {
+  DRAFT
+  UNDER_REVIEW
+  REVIEWED
+}
+
+enum CapaActionActionType {
+  CORRECTIVE
+  PREVENTIVE
+}
+
+enum CapaActionStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  VERIFIED
+  CLOSED
+  CANCELLED
+}
+
+enum QualityStandardStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum QualityMeasureStatus {
+  PENDING
+  COMPLIANT
+  PARTIAL
+  NON_COMPLIANT
+  NOT_APPLICABLE
+}
+
+enum QualityFindingStatus {
+  OPEN
+  IN_PROGRESS
+  CLOSED
+}
+
+enum QualityAuditStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  CLOSED
+}
+
+enum WorkforceAssignmentAssignmentType {
+  PRIMARY
+  SECONDARY
+  TEMPORARY
+}
+
+enum WorkforceAssignmentStatus {
+  ACTIVE
+  ENDED
+}
+
+enum StaffShiftStatus {
+  SCHEDULED
+  CANCELLED
+  COMPLETED
+}
+
+enum StaffingRequirementStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum CredentialStatus {
+  PENDING
+  VERIFIED
+  EXPIRED
+  SUSPENDED
+  REVOKED
+}
+
+enum StaffPrivilegeStatus {
+  ACTIVE
+  EXPIRED
+  SUSPENDED
+  REVOKED
+}
+
+enum BreakGlassAccessStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+  COMPLETED
+}
+
+enum PrivacyRequestStatus {
+  REQUESTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  ACTIONED
+  CANCELLED
+}
+
+enum PatientDelegationStatus {
+  INVITED
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+enum PatientAccessSessionStatus {
+  PENDING
+  ACTIVE
+  ENDED
+  EXPIRED
+  CANCELLED
+}
+
+enum NotificationPriority {
+  ROUTINE
+  URGENT
+  CRITICAL
 }

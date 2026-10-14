@@ -1,7 +1,9 @@
+import { $Enums } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { admitPatient, transferPatient, TRANSFER_WITH_LOCATIONS, transferRouteLabel } from "./admission";
+import { parseEnum } from "@/lib/enumValue";
 
 /**
  * ICU Foundation service (Phase B1). Builds on the existing ADT
@@ -174,7 +176,7 @@ export async function recordDevice(input: {
   recordedByStaffId: string;
   byUserId: string;
 }) {
-  const status = input.status ?? "PLANNED";
+  const status = parseEnum($Enums.IcuDeviceStatus, input.status ?? "PLANNED", "status");
   if (!DEVICE_STATUSES.includes(status)) throw new BadRequestError(`status must be one of ${DEVICE_STATUSES.join(", ")}.`);
   const encounter = await prisma.encounter.findUnique({ where: { id: input.encounterId } });
   if (!encounter || encounter.facilityId !== input.facilityId) throw new NotFoundError("Encounter not found.");
@@ -228,7 +230,7 @@ export async function updateDeviceStatus(input: {
     const result = await tx.icuDevice.updateMany({
       where: { id: input.deviceId, status: { notIn: ["REMOVED", "DISCONTINUED"] } },
       data: {
-        status: input.status,
+        status: parseEnum($Enums.IcuDeviceStatus, input.status, "status"),
         ...(input.status === "ACTIVE" && !device.insertedAt ? { insertedAt: new Date() } : {}),
         ...(isTerminal ? { removedAt: input.removedAt ?? new Date() } : {}),
         ...(input.notes !== undefined ? { notes: input.notes } : {}),
@@ -312,7 +314,7 @@ export async function updateInfusionStatus(input: {
     const result = await tx.icuInfusion.updateMany({
       where: { id: input.infusionId, status: { not: "STOPPED" } },
       data: {
-        status: input.status,
+        status: parseEnum($Enums.IcuInfusionStatus, input.status, "status"),
         ...(input.rate !== undefined ? { rate: input.rate } : {}),
         ...(input.status === "STOPPED" ? { stoppedAt: new Date() } : {}),
       },

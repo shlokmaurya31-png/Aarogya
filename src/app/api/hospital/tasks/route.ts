@@ -1,8 +1,10 @@
+import { $Enums } from "@prisma/client";
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { parseOptionalEnum } from "@/lib/enumValue";
 
 /**
  * Generic task foundation (brief §25). Medication-due/vitals-due tasks
@@ -15,7 +17,7 @@ export async function GET(req: NextRequest) {
   return withApiErrors(async () => {
     const { searchParams } = new URL(req.url);
     const { facilityId } = await requireFacilityStaff("task:view", searchParams.get("facilityId") ?? undefined);
-    const status = searchParams.get("status");
+    const status = parseOptionalEnum($Enums.TaskStatus, searchParams.get("status"), "status");
     const ownerStaffId = searchParams.get("ownerStaffId");
     const encounterId = searchParams.get("encounterId");
 

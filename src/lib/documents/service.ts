@@ -52,8 +52,8 @@ const DOC_PREFIX: Record<DocumentInput["type"], string> = {
 export function clinicalDocumentFieldsFor(type: DocumentInput["type"], isDraft: boolean) {
   return {
     type: type.toUpperCase().replace(/-/g, "_"),
-    status: isDraft ? "DRAFT" : "CURRENT",
-    accessPolicy: type === "claim-packet" ? "CLINICAL_STAFF" : "PATIENT_VISIBLE",
+    status: isDraft ? ("DRAFT" as const) : ("CURRENT" as const),
+    accessPolicy: type === "claim-packet" ? ("CLINICAL_STAFF" as const) : ("PATIENT_VISIBLE" as const),
   };
 }
 

@@ -3,13 +3,15 @@ import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError } from "@/lib/auth/rbac";
 import { createQualityIncident } from "@/lib/hospital/quality/service";
+import { $Enums } from "@prisma/client";
+import { parseOptionalEnum } from "@/lib/enumValue";
 
 export async function GET(req: NextRequest) {
   return withApiErrors(async () => {
     const { searchParams } = new URL(req.url);
     const { facilityId } = await requireFacilityStaff("quality:incident:read", searchParams.get("facilityId") ?? undefined);
-    const status = searchParams.get("status");
-    const severity = searchParams.get("severity");
+    const status = parseOptionalEnum($Enums.QualityIncidentStatus, searchParams.get("status"), "status");
+    const severity = parseOptionalEnum($Enums.IncidentSeverity, searchParams.get("severity"), "severity");
     const category = searchParams.get("category");
     const departmentId = searchParams.get("departmentId");
     const investigator = searchParams.get("investigator");

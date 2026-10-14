@@ -1,9 +1,11 @@
+import { $Enums } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { deriveExpiryState } from "@/lib/hospital/workforce/authorization";
 import type { Prisma } from "@prisma/client";
 import { isStaffInFacility } from "@/lib/auth/staffFacility";
+import { parseEnum } from "@/lib/enumValue";
 
 /**
  * Phase B10 Workforce foundation — operational assignments, availability, shift/
@@ -41,7 +43,7 @@ export async function createAssignment(input: {
   const assignment = await prisma.workforceAssignment.create({
     data: {
       facilityId: input.facilityId, staffId: input.staffId, departmentId: input.departmentId,
-      operationalRole: input.operationalRole, assignmentType: input.assignmentType ?? "PRIMARY",
+      operationalRole: input.operationalRole, assignmentType: parseEnum($Enums.WorkforceAssignmentAssignmentType, input.assignmentType ?? "PRIMARY", "assignmentType"),
       supervisorStaffId: input.supervisorStaffId, startAt: input.startAt ?? new Date(), createdByStaffId: input.createdByStaffId,
     },
   });
@@ -194,7 +196,7 @@ async function guardedCredentialStatus(input: { facilityId: string; credentialId
     const cred = await tx.credential.findUnique({ where: { id: input.credentialId } });
     if (!cred || cred.facilityId !== input.facilityId) throw new NotFoundError("Credential not found.");
     if (!input.from.includes(cred.status)) throw new BadRequestError(`Credential is ${cred.status}; cannot move to ${input.to}.`);
-    const r = await tx.credential.updateMany({ where: { id: cred.id, version: cred.version }, data: { status: input.to, version: { increment: 1 }, ...(input.extra ?? {}) } });
+    const r = await tx.credential.updateMany({ where: { id: cred.id, version: cred.version }, data: { status: parseEnum($Enums.CredentialStatus, input.to, "status"), version: { increment: 1 }, ...(input.extra ?? {}) } });
     if (r.count !== 1) throw new WorkforceConcurrencyError();
     await tx.auditEvent.create({ data: { type: input.audit, userId: input.byUserId, detail: { credentialId: cred.id, from: cred.status, to: input.to }, facilityId: cred.facilityId } });
     return tx.credential.findUniqueOrThrow({ where: { id: cred.id } });
@@ -256,7 +258,7 @@ async function guardedPrivilegeStatus(input: { facilityId: string; privilegeId: 
     const priv = await tx.staffPrivilege.findUnique({ where: { id: input.privilegeId } });
     if (!priv || priv.facilityId !== input.facilityId) throw new NotFoundError("Privilege not found.");
     if (!input.from.includes(priv.status)) throw new BadRequestError(`Privilege is ${priv.status}; cannot move to ${input.to}.`);
-    const r = await tx.staffPrivilege.updateMany({ where: { id: priv.id, version: priv.version }, data: { status: input.to, version: { increment: 1 }, ...(input.extra ?? {}) } });
+    const r = await tx.staffPrivilege.updateMany({ where: { id: priv.id, version: priv.version }, data: { status: parseEnum($Enums.StaffPrivilegeStatus, input.to, "status"), version: { increment: 1 }, ...(input.extra ?? {}) } });
     if (r.count !== 1) throw new WorkforceConcurrencyError();
     await tx.auditEvent.create({ data: { type: input.audit, userId: input.byUserId, detail: { privilegeId: priv.id, from: priv.status, to: input.to }, facilityId: priv.facilityId } });
     return tx.staffPrivilege.findUniqueOrThrow({ where: { id: priv.id } });

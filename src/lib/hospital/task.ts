@@ -1,7 +1,9 @@
 import { prisma } from "@/lib/db";
 import { BadRequestError } from "@/lib/auth/rbac";
+import { $Enums, type TaskStatus } from "@prisma/client";
+import { parseOptionalEnum } from "@/lib/enumValue";
 
-const TERMINAL_STATUSES = ["COMPLETED", "CANCELLED"];
+const TERMINAL_STATUSES: TaskStatus[] = ["COMPLETED", "CANCELLED"];
 const NOT_TERMINAL = { notIn: TERMINAL_STATUSES };
 
 export class TaskConcurrencyError extends BadRequestError {
@@ -96,14 +98,15 @@ export async function updateTask(input: {
   return prisma.$transaction(async (tx) => {
     const task = await tx.task.findUniqueOrThrow({ where: { id: input.taskId } });
     if (TERMINAL_STATUSES.includes(task.status)) throw new TaskConcurrencyError(task.status);
-    if (input.status && TERMINAL_STATUSES.includes(input.status)) {
+    const status = parseOptionalEnum($Enums.TaskStatus, input.status, "status");
+    if (status && TERMINAL_STATUSES.includes(status)) {
       throw new BadRequestError("Use completeTask/skipTask to move a task into a terminal state.");
     }
 
     const result = await tx.task.updateMany({
       where: { id: input.taskId, status: NOT_TERMINAL },
       data: {
-        ...(input.status ? { status: input.status } : {}),
+        ...(status ? { status } : {}),
         ...(input.ownerStaffId !== undefined ? { ownerStaffId: input.ownerStaffId } : {}),
         ...(input.startedAt ? { startedAt: new Date() } : {}),
       },

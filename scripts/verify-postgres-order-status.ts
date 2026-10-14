@@ -100,7 +100,7 @@ async function main() {
       case "MEDICATION": return (await tx.medicationOrder.create({ data: { ...base, drugName: "D9 gate", dose: "1", route: "oral", frequency: "OD", orderedByStaffId: staff.id, orderId: env.id, status: s } })).id;
       case "LAB": return (await tx.labOrder.create({ data: { ...base, testName: "D9 gate", category: "Biochemistry", orderedByStaffId: staff.id, orderId: env.id, status: s } })).id;
       case "IMAGING": return (await tx.imagingOrder.create({ data: { ...base, modality: "XRAY", studyDescription: "D9 gate", orderedByStaffId: staff.id, orderId: env.id, status: s } })).id;
-      case "REFERRAL": return (await tx.referral.create({ data: { ...base, fromStaffId: staff.id, reason: "D9 gate", orderId: env.id, status } })).id;
+      case "REFERRAL": return (await tx.referral.create({ data: { ...base, fromStaffId: staff.id, reason: "D9 gate", orderId: env.id, status: s } })).id;
     }
   }
   async function setStatus(tx: Prisma.TransactionClient, kind: SpecificOrderKind, id: string, status: string) {
@@ -109,7 +109,7 @@ async function main() {
       case "MEDICATION": await tx.medicationOrder.update({ where: { id }, data }); break;
       case "LAB": await tx.labOrder.update({ where: { id }, data }); break;
       case "IMAGING": await tx.imagingOrder.update({ where: { id }, data }); break;
-      case "REFERRAL": await tx.referral.update({ where: { id }, data: { status } }); break;
+      case "REFERRAL": await tx.referral.update({ where: { id }, data }); break;
     }
     await syncOrderStatus(tx, kind, id);
   }

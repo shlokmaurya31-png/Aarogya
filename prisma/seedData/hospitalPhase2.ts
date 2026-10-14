@@ -6,6 +6,7 @@
  * seedPhase1Extensions() — no duplicate users beyond the one genuinely new
  * persona (front desk) the brief's demo-personas section asks for.
  */
+import type { AppointmentStatus } from "@prisma/client";
 import { PrismaClient, Role, BedStatus } from "@prisma/client";
 import { hashPassword } from "../../src/lib/auth/password";
 import { staffAtFacilityWhere } from "../../src/lib/auth/staffFacility";
@@ -69,7 +70,7 @@ export async function seedPhase2PatientFlow(prisma: PrismaClient) {
 
   // ── OPD Day scenario (brief §65): appointments across the full status range ──
   const today = startOfToday();
-  const apptStatuses = ["REQUESTED", "CONFIRMED", "CHECKED_IN", "COMPLETED", "CANCELLED", "NO_SHOW"];
+  const apptStatuses: AppointmentStatus[] = ["REQUESTED", "CONFIRMED", "CHECKED_IN", "COMPLETED", "CANCELLED", "NO_SHOW"];
   let apptCount = 0;
   for (let i = 0; i < 18 && i + 5 < patients.length; i++) {
     const doctor = opdDoctors[1] ?? opdDoctors[0]; // a doctor WITHOUT the leave-day override above

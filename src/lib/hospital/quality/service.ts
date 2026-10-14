@@ -1,3 +1,4 @@
+import { $Enums } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
@@ -6,6 +7,7 @@ import {
   isTransitionAllowed, assertQualityStaffInFacility, assertPatientInFacility, assertEncounterInFacility,
   assertQualityRefsInFacility,
 } from "@/lib/hospital/quality/shared";
+import { parseEnum } from "@/lib/enumValue";
 
 /**
  * Phase B10 Quality / Patient-Safety service — incident reporting, lifecycle,
@@ -53,8 +55,8 @@ export async function createQualityIncident(input: {
   }
   const incident = await prisma.qualityIncident.create({
     data: {
-      facilityId: input.facilityId, category: input.category, severity: input.severity ?? "MODERATE",
-      confidentiality: input.confidentiality ?? "STANDARD", title: input.title, description: input.description,
+      facilityId: input.facilityId, category: input.category, severity: parseEnum($Enums.IncidentSeverity, input.severity ?? "MODERATE", "severity"),
+      confidentiality: parseEnum($Enums.QualityIncidentConfidentiality, input.confidentiality ?? "STANDARD", "confidentiality"), title: input.title, description: input.description,
       immediateAction: input.immediateAction, patientId: input.patientId, encounterId: input.encounterId,
       departmentId: input.departmentId, occurrenceAt: input.occurrenceAt, dueAt: input.dueAt,
       reportedByStaffId: input.reportedByStaffId, relatedEntityType: input.relatedEntityType,
@@ -266,7 +268,7 @@ export async function setMeasureStatus(input: { facilityId: string; measureId: s
   const measure = await prisma.qualityMeasure.findUnique({ where: { id: input.measureId } });
   if (!measure || measure.facilityId !== input.facilityId) throw new NotFoundError("Measure not found.");
   await assertQualityStaffInFacility(prisma, input.reviewedByStaffId, input.facilityId);
-  const updated = await prisma.qualityMeasure.update({ where: { id: measure.id }, data: { status: input.status, reviewedByStaffId: input.reviewedByStaffId, reviewedAt: new Date() } });
+  const updated = await prisma.qualityMeasure.update({ where: { id: measure.id }, data: { status: parseEnum($Enums.QualityMeasureStatus, input.status, "status"), reviewedByStaffId: input.reviewedByStaffId, reviewedAt: new Date() } });
   await recordAuditEvent("hospital.quality.measureReviewed", input.byUserId, { measureId: measure.id, status: input.status }, { facilityId: input.facilityId });
   return updated;
 }
@@ -339,7 +341,7 @@ export async function createFinding(input: {
     auditId: input.auditId, standardId: input.standardId, measureId: input.measureId, incidentId: input.incidentId,
   });
   const finding = await prisma.qualityFinding.create({
-    data: { facilityId: input.facilityId, title: input.title, description: input.description, sourceType: input.sourceType, severity: input.severity, auditId: input.auditId, standardId: input.standardId, measureId: input.measureId, incidentId: input.incidentId, identifiedByStaffId: input.identifiedByStaffId },
+    data: { facilityId: input.facilityId, title: input.title, description: input.description, sourceType: input.sourceType, severity: input.severity === undefined ? undefined : parseEnum($Enums.IncidentSeverity, input.severity, "severity"), auditId: input.auditId, standardId: input.standardId, measureId: input.measureId, incidentId: input.incidentId, identifiedByStaffId: input.identifiedByStaffId },
   });
   await recordAuditEvent("hospital.quality.findingCreated", input.byUserId, { findingId: finding.id, auditId: input.auditId }, { facilityId: input.facilityId });
   return finding;

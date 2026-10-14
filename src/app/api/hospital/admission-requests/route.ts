@@ -1,16 +1,18 @@
+import { $Enums } from "@prisma/client";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { createAdmissionRequest } from "@/lib/hospital/admissionRequest";
+import { parseOptionalEnum } from "@/lib/enumValue";
 
 /** Admission work queue (brief §29). */
 export async function GET(req: NextRequest) {
   return withApiErrors(async () => {
     const { searchParams } = new URL(req.url);
     const { facilityId } = await requireFacilityStaff("patient:read", searchParams.get("facilityId") ?? undefined);
-    const status = searchParams.get("status");
+    const status = parseOptionalEnum($Enums.AdmissionRequestStatus, searchParams.get("status"), "status");
 
     const requests = await prisma.admissionRequest.findMany({
       where: { facilityId, status: status ? status : { notIn: ["ADMITTED", "REJECTED", "CANCELLED"] } },

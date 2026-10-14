@@ -13,6 +13,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-problem-list.ts
  */
+import type { DiagnosisStatus } from "@prisma/client";
 import { prisma } from "../src/lib/db";
 import { NotFoundError } from "../src/lib/auth/rbac";
 import { addDiagnosisToProblemList } from "../src/lib/hospital/problemList";
@@ -35,7 +36,7 @@ async function main() {
   const encounter = () => prisma.encounter.create({ data: { facilityId, patientId: patient.id, type: "OPD" } });
   const e1 = await encounter();
   const e2 = await encounter();
-  const dx = (encounterId: string, data: Partial<{ diagnosis: string; type: string; status: string; codeSystem: string; code: string; codeDisplay: string }>) =>
+  const dx = (encounterId: string, data: Partial<{ diagnosis: string; type: string; status: DiagnosisStatus; codeSystem: string; code: string; codeDisplay: string }>) =>
     prisma.diagnosis.create({ data: { patientId: patient.id, encounterId, diagnosis: "Type 2 diabetes mellitus", type: "FINAL", diagnosedByStaffId: doctor.id, ...data } });
   const add = (diagnosisId: string, fac = facilityId) => addDiagnosisToProblemList({ facilityId: fac, diagnosisId, byUserId: doctor.userId });
 

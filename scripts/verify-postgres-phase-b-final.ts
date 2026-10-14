@@ -395,7 +395,7 @@ async function main() {
   report("BILLING: no negative payment allocation",
     (await q(`SELECT COUNT(*)::bigint AS n FROM "PaymentAllocation" WHERE "amountMinor" < 0`)) === 0);
   report("BLOOD: no serialized unit is issued twice",
-    (await q(`SELECT COUNT(*)::bigint AS n FROM (SELECT "unitId" FROM "BloodIssue" WHERE "status" NOT IN ('RETURNED','CANCELLED') GROUP BY "unitId" HAVING COUNT(*)>1) t`)) === 0);
+    (await q(`SELECT COUNT(*)::bigint AS n FROM (SELECT "unitId" FROM "BloodIssue" WHERE "status" <> 'RETURNED' GROUP BY "unitId" HAVING COUNT(*)>1) t`)) === 0);
   report("PROCUREMENT: accepted quantity never exceeds the ordered ceiling",
     (await q(`SELECT COUNT(*)::bigint AS n FROM (
        SELECT pol.id FROM "PurchaseOrderLine" pol
