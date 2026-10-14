@@ -35,6 +35,7 @@ import { importFhirPayload } from "../src/lib/hospital/interoperability/fhir/imp
 import { createTerminologyMapping, resolveExternalCode } from "../src/lib/hospital/interoperability/terminology";
 import { StubExchangeAdapter } from "../src/lib/hospital/interoperability/adapters/abdm";
 import { IDENTIFIER_SYSTEMS } from "../src/lib/hospital/interoperability/shared";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
 let pass = 0, fail = 0;
@@ -66,8 +67,8 @@ async function main() {
   const facA = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
   const facB = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Noida Hospital" } });
 
-  const staffA = await prisma.hospitalStaffProfile.findMany({ where: { facilityId: facA.id, status: "ACTIVE" }, take: 2 });
-  const staffB = await prisma.hospitalStaffProfile.findMany({ where: { facilityId: facB.id, status: "ACTIVE" }, take: 1 });
+  const staffA = await prisma.hospitalStaffProfile.findMany({ where: { ...staffAtFacilityWhere(facA.id), status: "ACTIVE" }, take: 2 });
+  const staffB = await prisma.hospitalStaffProfile.findMany({ where: { ...staffAtFacilityWhere(facB.id), status: "ACTIVE" }, take: 1 });
   const [a1, a2] = staffA; const b1 = staffB[0];
 
   const patientsA = await prisma.patient.findMany({ where: { facilityId: facA.id }, take: 3 });

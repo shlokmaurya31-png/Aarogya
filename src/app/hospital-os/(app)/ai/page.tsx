@@ -10,7 +10,7 @@ export default async function HospitalOsAiCockpitPage() {
     <AiCockpit
       role={user.role}
       displayName={user.displayName}
-      facilityName={user.hospitalStaffProfile?.facility.name ?? "your facility"}
+      facilityName={user.primaryFacility?.name ?? "your facility"}
     />
   );
 }

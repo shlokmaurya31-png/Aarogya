@@ -20,6 +20,7 @@ import { createHandoff, acknowledgeHandoff, HandoffAlreadyAcknowledgedError } fr
 import { amendNote, NoteConcurrencyError } from "../src/lib/hospital/clinicalNote";
 import { addIntervention, completeIntervention } from "../src/lib/hospital/carePlan";
 import { NotFoundError } from "../src/lib/auth/rbac";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
 const runId = Date.now();
@@ -33,7 +34,7 @@ function report(name: string, ok: boolean, detail?: string) {
 
 async function main() {
   const facility = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
-  const nurses = await prisma.hospitalStaffProfile.findMany({ where: { facilityId: facility.id, user: { role: "NURSE" } }, take: 2 });
+  const nurses = await prisma.hospitalStaffProfile.findMany({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "NURSE" } }, take: 2 });
   if (nurses.length < 2) throw new Error("Expected at least 2 seeded NURSE staff profiles at Aarogya Medical Centre.");
   const [nurseA, nurseB] = nurses;
   const encounter = await prisma.encounter.findFirstOrThrow({ where: { facilityId: facility.id } });

@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import type { Prisma } from "@prisma/client";
+import { isStaffInFacility } from "@/lib/auth/staffFacility";
 
 /**
  * Phase C1 — shared vocabulary, state machines and facility guards for the
@@ -186,8 +187,8 @@ export async function assertEntityInFacility(db: Db, entityType: string, entityI
       return;
     }
     case "STAFF": {
-      const row = await db.hospitalStaffProfile.findUnique({ where: { id: entityId }, select: { facilityId: true } });
-      if (!row || row.facilityId !== facilityId) throw new NotFoundError("Staff member not found in this facility.");
+      const row = await db.hospitalStaffProfile.findUnique({ where: { id: entityId }, select: { id: true } });
+      if (!row || !(await isStaffInFacility(db, row.id, facilityId))) throw new NotFoundError("Staff member not found in this facility.");
       return;
     }
     case "ENCOUNTER": {
@@ -225,8 +226,8 @@ export async function assertPatientInFacility(db: Db, patientId: string, facilit
 }
 
 export async function assertStaffInFacility(db: Db, staffId: string, facilityId: string) {
-  const s = await db.hospitalStaffProfile.findUnique({ where: { id: staffId }, select: { id: true, facilityId: true, status: true } });
-  if (!s || s.facilityId !== facilityId) throw new NotFoundError("Staff member not found in this facility.");
+  const s = await db.hospitalStaffProfile.findUnique({ where: { id: staffId }, select: { id: true, status: true } });
+  if (!s || !(await isStaffInFacility(db, s.id, facilityId))) throw new NotFoundError("Staff member not found in this facility.");
   if (s.status !== "ACTIVE") throw new BadRequestError("That staff member is not active.");
   return s;
 }

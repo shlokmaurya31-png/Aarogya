@@ -21,6 +21,7 @@ import { createPurchaseOrderDraft, addPurchaseOrderLine, submitForApproval, appr
 import { recordGoodsReceipt, approveGoodsReceipt } from "../src/lib/hospital/procurement/goodsReceipts";
 import { createDepartmentRequest, transitionDepartmentRequest, registerSerial, transitionSerial } from "../src/lib/hospital/inventory/inventoryAdvanced";
 import { createRfq, recordQuotation, selectQuotation, recordSupplierInvoice, createSupplierContract, getEffectivePrice, transitionRfq } from "../src/lib/hospital/procurement/procurementAdvanced";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
 const runId = Date.now();
@@ -34,7 +35,7 @@ const tx = <T>(fn: (t: Prisma.TransactionClient) => Promise<T>) => prisma.$trans
 
 async function main() {
   const facility = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
-  const staffList = await prisma.hospitalStaffProfile.findMany({ where: { facilityId: facility.id }, take: 2 });
+  const staffList = await prisma.hospitalStaffProfile.findMany({ where: { ...staffAtFacilityWhere(facility.id) }, take: 2 });
   const staff = staffList[0];
   const staff2 = staffList[1] ?? staffList[0];
   const location = await prisma.stockLocation.findFirstOrThrow({ where: { facilityId: facility.id } });

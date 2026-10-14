@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { getStaffingCoverage } from "@/lib/hospital/workforce/service";
+import { staffAtFacilityWhere } from "@/lib/auth/staffFacility";
 
 /**
  * Workforce Command Center (Phase B10) — every count is a live, facility-scoped,
@@ -16,8 +17,8 @@ export async function getWorkforceCommandCenter(facilityId: string) {
     upcomingShifts, credExpiringSoon, credExpired, credSuspendedRevoked, privActive, privExpiringSoon, privSuspendedRevoked,
     activeAssignments,
   ] = await Promise.all([
-    prisma.hospitalStaffProfile.count({ where: { facilityId, status: "ACTIVE" } }),
-    prisma.hospitalStaffProfile.count({ where: { facilityId, status: { in: ["INACTIVE", "SUSPENDED"] } } }),
+    prisma.hospitalStaffProfile.count({ where: { ...staffAtFacilityWhere(facilityId), status: "ACTIVE" } }),
+    prisma.hospitalStaffProfile.count({ where: { ...staffAtFacilityWhere(facilityId), status: { in: ["INACTIVE", "SUSPENDED"] } } }),
     prisma.staffAvailability.count({ where: { facilityId, availability: "AVAILABLE" } }),
     prisma.staffAvailability.count({ where: { facilityId, availability: "ON_LEAVE" } }),
     prisma.staffAvailability.count({ where: { facilityId, availability: { in: ["UNAVAILABLE", "OFF_DUTY"] } } }),

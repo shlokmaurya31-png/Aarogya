@@ -13,6 +13,7 @@ import { PrismaClient } from "@prisma/client";
 import { createPatientWithUhid } from "../src/lib/hospital/uhid";
 import { mergePatients, unmergePatients, AlreadyMergedError, CrossFacilityMergeError } from "../src/lib/patient/merge";
 import { admitPatient, initiateDischarge, updateDischargeReadiness, finalizeDischarge } from "../src/lib/hospital/admission";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
 const runId = Date.now();
@@ -27,7 +28,7 @@ function report(name: string, ok: boolean, detail?: string) {
 async function main() {
   const facility = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
   const otherFacility = await prisma.facility.findFirst({ where: { id: { not: facility.id } } });
-  const staff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facility.id, user: { role: "DOCTOR" } } });
+  const staff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "DOCTOR" } } });
 
   // ── A: concurrent patient creation → no duplicate UHID, no 500s ──
   {

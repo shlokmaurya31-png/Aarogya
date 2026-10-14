@@ -3,6 +3,7 @@ import { requireSession } from "../rbac";
 import { sessionAuthAgeMs } from "../session";
 import { loadActorMemberships, canAccessFacility, TenantAccessError } from "../tenantContext";
 import type { AuthorizationActor } from "./types";
+import { primaryFacilityIdOf } from "@/lib/auth/staffFacility";
 
 /**
  * Phase C4 — build the authorization actor from the authenticated session.
@@ -55,7 +56,7 @@ export async function buildAuthorizationActor(
 
   const staff = await prisma.hospitalStaffProfile.findUnique({
     where: { userId: session.userId },
-    select: { id: true, facilityId: true, status: true, departmentId: true },
+    select: { id: true, status: true, departmentId: true },
   });
 
   // Phase D1 — the effective facility. A requested facility is honoured ONLY
@@ -65,10 +66,12 @@ export async function buildAuthorizationActor(
   // Whichever facility is effective, its tenant must be ACTIVE — a suspended
   // organization or facility refuses normal operation here too, so the ten-odd
   // engine-based routes are gated exactly as the requireFacilityStaff routes.
-  let effectiveFacilityId = staff?.facilityId ?? null;
+  // D8: the home facility is the primary ACTIVE membership.
+  const homeFacilityId = staff ? await primaryFacilityIdOf(prisma, session.userId) : null;
+  let effectiveFacilityId = homeFacilityId;
   let organizationId: string | null = null;
 
-  if (requestedFacilityId && requestedFacilityId !== staff?.facilityId) {
+  if (requestedFacilityId && requestedFacilityId !== homeFacilityId) {
     const m = await loadActorMemberships(session.userId, session.role);
     const fac = await prisma.facility.findUnique({
       where: { id: requestedFacilityId },

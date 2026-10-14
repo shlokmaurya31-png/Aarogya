@@ -3,6 +3,7 @@ import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { issueStock } from "@/lib/hospital/inventory/issue";
 import type { Prisma, SurgeryStatus, AnesthesiaType } from "@prisma/client";
+import { isStaffInFacility } from "@/lib/auth/staffFacility";
 
 /**
  * Operating Theatre & Surgical Workflow service (Phase B3). Composes the
@@ -169,7 +170,7 @@ export async function setTeamMember(input: { surgeryId: string; facilityId: stri
   const surgery = await prisma.surgery.findUnique({ where: { id: input.surgeryId } });
   if (!surgery || surgery.facilityId !== input.facilityId) throw new NotFoundError("Surgery not found.");
   const staff = await prisma.hospitalStaffProfile.findUnique({ where: { id: input.staffId } });
-  if (!staff || staff.facilityId !== input.facilityId) throw new NotFoundError("Staff member not found in this facility.");
+  if (!staff || !(await isStaffInFacility(prisma, staff.id, input.facilityId))) throw new NotFoundError("Staff member not found in this facility.");
   return prisma.surgeryTeamMember.upsert({
     where: { surgeryId_staffId_role: { surgeryId: input.surgeryId, staffId: input.staffId, role: input.role } },
     create: { surgeryId: input.surgeryId, staffId: input.staffId, role: input.role },

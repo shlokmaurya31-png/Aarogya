@@ -20,6 +20,7 @@ import { createStockLocation } from "../src/lib/hospital/inventory/locations";
 import { getOrCreateStockBalance } from "../src/lib/hospital/inventory/stockBalance";
 import { addPurchaseOrderLine } from "../src/lib/hospital/procurement/purchaseOrders";
 import { BadRequestError } from "../src/lib/auth/rbac";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
 const runId = Date.now();
@@ -34,7 +35,7 @@ function report(name: string, ok: boolean, detail?: string) {
 async function main() {
   const facilityA = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
   const facilityB = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Noida Hospital" } });
-  const staffA = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facilityA.id, user: { role: "PHARMACIST" } } });
+  const staffA = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facilityA.id), user: { role: "PHARMACIST" } } });
 
   // Cross-facility item: Facility A staff attempts to issue stock against Facility B's item.
   {

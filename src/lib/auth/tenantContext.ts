@@ -88,11 +88,11 @@ export async function loadActorMemberships(userId: string, role: Role): Promise<
     }),
     prisma.facilityMembership.findMany({
       where: { userId, status: "ACTIVE" },
-      select: { facilityId: true, isAdmin: true, facility: { select: { organizationId: true } } },
+      select: { facilityId: true, isAdmin: true, isPrimary: true, facility: { select: { organizationId: true } } },
     }),
     prisma.hospitalStaffProfile.findUnique({
       where: { userId },
-      select: { facilityId: true, status: true },
+      select: { status: true },
     }),
   ]);
 
@@ -108,10 +108,12 @@ export async function loadActorMemberships(userId: string, role: Role): Promise<
     facilityMemberships.set(r.facilityId, { isAdmin: r.isAdmin, organizationId: r.facility.organizationId });
   }
 
-  // The primary (home) facility only counts if the staff profile is active. A
-  // suspended staff profile is handled by the existing RBAC/engine checks, but
-  // we also refuse to treat it as an accessible default here.
-  const primaryFacilityId = staff && staff.status === "ACTIVE" ? staff.facilityId : null;
+  // The primary (home) facility is the ACTIVE membership flagged isPrimary
+  // (D8: memberships are the only source of facility access). It only counts
+  // if the staff profile is active: a suspended staff profile is handled by the
+  // RBAC/engine checks, and is never treated as an accessible default here.
+  const primary = facRows.find((r) => r.isPrimary);
+  const primaryFacilityId = staff && staff.status === "ACTIVE" && primary ? primary.facilityId : null;
 
   return { userId, role, isPlatformAdmin, orgMemberships, facilityMemberships, adminOrgIds, primaryFacilityId };
 }

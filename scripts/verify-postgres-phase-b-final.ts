@@ -37,6 +37,7 @@ import {
 } from "../src/lib/hospital/workforce/service";
 import { requirePrivilege, requireCredential, deriveExpiryState, CredentialAuthorizationError } from "../src/lib/hospital/workforce/authorization";
 import { selectQuotation } from "../src/lib/hospital/procurement/procurementAdvanced";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
 let pass = 0, fail = 0;
@@ -68,8 +69,8 @@ async function main() {
   const facA = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
   const facB = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Noida Hospital" } });
 
-  const staffA = await prisma.hospitalStaffProfile.findMany({ where: { facilityId: facA.id, status: "ACTIVE" }, take: 3 });
-  const staffB = await prisma.hospitalStaffProfile.findMany({ where: { facilityId: facB.id, status: "ACTIVE" }, take: 1 });
+  const staffA = await prisma.hospitalStaffProfile.findMany({ where: { ...staffAtFacilityWhere(facA.id), status: "ACTIVE" }, take: 3 });
+  const staffB = await prisma.hospitalStaffProfile.findMany({ where: { ...staffAtFacilityWhere(facB.id), status: "ACTIVE" }, take: 1 });
   if (staffA.length < 3 || staffB.length < 1) throw new Error("Seed did not provide enough staff for the gate.");
   const [a1, a2, a3] = staffA; const b1 = staffB[0];
 
@@ -233,7 +234,7 @@ async function main() {
     () => requireCredential(prisma, { staffId: a3.id, facilityId: facA.id, credentialType: "LICENSE" }),
     /expired/i);
 
-  const inactive = await prisma.hospitalStaffProfile.findFirst({ where: { facilityId: facA.id, status: { not: "ACTIVE" } } });
+  const inactive = await prisma.hospitalStaffProfile.findFirst({ where: { ...staffAtFacilityWhere(facA.id), status: { not: "ACTIVE" } } });
   if (inactive) {
     await mustReject("Inactive staff cannot satisfy a privilege predicate",
       () => requirePrivilege(prisma, { staffId: inactive.id, facilityId: facA.id, privilegeType: `${tag}-OK` }),

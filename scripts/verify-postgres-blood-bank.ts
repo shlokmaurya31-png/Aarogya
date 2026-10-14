@@ -14,6 +14,7 @@ import {
   requestBlood, transitionRequest, recordCompatibility, verifyCompatibility, reserveUnits, issueUnit,
   startTransfusion, transitionTransfusion, reportReaction, authorizeEmergencyRelease,
 } from "../src/lib/hospital/blood";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
 const runId = Date.now();
@@ -27,7 +28,7 @@ function report(name: string, ok: boolean, detail?: string) {
 
 async function main() {
   const facility = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
-  const staff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facility.id, user: { role: "DOCTOR" } } });
+  const staff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "DOCTOR" } } });
   const patient = await prisma.patient.findFirstOrThrow({ where: { facilityId: facility.id } });
   const product = await createBloodProduct({ facilityId: facility.id, code: `PRBC-${runId}`, name: "Packed Red Blood Cells", componentType: "PRBC", byUserId: staff.userId });
 

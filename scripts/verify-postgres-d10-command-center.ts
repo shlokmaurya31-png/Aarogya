@@ -11,6 +11,7 @@ import { getCommandCenterOverview, getCommandCenterSection, getDrillDown } from 
 import { setOverride, publishOverride } from "../src/lib/config";
 import { loadActorMemberships } from "../src/lib/auth/tenantContext";
 import type { FacilityContext } from "../src/lib/auth/hospitalRbac";
+import { ensurePrimaryMembership } from "../prisma/seedData/staffMembership";
 
 let pass = 0, fail = 0; const failures: string[] = [];
 const ok = (l: string) => { pass++; console.log(`  ✓ ${l}`); };
@@ -22,7 +23,8 @@ const ID = { orgA: "d10-org-a", orgB: "d10-org-b", facA: "d10-fac-a", facB: "d10
 async function cleanup() {
   await prisma.discharge.deleteMany({ where: { admission: { encounter: { facilityId: { in: [ID.facA, ID.facB] } } } } });
   await prisma.admission.deleteMany({ where: { encounter: { facilityId: { in: [ID.facA, ID.facB] } } } });
-  await prisma.hospitalStaffProfile.deleteMany({ where: { facilityId: { in: [ID.facA, ID.facB] } } });
+  await prisma.hospitalStaffProfile.deleteMany({ where: { user: { facilityMemberships: { some: { facilityId: { in: [ID.facA, ID.facB] } } } } } });
+  await prisma.facilityMembership.deleteMany({ where: { facilityId: { in: [ID.facA, ID.facB] } } });
   await prisma.encounter.deleteMany({ where: { facilityId: { in: [ID.facA, ID.facB] } } });
   await prisma.patient.deleteMany({ where: { facilityId: { in: [ID.facA, ID.facB] } } });
   await prisma.bed.deleteMany({ where: { facilityId: { in: [ID.facA, ID.facB] } } });
@@ -59,7 +61,8 @@ async function seed() {
   const patient = await prisma.patient.create({ data: { uhid: "D10-UHID-1", facilityId: ID.facA, fullName: "Test Patient", sex: "female" } });
   const enc = await prisma.encounter.create({ data: { patientId: patient.id, facilityId: ID.facA, type: "IPD", status: "ADMITTED" } });
   const bed = await prisma.bed.findFirstOrThrow({ where: { facilityId: ID.facA, label: "A-occ-0" } });
-  const staff = await prisma.hospitalStaffProfile.create({ data: { userId: ID.uNurse, facilityId: ID.facA, displayRole: "Nurse" } });
+  const staff = await prisma.hospitalStaffProfile.create({ data: { userId: ID.uNurse, displayRole: "Nurse" } });
+  await ensurePrimaryMembership(prisma, ID.uNurse, ID.facA);
   const adm = await prisma.admission.create({ data: { encounterId: enc.id, bedId: bed.id, admittingStaffId: staff.id, reason: "test" } });
   await prisma.discharge.create({ data: { admissionId: adm.id, clinicallyReady: true, billingReady: false, documentationReady: true, insuranceReady: true, pharmacyReady: true, transportReady: true } });
 }

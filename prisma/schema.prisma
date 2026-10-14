@@ -1003,7 +1003,6 @@ model Facility {
   departments               Department[]
   wards                     Ward[]
   beds                      Bed[]
-  staff                     HospitalStaffProfile[]
   patients                  Patient[]
   encounters                Encounter[]
   episodesOfCare            EpisodeOfCare[]
@@ -1142,6 +1141,10 @@ model FacilityMembership {
   /// Facility administrator (the HOSPITAL_ADMIN scope). May administer THIS
   /// facility only; never the parent organization.
   isAdmin         Boolean          @default(false)
+  /// The member's home facility (D8). Exactly one membership per user may be
+  /// primary: a partial unique index on (userId) WHERE "isPrimary", created in
+  /// migration 20261014170000 (Prisma can't express partial indexes).
+  isPrimary       Boolean          @default(false)
   status          MembershipStatus @default(ACTIVE)
   createdByUserId String?
   createdAt       DateTime         @default(now())
@@ -2068,8 +2071,6 @@ model HospitalStaffProfile {
   id            String      @id @default(cuid())
   user          User        @relation(fields: [userId], references: [id])
   userId        String      @unique
-  facility      Facility    @relation(fields: [facilityId], references: [id])
-  facilityId    String
   department    Department? @relation(fields: [departmentId], references: [id])
   departmentId  String?
   displayRole   String // human label e.g. "Cardiologist", "ICU Nurse", "Lab Technician"
@@ -2117,8 +2118,6 @@ model HospitalStaffProfile {
   dispensingRecords          DispensingRecord[]         @relation("DispensingPharmacist")
   dispensingWitnessed        DispensingRecord[]         @relation("DispensingWitness")
   administrationsWitnessed   MedicationAdministration[] @relation("AdministrationWitness")
-
-  @@index([facilityId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────

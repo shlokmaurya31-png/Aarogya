@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { assignNurse } from "@/lib/hospital/nursingAssignment";
+import { isStaffInFacility } from "@/lib/auth/staffFacility";
 
 export async function GET(req: NextRequest) {
   return withApiErrors(async () => {
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) throw new BadRequestError("Invalid assignment data.");
 
     const nurse = await prisma.hospitalStaffProfile.findUnique({ where: { id: parsed.data.nurseStaffId } });
-    if (!nurse || nurse.facilityId !== facilityId) throw new NotFoundError("Nurse not found.");
+    if (!nurse || !(await isStaffInFacility(prisma, nurse.id, facilityId))) throw new NotFoundError("Nurse not found.");
 
     const patient = await prisma.patient.findUnique({ where: { id: parsed.data.patientId } });
     if (!patient || patient.facilityId !== facilityId) throw new NotFoundError("Patient not found.");

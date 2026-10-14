@@ -94,7 +94,7 @@ async function main() {
 
     const portal = await call(patientCookie, "GET", "/api/patient/me");
     const portalSummary = portal.json.summary as { patient: Record<string, unknown>; recentEncounters: { id: string }[] } | undefined;
-    report("Portal: same patient ID", portalSummary?.patient.id === P);
+    report("Portal: same patient ID", portalSummary?.patient.id === P, `HTTP ${portal.status}${portal.status === 200 ? "" : ` ${JSON.stringify(portal.json).slice(0, 200)}`}`);
     report("Portal: same demographics", same(portalSummary?.patient));
     report("Portal: the encounter", Boolean(portalSummary?.recentEncounters.some((e) => e.id === E)));
     const profile = await call(patientCookie, "GET", "/api/patient/profile");

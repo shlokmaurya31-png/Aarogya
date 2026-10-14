@@ -18,6 +18,7 @@ import { enterResult, verifyResult } from "../../src/lib/hospital/labResultLifec
 import { scheduleStudy, checkInStudy, startStudy, completeStudy } from "../../src/lib/hospital/imagingStudyLifecycle";
 import { enterReport, verifyReport, amendReport } from "../../src/lib/hospital/imagingReportLifecycle";
 import { createCharge } from "../../src/lib/hospital/billing/chargeCapture";
+import { ensurePrimaryMembership } from "./staffMembership";
 
 /**
  * Small, explicitly-demo lab catalog (brief §8-10, §54). Global
@@ -238,7 +239,6 @@ export async function seedHospital(prisma: PrismaClient) {
       update: {},
       create: {
         userId: user.id,
-        facilityId: facility.id,
         departmentId: deptName ? departments.get(deptName)?.id : undefined,
         displayRole,
         status: "ACTIVE",
@@ -250,11 +250,9 @@ export async function seedHospital(prisma: PrismaClient) {
     // administrator; `orgAdmin` additionally makes them an organization
     // administrator (used for the demo hospital admin so the enterprise control
     // plane is operable without a separate platform login).
-    await prisma.facilityMembership.upsert({
-      where: { userId_facilityId: { userId: user.id, facilityId: facility.id } },
-      update: {},
-      create: { userId: user.id, facilityId: facility.id, isAdmin: role === Role.HOSPITAL_ADMIN },
-    });
+    // D8: the membership is the staff member's facility access; this one is
+    // their primary (home) facility.
+    await ensurePrimaryMembership(prisma, user.id, facility.id, { isAdmin: role === Role.HOSPITAL_ADMIN });
     await prisma.organizationMembership.upsert({
       where: { userId_organizationId: { userId: user.id, organizationId: org.id } },
       update: {},

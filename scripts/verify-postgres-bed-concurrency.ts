@@ -15,6 +15,7 @@ import { PrismaClient } from "@prisma/client";
 import { admitPatient, transferPatient, BedNotAvailableError } from "../src/lib/hospital/admission";
 import { allocateBed, AdmissionRequestNotPendingError } from "../src/lib/hospital/admissionRequest";
 import { BedConcurrencyError, InvalidBedTransitionError } from "../src/lib/hospital/bed";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
 
@@ -39,7 +40,7 @@ async function freshBed(facilityId: string, wardId: string, label: string) {
 async function main() {
   const facility = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
   const patient = await prisma.patient.findFirstOrThrow({ where: { facilityId: facility.id } });
-  const admittingStaff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facility.id, user: { role: "DOCTOR" } } });
+  const admittingStaff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "DOCTOR" } } });
   const ward = await prisma.ward.create({ data: { facilityId: facility.id, name: `Verify-Script Ward ${Date.now()}`, wardType: "GENERAL" } });
 
   // 1. Genuine parallel race: two concurrent admitPatient calls for the SAME bed — exactly one must win.

@@ -22,6 +22,7 @@ import {
 import { linkMedicationToItem, SYSTEM_ACTOR } from "../src/lib/hospital/inventory/itemMedicationLink";
 import { createAdjustment } from "../src/lib/hospital/inventory/adjustment";
 import { generateAdministrationSchedule } from "../src/lib/hospital/medicationSchedule";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
 const runId = Date.now();
@@ -35,9 +36,9 @@ function report(name: string, ok: boolean, detail?: string) {
 
 async function main() {
   const facility = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
-  const doctor = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facility.id, user: { role: "DOCTOR" } } });
-  const nurse = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facility.id, user: { role: "NURSE" } } });
-  const pharmacist = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facility.id, user: { role: "PHARMACIST" } } });
+  const doctor = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "DOCTOR" } } });
+  const nurse = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "NURSE" } } });
+  const pharmacist = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "PHARMACIST" } } });
   const encounter = await prisma.encounter.findFirstOrThrow({ where: { facilityId: facility.id } });
   const pharmacy = await prisma.stockLocation.findFirstOrThrow({ where: { facilityId: facility.id, name: "Central Pharmacy" } });
 

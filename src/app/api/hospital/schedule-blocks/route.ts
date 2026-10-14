@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
+import { isStaffInFacility } from "@/lib/auth/staffFacility";
 
 export async function GET(req: NextRequest) {
   return withApiErrors(async () => {
@@ -43,7 +44,7 @@ export async function POST(req: NextRequest) {
     if (!parsed.data.dayOfWeek && !parsed.data.specificDate) throw new BadRequestError("Either dayOfWeek or specificDate is required.");
 
     const staff = await prisma.hospitalStaffProfile.findUnique({ where: { id: parsed.data.staffId } });
-    if (!staff || staff.facilityId !== facilityId) throw new NotFoundError("Doctor not found.");
+    if (!staff || !(await isStaffInFacility(prisma, staff.id, facilityId))) throw new NotFoundError("Doctor not found.");
 
     const block = await prisma.doctorScheduleBlock.create({
       data: {

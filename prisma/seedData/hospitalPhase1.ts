@@ -9,6 +9,8 @@
  */
 import { PrismaClient, WardType, BedStatus, EncounterType, EncounterStatus, Role } from "@prisma/client";
 import { hashPassword } from "../../src/lib/auth/password";
+import { ensurePrimaryMembership } from "./staffMembership";
+import { staffAtFacilityWhere } from "../../src/lib/auth/staffFacility";
 
 export async function seedPhase1Extensions(prisma: PrismaClient) {
   const alreadySeeded = await prisma.episodeOfCare.count();
@@ -66,8 +68,9 @@ export async function seedPhase1Extensions(prisma: PrismaClient) {
   const noidaDoctorStaff = await prisma.hospitalStaffProfile.upsert({
     where: { userId: noidaDoctorUser.id },
     update: {},
-    create: { userId: noidaDoctorUser.id, facilityId: noida.id, departmentId: noidaDepts.get("Orthopedics"), displayRole: "Orthopedic Surgeon", status: "ACTIVE" },
+    create: { userId: noidaDoctorUser.id, departmentId: noidaDepts.get("Orthopedics"), displayRole: "Orthopedic Surgeon", status: "ACTIVE" },
   });
+  await ensurePrimaryMembership(prisma, noidaDoctorUser.id, noida.id);
   const noidaAdminUser = await prisma.user.upsert({
     where: { email: "admin@noida-demo.aarogya" },
     update: {},
@@ -76,8 +79,9 @@ export async function seedPhase1Extensions(prisma: PrismaClient) {
   await prisma.hospitalStaffProfile.upsert({
     where: { userId: noidaAdminUser.id },
     update: {},
-    create: { userId: noidaAdminUser.id, facilityId: noida.id, displayRole: "Hospital Administrator", status: "ACTIVE" },
+    create: { userId: noidaAdminUser.id, displayRole: "Hospital Administrator", status: "ACTIVE" },
   });
+  await ensurePrimaryMembership(prisma, noidaAdminUser.id, noida.id, { isAdmin: true });
 
   const noidaPatientNames = [
     "Vikas Oberoi", "Rina Chawla", "Sameer Kapoor", "Tanvi Malhotra", "Arun Bhargava",
@@ -133,8 +137,8 @@ export async function seedPhase1Extensions(prisma: PrismaClient) {
 
   // ── Phase 1 clinical-core entities attached to the FIRST facility's existing patients ──
   const patients = await prisma.patient.findMany({ where: { facilityId: primaryFacility.id }, take: 15, orderBy: { createdAt: "asc" } });
-  const doctors = await prisma.hospitalStaffProfile.findMany({ where: { facility: { id: primaryFacility.id }, user: { role: "DOCTOR" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
-  const nurses = await prisma.hospitalStaffProfile.findMany({ where: { facility: { id: primaryFacility.id }, user: { role: "NURSE" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+  const doctors = await prisma.hospitalStaffProfile.findMany({ where: { ...staffAtFacilityWhere(primaryFacility.id), user: { role: "DOCTOR" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+  const nurses = await prisma.hospitalStaffProfile.findMany({ where: { ...staffAtFacilityWhere(primaryFacility.id), user: { role: "NURSE" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
   const encounters = await prisma.encounter.findMany({ where: { patientId: { in: patients.map((p) => p.id) } }, orderBy: [{ registeredAt: "asc" }, { id: "asc" }] });
   const departments = await prisma.department.findMany({ where: { facilityId: primaryFacility.id }, orderBy: [{ name: "asc" }, { id: "asc" }] });
 

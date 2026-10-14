@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { getAvailableSlots } from "@/lib/hospital/doctorSchedule";
+import { isStaffInFacility } from "@/lib/auth/staffFacility";
 
 /** Computed bookable slots for one doctor on one date (brief §7/§6) — never a persisted slot table. */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ staffId: string }> }) {
@@ -14,7 +15,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ staf
     if (!date) throw new BadRequestError("date (yyyy-mm-dd) is required.");
 
     const staff = await prisma.hospitalStaffProfile.findUnique({ where: { id: staffId } });
-    if (!staff || staff.facilityId !== facilityId) throw new NotFoundError("Doctor not found.");
+    if (!staff || !(await isStaffInFacility(prisma, staff.id, facilityId))) throw new NotFoundError("Doctor not found.");
 
     const slots = await getAvailableSlots(staffId, new Date(`${date}T00:00:00`));
     return { slots };

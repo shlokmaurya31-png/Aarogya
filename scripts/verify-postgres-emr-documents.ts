@@ -10,6 +10,7 @@
  */
 import { PrismaClient } from "@prisma/client";
 import { buildPatientTimeline } from "../src/lib/patient/timeline";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
 const runId = Date.now();
@@ -39,7 +40,7 @@ async function bumpVersion(documentId: string) {
 
 async function main() {
   const facility = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
-  const staff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facility.id } });
+  const staff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facility.id) } });
   const patient = await prisma.patient.create({ data: { uhid: `UHID-DOC-${runId}`, facilityId: facility.id, fullName: `Doc Patient ${runId}`, sex: "female" } });
 
   // ── A: document versioning is non-destructive — prior kept as SUPERSEDED, new CURRENT ──

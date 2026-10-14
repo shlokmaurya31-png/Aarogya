@@ -32,6 +32,7 @@ import {
 import { revokeAllSessions, currentTokenVersion, getMfaProvider } from "../src/lib/auth/authorize/sessionControl";
 import { requestConsent, grantConsent, revokeConsent } from "../src/lib/consent";
 import type { AuthorizationActor } from "../src/lib/auth/authorize/types";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
 let pass = 0, fail = 0;
@@ -69,17 +70,17 @@ async function main() {
   const facB = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Noida Hospital" } });
 
   const doctorA = await prisma.hospitalStaffProfile.findFirstOrThrow({
-    where: { facilityId: facA.id, status: "ACTIVE", user: { role: "DOCTOR" } }, include: { user: true },
+    where: { ...staffAtFacilityWhere(facA.id), status: "ACTIVE", user: { role: "DOCTOR" } }, include: { user: { include: { facilityMemberships: { where: { isPrimary: true }, select: { facilityId: true } } } } },
   });
   const doctorA2 = await prisma.hospitalStaffProfile.findFirst({
-    where: { facilityId: facA.id, status: "ACTIVE", user: { role: "DOCTOR" }, id: { not: doctorA.id } },
-    include: { user: true },
+    where: { ...staffAtFacilityWhere(facA.id), status: "ACTIVE", user: { role: "DOCTOR" }, id: { not: doctorA.id } },
+    include: { user: { include: { facilityMemberships: { where: { isPrimary: true }, select: { facilityId: true } } } } },
   });
   const nurseA = await prisma.hospitalStaffProfile.findFirst({
-    where: { facilityId: facA.id, status: "ACTIVE", user: { role: "NURSE" } }, include: { user: true },
+    where: { ...staffAtFacilityWhere(facA.id), status: "ACTIVE", user: { role: "NURSE" } }, include: { user: { include: { facilityMemberships: { where: { isPrimary: true }, select: { facilityId: true } } } } },
   });
   const staffB = await prisma.hospitalStaffProfile.findFirstOrThrow({
-    where: { facilityId: facB.id, status: "ACTIVE" }, include: { user: true },
+    where: { ...staffAtFacilityWhere(facB.id), status: "ACTIVE" }, include: { user: { include: { facilityMemberships: { where: { isPrimary: true }, select: { facilityId: true } } } } },
   });
   const adminUser = await prisma.user.findFirst({ where: { role: "AAROGYA_ADMIN" } });
 
@@ -92,13 +93,13 @@ async function main() {
 
   const actorOf = (staff: typeof doctorA, authAgeMs: number | null = 1000): AuthorizationActor => ({
     userId: staff.userId, role: staff.user.role, staffId: staff.id,
-    staffStatus: staff.status, facilityId: staff.facilityId, authAgeMs,
+    staffStatus: staff.status, facilityId: staff.user.facilityMemberships[0]?.facilityId ?? "", authAgeMs,
   });
 
   // HOSPITAL_ADMIN holds interop:exchange:authorize; DOCTOR deliberately does
   // not. Step-up ordering can only be observed with an actor who gets past RBAC.
   const adminA = await prisma.hospitalStaffProfile.findFirst({
-    where: { facilityId: facA.id, status: "ACTIVE", user: { role: "HOSPITAL_ADMIN" } }, include: { user: true },
+    where: { ...staffAtFacilityWhere(facA.id), status: "ACTIVE", user: { role: "HOSPITAL_ADMIN" } }, include: { user: { include: { facilityMemberships: { where: { isPrimary: true }, select: { facilityId: true } } } } },
   });
 
   const docA = actorOf(doctorA);

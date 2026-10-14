@@ -47,6 +47,7 @@ import { WORKFLOW_TEMPLATES } from "../src/lib/workflow-builder/templates";
 import { listRegistry } from "../src/lib/config/registry";
 import { ensureFixture, ownershipWhere, type Tenant } from "../prisma/seedData/tenancyFixtures";
 import { startServer, loginAs } from "./lib/appServer";
+import { ensurePrimaryMembership } from "../prisma/seedData/staffMembership";
 
 const ROOT = path.resolve(__dirname, "..");
 const API_ROOT = path.join(ROOT, "src", "app", "api", "hospital");
@@ -91,13 +92,10 @@ async function seedLinkActors(password: string) {
   // The org admin works at Pune (a staff profile gives facility routes a home
   // facility) and administers the whole organization.
   await prisma.hospitalStaffProfile.upsert({
-    where: { userId: orgAdmin.id }, update: { facilityId: FACILITIES.pune, status: "ACTIVE" },
-    create: { userId: orgAdmin.id, facilityId: FACILITIES.pune, displayRole: "Tenancy sweep org admin", status: "ACTIVE" },
+    where: { userId: orgAdmin.id }, update: { status: "ACTIVE" },
+    create: { userId: orgAdmin.id, displayRole: "Tenancy sweep org admin", status: "ACTIVE" },
   });
-  await prisma.facilityMembership.upsert({
-    where: { userId_facilityId: { userId: orgAdmin.id, facilityId: FACILITIES.pune } },
-    update: { isAdmin: true }, create: { userId: orgAdmin.id, facilityId: FACILITIES.pune, isAdmin: true },
-  });
+  await ensurePrimaryMembership(prisma, orgAdmin.id, FACILITIES.pune, { isAdmin: true });
   // The third tenant: a facility in a separate organization.
   await prisma.facility.upsert({
     where: { id: OTHER_FACILITY_ID }, update: {},
@@ -130,14 +128,10 @@ async function seedSweepData() {
     });
     await prisma.hospitalStaffProfile.upsert({
       where: { userId: user.id },
-      update: { facilityId, status: "ACTIVE" },
-      create: { userId: user.id, facilityId, displayRole: `Tenancy sweep ${role}`, status: "ACTIVE" },
+      update: { status: "ACTIVE" },
+      create: { userId: user.id, displayRole: `Tenancy sweep ${role}`, status: "ACTIVE" },
     });
-    await prisma.facilityMembership.upsert({
-      where: { userId_facilityId: { userId: user.id, facilityId } },
-      update: { isAdmin: role === Role.HOSPITAL_ADMIN },
-      create: { userId: user.id, facilityId, isAdmin: role === Role.HOSPITAL_ADMIN },
-    });
+    await ensurePrimaryMembership(prisma, user.id, facilityId, { isAdmin: role === Role.HOSPITAL_ADMIN });
     // A plain (non-admin) org member: org admins legitimately see every facility.
     await prisma.organizationMembership.upsert({
       where: { userId_organizationId: { userId: user.id, organizationId: facility.organizationId } },

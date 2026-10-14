@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import type { Prisma } from "@prisma/client";
+import { isStaffInFacility } from "@/lib/auth/staffFacility";
 
 /**
  * Shared helpers for the Phase B10 Quality / Patient-Safety layer. Every
@@ -61,7 +62,7 @@ export function isTransitionAllowed(map: Record<string, string[]>, from: string,
  */
 export async function assertQualityStaffInFacility(db: Tx | typeof prisma, staffId: string, facilityId: string) {
   const staff = await db.hospitalStaffProfile.findUnique({ where: { id: staffId } });
-  if (!staff || staff.facilityId !== facilityId) throw new NotFoundError("Staff member not found in this facility.");
+  if (!staff || !(await isStaffInFacility(db, staff.id, facilityId))) throw new NotFoundError("Staff member not found in this facility.");
   if (staff.status !== "ACTIVE") throw new BadRequestError("That staff member is not active.");
   return staff;
 }

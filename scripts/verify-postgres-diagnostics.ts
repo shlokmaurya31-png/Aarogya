@@ -15,6 +15,7 @@ import { enterResult, verifyResult, amendResult, acknowledgeResult } from "../sr
 import { scheduleStudy, startStudy } from "../src/lib/hospital/imagingStudyLifecycle";
 import { verifyReport } from "../src/lib/hospital/imagingReportLifecycle";
 import { recordQc, reviewQc, createExternalReferral, transitionExternalReferral, recordStudyAcquisition } from "../src/lib/hospital/diagnosticsAdvanced";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
 const runId = Date.now();
@@ -28,7 +29,7 @@ const tx = <T>(fn: (t: Prisma.TransactionClient) => Promise<T>) => prisma.$trans
 
 async function main() {
   const facility = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
-  const staff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facility.id, user: { role: "DOCTOR" } } });
+  const staff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "DOCTOR" } } });
   const patient = await prisma.patient.findFirstOrThrow({ where: { facilityId: facility.id } });
 
   async function labOrder() {

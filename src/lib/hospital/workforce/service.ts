@@ -3,6 +3,7 @@ import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { deriveExpiryState } from "@/lib/hospital/workforce/authorization";
 import type { Prisma } from "@prisma/client";
+import { isStaffInFacility } from "@/lib/auth/staffFacility";
 
 /**
  * Phase B10 Workforce foundation — operational assignments, availability, shift/
@@ -23,7 +24,7 @@ type Db = Prisma.TransactionClient | typeof prisma;
 
 async function assertStaffInFacility(db: Db, staffId: string, facilityId: string) {
   const staff = await db.hospitalStaffProfile.findUnique({ where: { id: staffId } });
-  if (!staff || staff.facilityId !== facilityId) throw new NotFoundError("Staff member not found in this facility.");
+  if (!staff || !(await isStaffInFacility(prisma, staff.id, facilityId))) throw new NotFoundError("Staff member not found in this facility.");
   return staff;
 }
 

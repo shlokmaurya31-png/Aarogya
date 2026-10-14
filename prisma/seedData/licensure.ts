@@ -21,10 +21,12 @@ const PRIVILEGES_BY_ROLE: Record<string, string[]> = {
 };
 
 export async function seedDemoLicensure(prisma: PrismaClient) {
-  const staff = await prisma.hospitalStaffProfile.findMany({
+  const staffRows = await prisma.hospitalStaffProfile.findMany({
     where: { status: "ACTIVE" },
-    select: { id: true, facilityId: true, user: { select: { role: true } } },
+    select: { id: true, user: { select: { role: true, facilityMemberships: { where: { isPrimary: true }, select: { facilityId: true } } } } },
   });
+  // D8: the staff member's facility is their primary membership.
+  const staff = staffRows.flatMap((s) => (s.user.facilityMemberships[0] ? [{ ...s, facilityId: s.user.facilityMemberships[0].facilityId }] : []));
   const admins = new Map<string, string>();
   for (const s of staff) if (s.user.role === "HOSPITAL_ADMIN" && !admins.has(s.facilityId)) admins.set(s.facilityId, s.id);
 

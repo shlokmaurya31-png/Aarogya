@@ -58,6 +58,7 @@ import { authorizeAccess } from "../src/lib/auth/authorize/engine";
 import { getExchangeAdapter } from "../src/lib/hospital/interoperability/adapters/abdm";
 import { getNhcxAdapter } from "../src/lib/hospital/nhcx/adapter";
 import type { AuthorizationActor } from "../src/lib/auth/authorize/types";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
 let pass = 0, fail = 0;
@@ -84,19 +85,19 @@ async function main() {
   const facB = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Noida Hospital" } });
 
   const adminA = await prisma.hospitalStaffProfile.findFirstOrThrow({
-    where: { facilityId: facA.id, status: "ACTIVE", user: { role: "HOSPITAL_ADMIN" } }, include: { user: true },
+    where: { ...staffAtFacilityWhere(facA.id), status: "ACTIVE", user: { role: "HOSPITAL_ADMIN" } }, include: { user: { include: { facilityMemberships: { where: { isPrimary: true }, select: { facilityId: true } } } } },
   });
   const adminB = await prisma.hospitalStaffProfile.findFirstOrThrow({
-    where: { facilityId: facB.id, status: "ACTIVE", user: { role: "HOSPITAL_ADMIN" } }, include: { user: true },
+    where: { ...staffAtFacilityWhere(facB.id), status: "ACTIVE", user: { role: "HOSPITAL_ADMIN" } }, include: { user: { include: { facilityMemberships: { where: { isPrimary: true }, select: { facilityId: true } } } } },
   });
   const doctorA = await prisma.hospitalStaffProfile.findFirstOrThrow({
-    where: { facilityId: facA.id, status: "ACTIVE", user: { role: "DOCTOR" } }, include: { user: true },
+    where: { ...staffAtFacilityWhere(facA.id), status: "ACTIVE", user: { role: "DOCTOR" } }, include: { user: { include: { facilityMemberships: { where: { isPrimary: true }, select: { facilityId: true } } } } },
   });
   const platformAdmin = await prisma.user.findFirstOrThrow({ where: { role: "AAROGYA_ADMIN" } });
 
   const actorOf = (s: typeof adminA, authAgeMs: number | null = 1_000): AuthorizationActor => ({
     userId: s.userId, role: s.user.role, staffId: s.id,
-    staffStatus: s.status, facilityId: s.facilityId, authAgeMs,
+    staffStatus: s.status, facilityId: s.user.facilityMemberships[0]?.facilityId ?? "", authAgeMs,
   });
   const A = actorOf(adminA);
   const B = actorOf(adminB);

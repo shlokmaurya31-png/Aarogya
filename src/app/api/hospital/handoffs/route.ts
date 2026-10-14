@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { createHandoff } from "@/lib/hospital/handoff";
+import { isStaffInFacility } from "@/lib/auth/staffFacility";
 
 export async function GET(req: NextRequest) {
   return withApiErrors(async () => {
@@ -60,7 +61,7 @@ export async function POST(req: NextRequest) {
 
     if (parsed.data.toStaffId) {
       const toStaff = await prisma.hospitalStaffProfile.findUnique({ where: { id: parsed.data.toStaffId } });
-      if (!toStaff || toStaff.facilityId !== facilityId) throw new NotFoundError("Recipient staff not found.");
+      if (!toStaff || !(await isStaffInFacility(prisma, toStaff.id, facilityId))) throw new NotFoundError("Recipient staff not found.");
     }
 
     const handoff = await createHandoff({

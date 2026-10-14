@@ -8,6 +8,8 @@
  */
 import { PrismaClient, Role, BedStatus } from "@prisma/client";
 import { hashPassword } from "../../src/lib/auth/password";
+import { staffAtFacilityWhere } from "../../src/lib/auth/staffFacility";
+import { ensurePrimaryMembership } from "./staffMembership";
 
 function startOfToday(): Date {
   const d = new Date();
@@ -34,11 +36,12 @@ export async function seedPhase2PatientFlow(prisma: PrismaClient) {
   const frontDeskStaff = await prisma.hospitalStaffProfile.upsert({
     where: { userId: frontDeskUser.id },
     update: {},
-    create: { userId: frontDeskUser.id, facilityId: facility.id, displayRole: "Front Desk Coordinator", status: "ACTIVE" },
+    create: { userId: frontDeskUser.id, displayRole: "Front Desk Coordinator", status: "ACTIVE" },
   });
+  await ensurePrimaryMembership(prisma, frontDeskUser.id, facility.id);
 
-  const doctors = await prisma.hospitalStaffProfile.findMany({ where: { facilityId: facility.id, user: { role: "DOCTOR" } }, include: { user: true, department: true }, orderBy: { user: { displayName: "asc" } } });
-  const nurses = await prisma.hospitalStaffProfile.findMany({ where: { facilityId: facility.id, user: { role: "NURSE" } }, take: 5, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+  const doctors = await prisma.hospitalStaffProfile.findMany({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "DOCTOR" } }, include: { user: true, department: true }, orderBy: { user: { displayName: "asc" } } });
+  const nurses = await prisma.hospitalStaffProfile.findMany({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "NURSE" } }, take: 5, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
   const emergencyDoctor = doctors.find((d) => d.department?.name === "Emergency") ?? doctors[0];
   const opdDoctors = doctors.filter((d) => d.department?.name !== "Emergency").slice(0, 3);
   const patients = await prisma.patient.findMany({ where: { facilityId: facility.id }, take: 40, orderBy: { createdAt: "asc" } });

@@ -11,6 +11,7 @@ import {
 } from "./mappers";
 import { buildDocumentBundle, hashBundle, countResources, type DocumentBundleType } from "./bundle";
 import type { FhirBundle, FhirResource } from "./types";
+import { isStaffInFacility, staffAtFacilityWhere } from "@/lib/auth/staffFacility";
 
 /**
  * Phase C1 — controlled FHIR export.
@@ -208,7 +209,7 @@ export async function exportPatientToFhir(req: ExportRequest): Promise<ExportRes
   let author: FhirResource = custodian;
   if (req.actorStaffId) {
     const staff = await prisma.hospitalStaffProfile.findUnique({ where: { id: req.actorStaffId } });
-    if (staff && staff.facilityId === req.facilityId) {
+    if (staff && (await isStaffInFacility(prisma, staff.id, req.facilityId))) {
       author = mapPractitionerToFhir({ ...staff, displayName: null });
       practitionerIds.delete(staff.id);
     }
@@ -216,7 +217,7 @@ export async function exportPatientToFhir(req: ExportRequest): Promise<ExportRes
 
   if (practitionerIds.size) {
     const staff = await prisma.hospitalStaffProfile.findMany({
-      where: { id: { in: [...practitionerIds] }, facilityId: req.facilityId },
+      where: { id: { in: [...practitionerIds] }, ...staffAtFacilityWhere(req.facilityId) },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     if (staff.length) {

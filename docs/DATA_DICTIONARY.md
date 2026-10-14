@@ -1,8 +1,8 @@
 # Data dictionary
 
-Every Prisma model (258), with its owner module, tenancy scope, whether it holds
+Every Prisma model (257), with its owner module, tenancy scope, whether it holds
 PHI, and any fields that duplicate data held elsewhere. **Duplicates are listed
-for decision only; nothing has been merged.**
+for decision; resolved ones say how they were resolved.**
 
 Generated from the schema (Prisma DMMF) and the code on 2026-10-14, then
 reviewed by hand. The conceptual duplicates in §1.1 are hand-written; the
@@ -24,7 +24,7 @@ editing them.
   data of staff, students or accounts that isn't health data; otherwise
   **no**.
 
-**Totals**: 258 models: 112 PHI, 5 PII, 141 neither.
+**Totals**: 257 models: 111 PHI, 5 PII, 141 neither.
 
 ## 1. Duplicated data (for decision)
 
@@ -33,13 +33,13 @@ editing them.
 | # | Models | What overlaps | Risk while both exist |
 |---|---|---|---|
 | D1 | `PatientIdentifier` ↔ `ExternalIdentifier` (entityType `PATIENT`) | Both store a patient's identifiers (type/system, value, status). `ExternalIdentifier` adds verification/sync state and covers non-patient entities. | An ABHA number or other ID can be recorded in one and missed by readers of the other; the FHIR export and the NHCX bundle read `ExternalIdentifier`, while the patient API (`/api/hospital/patients/[id]`) returns `PatientIdentifier`. |
-| D2 | `Consent` ↔ `InteropConsent` | Both are patient consents with purpose, status, grant/revoke/expiry. `InteropConsent` is the ABDM/HIE one (recipient, external ref, facility). | A revocation recorded in one isn't seen by code that checks the other. |
+| D2 | `Consent` ↔ `InteropConsent` | Both are patient consents with purpose, status, grant/revoke/expiry. `InteropConsent` is the ABDM/HIE one (recipient, external ref, facility). | A revocation recorded in one isn't seen by code that checks the other. **Resolved:** `Consent` was migrated into `InteropConsent` (recipient = the facility for staff-recorded consents) and dropped; every check goes through `src/lib/consent`. Gate: `verify-postgres-consent-revocation`. |
 | D3 | `Problem` ↔ `Diagnosis` | Both are a patient's conditions (`diagnosis` text, status, onset). `Diagnosis` is per encounter and coded (`codeSystem`, `code`); `Problem` is the longitudinal list, uncoded. | The problem list and encounter diagnoses drift; summaries read `Problem`, the chart reads both. |
 | D4 | `GeneratedDocument` ↔ `ClinicalDocument` | Both are documents about a patient with a stored file (`storageRef`, `sha256`). Generated PDFs (prescriptions, discharge summaries, invoices) live only in `GeneratedDocument`, whose `patientId` has no foreign key. | Generated PDFs don't appear in the portal's reports or the Hospital OS document list, which read `ClinicalDocument` only. |
 | D5 | `Transfer` ↔ `EncounterLocation` | Both record where an admitted patient is (bed moves): `Transfer` from→to bed per admission, `EncounterLocation` bed assignment intervals per encounter. | Bed history can disagree between the two. |
 | D6 | `Task` ↔ `WorkflowTask` | Two task systems (clinical tasks vs workflow-engine tasks), both with assignee, status, due date, facility. | Two worklists for staff; a task can exist in one and be invisible in the other. |
 | D7 | `DoctorScheduleBlock` ↔ `StaffShift` | Both say when a staff member works (`staffId`, facility, department, time window). One drives appointment slots, the other workforce rostering. | A doctor can be on leave in one and bookable in the other. |
-| D8 | `HospitalStaffProfile.facilityId` ↔ `FacilityMembership` | The staff profile's home facility duplicates a facility membership; tenancy resolution reads both (`primaryFacilityId` plus memberships). | Removing a membership doesn't change the home facility, and the other way round. |
+| D8 | `HospitalStaffProfile.facilityId` ↔ `FacilityMembership` | The staff profile's home facility duplicates a facility membership; tenancy resolution reads both (`primaryFacilityId` plus memberships). | Removing a membership doesn't change the home facility, and the other way round. **Resolved:** `HospitalStaffProfile.facilityId` is gone; the home facility is the one membership with `isPrimary` (partial unique index `FacilityMembership_one_primary_per_user`), and staff-at-facility checks use `src/lib/auth/staffFacility.ts`. |
 | D9 | `Order` ↔ `MedicationOrder` / `LabOrder` / `ImagingOrder` / `Referral` | `Order` is a generic parent (optional link from each specific order) and repeats `patientId`, `encounterId`, `status`, `priority`, ordering staff and timestamps the specific orders also hold. | Two statuses per order that can disagree. |
 
 **Same name, different domain (listed so they aren't mistaken for duplicates):**
@@ -290,7 +290,6 @@ consistency gate could check that they agree.
 | `ClinicalDocument` | facility · patient | PHI | §1.1 D4, §1.3 |
 | `ClinicalHandoff` | facility · patient | PHI | §1.3 |
 | `ClinicalNote` | facility · patient (via Encounter) | PHI | — |
-| `Consent` | facility · patient (via Patient) | PHI | §1.1 D2 |
 | `Diagnosis` | facility · patient (via Patient) | PHI | §1.1 D3, §1.3 |
 | `IntakeOutputRecord` | facility · patient | PHI | §1.3 |
 | `NursingAssessment` | facility · patient | PHI | §1.3 |
@@ -372,7 +371,7 @@ consistency gate could check that they agree.
 | `Department` | facility | no | — |
 | `DepartmentMembership` | facility (via HospitalStaffProfile) | no | — |
 | `Facility` | organization | no | — |
-| `FacilityMembership` | facility | no | §1.1 D8 |
+| `FacilityMembership` | facility | no | §1.1 D8 (resolved; `isPrimary` = home facility) |
 | `Organization` | platform | no | — |
 | `OrganizationMembership` | organization | no | — |
 
@@ -418,7 +417,7 @@ consistency gate could check that they agree.
 | `IntegrationCertificate` | facility | no | §1.3 |
 | `IntegrationConfigRevision` | facility | no | §1.3 |
 | `InteropConnection` | facility | no | — |
-| `InteropConsent` | facility · patient | PHI | §1.1 D2 |
+| `InteropConsent` | facility · patient | PHI | §1.1 D2 (resolved; the only consent model) |
 | `InteropConsentScope` | facility · patient (via InteropConsent) | PHI | — |
 | `InteropProvenance` | facility · patient | PHI | — |
 | `TerminologyMapping` | facility (optional) / platform | no | — |
@@ -614,7 +613,7 @@ consistency gate could check that they agree.
 | Model | Scope | PHI | Duplicates |
 |---|---|---|---|
 | `Credential` | facility | PII | — |
-| `HospitalStaffProfile` | facility | PII | §1.1 D8 |
+| `HospitalStaffProfile` | user (facility via `FacilityMembership`) | PII | §1.1 D8 (resolved) |
 | `StaffAvailability` | facility | no | — |
 | `StaffPrivilege` | facility | PII | — |
 | `StaffShift` | facility | no | §1.1 D7 |
