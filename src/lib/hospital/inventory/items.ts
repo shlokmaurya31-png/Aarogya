@@ -1,8 +1,9 @@
 import type { Prisma, ItemCategory, UnitOfMeasure } from "@prisma/client";
-import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
+import { BadRequestError } from "@/lib/auth/rbac";
 import { computeAvailable } from "./stockBalance";
 import { clampPageSize } from "./expiry";
 import { textContains } from "@/lib/search";
+import { assertItemInFacility } from "./facilityScope";
 
 type Tx = Prisma.TransactionClient;
 
@@ -80,8 +81,9 @@ export async function listItems(
 
 /** Backs the Item Detail UI: stock by location/lot, reserved, available, recent movements, pending POs, reorder state. */
 export async function getItemDetail(tx: Tx, itemId: string, facilityId: string) {
-  const item = await tx.item.findUnique({ where: { id: itemId } });
-  if (!item) throw new NotFoundError("Item not found.");
+  // The caller's facility or a global catalog item; another facility's item is
+  // reported exactly like an unknown one.
+  const item = await assertItemInFacility(tx, itemId, facilityId);
 
   const balances = await tx.stockBalance.findMany({
     where: { itemId, facilityId },
