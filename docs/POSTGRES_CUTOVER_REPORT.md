@@ -293,9 +293,38 @@ The first CI run of the gates job found one more real bug:
 with `?connection_limit=5` on `DATABASE_URL` reproduces it.
 
 
-## 8. Week 2 schema audit (recorded 2026-10-14; nothing changed yet)
+## 8. Week 2 schema audit (recorded 2026-10-14; applied 2026-10-15)
 
-This is an inventory for Week 2. **No column has been changed.** Each entry
+**Status: done.** Five migrations, one per domain, each guarded so it stops
+and names any value outside the target set rather than guessing:
+
+| Migration | Domain | Changes |
+|---|---|---|
+| `20261015100000_s8_clinical_enums` | clinical core, operations, quality, workforce, privacy, notifications | 71 enums, 8 CHECKed sets; the SurgerySchedule/StaffShift no-overlap EXCLUDE constraints recreated against the enum |
+| `20261015110000_s8_inventory` | inventory, procurement | supply urgency → `Priority`; 2 currency CHECKs; 7 idempotency keys per facility |
+| `20261015120000_s8_billing` | SaaS + hospital billing, NHCX | 10 enums, 3 CHECKed sets, 11 currency CHECKs; idempotency keys per facility (Payment, Refund — which gains `facilityId` — NhcxExchange) or per organization (Billing*) |
+| `20261015130000_s8_scholar_arrays` | Scholar | 5 JSON-in-text lists → `text[]` (learnerTracks CHECKed against `LearningTrack`) |
+| `20261015140000_s8_platform` | events, workflows, config, interoperability | 32 enums, 9 CHECKed sets; HIE idempotency key per facility |
+
+Totals: 114 enum columns (116 in the inventory below; `Consent` and
+`StaffAvailability` were removed by D2/D7), 20 CHECKed sets, 13 currency
+CHECKs, 5 arrays, 15 per-tenant idempotency keys. Before migrating, every
+gate was run into a kept database and its distinct values diffed against the
+target sets; that found `InteropConnection.environment = LOCAL` and
+`InteropConnection.system = FHIR`, which the inventory had missed. Text from
+requests is parsed with `src/lib/enumValue.ts`, so an unknown status filter is
+a 400. `verify-postgres-schema-constraints` keeps this from regressing.
+
+The re-grep for status-like text columns found 15 outside this inventory.
+Four stay text on purpose (ABDM/NHCX protocol states, sync and health-probe
+detail); eleven await a decision and are allowlisted by name in the gate:
+`Allergy.severity`, `Problem.severity`, `Problem.status`,
+`BiomedicalEquipment.calibrationStatus`, `Encounter.referralUrgency`,
+`PharmacyStorageCheck.status`, `QualityIncidentTransition.fromStatus`/
+`toStatus`, `Surgery.consentStatus`, `TriageAssessment.mentalStatus`,
+`TriageAssessment.pregnancyStatus`.
+
+The inventory as recorded on 2026-10-14 follows. Each entry
 says whether today's representation is deliberate, or should become `jsonb`,
 a Postgres array or a native enum.
 
