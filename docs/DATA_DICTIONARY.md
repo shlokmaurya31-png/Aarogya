@@ -34,7 +34,7 @@ editing them.
 |---|---|---|---|
 | D1 | `PatientIdentifier` ↔ `ExternalIdentifier` (entityType `PATIENT`) | Both store a patient's identifiers (type/system, value, status). `ExternalIdentifier` adds verification/sync state and covers non-patient entities. | An ABHA number or other ID can be recorded in one and missed by readers of the other; the FHIR export and the NHCX bundle read `ExternalIdentifier`, while the patient API (`/api/hospital/patients/[id]`) returns `PatientIdentifier`. **Resolved:** `PatientIdentifier` holds only Aarogya-issued types (UHID, MRN; CHECK `PatientIdentifier_aarogya_issued_only`); ABHA number/address, insurer member IDs and other external IDs were moved to `ExternalIdentifier`. The patient API, FHIR export and NHCX bundle read them through `src/lib/patient/identifiers.ts`. Gate: `verify-postgres-patient-identifiers`. |
 | D2 | `Consent` ↔ `InteropConsent` | Both are patient consents with purpose, status, grant/revoke/expiry. `InteropConsent` is the ABDM/HIE one (recipient, external ref, facility). | A revocation recorded in one isn't seen by code that checks the other. **Resolved:** `Consent` was migrated into `InteropConsent` (recipient = the facility for staff-recorded consents) and dropped; every check goes through `src/lib/consent`. Gate: `verify-postgres-consent-revocation`. |
-| D3 | `Problem` ↔ `Diagnosis` | Both are a patient's conditions (`diagnosis` text, status, onset). `Diagnosis` is per encounter and coded (`codeSystem`, `code`); `Problem` is the longitudinal list, uncoded. | The problem list and encounter diagnoses drift; summaries read `Problem`, the chart reads both. |
+| D3 | `Problem` ↔ `Diagnosis` | Both are a patient's conditions (`diagnosis` text, status, onset). `Diagnosis` is per encounter and coded (`codeSystem`, `code`); `Problem` is the longitudinal list, uncoded. | The problem list and encounter diagnoses drift; summaries read `Problem`, the chart reads both. **Resolved (kept separate):** `Diagnosis.problemId` links an encounter diagnosis to the problem list through one service action (`addDiagnosisToProblemList`, `POST /api/hospital/diagnoses/[id]/problem-list`), and both carry the same code field (`codeSystem` + `code` + `codeDisplay`, CHECKed complete). Existing diagnoses were linked where exactly one problem has the same text. Gate: `verify-postgres-problem-list`. |
 | D4 | `GeneratedDocument` ↔ `ClinicalDocument` | Both are documents about a patient with a stored file (`storageRef`, `sha256`). Generated PDFs (prescriptions, discharge summaries, invoices) live only in `GeneratedDocument`, whose `patientId` has no foreign key. | Generated PDFs don't appear in the portal's reports or the Hospital OS document list, which read `ClinicalDocument` only. **Resolved:** generating a document creates a linked `ClinicalDocument` (`generatedDocumentId`) in the same transaction; `GeneratedDocument` keeps render, hash and verify-token metadata (its `patientId`/`issuedByUserId` moved to the ClinicalDocument's patient/author). Its `storageRef`/`sha256` equal the ClinicalDocument's and are immutable. Existing rows with a patient were backfilled. Gate: `verify-postgres-generated-documents`. |
 | D5 | `Transfer` ↔ `EncounterLocation` | Both record where an admitted patient is (bed moves): `Transfer` from→to bed per admission, `EncounterLocation` bed assignment intervals per encounter. | Bed history can disagree between the two. **Resolved:** `EncounterLocation` is the only location history. `Transfer` keeps who/why/request and points at the location it closed (`fromLocationId`) and opened (`toLocationId`); its bed and time columns were backfilled into those links and dropped. Completing a transfer request is one transaction. Gate: `verify-postgres-location-history`. |
 | D6 | `Task` ↔ `WorkflowTask` | Two task systems (clinical tasks vs workflow-engine tasks), both with assignee, status, due date, facility. | Two worklists for staff; a task can exist in one and be invisible in the other. |
@@ -75,7 +75,7 @@ consistency gate could check that they agree.
 
 | Model | Copied key = parent's key |
 |---|---|
-| `Diagnosis` | `patientId` = encounter.patientId |
+| `Diagnosis` | `patientId` = encounter.patientId = problem.patientId (when linked) |
 | `MedicationOrder` | `patientId` = encounter.patientId |
 | `LabOrder` | `patientId` = encounter.patientId |
 | `Specimen` | `patientId` = labOrder.patientId = encounter.patientId |
@@ -290,7 +290,7 @@ consistency gate could check that they agree.
 | `ClinicalDocument` | facility · patient | PHI | §1.1 D4 (resolved; includes generated documents), §1.3 |
 | `ClinicalHandoff` | facility · patient | PHI | §1.3 |
 | `ClinicalNote` | facility · patient (via Encounter) | PHI | — |
-| `Diagnosis` | facility · patient (via Patient) | PHI | §1.1 D3, §1.3 |
+| `Diagnosis` | facility · patient (via Patient) | PHI | §1.1 D3 (resolved; links to Problem), §1.3 |
 | `IntakeOutputRecord` | facility · patient | PHI | §1.3 |
 | `NursingAssessment` | facility · patient | PHI | §1.3 |
 | `NursingAssignment` | facility · patient | PHI | §1.3 |
@@ -488,7 +488,7 @@ consistency gate could check that they agree.
 | `PatientEmergencyContact` | facility · patient (via Patient) | PHI | — |
 | `PatientIdentifier` | facility · patient (via Patient) | PHI | §1.1 D1 (resolved; UHID/MRN only) |
 | `PatientMergeRecord` | facility · patient (via Patient) | PHI | — |
-| `Problem` | facility · patient (via Patient) | PHI | §1.1 D3 |
+| `Problem` | facility · patient (via Patient) | PHI | §1.1 D3 (resolved; kept separate) |
 
 ### patient flow (src/lib/hospital)
 

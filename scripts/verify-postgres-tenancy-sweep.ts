@@ -303,6 +303,7 @@ const SEGMENT_MODELS: Record<string, string> = {
   "devices/[id]": "IcuDevice",
   "infusions/[id]": "IcuInfusion",
   "encounters/[id]": "Encounter",
+  "diagnoses/[id]": "Diagnosis",
   "patients/[id]": "Patient",
   "admissions/[id]": "Admission",
   "items/[id]": "Item",

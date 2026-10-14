@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { normalizeCode } from "@/lib/hospital/problemList";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return withApiErrors(async () => {
@@ -28,11 +29,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const patient = await prisma.patient.findUnique({ where: { id } });
     if (!patient || patient.facilityId !== facilityId) throw new NotFoundError("Patient not found.");
 
-    const { diagnosis, severity, onsetDate } = body ?? {};
+    const { diagnosis, severity, onsetDate, codeSystem, code, codeDisplay } = body ?? {};
     if (!diagnosis) throw new BadRequestError("diagnosis is required.");
+    const coded = normalizeCode({ codeSystem, code, codeDisplay });
 
     const problem = await prisma.problem.create({
-      data: { patientId: id, diagnosis, status: "active", severity, onsetDate: onsetDate ? new Date(onsetDate) : undefined },
+      data: { patientId: id, diagnosis, status: "active", severity, onsetDate: onsetDate ? new Date(onsetDate) : undefined, ...coded },
     });
 
     await recordAuditEvent(

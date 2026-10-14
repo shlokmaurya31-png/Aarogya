@@ -2303,12 +2303,19 @@ model Diagnosis {
   onsetDate          DateTime?
   codeSystem         String? // e.g. "ICD-10" — nullable, no terminology integrated yet (see TARGET_DOMAIN_ARCHITECTURE.md §3)
   code               String?
+  /// D3: same code field as Problem (system + code + display).
+  codeDisplay        String?
+  /// D3: Problem and Diagnosis stay separate; a diagnosis may be added to the
+  /// problem list (src/lib/hospital/problemList.ts), which links it here.
+  problem            Problem?             @relation(fields: [problemId], references: [id])
+  problemId          String?
   diagnosedBy        HospitalStaffProfile @relation(fields: [diagnosedByStaffId], references: [id])
   diagnosedByStaffId String
   createdAt          DateTime             @default(now())
 
   @@index([patientId])
   @@index([encounterId])
+  @@index([problemId])
 }
 
 enum EncounterType {
@@ -2514,14 +2521,20 @@ model ClinicalNote {
 }
 
 model Problem {
-  id        String    @id @default(cuid())
-  patient   Patient   @relation(fields: [patientId], references: [id])
-  patientId String
-  diagnosis String
-  status    String // "active" | "resolved" | "suspected"
-  severity  String?
-  onsetDate DateTime?
-  createdAt DateTime  @default(now())
+  id          String      @id @default(cuid())
+  patient     Patient     @relation(fields: [patientId], references: [id])
+  patientId   String
+  diagnosis   String
+  status      String // "active" | "resolved" | "suspected"
+  severity    String?
+  onsetDate   DateTime?
+  /// D3: the same code field as Diagnosis (system + code + display; system and code together or neither).
+  codeSystem  String?
+  code        String?
+  codeDisplay String?
+  /// Encounter diagnoses added to the problem list as (or linked to) this problem.
+  diagnoses   Diagnosis[]
+  createdAt   DateTime    @default(now())
 
   @@index([patientId])
 }
