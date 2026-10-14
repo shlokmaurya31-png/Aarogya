@@ -13,7 +13,10 @@ describe("patient age from dob", () => {
     expect(ageLabel({ dob: null }, now)).toBe("?");
   });
   it("marks an estimated dob", () => {
-    expect(ageLabel({ dob: estimatedDobFromAge(34, now), dobEstimated: true }, now)).toBe("~34");
+    expect(ageLabel({ dob: estimatedDobFromAge(34, now), dobPrecision: "ESTIMATED_FROM_AGE" }, now)).toBe("~34");
+    expect(ageLabel({ dob: new Date(1992, 0, 1), dobPrecision: "YEAR" }, now)).toBe("~34");
+    expect(ageLabel({ dob: new Date(1992, 0, 1), dobPrecision: "MONTH" }, now)).toBe("~34");
+    expect(ageLabel({ dob: new Date(1992, 0, 1), dobPrecision: "DAY" }, now)).toBe("34");
   });
   it("round-trips an age given at registration", () => {
     expect(ageInYears(estimatedDobFromAge(5, now), now)).toBe(5);

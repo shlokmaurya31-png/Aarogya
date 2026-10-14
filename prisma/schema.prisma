@@ -2125,10 +2125,19 @@ model HospitalStaffProfile {
 // Patient master + longitudinal encounter record
 // ─────────────────────────────────────────────────────────────────────────
 
+/// How precise a date of birth is. ESTIMATED_FROM_AGE: only an age was given
+/// (e.g. at registration), so dob is that many years before the day it was recorded.
+enum DobPrecision {
+  DAY
+  MONTH
+  YEAR
+  ESTIMATED_FROM_AGE
+}
+
 model Patient {
-  id                      String    @id @default(cuid())
-  uhid                    String    @unique
-  facility                Facility  @relation(fields: [facilityId], references: [id])
+  id                      String       @id @default(cuid())
+  uhid                    String       @unique
+  facility                Facility     @relation(fields: [facilityId], references: [id])
   facilityId              String
   fullName                String // primary/legal display name — kept as the existing field name rather than
   // renamed to "legalName" to avoid a large, purely-cosmetic blast radius
@@ -2136,15 +2145,15 @@ model Patient {
   preferredName           String?
   sex                     String
   dob                     DateTime?
-  /// The date of birth is an estimate (e.g. derived from an age given at
-  /// registration). Age is always calculated from dob; it is never stored.
-  dobEstimated            Boolean   @default(false)
+  /// How precise dob is. Age is always calculated from dob (never stored) and
+  /// shown as "~34" for anything other than DAY.
+  dobPrecision            DobPrecision @default(DAY)
   phone                   String?
   address                 String?
-  language                String?   @default("en")
+  language                String?      @default("en")
   communicationPreference String? // "SMS" | "EMAIL" | "CALL" | "NONE"
   bloodGroup              String?
-  registrationStatus      String    @default("ACTIVE") // "ACTIVE" | "INACTIVE"
+  registrationStatus      String       @default("ACTIVE") // "ACTIVE" | "INACTIVE"
   deceasedAt              DateTime?
 
   // Self-service portal linkage (Phase 1: Role.PATIENT accounts) — nullable because most

@@ -8,7 +8,7 @@ import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { ageLabel } from "@/lib/patient/age";
 
-interface Patient { id: string; fullName: string; uhid: string; sex: string; dob: string | null; dobEstimated?: boolean; phone: string | null }
+interface Patient { id: string; fullName: string; uhid: string; sex: string; dob: string | null; dobPrecision?: string; phone: string | null }
 interface Duplicate { patientId: string; uhid: string; fullName: string; confidence: string; score: number }
 interface Doctor { staffId: string; displayName: string; displayRole: string; departmentName: string | null }
 interface Slot { start: string; end: string; roomLabel: string | null; remainingCapacity: number }

@@ -302,7 +302,7 @@ export async function seedHospital(prisma: PrismaClient) {
         facilityId: facility.id,
         fullName: p.name,
         sex: p.sex,
-        dob: estimatedDobFromAge(5 + ((i * 7) % 80)), dobEstimated: true,
+        dob: estimatedDobFromAge(5 + ((i * 7) % 80)), dobPrecision: "ESTIMATED_FROM_AGE",
         phone: `+91 98${String(200000 + i * 37).padStart(6, "0")}`,
         bloodGroup: pick(["A+", "B+", "O+", "AB+", "O-", "A-"], i),
       },

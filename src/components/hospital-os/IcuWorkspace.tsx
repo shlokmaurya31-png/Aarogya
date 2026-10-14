@@ -12,7 +12,7 @@ import { ageLabel } from "@/lib/patient/age";
 interface Vital { id: string; hr: number | null; sbp: number | null; dbp: number | null; rr: number | null; spo2: number | null; tempC: number | null; recordedAt: string }
 interface Observation { id: string; type: string; values: Record<string, unknown>; recordedAt: string; recordedByStaffId: string }
 interface Rounding {
-  encounter: { id: string; registeredAt: string; patient: { fullName: string; uhid: string; sex: string; dob: string | null; dobEstimated?: boolean }; attendingStaff: { user: { displayName: string } } | null };
+  encounter: { id: string; registeredAt: string; patient: { fullName: string; uhid: string; sex: string; dob: string | null; dobPrecision?: string }; attendingStaff: { user: { displayName: string } } | null };
   location: { bed: { label: string; ward: { name: string }; icuUnit: { name: string } | null } | null } | null;
   admission: { id: string; admittedAt: string; admissionType: string | null } | null;
   los: { icuStayHours: number | null; encounterStayHours: number; admittedAt: string | null; icuSince: string | null };

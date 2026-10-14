@@ -101,7 +101,7 @@ export async function seedPhase1Extensions(prisma: PrismaClient) {
         facilityId: noida.id,
         fullName: noidaPatientNames[i],
         sex: i % 2 === 0 ? "male" : "female",
-        dob: estimatedDobFromAge(20 + (i * 6)), dobEstimated: true,
+        dob: estimatedDobFromAge(20 + (i * 6)), dobPrecision: "ESTIMATED_FROM_AGE",
         phone: `+91 97${String(300000 + i * 41).padStart(6, "0")}`,
       },
     });
@@ -241,7 +241,7 @@ export async function seedPhase1Extensions(prisma: PrismaClient) {
     update: {},
     create: {
       uhid: "UHID-AMC-DUP1", facilityId: primaryFacility.id, fullName: dupSource.fullName,
-      sex: dupSource.sex, phone: dupSource.phone ?? undefined, dob: dupSource.dob, dobEstimated: dupSource.dobEstimated,
+      sex: dupSource.sex, phone: dupSource.phone ?? undefined, dob: dupSource.dob, dobPrecision: dupSource.dobPrecision,
     },
   });
 

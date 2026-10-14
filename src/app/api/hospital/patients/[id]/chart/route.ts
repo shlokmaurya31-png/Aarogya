@@ -81,7 +81,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         fullName: patient.fullName,
         sex: patient.sex,
         dob: patient.dob,
-        dobEstimated: patient.dobEstimated,
+        dobPrecision: patient.dobPrecision,
         phone: patient.phone,
         bloodGroup: patient.bloodGroup,
       },

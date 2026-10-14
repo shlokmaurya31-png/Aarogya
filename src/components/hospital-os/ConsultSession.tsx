@@ -16,7 +16,7 @@ const WARN_THRESHOLD_MS = 1000 * 60 * 3;
 interface HistoryData {
   session: { id: string; status: string; redeemedAt: string | null; doctorName: string | null; activeExpiresAt: string | null; extensionCount?: number };
   patient: {
-    id: string; fullName: string; uhid: string; sex: string; dob: string | null; dobEstimated?: boolean; bloodGroup: string | null;
+    id: string; fullName: string; uhid: string; sex: string; dob: string | null; dobPrecision?: string; bloodGroup: string | null;
     allergies: { id: string; substance?: string; reaction?: string | null; severity?: string | null }[];
     problems: { id: string; description?: string; name?: string; status?: string | null }[];
     diagnoses: { id: string; description?: string; code?: string | null; createdAt: string }[];

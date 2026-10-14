@@ -15,11 +15,11 @@ export function ageInYears(dob: DobLike, now: Date = new Date()): number | null 
   return Math.max(age, 0);
 }
 
-/** "34", "~34" when the dob is an estimate, or "?" when unknown. */
-export function ageLabel(p: { dob?: DobLike; dobEstimated?: boolean | null }, now: Date = new Date()): string {
+/** "34" for a dob known to the day; "~34" for MONTH, YEAR or ESTIMATED_FROM_AGE; "?" when unknown. */
+export function ageLabel(p: { dob?: DobLike; dobPrecision?: string | null }, now: Date = new Date()): string {
   const age = ageInYears(p.dob, now);
   if (age === null) return "?";
-  return `${p.dobEstimated ? "~" : ""}${age}`;
+  return `${p.dobPrecision && p.dobPrecision !== "DAY" ? "~" : ""}${age}`;
 }
 
 /** An estimated dob for an age given at registration: today's day and month, `age` years ago. */

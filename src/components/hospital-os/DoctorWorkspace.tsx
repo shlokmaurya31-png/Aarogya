@@ -12,7 +12,7 @@ import { ageLabel } from "@/lib/patient/age";
 
 interface Encounter {
   id: string; type: string; status: string; chiefComplaint: string | null; triageLevel: number | null;
-  patient: { id: string; fullName: string; uhid: string; dob: string | null; dobEstimated?: boolean; sex: string };
+  patient: { id: string; fullName: string; uhid: string; dob: string | null; dobPrecision?: string; sex: string };
   admission: { bed: { label: string } } | null;
 }
 interface QueueEntry {

@@ -53,7 +53,7 @@ editing them.
 
 | Model | Field | Duplicates | Note |
 |---|---|---|---|
-| `Patient` | ~~`ageYears`~~ | `dob` | **Resolved:** `ageYears` dropped; age is calculated from `dob` (`src/lib/patient/age.ts`). An age given at registration is stored as an estimated dob (`dobEstimated`, which also replaced `dobPrecision`). |
+| `Patient` | ~~`ageYears`~~ | `dob` | **Resolved:** `ageYears` dropped; age is calculated from `dob` (`src/lib/patient/age.ts`). How precise the dob is lives in `dobPrecision` (enum DAY / MONTH / YEAR / ESTIMATED_FROM_AGE); an age given at registration is stored as a dob with ESTIMATED_FROM_AGE. Ages other than DAY show as "~34". |
 | `User` / `Patient` / `StudentProfile` | `displayName` / `fullName`, `preferredName` / `fullLegalName`, `preferredName` | each other | A person's name is held per model; a correction in one doesn't reach the others. **Partly resolved:** `StudentProfile` no longer stores a name; it reads `User.legalName` / `User.displayName`. Patient names stay on `Patient` (a patient record may have no account). |
 
 | `BloodRequest` | productName | product | **Deliberate snapshot:** the product as named when requested, kept for the request record; the `product` FK stays the reference. |

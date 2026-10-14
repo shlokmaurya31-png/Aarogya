@@ -26,7 +26,7 @@ type Findings = Record<string, string>;
 const EMPTY_FINDINGS: Findings = Object.fromEntries(FINDING_SECTIONS.map((s) => [s.key, ""]));
 
 interface ChartData {
-  patient: { id: string; uhid: string; fullName: string; sex: string; dob: string | null; dobEstimated?: boolean };
+  patient: { id: string; uhid: string; fullName: string; sex: string; dob: string | null; dobPrecision?: string };
   notes: { id: string; type: string; status: string; content: { assessment?: string; [k: string]: unknown }; author: { user: { displayName: string } }; createdAt: string }[];
   medicationOrders: { id: string; drugName: string; dose: string; route: string; status: string }[];
 }

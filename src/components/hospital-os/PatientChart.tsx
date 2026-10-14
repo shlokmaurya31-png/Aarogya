@@ -18,7 +18,7 @@ import { ageLabel } from "@/lib/patient/age";
 interface TimelineEntry { id: string; timestamp: string; type: string; summary: string; department?: string | null }
 
 interface ChartData {
-  patient: { id: string; uhid: string; fullName: string; sex: string; dob: string | null; dobEstimated?: boolean; bloodGroup: string | null };
+  patient: { id: string; uhid: string; fullName: string; sex: string; dob: string | null; dobPrecision?: string; bloodGroup: string | null };
   allergies: { id: string; substance: string; severity: string; reaction: string | null }[];
   problems: { id: string; diagnosis: string; status: string }[];
   diagnoses: { id: string; diagnosis: string; type: string; status: string }[];

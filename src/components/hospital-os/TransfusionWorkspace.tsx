@@ -13,7 +13,7 @@ interface Workspace {
   request: {
     id: string; facilityId: string; patientId: string; encounterId: string; productName: string; quantity: number; priority: string; status: string;
     indication: string | null; emergencyRelease: boolean; emergencyReason: string | null;
-    patient: { fullName: string; uhid: string; sex: string; dob: string | null; dobEstimated?: boolean };
+    patient: { fullName: string; uhid: string; sex: string; dob: string | null; dobPrecision?: string };
     compatibilityTests: { id: string; unitId: string | null; status: string; crossmatchResult: string | null; verifiedByStaffId: string | null; unit: Unit | null }[];
     reservations: { id: string; status: string; unit: Unit }[];
     issues: { id: string; status: string; unit: Unit; emergencyRelease: boolean }[];

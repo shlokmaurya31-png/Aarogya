@@ -14,7 +14,7 @@ interface Workspace {
     laterality: string | null; urgency: string; status: string; surgeonStaffId: string | null; consentStatus: string | null;
     actualStart: string | null; actualEnd: string | null; operativeFindings: string | null; complications: string | null;
     estimatedBloodLossMl: number | null; recoveryDestination: string | null; operativeNoteId: string | null;
-    patient: { fullName: string; uhid: string; sex: string; dob: string | null; dobEstimated?: boolean };
+    patient: { fullName: string; uhid: string; sex: string; dob: string | null; dobPrecision?: string };
     procedure: { name: string; code: string } | null;
     schedule: { startAt: string; endAt: string; status: string; operatingTheatre: { name: string } } | null;
     team: { id: string; staffId: string; role: string }[];

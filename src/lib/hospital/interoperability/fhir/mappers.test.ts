@@ -22,7 +22,7 @@ const AT = new Date("2026-03-01T10:00:00.000Z");
 
 const patient = {
   id: "pat-1", uhid: "UH-0001", fullName: "Asha Devi", sex: "FEMALE",
-  dob: new Date("1990-05-14T00:00:00.000Z"), dobEstimated: false,
+  dob: new Date("1990-05-14T00:00:00.000Z"), dobPrecision: "DAY",
   phone: "+919000000000", address: "12 MG Road", language: "hi",
   registrationStatus: "ACTIVE", deceasedAt: null, facilityId: "fac-1",
 };
@@ -53,10 +53,16 @@ describe("mapPatientToFhir", () => {
   });
 
   it("does NOT emit a birthDate when the date of birth is only an estimate", () => {
-    const approx = mapPatientToFhir({ ...patient, dobEstimated: true });
+    const approx = mapPatientToFhir({ ...patient, dobPrecision: "ESTIMATED_FROM_AGE" });
     expect(approx.birthDate).toBeUndefined();
-    const unknown = mapPatientToFhir({ ...patient, dob: null, dobEstimated: false });
+    const unknown = mapPatientToFhir({ ...patient, dob: null, dobPrecision: "DAY" });
     expect(unknown.birthDate).toBeUndefined();
+  });
+
+  it("emits a partial birthDate at the precision recorded", () => {
+    expect(mapPatientToFhir({ ...patient, dobPrecision: "YEAR" }).birthDate).toBe("1990");
+    expect(mapPatientToFhir({ ...patient, dobPrecision: "MONTH" }).birthDate).toBe("1990-05");
+    expect(mapPatientToFhir({ ...patient, dobPrecision: "DAY" }).birthDate).toBe("1990-05-14");
   });
 
   it("emits birthDate as a FHIR date, not an instant", () => {

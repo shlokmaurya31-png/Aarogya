@@ -7,7 +7,7 @@ import { ageLabel } from "@/lib/patient/age";
 
 interface PatientMeResponse {
   summary: {
-    patient: { uhid: string; fullName: string; sex: string; dob: string | null; dobEstimated?: boolean; bloodGroup: string | null };
+    patient: { uhid: string; fullName: string; sex: string; dob: string | null; dobPrecision?: string; bloodGroup: string | null };
     activeProblems: { id: string; diagnosis: string; status: string }[];
     activeAllergies: { id: string; substance: string; severity: string }[];
     activeMedications: { id: string; drugName: string; dose: string; frequency: string }[];
