@@ -30,7 +30,7 @@ export async function buildRecords(scope: PatientAccessScope): Promise<RecordsDT
       include: { department: { select: { name: true } } },
     }),
     prisma.problem.findMany({
-      where: { patientId: { in: scope.patientIds }, status: "active" },
+      where: { patientId: { in: scope.patientIds }, status: "ACTIVE" },
       orderBy: { createdAt: "desc" },
       take: 100,
     }),

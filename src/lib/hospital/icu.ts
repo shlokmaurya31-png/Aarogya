@@ -355,7 +355,7 @@ export async function buildIcuRounding(encounterId: string) {
     prisma.task.findMany({ where: { encounterId, status: { notIn: ["COMPLETED", "CANCELLED"] } }, orderBy: { createdAt: "desc" }, take: 30 }),
     prisma.clinicalNote.findMany({ where: { encounterId }, orderBy: { createdAt: "desc" }, take: 5, include: { author: { include: { user: true } } } }),
     prisma.clinicalHandoff.findMany({ where: { encounterId }, orderBy: { createdAt: "desc" }, take: 5, include: { fromStaff: { include: { user: true } }, toStaff: { include: { user: true } } } }),
-    prisma.problem.findMany({ where: { patientId: encounter.patientId, status: "active" }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] }),
+    prisma.problem.findMany({ where: { patientId: encounter.patientId, status: "ACTIVE" }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] }),
     prisma.carePlan.findMany({ where: { encounterId, status: "ACTIVE" }, include: { interventions: true }, orderBy: { createdAt: "desc" } }),
     prisma.nursingAssessment.findFirst({ where: { encounterId, isCurrent: true }, orderBy: { createdAt: "desc" } }),
     prisma.labOrder.findMany({ where: { encounterId }, include: { results: { where: { isCurrent: true } } }, orderBy: { orderedAt: "desc" }, take: 10 }),

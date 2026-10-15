@@ -98,7 +98,7 @@ export async function transitionIncident(input: {
     if (input.to === "CANCELLED") data.cancelledAt = new Date();
     const r = await tx.qualityIncident.updateMany({ where: { id: inc.id, status: inc.status }, data });
     if (r.count !== 1) throw new QualityConcurrencyError();
-    await tx.qualityIncidentTransition.create({ data: { facilityId: inc.facilityId, incidentId: inc.id, fromStatus: inc.status, toStatus: input.to, reason: input.reason, actorStaffId: input.actorStaffId } });
+    await tx.qualityIncidentTransition.create({ data: { facilityId: inc.facilityId, incidentId: inc.id, fromStatus: inc.status, toStatus: parseEnum($Enums.QualityIncidentStatus, input.to, "status"), reason: input.reason, actorStaffId: input.actorStaffId } });
     await tx.auditEvent.create({ data: { type: INCIDENT_STATUS_AUDIT[input.to] ?? "hospital.quality.incidentUpdated", userId: input.byUserId, detail: { incidentId: inc.id, from: inc.status, to: input.to, reason: input.reason }, facilityId: inc.facilityId, patientId: inc.patientId, encounterId: inc.encounterId } });
     return tx.qualityIncident.findUniqueOrThrow({ where: { id: inc.id } });
   });

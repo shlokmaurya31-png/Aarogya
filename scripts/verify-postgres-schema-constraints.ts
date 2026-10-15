@@ -23,24 +23,12 @@ function report(name: string, ok: boolean, detail?: string) {
   else fail += 1;
 }
 
-/** Status-like text columns that stay text on purpose, or await a decision outside §8. */
+/** Status-like text columns that stay text on purpose. (The 11 the §8 re-grep found are enums since 2026-10-15.) */
 const ALLOWED_TEXT: Record<string, string> = {
   "HealthInformationExchange.abdmProtocolState": "ABDM protocol states: external spec (§8.2)",
   "NhcxExchange.protocolState": "NHCX protocol states: contract not yet verified (§8.2)",
   "ExternalIdentifier.syncStatus": "free-form registry sync detail, nullable",
   "InteropConnection.lastHealthState": "last health-probe result from an external system",
-  // Found by the §8 re-grep (not in the §8 inventory). Awaiting a decision; listed in the Week 2 report.
-  "Allergy.severity": "not in §8 inventory — decision pending",
-  "Problem.severity": "not in §8 inventory — decision pending",
-  "Problem.status": "not in §8 inventory (lowercase values) — decision pending",
-  "BiomedicalEquipment.calibrationStatus": "not in §8 inventory — decision pending",
-  "Encounter.referralUrgency": "not in §8 inventory — decision pending",
-  "PharmacyStorageCheck.status": "not in §8 inventory — decision pending",
-  "QualityIncidentTransition.fromStatus": "history of QualityIncident.status — decision pending",
-  "QualityIncidentTransition.toStatus": "history of QualityIncident.status — decision pending",
-  "Surgery.consentStatus": "not in §8 inventory — decision pending",
-  "TriageAssessment.mentalStatus": "clinical observation, not a lifecycle — decision pending",
-  "TriageAssessment.pregnancyStatus": "clinical observation, not a lifecycle — decision pending",
 };
 const ENGINE_KEYS = new Set(["WorkflowInstance", "WorkflowTask", "WorkflowTimer"]);
 

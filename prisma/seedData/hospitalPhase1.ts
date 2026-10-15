@@ -156,7 +156,7 @@ export async function seedPhase1Extensions(prisma: PrismaClient) {
         type: "PRIMARY", diagnosedByStaffId: pick(doctors, 1).id, onsetDate: new Date(Date.now() - 30 * 86_400_000),
       },
     });
-    await prisma.problem.create({ data: { patientId: scenarioA.id, diagnosis: "Essential hypertension", status: "active", severity: "moderate" } });
+    await prisma.problem.create({ data: { patientId: scenarioA.id, diagnosis: "Essential hypertension", status: "ACTIVE", severity: "MODERATE" } });
   }
 
   // Demo Scenario B (inpatient): find an admitted patient, add problem + diagnosis + task.

@@ -314,14 +314,14 @@ export async function seedHospital(prisma: PrismaClient) {
       await prisma.allergy.upsert({
         where: { id: `allergy-seed-${i}` },
         update: {},
-        create: { id: `allergy-seed-${i}`, patientId: patient.id, substance: "penicillin", severity: "severe", reaction: "anaphylaxis" },
+        create: { id: `allergy-seed-${i}`, patientId: patient.id, substance: "penicillin", severity: "SEVERE", reaction: "anaphylaxis" },
       });
     }
     if (i % 9 === 0) {
       await prisma.allergy.upsert({
         where: { id: `allergy-seed-b-${i}` },
         update: {},
-        create: { id: `allergy-seed-b-${i}`, patientId: patient.id, substance: "sulfa drugs", severity: "moderate", reaction: "rash" },
+        create: { id: `allergy-seed-b-${i}`, patientId: patient.id, substance: "sulfa drugs", severity: "MODERATE", reaction: "rash" },
       });
     }
   }
@@ -546,7 +546,7 @@ export async function seedHospital(prisma: PrismaClient) {
 
     // Problems for a subset — active diagnosis list.
     if (i % 4 === 0) {
-      await prisma.problem.create({ data: { patientId: patient.id, diagnosis: complaint, status: "active", severity: "moderate" } });
+      await prisma.problem.create({ data: { patientId: patient.id, diagnosis: complaint, status: "ACTIVE", severity: "MODERATE" } });
     }
   }
 

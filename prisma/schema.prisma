@@ -2266,7 +2266,9 @@ model Allergy {
   patientId    String
   substance    String
   reaction     String?
-  severity     String // "mild" | "moderate" | "severe"
+  severity     Severity
+  /// FHIR AllergyIntolerance.criticality: potential for a serious reaction (distinct from a past reaction's severity).
+  criticality  AllergyCriticality?
   status       AllergyStatus       @default(ACTIVE) // "ACTIVE" | "INACTIVE" | "ENTERED_IN_ERROR"
   verification AllergyVerification @default(UNCONFIRMED) // "UNCONFIRMED" | "CONFIRMED"
   recordedAt   DateTime            @default(now())
@@ -2385,7 +2387,7 @@ model Encounter {
   accompanyingPerson    String?
   referringProviderName String? // external referral intake (brief §46) — full referral management deferred
   referringFacilityName String?
-  referralUrgency       String?
+  referralUrgency       Priority?
 
   vitals                    Vital[]
   notes                     ClinicalNote[]
@@ -2537,20 +2539,22 @@ model ClinicalNote {
 }
 
 model Problem {
-  id          String      @id @default(cuid())
-  patient     Patient     @relation(fields: [patientId], references: [id])
-  patientId   String
-  diagnosis   String
-  status      String // "active" | "resolved" | "suspected"
-  severity    String?
-  onsetDate   DateTime?
+  id                 String                     @id @default(cuid())
+  patient            Patient                    @relation(fields: [patientId], references: [id])
+  patientId          String
+  diagnosis          String
+  status             ProblemClinicalStatus // FHIR Condition.clinicalStatus
+  /// FHIR Condition.verificationStatus (a "suspected" problem is ACTIVE + PROVISIONAL).
+  verificationStatus ProblemVerificationStatus?
+  severity           Severity?
+  onsetDate          DateTime?
   /// D3: the same code field as Diagnosis (system + code + display; system and code together or neither).
-  codeSystem  String?
-  code        String?
-  codeDisplay String?
+  codeSystem         String?
+  code               String?
+  codeDisplay        String?
   /// Encounter diagnoses added to the problem list as (or linked to) this problem.
-  diagnoses   Diagnosis[]
-  createdAt   DateTime    @default(now())
+  diagnoses          Diagnosis[]
+  createdAt          DateTime                   @default(now())
 
   @@index([patientId])
 }
@@ -4143,9 +4147,9 @@ model TriageAssessment {
   currentMedications String?
   relevantHistory    String?
   painScore          Int? // 0-10 as recorded, never interpreted
-  mentalStatus       String? // documentary (e.g. "ALERT" | "DROWSY" | ...) — not a computed GCS
+  mentalStatus       AvpuScale? // AVPU, documentary — not a computed GCS
   mobility           String?
-  pregnancyStatus    String?
+  pregnancyStatus    PregnancyStatus?
   isolationRequired  Boolean                @default(false)
   injuryTrauma       Boolean                @default(false)
 
@@ -4513,11 +4517,11 @@ model Surgery {
   cancelledAt        DateTime?
 
   // Pre-op workflow (documentation, not a medical-fitness determination).
-  consentStatus     String? // "PENDING" | "OBTAINED" | "REFUSED" | "NA"
+  consentStatus     SurgeryConsentStatus?
   consentAt         DateTime?
   consentByStaffId  String?
   consentDocumentId String?
-  preOpReady        Boolean   @default(false)
+  preOpReady        Boolean               @default(false)
   preOpNotes        String?
 
   // Procedure execution.
@@ -6772,15 +6776,15 @@ model MedicationSubstitution {
  * clinical interpretation; just an auditable manual record.
  */
 model PharmacyStorageCheck {
-  id                String   @id @default(cuid())
+  id                String              @id @default(cuid())
   facilityId        String
   locationId        String
   recordedValue     Float
   unit              String
-  status            String? // "OK" | "EXCURSION" — a recorded label, not an inference
+  status            StorageCheckStatus? // a recorded label, not an inference
   recordedByStaffId String
   notes             String?
-  checkedAt         DateTime @default(now())
+  checkedAt         DateTime            @default(now())
 
   @@index([facilityId, locationId])
 }
@@ -7408,7 +7412,7 @@ model BiomedicalEquipment {
   departmentId      String?
   locationLabel     String?
   status            BiomedicalEquipmentStatus @default(IN_SERVICE) // IN_SERVICE | UNDER_MAINTENANCE | OUT_OF_SERVICE | RETIRED
-  calibrationStatus String? // documentary "CALIBRATED" | "DUE" | "OVERDUE"
+  calibrationStatus CalibrationStatus?
   warrantyUntil     DateTime?
   nextServiceAt     DateTime?
   active            Boolean                   @default(true)
@@ -7609,15 +7613,15 @@ model QualityIncident {
 }
 
 model QualityIncidentTransition {
-  id           String          @id @default(cuid())
+  id           String                @id @default(cuid())
   facilityId   String
-  incident     QualityIncident @relation(fields: [incidentId], references: [id])
+  incident     QualityIncident       @relation(fields: [incidentId], references: [id])
   incidentId   String
-  fromStatus   String
-  toStatus     String
+  fromStatus   QualityIncidentStatus
+  toStatus     QualityIncidentStatus
   reason       String?
   actorStaffId String
-  createdAt    DateTime        @default(now())
+  createdAt    DateTime              @default(now())
 
   @@index([incidentId])
   @@index([facilityId])
@@ -9973,4 +9977,68 @@ enum AbdmCallbackEventStatus {
   REJECTED
   DUPLICATE
   UNMATCHED
+}
+
+// ── Section 8 follow-up: the 11 status columns found by the re-grep ──
+
+enum Severity {
+  MILD
+  MODERATE
+  SEVERE
+}
+
+enum AllergyCriticality {
+  LOW
+  HIGH
+  UNABLE_TO_ASSESS
+}
+
+enum ProblemClinicalStatus {
+  ACTIVE
+  RECURRENCE
+  RELAPSE
+  INACTIVE
+  REMISSION
+  RESOLVED
+}
+
+enum ProblemVerificationStatus {
+  UNCONFIRMED
+  PROVISIONAL
+  DIFFERENTIAL
+  CONFIRMED
+  REFUTED
+  ENTERED_IN_ERROR
+}
+
+enum CalibrationStatus {
+  CALIBRATED
+  DUE
+  OVERDUE
+}
+
+enum StorageCheckStatus {
+  OK
+  EXCURSION
+}
+
+enum SurgeryConsentStatus {
+  PENDING
+  OBTAINED
+  REFUSED
+  NOT_APPLICABLE
+}
+
+enum AvpuScale {
+  ALERT
+  VOICE
+  PAIN
+  UNRESPONSIVE
+}
+
+enum PregnancyStatus {
+  NOT_PREGNANT
+  PREGNANT
+  UNKNOWN
+  NOT_APPLICABLE
 }

@@ -14,7 +14,7 @@ export async function buildPatientSummary(patientId: string) {
   const [patient, activeProblems, activeAllergies, activeMedications, recentVitals, recentEncounters, pendingLabOrders, pendingImagingOrders, recentNotes, activeCarePlans, currentLocation, activeAdmission, recentDocuments] =
     await Promise.all([
       prisma.patient.findUnique({ where: { id: patientId }, include: { emergencyContacts: true, identifiers: true } }),
-      prisma.problem.findMany({ where: { patientId: { in: patientIds }, status: "active" }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] }),
+      prisma.problem.findMany({ where: { patientId: { in: patientIds }, status: "ACTIVE" }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] }),
       prisma.allergy.findMany({ where: { patientId: { in: patientIds }, status: "ACTIVE" }, orderBy: [{ recordedAt: "asc" }, { id: "asc" }] }),
       prisma.medicationOrder.findMany({
         where: { patientId: { in: patientIds }, status: { in: ["ORDERED", "VERIFIED", "DISPENSED"] } },

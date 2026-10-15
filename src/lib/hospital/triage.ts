@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/db";
 import { isEncounterTransitionAllowed } from "./encounterStateMachine";
+import { parseOptionalEnum } from "@/lib/enumValue";
+import { $Enums } from "@prisma/client";
 
 /**
  * Records a triage assessment (brief §19-20). The clinician/nurse records
@@ -57,9 +59,9 @@ export async function recordTriage(input: {
         currentMedications: input.currentMedications,
         relevantHistory: input.relevantHistory,
         painScore: input.painScore,
-        mentalStatus: input.mentalStatus,
+        mentalStatus: parseOptionalEnum($Enums.AvpuScale, input.mentalStatus, "mentalStatus"),
         mobility: input.mobility,
-        pregnancyStatus: input.pregnancyStatus,
+        pregnancyStatus: parseOptionalEnum($Enums.PregnancyStatus, input.pregnancyStatus, "pregnancyStatus"),
         isolationRequired: input.isolationRequired ?? false,
         injuryTrauma: input.injuryTrauma ?? false,
       },

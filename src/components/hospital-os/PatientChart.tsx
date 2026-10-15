@@ -479,7 +479,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
           <Card className="rounded-[20px]">
             <CardLabel>Problem list</CardLabel>
             <div className="mt-2 space-y-1.5">
-              {data.problems.map((p) => <StatusPill key={p.id} label={p.diagnosis} tone={p.status === "active" ? "amber" : "neutral"} className="mr-1 rounded-md" />)}
+              {data.problems.map((p) => <StatusPill key={p.id} label={p.diagnosis} tone={p.status === "ACTIVE" ? "amber" : "neutral"} className="mr-1 rounded-md" />)}
               {data.problems.length === 0 && <p className="text-[11.5px] text-text-tertiary">No documented problems.</p>}
             </div>
           </Card>

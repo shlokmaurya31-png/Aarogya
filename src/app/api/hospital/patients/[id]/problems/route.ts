@@ -4,6 +4,8 @@ import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { normalizeCode } from "@/lib/hospital/problemList";
+import { parseOptionalEnum } from "@/lib/enumValue";
+import { $Enums } from "@prisma/client";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return withApiErrors(async () => {
@@ -34,7 +36,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const coded = normalizeCode({ codeSystem, code, codeDisplay });
 
     const problem = await prisma.problem.create({
-      data: { patientId: id, diagnosis, status: "active", severity, onsetDate: onsetDate ? new Date(onsetDate) : undefined, ...coded },
+      data: { patientId: id, diagnosis, status: "ACTIVE", severity: parseOptionalEnum($Enums.Severity, typeof severity === "string" ? severity.toUpperCase() : severity, "severity"), onsetDate: onsetDate ? new Date(onsetDate) : undefined, ...coded },
     });
 
     await recordAuditEvent(

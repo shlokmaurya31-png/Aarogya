@@ -317,12 +317,16 @@ a 400. `verify-postgres-schema-constraints` keeps this from regressing.
 
 The re-grep for status-like text columns found 15 outside this inventory.
 Four stay text on purpose (ABDM/NHCX protocol states, sync and health-probe
-detail); eleven await a decision and are allowlisted by name in the gate:
-`Allergy.severity`, `Problem.severity`, `Problem.status`,
-`BiomedicalEquipment.calibrationStatus`, `Encounter.referralUrgency`,
-`PharmacyStorageCheck.status`, `QualityIncidentTransition.fromStatus`/
-`toStatus`, `Surgery.consentStatus`, `TriageAssessment.mentalStatus`,
-`TriageAssessment.pregnancyStatus`.
+detail). The other eleven became enums in
+`20261015150000_s8_followup_status_enums`, with standard value sets:
+`Problem.status` is FHIR Condition.clinicalStatus (plus the FHIR
+`verificationStatus`, so a "suspected" problem maps to ACTIVE + PROVISIONAL
+without loss); `Allergy.severity`/`Problem.severity` share `Severity`
+(MILD | MODERATE | SEVERE), and Allergy gains FHIR `criticality`;
+`QualityIncidentTransition.fromStatus`/`toStatus` reuse `QualityIncidentStatus`;
+`Encounter.referralUrgency` shares `Priority` with supply urgency;
+`Surgery.consentStatus`, `TriageAssessment.mentalStatus` (AVPU) and
+`pregnancyStatus` are closed enums, as are calibration and storage-check status.
 
 The inventory as recorded on 2026-10-14 follows. Each entry
 says whether today's representation is deliberate, or should become `jsonb`,

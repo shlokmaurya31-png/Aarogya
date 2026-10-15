@@ -46,14 +46,14 @@ async function main() {
     report(`${table} has codeSystem, code and codeDisplay`, ["codeSystem", "code", "codeDisplay"].every((c) => cols.includes(c)));
   }
   report("The database refuses a problem code without its system",
-    await refused(prisma.problem.create({ data: { patientId: patient.id, diagnosis: "x", status: "active", code: "E11" } })));
+    await refused(prisma.problem.create({ data: { patientId: patient.id, diagnosis: "x", status: "ACTIVE", code: "E11" } })));
   report("…and a diagnosis display without a code", await refused(dx(e1.id, { codeDisplay: "Diabetes" })));
 
   // 2–3. Coded diagnosis → new problem; idempotent; concurrent.
   const icd = { codeSystem: "http://hl7.org/fhir/sid/icd-10", code: "E11.9", codeDisplay: "Type 2 diabetes mellitus without complications" };
   const d1 = await dx(e1.id, icd);
   const r1 = await add(d1.id);
-  report("Adding a coded diagnosis creates a problem", r1.created && r1.problem.patientId === patient.id && r1.problem.status === "active");
+  report("Adding a coded diagnosis creates a problem", r1.created && r1.problem.patientId === patient.id && r1.problem.status === "ACTIVE");
   report("…with the same code field", r1.problem.codeSystem === icd.codeSystem && r1.problem.code === icd.code && r1.problem.codeDisplay === icd.codeDisplay);
   report("…and links the diagnosis", (await prisma.diagnosis.findUniqueOrThrow({ where: { id: d1.id } })).problemId === r1.problem.id);
   const again = await add(d1.id);
@@ -69,14 +69,15 @@ async function main() {
   report("A later diagnosis with the same code links to the existing problem", !r2.created && r2.problem.id === r1.problem.id);
 
   // 5. Uncoded → uncoded problem with the same text.
-  const htn = await prisma.problem.create({ data: { patientId: patient.id, diagnosis: "Essential hypertension", status: "active" } });
+  const htn = await prisma.problem.create({ data: { patientId: patient.id, diagnosis: "Essential hypertension", status: "ACTIVE" } });
   const d3 = await dx(e2.id, { diagnosis: "  essential HYPERTENSION " });
   const r3 = await add(d3.id);
   report("An uncoded diagnosis links to the uncoded problem with the same text", !r3.created && r3.problem.id === htn.id);
 
   // 6. Provisional, entered in error, other facility.
   const d4 = await dx(e2.id, { diagnosis: "Suspected pulmonary TB", type: "PROVISIONAL" });
-  report("A provisional diagnosis becomes a suspected problem", (await add(d4.id)).problem.status === "suspected");
+  const suspected = (await add(d4.id)).problem;
+  report("A provisional diagnosis becomes a suspected problem (FHIR: ACTIVE + PROVISIONAL)", suspected.status === "ACTIVE" && suspected.verificationStatus === "PROVISIONAL");
   const d5 = await dx(e2.id, { diagnosis: "Wrong patient", status: "ENTERED_IN_ERROR" });
   report("A diagnosis entered in error is refused", await refused(add(d5.id)));
   const d6 = await dx(e2.id, { diagnosis: "Asthma" });

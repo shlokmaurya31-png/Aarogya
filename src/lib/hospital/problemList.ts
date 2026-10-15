@@ -38,7 +38,7 @@ export async function addDiagnosisToProblemList(input: { facilityId: string; dia
       return { problem: await tx.problem.findUniqueOrThrow({ where: { id: dx.problemId } }), created: false, linked: false };
     }
 
-    const candidates = await tx.problem.findMany({ where: { patientId: dx.patientId, status: { in: ["active", "suspected"] } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+    const candidates = await tx.problem.findMany({ where: { patientId: dx.patientId, status: "ACTIVE" }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
     const sameText = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
     const match = dx.code
       ? candidates.find((p) => p.codeSystem === dx.codeSystem && p.code === dx.code)
@@ -48,7 +48,9 @@ export async function addDiagnosisToProblemList(input: { facilityId: string; dia
       data: {
         patientId: dx.patientId,
         diagnosis: dx.diagnosis,
-        status: dx.type === "PROVISIONAL" || dx.type === "RULE_OUT" ? "suspected" : "active",
+        // FHIR: a suspected problem is ACTIVE with verification PROVISIONAL.
+        status: "ACTIVE",
+        verificationStatus: dx.type === "PROVISIONAL" || dx.type === "RULE_OUT" ? "PROVISIONAL" : null,
         onsetDate: dx.onsetDate,
         codeSystem: dx.codeSystem,
         code: dx.code,
