@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { emitDomainEvent } from "@/lib/events/emit";
 import type { DomainEventEnvelope } from "@/lib/events/types";
@@ -213,13 +214,18 @@ async function executeStep(
     return "WAIT";
   }
 
-  // ACTION
-  await runAction(inst, stepCfg);
-  await markCompleted(null);
+  // ACTION — the action (e.g. an emitted event) and the step's completion
+  // commit together (ADR 0004 rule 1): no event without a completed step, and
+  // no completed step without its event.
+  await prisma.$transaction(async (tx) => {
+    await runAction(tx, inst, stepCfg);
+    await tx.workflowStep.updateMany({ where: { id: step.id, status: { in: ["PENDING", "RUNNING"] } }, data: { status: "COMPLETED", completedAt: now, startedAt: now, resultRef: null } });
+  });
   return "CONTINUE";
 }
 
 async function runAction(
+  tx: Prisma.TransactionClient,
   inst: { id: string; organizationId: string | null; facilityId: string | null; triggerEventId: string; correlationId: string },
   stepCfg: Extract<StepConfig, { type: "ACTION" }>,
 ): Promise<void> {
@@ -229,7 +235,7 @@ async function runAction(
     // Preserve causation: the emitted event shares the instance's correlation chain
     // and names the trigger event as its cause. Depth-capping in
     // startWorkflowsForEvent prevents runaway event→workflow→event loops.
-    await emitDomainEvent(prisma, {
+    await emitDomainEvent(tx, {
       type: p.eventType,
       aggregateId: p.aggregateId ?? inst.id,
       organizationId: inst.organizationId,
@@ -274,12 +280,22 @@ export async function tickWorkflows(opts: TickOptions = {}): Promise<TickResult>
 }
 
 async function processDueWorkflowTimers(now: Date, batchSize: number): Promise<{ timersFired: number; escalated: number }> {
-  const due = await prisma.workflowTimer.findMany({ where: { status: "PENDING", availableAt: { lte: now } }, orderBy: { availableAt: "asc" }, take: batchSize, select: { id: true } });
+  // Workflow spine §3.3: one statement claims a batch with FOR UPDATE SKIP
+  // LOCKED, so concurrent ticks take disjoint timers; the token still guards
+  // every later write.
+  const token = randomUUID();
+  const due = await prisma.$queryRaw<{ id: string }[]>`
+    UPDATE "WorkflowTimer" t
+    SET "status" = 'CLAIMED', "claimToken" = ${token}, "claimedAt" = ${now}, "attemptCount" = t."attemptCount" + 1, "updatedAt" = ${now}
+    WHERE t."id" IN (
+      SELECT "id" FROM "WorkflowTimer"
+      WHERE "status" = 'PENDING' AND "availableAt" <= ${now}
+      ORDER BY "availableAt", "id"
+      FOR UPDATE SKIP LOCKED
+      LIMIT ${batchSize})
+    RETURNING t."id"`;
   let timersFired = 0, escalated = 0;
   for (const t of due) {
-    const token = randomUUID();
-    const claim = await prisma.workflowTimer.updateMany({ where: { id: t.id, status: "PENDING" }, data: { status: "CLAIMED", claimToken: token, claimedAt: now, attemptCount: { increment: 1 } } });
-    if (claim.count !== 1) continue; // another worker won the claim
     timersFired++;
     const timer = await prisma.workflowTimer.findUniqueOrThrow({ where: { id: t.id } });
     try {

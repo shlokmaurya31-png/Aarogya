@@ -11,9 +11,9 @@ import { classifyEventError, safeMessage, type DomainEventEnvelope } from "./typ
  * records the outcome — with at-least-once delivery, idempotent consumers, bounded
  * retries with exponential backoff, dead-lettering of permanent failures, and
  * poison-event isolation. It is:
- *   - concurrency-safe: an event is claimed with a guarded conditional UPDATE +
- *     per-claim token, so two workers can never both own the same event (works on
- *     both SQLite and PostgreSQL without SELECT ... FOR UPDATE);
+ *   - concurrency-safe: a batch is claimed with one UPDATE … FOR UPDATE SKIP
+ *     LOCKED + a per-claim token, so two workers never own the same event, and
+ *     events of one aggregate are delivered in insert (seq) order;
  *   - bounded: batchSize + maxDurationMs cap the work per invocation, so it can be
  *     driven by a scheduler, worker, CLI, or operational endpoint (D6 ships no
  *     daemon — correctness never depends on one running);
@@ -41,37 +41,74 @@ export interface DispatchResult {
   skipped: number;
 }
 
+/** A claim left PROCESSING longer than this is assumed abandoned (worker crashed). */
+export const STALE_CLAIM_MS = 5 * 60_000;
+const MAX_ROUNDS = 50;
+
+/**
+ * Workflow spine §3.3 — one statement claims a batch:
+ *   - FOR UPDATE SKIP LOCKED, so concurrent workers take disjoint batches;
+ *   - per-aggregate ordering: an event is claimable only when no older (lower
+ *     seq) event of the same aggregate is still PENDING, RETRY or PROCESSING;
+ *   - ordered by seq (insert order), never occurredAt, which is identical for
+ *     every event of one transaction.
+ * A dead-lettered event no longer blocks its successors.
+ */
+async function claimBatch(token: string, now: Date, batchSize: number): Promise<string[]> {
+  const rows = await prisma.$queryRaw<{ id: string; seq: bigint }[]>`
+    UPDATE "DomainEventOutbox" o
+    SET "status" = 'PROCESSING', "claimToken" = ${token}, "lastAttemptAt" = ${now},
+        "attemptCount" = o."attemptCount" + 1, "updatedAt" = ${now}
+    WHERE o."id" IN (
+      SELECT c."id" FROM "DomainEventOutbox" c
+      WHERE c."status" IN ('PENDING', 'RETRY')
+        AND (c."nextAttemptAt" IS NULL OR c."nextAttemptAt" <= ${now})
+        AND NOT EXISTS (
+          SELECT 1 FROM "DomainEventOutbox" e
+          WHERE e."aggregateType" = c."aggregateType" AND e."aggregateId" = c."aggregateId"
+            AND e."seq" < c."seq" AND e."status" IN ('PENDING', 'RETRY', 'PROCESSING'))
+      ORDER BY c."seq"
+      FOR UPDATE SKIP LOCKED
+      LIMIT ${batchSize})
+    RETURNING o."id", o."seq"`;
+  return rows.sort((a, b) => (a.seq < b.seq ? -1 : a.seq > b.seq ? 1 : 0)).map((r) => r.id);
+}
+
+/**
+ * Return abandoned claims to RETRY (a worker died between claim and finalize).
+ * The delivery ledger stops consumers that already processed it from running again.
+ */
+export async function reapStaleClaims(now: Date = new Date()): Promise<number> {
+  const r = await prisma.domainEventOutbox.updateMany({
+    where: { status: "PROCESSING", lastAttemptAt: { lt: new Date(now.getTime() - STALE_CLAIM_MS) } },
+    data: { status: "RETRY", claimToken: null, nextAttemptAt: null },
+  });
+  return r.count;
+}
+
 export async function dispatchPendingDomainEvents(opts: DispatchOptions = {}): Promise<DispatchResult> {
   const now = opts.now ?? new Date();
   const batchSize = Math.min(Math.max(1, opts.batchSize ?? 50), 500);
   const deadline = Date.now() + (opts.maxDurationMs ?? 25_000);
   const res: DispatchResult = { claimed: 0, processed: 0, retried: 0, deadLettered: 0, skipped: 0 };
+  await reapStaleClaims(now);
 
-  const candidates = await prisma.domainEventOutbox.findMany({
-    where: { status: { in: ["PENDING", "RETRY"] }, OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }] },
-    orderBy: { occurredAt: "asc" },
-    take: batchSize,
-    select: { id: true },
-  });
-
-  for (const cand of candidates) {
-    if (Date.now() > deadline) break;
+  // Claim and process in rounds, so a chain of events on one aggregate drains
+  // in one call (each round can only take the head of every aggregate). A
+  // claimed batch is always processed in full; the deadline is checked between
+  // rounds, so nothing is left PROCESSING when the budget runs out.
+  for (let round = 0; round < MAX_ROUNDS && Date.now() <= deadline; round++) {
     const token = randomUUID();
-    // Guarded claim: only one worker's UPDATE matches the (still-eligible) row.
-    const claim = await prisma.domainEventOutbox.updateMany({
-      where: { id: cand.id, status: { in: ["PENDING", "RETRY"] }, OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }] },
-      data: { status: "PROCESSING", claimToken: token, lastAttemptAt: now, attemptCount: { increment: 1 } },
-    });
-    if (claim.count !== 1) {
-      res.skipped++;
-      continue;
+    const ids = await claimBatch(token, now, batchSize);
+    if (ids.length === 0) break;
+    res.claimed += ids.length;
+    for (const id of ids) {
+      const outcome = await processClaimed(id, token, now);
+      if (outcome === "PROCESSED") res.processed++;
+      else if (outcome === "RETRY") res.retried++;
+      else if (outcome === "DEAD_LETTER") res.deadLettered++;
+      else res.skipped++;
     }
-    res.claimed++;
-    const outcome = await processClaimed(cand.id, token, now);
-    if (outcome === "PROCESSED") res.processed++;
-    else if (outcome === "RETRY") res.retried++;
-    else if (outcome === "DEAD_LETTER") res.deadLettered++;
-    else res.skipped++;
   }
   return res;
 }

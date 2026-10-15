@@ -329,14 +329,17 @@ triggers.
 Today the dispatcher claims with a guarded `UPDATE … WHERE status IN
 (PENDING, RETRY)` plus a claim token. That is safe (one winner), but every
 concurrent worker reads the same candidate list and loses most claims, and it
-orders by `occurredAt`, which can't order events from one transaction:
-`now()` is the transaction start time, so every event in a transaction has the
-same `occurredAt`.
+orders by `occurredAt`, which can't order events reliably. `occurredAt` is
+domain time from the application clock (`emitDomainEvent` uses the caller's
+timestamp or `new Date()`): events from one transaction can tie (same
+millisecond, or a service passing one `now` to several emits), and clocks on
+different instances aren't ordered at all.
 
 **Order key.** `DomainEventOutbox` gains `seq BIGINT GENERATED ALWAYS AS
 IDENTITY`: monotonic in insert order, so two events emitted in one transaction
 keep the order they were emitted in. Claims order by `seq`, never by
-`occurredAt`. The ordering lookup is indexed:
+`occurredAt`. (Implemented in phase B step 1:
+`20261015160000_outbox_seq`, `src/lib/events/dispatcher.ts`.) The ordering lookup is indexed:
 `CREATE INDEX … ON "DomainEventOutbox" ("aggregateType", "aggregateId", seq)
 WHERE status IN ('PENDING', 'RETRY', 'PROCESSING')` (partial, so finished
 events don't grow it).

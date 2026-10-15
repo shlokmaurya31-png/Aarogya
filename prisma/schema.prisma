@@ -533,6 +533,9 @@ model DomainEventOutbox {
   id               String                  @id @default(cuid())
   /// Globally-unique public event identifier (distinct from the row `id`).
   eventId          String                  @unique
+  /// Monotonic insert order (BIGINT identity). Claims order by this, never by
+  /// occurredAt, which is identical for every event in one transaction.
+  seq              BigInt                  @default(autoincrement())
   eventType        String
   eventVersion     Int
   aggregateType    String

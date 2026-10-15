@@ -26,7 +26,8 @@
     "staging:document": "tsx scripts/staging.ts document",
     "storage:init": "tsx scripts/storage.ts init",
     "storage:check": "tsx scripts/storage.ts check",
-    "verification:migrate": "tsx scripts/migrate-verification-uploads.ts"
+    "verification:migrate": "tsx scripts/migrate-verification-uploads.ts",
+    "worker": "tsx scripts/worker.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

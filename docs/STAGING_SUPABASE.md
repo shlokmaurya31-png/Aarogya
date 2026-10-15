@@ -178,7 +178,65 @@ staging:
 Run migrations from a trusted machine with `npm run staging:migrate`, not
 from the Vercel build.
 
-## 6. Rules
+## 6. Background tick: pg_cron + pg_net
+
+The app's background work (domain-event dispatch, workflow timers; later the
+MAR sweep) runs through `POST /api/cron/tick`, one bounded tick per call
+(docs/WORKFLOW_SPINE_DESIGN.md §3). Vercel Hobby only allows a daily cron, so
+on staging **Supabase calls the route every minute** with `pg_cron` + `pg_net`.
+
+> **The one documented exception to "migrations own all extensions".**
+> `pg_cron` and `pg_net` are enabled here, in the SQL editor, not by a Prisma
+> migration: they are staging infrastructure that drives the app from outside,
+> not part of the app's schema. The app never depends on them (locally,
+> `npm run worker` does the same job), and no migration may reference them.
+> Every extension the schema declares (`vector`) is still migration-only.
+
+1. **Generate a secret** (at least 32 characters) and set it as `CRON_SECRET`
+   in Vercel (staging environment) and in `.env.staging.local`. Never commit
+   it. Without it the route answers 503.
+2. **Store it in Supabase Vault**, not in the job text (SQL editor):
+   ```sql
+   select vault.create_secret('<the CRON_SECRET value>', 'aarogya_cron_secret');
+   ```
+3. **Enable the extensions and schedule the job** (SQL editor, staging only):
+   ```sql
+   create extension if not exists pg_cron;
+   create extension if not exists pg_net;
+   select cron.schedule(
+     'aarogya-tick',
+     '* * * * *',
+     $$
+     select net.http_post(
+       url := 'https://<staging-host>/api/cron/tick',
+       headers := jsonb_build_object(
+         'Content-Type', 'application/json',
+         'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'aarogya_cron_secret')
+       ),
+       body := '{}'::jsonb,
+       timeout_milliseconds := 55000
+     );
+     $$
+   );
+   ```
+   Overlapping calls are safe: claims use `FOR UPDATE SKIP LOCKED` and every
+   consumer is idempotent.
+4. **Check it runs** (after a few minutes):
+   ```sql
+   select status, return_message, start_time from cron.job_run_details
+   where jobid = (select jobid from cron.job where jobname = 'aarogya-tick')
+   order by start_time desc limit 5;
+   select status_code, created from net._http_response order by created desc limit 5;  -- expect 200
+   ```
+   A 401 means the Vault secret and `CRON_SECRET` differ; a 503 means
+   `CRON_SECRET` isn't set in Vercel. The platform event metrics
+   (oldest pending event age) turn WARN/CRIT if the job stops.
+5. **To stop it:** `select cron.unschedule('aarogya-tick');`
+
+**Production (later):** Vercel Pro cron every minute, calling the same route
+with the same `Authorization: Bearer` header. Nothing in the app changes.
+
+## 7. Rules
 
 1. **`verify:all` never targets staging.** The gates are destructive. Run
    them locally or in CI.
