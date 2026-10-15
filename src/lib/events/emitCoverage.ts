@@ -1,0 +1,140 @@
+/**
+ * Workflow spine §6 — static analysis behind the "a state change must emit"
+ * CI rule (emitCoverage.test.ts). Pure TypeScript-compiler analysis; no
+ * database.
+ *
+ * A service function "writes" if its body (including nested callbacks) calls a
+ * Prisma write method on a delegate (`prisma.x.create(…)`, `tx.x.update(…)`,
+ * …) or a raw INSERT/UPDATE/DELETE. It "emits" if it calls emitDomainEvent,
+ * or calls (one level deep) a function anywhere in src/lib that does.
+ */
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import path from "node:path";
+import ts from "typescript";
+
+export const WRITE_METHODS = new Set(["create", "createMany", "createManyAndReturn", "update", "updateMany", "upsert", "delete", "deleteMany"]);
+const CLIENTS = new Set(["prisma", "tx", "db", "client", "trx"]);
+
+export interface FunctionFacts {
+  /** "src/lib/…/file.ts#functionName" */
+  key: string;
+  file: string;
+  name: string;
+  line: number;
+  writes: string[];
+  emits: boolean;
+  callees: string[];
+  /** emitDomainEvent called with the global client while the function also writes. */
+  emitsOutsideTx: boolean;
+}
+
+function walk(dir: string, pred: (f: string) => boolean): string[] {
+  return readdirSync(dir).flatMap((f) => {
+    const p = path.join(dir, f);
+    return statSync(p).isDirectory() ? walk(p, pred) : pred(p) ? [p] : [];
+  });
+}
+
+function rawWrite(node: ts.Node, src: ts.SourceFile): string | null {
+  if (!ts.isTaggedTemplateExpression(node) && !ts.isCallExpression(node)) return null;
+  const callee = ts.isTaggedTemplateExpression(node) ? node.tag : node.expression;
+  if (!ts.isPropertyAccessExpression(callee) || !/^\$(executeRaw|executeRawUnsafe|queryRaw|queryRawUnsafe)$/.test(callee.name.text)) return null;
+  const text = node.getText(src);
+  const m = /\b(INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+"(\w+)"/i.exec(text);
+  return m ? `raw ${m[1].split(/\s+/)[0].toUpperCase()} ${m[2]}` : null;
+}
+
+/** Facts for every exported function (declarations and exported const arrows) in the given files. */
+export function analyze(files: string[], root: string): FunctionFacts[] {
+  const out: FunctionFacts[] = [];
+  for (const file of files) {
+    const src = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+    const rel = path.relative(root, file);
+    const fns: { name: string; node: ts.Node; exported: boolean }[] = [];
+    const isExported = (n: ts.Node) => !!(ts.getCombinedModifierFlags(n as ts.Declaration) & ts.ModifierFlags.Export);
+    for (const st of src.statements) {
+      if (ts.isFunctionDeclaration(st) && st.name && st.body) fns.push({ name: st.name.text, node: st.body, exported: isExported(st) });
+      if (ts.isVariableStatement(st)) {
+        const exp = isExported(st);
+        for (const d of st.declarationList.declarations) {
+          if (ts.isIdentifier(d.name) && d.initializer && (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer))) {
+            fns.push({ name: d.name.text, node: d.initializer, exported: exp });
+          }
+        }
+      }
+    }
+    for (const fn of fns) {
+      const writes = new Set<string>();
+      const callees = new Set<string>();
+      let emits = false;
+      let emitsGlobal = false;
+      const visit = (n: ts.Node) => {
+        const raw = rawWrite(n, src);
+        if (raw) writes.add(raw);
+        if (ts.isCallExpression(n)) {
+          const e = n.expression;
+          if (ts.isPropertyAccessExpression(e) && WRITE_METHODS.has(e.name.text) && ts.isPropertyAccessExpression(e.expression)
+            && ts.isIdentifier(e.expression.expression) && CLIENTS.has(e.expression.expression.text)) {
+            writes.add(`${e.expression.name.text}.${e.name.text}`);
+          }
+          const calleeName = ts.isIdentifier(e) ? e.text : ts.isPropertyAccessExpression(e) ? e.name.text : null;
+          if (calleeName === "emitDomainEvent") {
+            emits = true;
+            const first = n.arguments[0];
+            if (first && ts.isIdentifier(first) && first.text === "prisma") emitsGlobal = true;
+          } else if (calleeName) callees.add(calleeName);
+        }
+        ts.forEachChild(n, visit);
+      };
+      visit(fn.node);
+      out.push({
+        key: `${rel}#${fn.name}`, file: rel, name: fn.name, line: src.getLineAndCharacterOfPosition(fn.node.getStart()).line + 1,
+        writes: [...writes].sort(), emits, callees: [...callees], emitsOutsideTx: emitsGlobal && writes.size > 0,
+      });
+      void fn.exported;
+    }
+  }
+  return out;
+}
+
+/** Resolve "emits" one level deep: a function that calls a directly-emitting function emits. */
+export function resolveEmits(facts: FunctionFacts[]): Map<string, boolean> {
+  const direct = new Set(facts.filter((f) => f.emits).map((f) => f.name));
+  return new Map(facts.map((f) => [f.key, f.emits || f.callees.some((c) => direct.has(c))]));
+}
+
+export function libFiles(repoRoot: string): string[] {
+  return walk(path.join(repoRoot, "src", "lib"), (f) => /\.ts$/.test(f) && !/\.test\.ts$/.test(f));
+}
+
+export function routeFiles(repoRoot: string): string[] {
+  return walk(path.join(repoRoot, "src", "app"), (f) => /route\.ts$/.test(f));
+}
+
+/** Exported service functions in src/lib that write without emitting (before exemptions). */
+export function unemittingWriters(repoRoot: string): FunctionFacts[] {
+  const all = analyze(libFiles(repoRoot), repoRoot);
+  const emits = resolveEmits(all);
+  const exported = new Set(analyzeExportedKeys(libFiles(repoRoot), repoRoot));
+  return all.filter((f) => exported.has(f.key) && f.writes.length > 0 && !emits.get(f.key));
+}
+
+/** Route handlers (GET/POST/…) that write domain tables directly. */
+export function writingRoutes(repoRoot: string): FunctionFacts[] {
+  return analyze(routeFiles(repoRoot), repoRoot).filter((f) => /^(GET|POST|PUT|PATCH|DELETE)$/.test(f.name) && f.writes.length > 0);
+}
+
+function analyzeExportedKeys(files: string[], root: string): string[] {
+  const keys: string[] = [];
+  for (const file of files) {
+    const src = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+    const rel = path.relative(root, file);
+    for (const st of src.statements) {
+      const exp = !!(ts.getCombinedModifierFlags(st as unknown as ts.Declaration) & ts.ModifierFlags.Export);
+      if (!exp) continue;
+      if (ts.isFunctionDeclaration(st) && st.name) keys.push(`${rel}#${st.name.text}`);
+      if (ts.isVariableStatement(st)) for (const d of st.declarationList.declarations) if (ts.isIdentifier(d.name)) keys.push(`${rel}#${d.name.text}`);
+    }
+  }
+  return keys;
+}

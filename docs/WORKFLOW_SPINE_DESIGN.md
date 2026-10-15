@@ -539,6 +539,27 @@ The test prints, for each failure, the function, file and line, and the
 missing event. The exemption list is reviewed like code: adding to it needs
 a reason that fits a category.
 
+**As implemented (phase B step 2).** `src/lib/events/emitCoverage.ts` (the
+analysis), `emitCoverage.test.ts` (the rule, plus fixtures proving each check
+fails when it should) and `emitExemptions.ts`. Differences from the plan
+above, decided while building it:
+
+- A helper "one level deep" is resolved across all of `src/lib`, not only the
+  same file (e.g. `markAttempt` emits through `emitPaymentFailed`).
+- **A ratchet, not a wish list.** The baseline was generated from the code:
+  450 exported functions wrote without emitting. Each is listed with a
+  category. The test fails on any *new* unlisted writer and on any *stale*
+  entry (a listed function that now emits or no longer writes), so the list
+  only changes deliberately and shrinks as steps land.
+- **Categories:** `PLANNED` (48, names the event and its §9 step; removed in
+  the commit that wires it), `BOOKKEEPING` (53), `REFERENCE_DATA` (32),
+  `CONFIGURATION` (40), and **`NOT_YET_CATALOGUED` (277)**: real domain
+  changes (blood unit quarantine, ICU device updates, quality incidents, …)
+  that no consumer needs today. That category is new: listing them makes
+  "should this be an event?" a visible product decision instead of an
+  accident, without inventing 277 events nobody consumes.
+- The route allowlist started at 36 handlers.
+
 A second, runtime check backs it up: the replay test (§7) asserts the exact
 event chain, so a producer that stops emitting fails CI even if the static
 check is fooled.
