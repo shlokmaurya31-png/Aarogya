@@ -1,5 +1,5 @@
 import { $Enums } from "@prisma/client";
-import { createTask } from "@/lib/hospital/task";
+import { createTask, TERMINAL_STATUSES } from "@/lib/hospital/task";
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
     const tasks = await prisma.task.findMany({
       where: {
         facilityId,
-        ...(status ? { status } : { status: { notIn: ["COMPLETED", "CANCELLED"] } }),
+        ...(status ? { status } : { status: { notIn: TERMINAL_STATUSES } }),
         ...(ownerStaffId ? { ownerStaffId } : {}),
         ...(encounterId ? { encounterId } : {}),
       },

@@ -6,7 +6,13 @@
  * A service function "writes" if its body (including nested callbacks) calls a
  * Prisma write method on a delegate (`prisma.x.create(…)`, `tx.x.update(…)`,
  * …) or a raw INSERT/UPDATE/DELETE. It "emits" if it calls emitDomainEvent,
- * or calls (one level deep) a function anywhere in src/lib that does.
+ * or calls (one level deep) a function anywhere in src/lib that does, or
+ * reaches a registered emitting helper (EMITTING_HELPERS) through any chain of
+ * calls inside src/lib.
+ *
+ * Event types: the string literals inside an emitDomainEvent / emitFacilityEvent
+ * call (`type: "X"`, or a literal passed to a builder), plus the registered
+ * types of the helpers a function reaches.
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
@@ -23,7 +29,11 @@ export interface FunctionFacts {
   line: number;
   writes: string[];
   emits: boolean;
+  /** PascalCase string literals inside emit calls: the event types it emits directly. */
+  emitTypes: string[];
   callees: string[];
+  /** Plain-identifier calls only (`foo(…)`, not `x.foo(…)`): the edges followed to registered helpers. */
+  calls: string[];
   /** emitDomainEvent called with the global client while the function also writes. */
   emitsOutsideTx: boolean;
 }
@@ -66,6 +76,8 @@ export function analyze(files: string[], root: string): FunctionFacts[] {
     for (const fn of fns) {
       const writes = new Set<string>();
       const callees = new Set<string>();
+      const calls = new Set<string>();
+      const emitTypes = new Set<string>();
       let emits = false;
       let emitsGlobal = false;
       const visit = (n: ts.Node) => {
@@ -78,18 +90,29 @@ export function analyze(files: string[], root: string): FunctionFacts[] {
             writes.add(`${e.expression.name.text}.${e.name.text}`);
           }
           const calleeName = ts.isIdentifier(e) ? e.text : ts.isPropertyAccessExpression(e) ? e.name.text : null;
+          if (calleeName && EMIT_CALLS.has(calleeName)) {
+            const lits = (a: ts.Node): void => {
+              if (ts.isStringLiteral(a) && /^[A-Z][A-Za-z0-9]+$/.test(a.text)) emitTypes.add(a.text);
+              ts.forEachChild(a, lits);
+            };
+            n.arguments.forEach(lits);
+          }
           if (calleeName === "emitDomainEvent") {
             emits = true;
             const first = n.arguments[0];
             if (first && ts.isIdentifier(first) && first.text === "prisma") emitsGlobal = true;
-          } else if (calleeName) callees.add(calleeName);
+          } else if (calleeName) {
+            callees.add(calleeName);
+            if (ts.isIdentifier(e)) calls.add(calleeName);
+          }
         }
         ts.forEachChild(n, visit);
       };
       visit(fn.node);
       out.push({
         key: `${rel}#${fn.name}`, file: rel, name: fn.name, line: src.getLineAndCharacterOfPosition(fn.node.getStart()).line + 1,
-        writes: [...writes].sort(), emits, callees: [...callees], emitsOutsideTx: emitsGlobal && writes.size > 0,
+        writes: [...writes].sort(), emits, emitTypes: [...emitTypes].sort(), callees: [...callees], calls: [...calls],
+        emitsOutsideTx: emitsGlobal && writes.size > 0,
       });
       void fn.exported;
     }
@@ -97,10 +120,37 @@ export function analyze(files: string[], root: string): FunctionFacts[] {
   return out;
 }
 
-/** Resolve "emits" one level deep: a function that calls a directly-emitting function emits. */
-export function resolveEmits(facts: FunctionFacts[]): Map<string, boolean> {
+const EMIT_CALLS = new Set(["emitDomainEvent", "emitFacilityEvent"]);
+
+/**
+ * The event types each function emits: its own literals, those of functions it
+ * calls directly (one level), and the registered types of every registered
+ * helper it reaches through plain calls at any depth.
+ */
+export function resolveEmitTypes(facts: FunctionFacts[], helpers: Record<string, string[]> = {}): Map<string, Set<string>> {
+  const byName = new Map<string, FunctionFacts[]>();
+  for (const f of facts) byName.set(f.name, [...(byName.get(f.name) ?? []), f]);
+  const out = new Map<string, Set<string>>();
+  for (const f of facts) {
+    const types = new Set(f.emitTypes);
+    for (const c of f.callees) for (const g of byName.get(c) ?? []) g.emitTypes.forEach((t) => types.add(t));
+    const seen = new Set<string>([f.key]);
+    const queue = [f];
+    while (queue.length) {
+      const cur = queue.shift()!;
+      helpers[cur.key]?.forEach((t) => types.add(t));
+      for (const c of cur.calls) for (const g of byName.get(c) ?? []) if (!seen.has(g.key)) { seen.add(g.key); queue.push(g); }
+    }
+    out.set(f.key, types);
+  }
+  return out;
+}
+
+/** Resolve "emits": directly, one level deep, or through a registered helper at any depth. */
+export function resolveEmits(facts: FunctionFacts[], helpers: Record<string, string[]> = {}): Map<string, boolean> {
   const direct = new Set(facts.filter((f) => f.emits).map((f) => f.name));
-  return new Map(facts.map((f) => [f.key, f.emits || f.callees.some((c) => direct.has(c))]));
+  const types = resolveEmitTypes(facts, helpers);
+  return new Map(facts.map((f) => [f.key, f.emits || f.callees.some((c) => direct.has(c)) || (types.get(f.key)?.size ?? 0) > 0]));
 }
 
 export function libFiles(repoRoot: string): string[] {
@@ -112,9 +162,9 @@ export function routeFiles(repoRoot: string): string[] {
 }
 
 /** Exported service functions in src/lib that write without emitting (before exemptions). */
-export function unemittingWriters(repoRoot: string): FunctionFacts[] {
+export function unemittingWriters(repoRoot: string, helpers: Record<string, string[]> = {}): FunctionFacts[] {
   const all = analyze(libFiles(repoRoot), repoRoot);
-  const emits = resolveEmits(all);
+  const emits = resolveEmits(all, helpers);
   const exported = new Set(analyzeExportedKeys(libFiles(repoRoot), repoRoot));
   return all.filter((f) => exported.has(f.key) && f.writes.length > 0 && !emits.get(f.key));
 }

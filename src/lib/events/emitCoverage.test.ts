@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import path from "node:path";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { analyze, libFiles, unemittingWriters, writingRoutes } from "./emitCoverage";
-import { EMIT_EXEMPTIONS, OWED_EVENTS, ROUTE_WRITE_ALLOWLIST } from "./emitExemptions";
+import { analyze, libFiles, resolveEmitTypes, unemittingWriters, writingRoutes } from "./emitCoverage";
+import { EMIT_EXEMPTIONS, EMITTING_HELPERS, OWED_EVENTS, ROUTE_WRITE_ALLOWLIST } from "./emitExemptions";
 import { getEventContract } from "./catalogue";
 
 /**
@@ -15,7 +15,10 @@ const ROOT = path.resolve(__dirname, "..", "..", "..");
 const CATEGORIES = new Set(["PLANNED", "BOOKKEEPING", "REFERENCE_DATA", "CONFIGURATION", "NOT_YET_CATALOGUED"]);
 
 describe("every state change emits a domain event (or is a listed exemption)", () => {
-  const writers = unemittingWriters(ROOT);
+  const facts = analyze(libFiles(ROOT), ROOT);
+  const factByKey = new Map(facts.map((f) => [f.key, f]));
+  const types = resolveEmitTypes(facts, EMITTING_HELPERS);
+  const writers = unemittingWriters(ROOT, EMITTING_HELPERS);
   const writerKeys = new Set(writers.map((w) => w.key));
 
   it("has no unlisted service function that writes without emitting", () => {
@@ -25,23 +28,39 @@ describe("every state change emits a domain event (or is a listed exemption)", (
   });
 
   it("has no stale exemption (the function emits now, no longer writes, or is gone)", () => {
-    const stale = Object.keys(EMIT_EXEMPTIONS).filter((k) => !writerKeys.has(k));
+    const stale = Object.entries(EMIT_EXEMPTIONS).flatMap(([k, e]) => {
+      if (e.category !== "PLANNED") return writerKeys.has(k) ? [] : [k];
+      // A planned producer is judged by ITS event: emitting another one doesn't clear it.
+      const fn = factByKey.get(k);
+      if (!fn || fn.writes.length === 0) return [`${k} is gone or no longer writes`];
+      return (e.events ?? []).every((t) => types.get(k)?.has(t)) ? [`${k} emits ${e.events!.join(", ")} now — remove the entry`] : [];
+    });
     expect(stale).toEqual([]);
+  });
+
+  it("registers only emitting helpers that really emit what they declare", () => {
+    const own = resolveEmitTypes(facts); // without the registry: direct + one level
+    const problems = Object.entries(EMITTING_HELPERS).flatMap(([k, declared]) => {
+      if (!factByKey.has(k)) return [`${k} is gone`];
+      return declared.flatMap((t) => [
+        ...(own.get(k)?.has(t) ? [] : [`${k} does not emit ${t}`]),
+        ...(getEventContract(t, 1) ? [] : [`${k}: ${t} is not in the catalogue`]),
+      ]);
+    });
+    expect(problems).toEqual([]);
   });
 
   it("gives every exemption a known category, a reason, and PLANNED entries a step", () => {
     const bad = Object.entries(EMIT_EXEMPTIONS).filter(([, e]) =>
-      !CATEGORIES.has(e.category) || e.reason.trim().length < 10 || (e.category === "PLANNED" && typeof e.step !== "number"));
+      !CATEGORIES.has(e.category) || e.reason.trim().length < 10
+      || (e.category === "PLANNED" && (typeof e.step !== "number" || !e.events?.length || !e.events.every((t) => /^[A-Z][A-Za-z0-9]+$/.test(t)))));
     expect(bad.map(([k]) => k)).toEqual([]);
   });
 
   it("tracks events still owed by functions that already emit something else", () => {
-    const facts = analyze(libFiles(ROOT), ROOT);
     const problems = Object.entries(OWED_EVENTS).flatMap(([key, { event }]) => {
-      const fn = facts.find((f) => f.key === key);
-      if (!fn) return [`${key} is gone`];
-      const text = readFileSync(path.join(ROOT, key.split("#")[0]), "utf8");
-      return text.includes(`"${event}"`) ? [`${key} emits ${event} now — remove it from OWED_EVENTS`] : [];
+      if (!factByKey.has(key)) return [`${key} is gone`];
+      return types.get(key)?.has(event) ? [`${key} emits ${event} now — remove it from OWED_EVENTS`] : [];
     });
     expect(problems).toEqual([]);
   });
@@ -78,6 +97,13 @@ describe("the rule catches violations (fixtures)", () => {
     export async function viaHelper(tx: any) { await tx.patient.delete({ where: { id: "x" } }); await helperThatEmits(tx); }
     export async function rawWrite(tx: any) { await tx.$executeRaw\`UPDATE "Patient" SET x = 1\`; }
     export async function readOnly(tx: any) { return tx.patient.findMany(); }
+    export async function registeredHelper(tx: any) { await emitDomainEvent(tx, { type: "StockMoved" }); }
+    function middle(tx: any) { return registeredHelper(tx); }
+    export async function deepViaRegistered(tx: any) { await tx.item.update({}); await middle(tx); }
+    function unregisteredEmitter(tx: any) { return emitDomainEvent(tx, { type: "PatientRegistered" }); }
+    function middle2(tx: any) { return unregisteredEmitter(tx); }
+    export async function deepViaUnregistered(tx: any) { await tx.item.update({}); await middle2(tx); }
+    export async function emitsOther(tx: any) { await tx.item.update({}); await emitFacilityEvent(tx, { type: "TaskCreated" }); }
   `);
   const facts = analyze([file], dir);
   const byName = (n: string) => facts.find((f) => f.name === n)!;
@@ -94,6 +120,17 @@ describe("the rule catches violations (fixtures)", () => {
   });
   it("flags an emit through the global client from a function that writes", () => {
     expect(byName("emitsOutside").emitsOutsideTx).toBe(true);
+  });
+  it("follows a registered emitting helper at any depth, an unregistered one only one level", () => {
+    const helpers = { [byName("registeredHelper").key]: ["StockMoved"] };
+    const t = resolveEmitTypes(facts, helpers);
+    expect([...t.get(byName("deepViaRegistered").key)!]).toEqual(["StockMoved"]);
+    expect([...t.get(byName("deepViaUnregistered").key)!]).toEqual([]);
+  });
+  it("records the event type a function emits, so a different type does not satisfy a planned one", () => {
+    const t = resolveEmitTypes(facts);
+    expect([...t.get(byName("emitsOther").key)!]).toEqual(["TaskCreated"]);
+    expect(t.get(byName("emitsOther").key)!.has("StockMoved")).toBe(false);
   });
   it("sees raw SQL writes and ignores reads", () => {
     expect(byName("rawWrite").writes).toEqual(["raw UPDATE Patient"]);
