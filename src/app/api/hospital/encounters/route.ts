@@ -4,7 +4,7 @@ import { EncounterType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError } from "@/lib/auth/rbac";
-import { recordAuditEvent } from "@/lib/auth/audit";
+import { openEncounter } from "@/lib/hospital/encounter";
 
 export async function GET(req: NextRequest) {
   return withApiErrors(async () => {
@@ -44,25 +44,9 @@ export async function POST(req: NextRequest) {
     const parsed = CreateEncounterSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestError("Invalid encounter data.");
 
-    const patient = await prisma.patient.findUnique({ where: { id: parsed.data.patientId } });
-    if (!patient || patient.facilityId !== facilityId) throw new BadRequestError("Patient not found in this facility.");
-
-    const encounter = await prisma.encounter.create({
-      data: {
-        patientId: parsed.data.patientId,
-        facilityId,
-        type: parsed.data.type,
-        departmentId: parsed.data.departmentId,
-        chiefComplaint: parsed.data.chiefComplaint,
-      },
-    });
-
-    await recordAuditEvent(
-      "hospital.encounter.registered",
-      session.userId,
-      { encounterId: encounter.id, type: encounter.type },
-      { facilityId, patientId: parsed.data.patientId, encounterId: encounter.id }
-    );
+    const { facilityId: _requested, ...data } = parsed.data;
+    void _requested;
+    const encounter = await openEncounter({ facilityId, byUserId: session.userId, ...data });
     return { encounter };
   });
 }

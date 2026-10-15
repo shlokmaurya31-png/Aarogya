@@ -25,6 +25,7 @@ import { BadRequestError, ConflictError, NotFoundError } from "@/lib/auth/rbac";
 import { generateCandidateUhid } from "@/lib/hospital/uhid";
 import { sendSms, maskPhone } from "@/lib/messaging/sms";
 import { findDuplicateCandidates } from "./duplicateDetection";
+import { createRegisteredPatient } from "./registration";
 
 const OTP_TTL_MS = 10 * 60_000;
 const MAX_OTP_ATTEMPTS = 5;
@@ -77,8 +78,8 @@ export async function registerPatientAccount(input: SelfRegistrationInput): Prom
     const uhid = await generateCandidateUhid(facility.id);
     const { user, patient } = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({ data: { email: input.email, passwordHash: input.passwordHash, role: Role.PATIENT, displayName: input.fullName } });
-      const patient = await tx.patient.create({
-        data: { uhid, facilityId: facility.id, fullName: input.fullName, sex: input.sex, phone: input.phone, dob: input.dob, userId: user.id },
+      const patient = await createRegisteredPatient(tx, {
+        uhid, facilityId: facility.id, fullName: input.fullName, sex: input.sex, phone: input.phone, dob: input.dob, userId: user.id, actorUserId: user.id,
       });
       return { user, patient };
     });
@@ -214,8 +215,8 @@ export async function decideLinkRequest(input: { facilityId: string; requestId: 
   if (input.decision === "CREATE_NEW") {
     const uhid = await generateCandidateUhid(r.facilityId);
     const patient = await prisma.$transaction(async (tx) => {
-      const patient = await tx.patient.create({
-        data: { uhid, facilityId: r.facilityId, fullName: r.claimedName, sex: r.claimedSex, phone: r.claimedPhone, dob: r.claimedDob, userId: r.userId },
+      const patient = await createRegisteredPatient(tx, {
+        uhid, facilityId: r.facilityId, fullName: r.claimedName, sex: r.claimedSex, phone: r.claimedPhone, dob: r.claimedDob, userId: r.userId, actorUserId: input.reviewerUserId,
       });
       await tx.patientLinkRequest.update({ where: { id: r.id }, data: { status: "CREATED_NEW", otpHash: null, resolvedByUserId: input.reviewerUserId, resolvedAt: new Date(), reviewReason: input.note ?? r.reviewReason } });
       return patient;
