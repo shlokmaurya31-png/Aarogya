@@ -83,6 +83,19 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({ admissionRequestId: id, encounterId: id, patientId: id, priority: id }).strict(),
   }),
   contract({
+    type: "TaskCreated", version: 1, aggregateType: "TASK", scope: "ORGANIZATION",
+    sensitivity: "INTERNAL", producer: "tasks (createTask: manual, care plan, order, event consumer, workflow)",
+    payload: z.object({
+      taskId: id, source: z.enum(["MANUAL", "CARE_PLAN", "WORKFLOW", "EVENT", "ORDER"]), taskType: id,
+      priority: z.enum(["ROUTINE", "URGENT", "STAT"]), patientId: optId, encounterId: optId, dueAt: iso.optional(),
+    }).strict(),
+  }),
+  contract({
+    type: "TaskCompleted", version: 1, aggregateType: "TASK", scope: "ORGANIZATION",
+    sensitivity: "INTERNAL", producer: "tasks (closeTask: completeTask, skipTask, workflow completion and cancellation, task-generator)",
+    payload: z.object({ taskId: id, source: z.enum(["MANUAL", "CARE_PLAN", "WORKFLOW", "EVENT", "ORDER"]), outcome: z.enum(["COMPLETED", "CANCELLED"]) }).strict(),
+  }),
+  contract({
     type: "BedReserved", version: 1, aggregateType: "ADMISSION_REQUEST", scope: "FACILITY",
     sensitivity: "INTERNAL", producer: "admission requests (allocateBed)",
     payload: z.object({ admissionRequestId: id, bedId: id, patientId: id }).strict(),

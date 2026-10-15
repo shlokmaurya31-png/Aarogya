@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { createTask } from "@/lib/hospital/task";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 
 /** Care plan (brief §6) — problem/goal/interventions. Never invents medical thresholds or protocols; goal/intervention text is entirely clinician-authored. */
@@ -58,18 +59,16 @@ export async function addIntervention(input: {
 
     let linked = intervention;
     if (input.createTask) {
-      const task = await tx.task.create({
-        data: {
-          facilityId: input.facilityId,
-          title: input.description,
-          type: "CARE_PLAN_INTERVENTION",
-          patientId: carePlan.patientId,
-          encounterId: carePlan.encounterId ?? undefined,
-          dueAt: input.taskDueAt,
-          source: "care-plan",
-          createdByStaffId: input.createdByStaffId,
-        },
-      });
+      const task = await createTask(tx, {
+        facilityId: input.facilityId,
+        title: input.description,
+        type: "CARE_PLAN_INTERVENTION",
+        patientId: carePlan.patientId,
+        encounterId: carePlan.encounterId ?? undefined,
+        dueAt: input.taskDueAt,
+        source: "CARE_PLAN",
+        createdByStaffId: input.createdByStaffId,
+      }, input.byUserId);
       linked = await tx.carePlanIntervention.update({ where: { id: intervention.id }, data: { taskId: task.id } });
     }
 

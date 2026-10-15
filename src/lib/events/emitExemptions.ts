@@ -161,7 +161,6 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/hospital/blood.ts#transitionTransfusion": { category: "NOT_YET_CATALOGUED", reason: "domain change with no consumer today; adding an event is a product decision" },
   "src/lib/hospital/blood.ts#verifyCompatibility": { category: "NOT_YET_CATALOGUED", reason: "domain change with no consumer today; adding an event is a product decision" },
   "src/lib/hospital/blood.ts#wasteUnit": { category: "NOT_YET_CATALOGUED", reason: "domain change with no consumer today; adding an event is a product decision" },
-  "src/lib/hospital/carePlan.ts#addIntervention": { category: "NOT_YET_CATALOGUED", reason: "domain change with no consumer today; adding an event is a product decision" },
   "src/lib/hospital/carePlan.ts#closeCarePlan": { category: "NOT_YET_CATALOGUED", reason: "domain change with no consumer today; adding an event is a product decision" },
   "src/lib/hospital/carePlan.ts#completeIntervention": { category: "NOT_YET_CATALOGUED", reason: "domain change with no consumer today; adding an event is a product decision" },
   "src/lib/hospital/carePlan.ts#createCarePlan": { category: "NOT_YET_CATALOGUED", reason: "domain change with no consumer today; adding an event is a product decision" },
@@ -189,7 +188,6 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/hospital/icu.ts#recordObservation": { category: "NOT_YET_CATALOGUED", reason: "domain change with no consumer today; adding an event is a product decision" },
   "src/lib/hospital/icu.ts#updateDeviceStatus": { category: "NOT_YET_CATALOGUED", reason: "domain change with no consumer today; adding an event is a product decision" },
   "src/lib/hospital/icu.ts#updateInfusionStatus": { category: "NOT_YET_CATALOGUED", reason: "domain change with no consumer today; adding an event is a product decision" },
-  "src/lib/hospital/imagingOrder.ts#placeImagingOrder": { category: "PLANNED", reason: "will emit ImagingOrderPlaced", step: 6 },
   "src/lib/hospital/imagingReportLifecycle.ts#acknowledgeReport": { category: "PLANNED", reason: "will emit CriticalResultAcknowledged", step: 6 },
   "src/lib/hospital/imagingReportLifecycle.ts#amendReport": { category: "NOT_YET_CATALOGUED", reason: "domain change with no consumer today; adding an event is a product decision" },
   "src/lib/hospital/imagingReportLifecycle.ts#enterReport": { category: "NOT_YET_CATALOGUED", reason: "domain change with no consumer today; adding an event is a product decision" },
@@ -257,7 +255,6 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/hospital/inventory/waste.ts#recordWaste": { category: "NOT_YET_CATALOGUED", reason: "domain change with no consumer today; adding an event is a product decision" },
   "src/lib/hospital/inventory/waste.ts#rejectWaste": { category: "NOT_YET_CATALOGUED", reason: "domain change with no consumer today; adding an event is a product decision" },
   "src/lib/hospital/labOrder.ts#markEncounterInvestigating": { category: "BOOKKEEPING", reason: "encounter status step taken inside the order's own transaction; the order event covers it" },
-  "src/lib/hospital/labOrder.ts#placeLabOrder": { category: "PLANNED", reason: "will emit LabOrderPlaced", step: 6 },
   "src/lib/hospital/labResultLifecycle.ts#acknowledgeResult": { category: "PLANNED", reason: "will emit CriticalResultAcknowledged", step: 6 },
   "src/lib/hospital/labResultLifecycle.ts#amendResult": { category: "NOT_YET_CATALOGUED", reason: "domain change with no consumer today; adding an event is a product decision" },
   "src/lib/hospital/labResultLifecycle.ts#enterResult": { category: "NOT_YET_CATALOGUED", reason: "domain change with no consumer today; adding an event is a product decision" },
@@ -418,8 +415,6 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/hospital/surgery.ts#transitionSurgery": { category: "NOT_YET_CATALOGUED", reason: "domain change with no consumer today; adding an event is a product decision" },
   "src/lib/hospital/surgery.ts#updateChecklistItem": { category: "NOT_YET_CATALOGUED", reason: "domain change with no consumer today; adding an event is a product decision" },
   "src/lib/hospital/surgery.ts#updateRecovery": { category: "NOT_YET_CATALOGUED", reason: "domain change with no consumer today; adding an event is a product decision" },
-  "src/lib/hospital/task.ts#completeTask": { category: "PLANNED", reason: "will emit TaskCompleted", step: 5 },
-  "src/lib/hospital/task.ts#skipTask": { category: "PLANNED", reason: "will emit TaskCompleted", step: 5 },
   "src/lib/hospital/task.ts#updateTask": { category: "NOT_YET_CATALOGUED", reason: "domain change with no consumer today; adding an event is a product decision" },
   "src/lib/hospital/transferRequest.ts#acceptTransferRequest": { category: "NOT_YET_CATALOGUED", reason: "domain change with no consumer today; adding an event is a product decision" },
   "src/lib/hospital/transferRequest.ts#cancelTransferRequest": { category: "NOT_YET_CATALOGUED", reason: "domain change with no consumer today; adding an event is a product decision" },
@@ -461,13 +456,20 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/workflows/definitions.ts#retireDefinition": { category: "CONFIGURATION", reason: "tenant, configuration or integration administration" },
   "src/lib/workflows/engine.ts#runInstance": { category: "BOOKKEEPING", reason: "workflow-engine state (instances, steps, timers); the engine is itself driven by events" },
   "src/lib/workflows/engine.ts#startWorkflowsForEvent": { category: "BOOKKEEPING", reason: "workflow-engine state (instances, steps, timers); the engine is itself driven by events" },
-  "src/lib/workflows/instances.ts#cancelInstance": { category: "BOOKKEEPING", reason: "workflow-engine state (instances, steps, timers); the engine is itself driven by events" },
   "src/lib/workflows/instances.ts#retryInstance": { category: "BOOKKEEPING", reason: "workflow-engine state (instances, steps, timers); the engine is itself driven by events" },
-  "src/lib/workflows/tasks.ts#cancelWorkflowTask": { category: "PLANNED", reason: "will emit TaskCompleted", step: 5 },
-  "src/lib/workflows/tasks.ts#completeWorkflowTask": { category: "PLANNED", reason: "will emit TaskCompleted", step: 5 },
-  "src/lib/workflows/tasks.ts#createWorkflowTask": { category: "PLANNED", reason: "will emit TaskCreated", step: 5 },
   "src/lib/workflows/timers.ts#cancelInstanceTimersTx": { category: "BOOKKEEPING", reason: "workflow-engine state (instances, steps, timers); the engine is itself driven by events" },
   "src/lib/workflows/timers.ts#createTimerTx": { category: "BOOKKEEPING", reason: "workflow-engine state (instances, steps, timers); the engine is itself driven by events" },
+};
+
+/**
+ * Functions that already emit an event (so the rule above is satisfied) but
+ * still owe a catalogued event of their own at a later spine step. The entry is
+ * stale, and fails the test, once the function emits that event.
+ */
+export const OWED_EVENTS: Record<string, { event: string; step: number }> = {
+  "src/lib/hospital/labOrder.ts#placeLabOrder": { event: "LabOrderPlaced", step: 6 },
+  "src/lib/hospital/imagingOrder.ts#placeImagingOrder": { event: "ImagingOrderPlaced", step: 6 },
+  "src/lib/hospital/carePlan.ts#addIntervention": { event: "CarePlanUpdated", step: 6 },
 };
 
 /**
@@ -497,7 +499,6 @@ export const ROUTE_WRITE_ALLOWLIST: readonly string[] = [
   "src/app/api/hospital/referrals/[id]/route.ts#PATCH",
   "src/app/api/hospital/referrals/route.ts#POST",
   "src/app/api/hospital/schedule-blocks/route.ts#POST",
-  "src/app/api/hospital/tasks/route.ts#POST",
   "src/app/api/patient/access-session/[id]/end/route.ts#POST",
   "src/app/api/scholar-auth/password/change/route.ts#POST",
   "src/app/api/scholar-auth/password/reset/route.ts#POST",

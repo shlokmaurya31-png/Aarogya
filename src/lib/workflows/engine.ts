@@ -323,8 +323,8 @@ async function escalateSla(timer: { id: string; workflowInstanceId: string; work
   const payload = (timer.payload ?? {}) as { taskId?: string; escalation?: { taskType: string; title: string; description?: string; priority?: "ROUTINE" | "URGENT" | "STAT"; assignedRole?: string; emitEventType?: string } };
   if (!payload.escalation) return false;
   if (payload.taskId) {
-    const task = await prisma.workflowTask.findUnique({ where: { id: payload.taskId }, select: { status: true } });
-    if (task && (task.status === "COMPLETED" || task.status === "CANCELLED")) return false; // met SLA — no escalation
+    const task = await prisma.task.findUnique({ where: { id: payload.taskId }, select: { status: true } });
+    if (task && (task.status === "COMPLETED" || task.status === "CANCELLED" || task.status === "EXPIRED")) return false; // met SLA — no escalation
   }
   const inst = await prisma.workflowInstance.findUniqueOrThrow({ where: { id: timer.workflowInstanceId }, select: { organizationId: true, facilityId: true } });
   await prisma.$transaction(async (tx) => {

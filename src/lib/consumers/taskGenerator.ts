@@ -1,5 +1,6 @@
 import type { Priority } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { createTask, closeTask as closeTaskTx, OPEN_STATUSES } from "@/lib/hospital/task";
 import type { DomainEventConsumer } from "@/lib/events/consumers";
 import { PermanentEventError, type DomainEventEnvelope } from "@/lib/events/types";
 
@@ -10,11 +11,11 @@ import { PermanentEventError, type DomainEventEnvelope } from "@/lib/events/type
  *
  * Idempotent: every task has a key derived from its source
  * ("<TASK_TYPE>:<source id>"), unique per facility, so redelivery creates
- * nothing; closing is a guarded update of the open task with that key.
+ * nothing; closing is a guarded update of the open task with that key. Tasks
+ * are created and closed through the task service, so TaskCreated /
+ * TaskCompleted are emitted once (D6).
  * Re-reads what it needs and checks the event's tenant on every row.
  */
-const OPEN = ["OPEN", "ASSIGNED", "IN_PROGRESS", "OVERDUE"] as const;
-
 type TaskSpec = { type: string; title: string; priority?: Priority; sourceId: string };
 
 const DISPOSITION_TASKS: Record<string, { type: string; title: string; priority: Priority } | undefined> = {
@@ -41,20 +42,17 @@ async function encounterIn(event: DomainEventEnvelope, encounterId: string) {
 
 async function openTask(event: DomainEventEnvelope, encounterId: string, spec: TaskSpec) {
   const enc = await encounterIn(event, encounterId);
-  await prisma.task.createMany({
-    data: [{
-      facilityId: enc.facilityId, patientId: enc.patientId, encounterId: enc.id,
-      type: spec.type, title: spec.title, priority: spec.priority ?? "ROUTINE",
-      source: "event", idempotencyKey: keyOf(spec.type, spec.sourceId),
-    }],
-    skipDuplicates: true,
-  });
+  await prisma.$transaction((tx) => createTask(tx, {
+    facilityId: enc.facilityId, patientId: enc.patientId, encounterId: enc.id,
+    type: spec.type, title: spec.title, priority: spec.priority ?? "ROUTINE",
+    source: "EVENT", idempotencyKey: keyOf(spec.type, spec.sourceId),
+  }));
 }
 
 async function closeTask(event: DomainEventEnvelope, type: string, sourceId: string) {
-  await prisma.task.updateMany({
-    where: { facilityId: event.facilityId!, idempotencyKey: keyOf(type, sourceId), status: { in: [...OPEN] } },
-    data: { status: "COMPLETED", completedAt: event.occurredAt },
+  await prisma.$transaction(async (tx) => {
+    const task = await tx.task.findFirst({ where: { facilityId: event.facilityId!, idempotencyKey: keyOf(type, sourceId), source: "EVENT", status: { in: OPEN_STATUSES } }, select: { id: true } });
+    if (task) await closeTaskTx(tx, task.id, "COMPLETED", { completedAt: event.occurredAt });
   });
 }
 

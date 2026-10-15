@@ -454,6 +454,36 @@ All task lists (nurse tasks, workflow inbox, discharge prep) read one table.
 `TaskCreated`/`TaskCompleted` are emitted by the one service, whatever the
 source.
 
+**As built (step 5, 2026-10-15).** Two migrations: `20261015180000_task_merge`
+(refusals, then the merge; WorkflowTask kept) and
+`20261015190000_drop_workflow_task` (refuses unless every WorkflowTask row is
+reachable as a Task with the same id and instance, then drops it).
+`verify-postgres-d7-workflows` (48/0), `-d8-configuration` (40/0) and
+`-d9-builder` (31/0) were run against the database with only the first
+migration applied, then D7 again after the drop. Deviations from the table
+above:
+
+- **`facilityId` is not required.** The engine creates tasks for
+  organization-scoped events (`PaymentReceived`, `InvoiceFinalized` carry no
+  facility), and the D7 gate depends on that. `Task.facilityId` is nullable
+  only for `source = WORKFLOW` with an `organizationId`
+  (`Task_facility_or_org_workflow_check`); workflow links appear exactly on
+  workflow tasks (`Task_workflow_links_check`).
+- **Workflow keys stay global**, by a partial unique index
+  (`WHERE source = 'WORKFLOW'`); every other key is unique per facility.
+- **Free-text sources** found in the code: `manual`, `care-plan`, `lab-order`,
+  `imaging-order` (→ ORDER) and `event`. A NULL source maps only through the
+  row's own order or care-plan intervention link.
+- **Patients and encounters on workflow tasks are checked.** `Task.patientId`
+  is a foreign key, so `createWorkflowTask` refuses (as a VALIDATION failure) a
+  patient or encounter that is not in the task's facility. The D7/D9 gates used
+  made-up ids (`"p1"`, `"e1"`) in their event payloads; they now create a real
+  patient and encounter per gate facility. No assertion changed.
+- `TaskCreated` / `TaskCompleted` are ORGANIZATION-scoped (the facility is
+  carried when there is one), correlated by the encounter. `createTask` and
+  `closeTask` in `src/lib/hospital/task.ts` are the only writers; the manual
+  task route now goes through `createTask`.
+
 ---
 
 ## 5. How charges move

@@ -3,7 +3,7 @@ import path from "node:path";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { analyze, libFiles, unemittingWriters, writingRoutes } from "./emitCoverage";
-import { EMIT_EXEMPTIONS, ROUTE_WRITE_ALLOWLIST } from "./emitExemptions";
+import { EMIT_EXEMPTIONS, OWED_EVENTS, ROUTE_WRITE_ALLOWLIST } from "./emitExemptions";
 import { getEventContract } from "./catalogue";
 
 /**
@@ -33,6 +33,17 @@ describe("every state change emits a domain event (or is a listed exemption)", (
     const bad = Object.entries(EMIT_EXEMPTIONS).filter(([, e]) =>
       !CATEGORIES.has(e.category) || e.reason.trim().length < 10 || (e.category === "PLANNED" && typeof e.step !== "number"));
     expect(bad.map(([k]) => k)).toEqual([]);
+  });
+
+  it("tracks events still owed by functions that already emit something else", () => {
+    const facts = analyze(libFiles(ROOT), ROOT);
+    const problems = Object.entries(OWED_EVENTS).flatMap(([key, { event }]) => {
+      const fn = facts.find((f) => f.key === key);
+      if (!fn) return [`${key} is gone`];
+      const text = readFileSync(path.join(ROOT, key.split("#")[0]), "utf8");
+      return text.includes(`"${event}"`) ? [`${key} emits ${event} now — remove it from OWED_EVENTS`] : [];
+    });
+    expect(problems).toEqual([]);
   });
 
   it("never emits through the global client from a function that also writes", () => {

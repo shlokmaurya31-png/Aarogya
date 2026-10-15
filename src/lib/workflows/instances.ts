@@ -1,4 +1,5 @@
 import { Prisma, $Enums, type WorkflowInstanceStatus } from "@prisma/client";
+import { closeTask, OPEN_STATUSES } from "@/lib/hospital/task";
 import { prisma } from "@/lib/db";
 import { NotFoundError, BadRequestError, ConflictError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
@@ -59,7 +60,8 @@ export async function cancelInstance(m: ActorMemberships, instanceId: string, re
     if (res.count !== 1) throw new ConflictError("Workflow changed concurrently.");
     await tx.workflowStep.updateMany({ where: { workflowInstanceId: instanceId, status: { in: ["PENDING", "WAITING"] } }, data: { status: "SKIPPED" } });
     await cancelInstanceTimersTx(tx, instanceId);
-    await tx.workflowTask.updateMany({ where: { workflowInstanceId: instanceId, status: { in: ["OPEN", "IN_PROGRESS"] } }, data: { status: "CANCELLED", cancelledAt: new Date() } });
+    const open = await tx.task.findMany({ where: { workflowInstanceId: instanceId, status: { in: OPEN_STATUSES } }, select: { id: true } });
+    for (const t of open) await closeTask(tx, t.id, "CANCELLED", { cancelledAt: new Date() }, m.userId);
     await recordAuditEvent("workflow.instance.cancelled", m.userId, { instanceId, reason }, { organizationId: inst.organizationId ?? undefined }, tx);
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 20000, maxWait: 10000 });
   return getInstance(m, instanceId);

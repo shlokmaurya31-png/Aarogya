@@ -699,7 +699,7 @@ model WorkflowInstance {
   updatedAt            DateTime               @updatedAt
 
   steps  WorkflowStep[]
-  tasks  WorkflowTask[]
+  tasks  Task[]
   timers WorkflowTimer[]
 
   @@index([status])
@@ -740,35 +740,6 @@ model WorkflowStep {
 // An orchestration to-do created by a workflow. Distinct from the clinical `Task`
 // (which requires a staff creator + facility and is clinically coupled): a workflow
 // task is system-created, may be org-scoped, and carries NO clinical authority.
-model WorkflowTask {
-  id                 String             @id @default(cuid())
-  workflowInstanceId String
-  instance           WorkflowInstance   @relation(fields: [workflowInstanceId], references: [id], onDelete: Cascade)
-  workflowStepId     String?
-  organizationId     String?
-  facilityId         String?
-  patientId          String?
-  encounterId        String?
-  taskType           String
-  title              String
-  description        String?
-  priority           Priority           @default(ROUTINE) // ROUTINE | URGENT | STAT
-  status             WorkflowTaskStatus @default(OPEN) // OPEN | IN_PROGRESS | COMPLETED | CANCELLED | EXPIRED
-  assignedRole       String?
-  assignedUserId     String?
-  dueAt              DateTime?
-  completedByUserId  String?
-  completedAt        DateTime?
-  cancelledAt        DateTime?
-  /// Idempotency: a step creating a task twice yields one task.
-  idempotencyKey     String             @unique
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime           @updatedAt
-
-  @@index([organizationId, status])
-  @@index([status, dueAt])
-  @@index([workflowInstanceId])
-}
 
 // A durable timer (delay / SLA breach / escalation). Fired by a bounded, guarded
 // claim so it is correct under concurrent workers and process restarts, with no
@@ -3784,17 +3755,28 @@ model ClaimLine {
  */
 model Task {
   id                 String                @id @default(cuid())
-  facility           Facility              @relation(fields: [facilityId], references: [id])
-  facilityId         String
+  /// Null only for an organization-level workflow task (source WORKFLOW with
+  /// organizationId set); a CHECK constraint enforces it (spine §4).
+  facility           Facility?             @relation(fields: [facilityId], references: [id], onDelete: Restrict)
+  facilityId         String?
+  organizationId     String?
   department         Department?           @relation(fields: [departmentId], references: [id])
   departmentId       String?
   title              String
   description        String?
   type               String // "DISCHARGE_PREP" | "PATIENT_EDUCATION" | "WOUND_CARE" | "FOLLOW_UP" | "GENERAL" | ...
   priority           Priority              @default(ROUTINE) // "ROUTINE" | "URGENT" | "STAT"
-  status             TaskStatus            @default(OPEN) // OPEN | ASSIGNED | IN_PROGRESS | COMPLETED | CANCELLED | OVERDUE
+  /// "Overdue" is derived (open and dueAt < now), not a status (spine §4).
+  status             TaskStatus            @default(OPEN)
   dueAt              DateTime?
-  source             String? // what created this task, e.g. "manual" | "discharge-workflow"
+  source             TaskSource
+  /// Set for source WORKFLOW (the former WorkflowTask, D6).
+  workflowInstance   WorkflowInstance?     @relation(fields: [workflowInstanceId], references: [id], onDelete: Restrict)
+  workflowInstanceId String?
+  workflowStepId     String?
+  /// Role-based assignment (workflow tasks); ownerStaffId names a person.
+  assignedRole       String?
+  assignedUserId     String?
   patient            Patient?              @relation(fields: [patientId], references: [id])
   patientId          String?
   encounterId        String?
@@ -3807,8 +3789,11 @@ model Task {
   idempotencyKey     String?
   completedBy        HospitalStaffProfile? @relation("TaskCompletedBy", fields: [completedByStaffId], references: [id])
   completedByStaffId String?
+  completedByUserId  String?
   completedAt        DateTime?
+  cancelledAt        DateTime?
   createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @default(now()) @updatedAt
   // Phase 3 (brief §12) — deepens the existing engine without a new model.
   // A "nursing order" a doctor places is an Order (orderType=NURSING) whose
   // detail lives right here in Task, reusing the existing engine rather
@@ -3831,6 +3816,9 @@ model Task {
   @@index([ownerStaffId])
   @@index([patientId])
   @@index([facilityId, status])
+  @@index([workflowInstanceId])
+  @@index([organizationId, status])
+  @@index([status, dueAt])
 }
 
 /**
@@ -9329,7 +9317,16 @@ enum TaskStatus {
   IN_PROGRESS
   COMPLETED
   CANCELLED
-  OVERDUE
+  EXPIRED
+}
+
+/// What created a task (spine §4, D6).
+enum TaskSource {
+  MANUAL
+  CARE_PLAN
+  WORKFLOW
+  EVENT
+  ORDER
 }
 
 enum ClinicalDocumentStatus {
@@ -9845,13 +9842,6 @@ enum WorkflowStepStatus {
   FAILED
 }
 
-enum WorkflowTaskStatus {
-  OPEN
-  IN_PROGRESS
-  COMPLETED
-  CANCELLED
-  EXPIRED
-}
 
 enum WorkflowTimerStatus {
   PENDING

@@ -13,10 +13,10 @@ export async function getWorkflowMetrics(m: ActorMemberships, opts?: { now?: Dat
 
   const [instByStatus, taskByStatus, timerByStatus, activeDefs, overdueTasks, dueTimers, latencySample] = await Promise.all([
     prisma.workflowInstance.groupBy({ by: ["status"], _count: { _all: true } }),
-    prisma.workflowTask.groupBy({ by: ["status"], _count: { _all: true } }),
+    prisma.task.groupBy({ by: ["status"], where: { source: "WORKFLOW" }, _count: { _all: true } }),
     prisma.workflowTimer.groupBy({ by: ["status"], _count: { _all: true } }),
     prisma.workflowDefinition.count({ where: { status: "ACTIVE" } }),
-    prisma.workflowTask.count({ where: { status: { in: ["OPEN", "IN_PROGRESS"] }, dueAt: { lt: now } } }),
+    prisma.task.count({ where: { source: "WORKFLOW", status: { in: ["OPEN", "ASSIGNED", "IN_PROGRESS"] }, dueAt: { lt: now } } }),
     prisma.workflowTimer.count({ where: { status: "PENDING", availableAt: { lte: now } } }),
     prisma.workflowInstance.findMany({ where: { status: "COMPLETED", startedAt: { not: null }, completedAt: { not: null } }, orderBy: { completedAt: "desc" }, take: 200, select: { startedAt: true, completedAt: true } }),
   ]);

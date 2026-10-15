@@ -1,6 +1,7 @@
-import type { Prisma, WorkflowTaskStatus } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { NotFoundError, ConflictError } from "@/lib/auth/rbac";
+import { NotFoundError, ConflictError, BadRequestError } from "@/lib/auth/rbac";
+import { createTask, closeTask, OPEN_STATUSES } from "@/lib/hospital/task";
 import { assertNoSensitiveData } from "@/lib/events/sensitiveGuard";
 
 type Tx = Prisma.TransactionClient;
@@ -8,11 +9,14 @@ type Tx = Prisma.TransactionClient;
 /**
  * Phase D7 — orchestration tasks (§11/§12).
  *
- * WorkflowTask is an operational to-do created by a workflow. It is NOT the
- * clinical Task (which requires a staff creator + facility and carries clinical
- * coupling); a workflow task carries no clinical authority. Creation is idempotent
- * on a caller-supplied key, and completion is a guarded, idempotent state
- * transition so a task cannot be completed twice with duplicate downstream effect.
+ * A workflow task is a Task with source WORKFLOW (D6, workflow spine §4: one
+ * Task model). It carries no clinical authority. Creation is idempotent on a
+ * caller-supplied key (global for workflow tasks), and completion is a guarded,
+ * idempotent state transition so a task cannot be completed twice with duplicate
+ * downstream effect. TaskCreated / TaskCompleted come from the task service.
+ *
+ * Refuse, don't guess: a task needs a facility or an organization, and a patient
+ * or encounter taken from an event payload must exist in the task's facility.
  */
 
 export interface CreateWorkflowTaskInput {
@@ -35,24 +39,27 @@ export interface CreateWorkflowTaskInput {
 export async function createWorkflowTask(tx: Tx, input: CreateWorkflowTaskInput) {
   // Defense in depth: task metadata must not smuggle secrets/PHI blobs.
   assertNoSensitiveData({ title: input.title, description: input.description ?? undefined, taskType: input.taskType });
-  try {
-    return await tx.workflowTask.create({
-      data: {
-        workflowInstanceId: input.workflowInstanceId, workflowStepId: input.workflowStepId ?? null,
-        organizationId: input.organizationId ?? null, facilityId: input.facilityId ?? null,
-        patientId: input.patientId ?? null, encounterId: input.encounterId ?? null,
-        taskType: input.taskType, title: input.title, description: input.description ?? null,
-        priority: input.priority ?? "ROUTINE", status: "OPEN", assignedRole: input.assignedRole ?? null,
-        dueAt: input.dueAt ?? null, idempotencyKey: input.idempotencyKey,
-      },
-    });
-  } catch (err) {
-    if ((err as { code?: string }).code !== "P2002") throw err;
-    return tx.workflowTask.findUniqueOrThrow({ where: { idempotencyKey: input.idempotencyKey } });
+  const facilityId = input.facilityId ?? null;
+  if (!facilityId && !input.organizationId) throw new BadRequestError("A workflow task needs a facility or an organization.");
+  if ((input.patientId || input.encounterId) && !facilityId) throw new BadRequestError("A workflow task about a patient needs the facility the patient is in.");
+  if (input.patientId) {
+    const p = await tx.patient.findFirst({ where: { id: input.patientId, facilityId: facilityId! }, select: { id: true } });
+    if (!p) throw new BadRequestError("The workflow event names a patient that is not in its facility.");
   }
+  if (input.encounterId) {
+    const e = await tx.encounter.findFirst({ where: { id: input.encounterId, facilityId: facilityId!, ...(input.patientId ? { patientId: input.patientId } : {}) }, select: { id: true } });
+    if (!e) throw new BadRequestError("The workflow event names an encounter that is not in its facility.");
+  }
+  return createTask(tx, {
+    source: "WORKFLOW",
+    workflowInstanceId: input.workflowInstanceId, workflowStepId: input.workflowStepId ?? null,
+    organizationId: input.organizationId ?? null, facilityId,
+    patientId: input.patientId ?? null, encounterId: input.encounterId ?? null,
+    type: input.taskType, title: input.title, description: input.description ?? null,
+    priority: input.priority ?? "ROUTINE", status: "OPEN", assignedRole: input.assignedRole ?? null,
+    dueAt: input.dueAt ?? null, idempotencyKey: input.idempotencyKey,
+  });
 }
-
-const OPEN_TASK_STATES: WorkflowTaskStatus[] = ["OPEN", "IN_PROGRESS"];
 
 /**
  * Complete a task. Guarded + idempotent: a concurrent double-completion yields a
@@ -60,21 +67,18 @@ const OPEN_TASK_STATES: WorkflowTaskStatus[] = ["OPEN", "IN_PROGRESS"];
  * is a no-op that never double-applies downstream effects.
  */
 export async function completeWorkflowTask(taskId: string, byUserId: string | null) {
-  const task = await prisma.workflowTask.findUnique({ where: { id: taskId }, select: { id: true, status: true } });
+  const task = await prisma.task.findFirst({ where: { id: taskId, source: "WORKFLOW" }, select: { id: true, status: true } });
   if (!task) throw new NotFoundError();
-  if (!OPEN_TASK_STATES.includes(task.status)) {
-    if (task.status === "COMPLETED") return prisma.workflowTask.findUniqueOrThrow({ where: { id: taskId } });
+  if (!OPEN_STATUSES.includes(task.status)) {
+    if (task.status === "COMPLETED") return prisma.task.findUniqueOrThrow({ where: { id: taskId } });
     throw new ConflictError(`Task cannot be completed from ${task.status}.`);
   }
-  const res = await prisma.workflowTask.updateMany({
-    where: { id: taskId, status: { in: OPEN_TASK_STATES } },
-    data: { status: "COMPLETED", completedByUserId: byUserId, completedAt: new Date() },
-  });
-  if (res.count !== 1) throw new ConflictError("Task changed concurrently.");
-  return prisma.workflowTask.findUniqueOrThrow({ where: { id: taskId } });
+  const done = await prisma.$transaction((tx) => closeTask(tx, taskId, "COMPLETED", { completedByUserId: byUserId, completedAt: new Date() }, byUserId));
+  if (!done) throw new ConflictError("Task changed concurrently.");
+  return done;
 }
 
 /** Cancel a task (guarded). Used by workflow cancellation and expiry. */
 export async function cancelWorkflowTask(tx: Tx, taskId: string) {
-  await tx.workflowTask.updateMany({ where: { id: taskId, status: { in: OPEN_TASK_STATES } }, data: { status: "CANCELLED", cancelledAt: new Date() } });
+  await closeTask(tx, taskId, "CANCELLED", { cancelledAt: new Date() });
 }

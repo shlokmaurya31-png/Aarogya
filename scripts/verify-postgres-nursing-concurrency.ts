@@ -43,7 +43,7 @@ async function main() {
   // ── Case A: two concurrent completeTask calls on the SAME task ──
   {
     const task = await prisma.task.create({
-      data: { facilityId: facility.id, title: `Race task ${runId}`, type: "GENERAL", patientId, encounterId: encounter.id, createdByStaffId: nurseA.id, status: "OPEN" },
+      data: { facilityId: facility.id, title: `Race task ${runId}`, type: "GENERAL", patientId, encounterId: encounter.id, createdByStaffId: nurseA.id, status: "OPEN", source: "MANUAL" },
     });
     const attempt = () => completeTask({ taskId: task.id, facilityId: facility.id, completedByStaffId: nurseA.id, byUserId: nurseA.userId });
     const results = await Promise.allSettled([attempt(), attempt()]);

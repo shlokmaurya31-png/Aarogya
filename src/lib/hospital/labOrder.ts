@@ -1,4 +1,5 @@
 import { $Enums, type Prisma } from "@prisma/client";
+import { createTask } from "@/lib/hospital/task";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
@@ -95,12 +96,10 @@ export async function placeLabOrder(input: {
       charged = await createPricedChargeIfNotExists(tx, { ...chargeBase, description: `Lab: ${testName} (generic tariff)`, chargeCode: "LAB:GENERIC" });
     }
 
-    const task = await tx.task.create({
-      data: {
-        facilityId, title: `Collect specimen: ${testName}`, type: "SPECIMEN_COLLECTION", source: "lab-order",
-        patientId, encounterId, orderId: envelope.id, createdByStaffId: staffId, priority: priority ?? "ROUTINE",
-      },
-    });
+    const task = await createTask(tx, {
+      facilityId, title: `Collect specimen: ${testName}`, type: "SPECIMEN_COLLECTION", source: "ORDER",
+      patientId, encounterId, orderId: envelope.id, createdByStaffId: staffId, priority: priority ?? "ROUTINE",
+    }, input.byUserId);
     await markEncounterInvestigating(tx, encounterId);
     return { order, specimen, duplicate: false as const, charge: charged.charge, task };
   });

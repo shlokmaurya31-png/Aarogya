@@ -30,7 +30,9 @@ const ALLOWED_TEXT: Record<string, string> = {
   "ExternalIdentifier.syncStatus": "free-form registry sync detail, nullable",
   "InteropConnection.lastHealthState": "last health-probe result from an external system",
 };
-const ENGINE_KEYS = new Set(["WorkflowInstance", "WorkflowTask", "WorkflowTimer"]);
+const ENGINE_KEYS = new Set(["WorkflowInstance", "WorkflowTimer"]);
+/** Workflow-engine keys on Task are global (an organization-level workflow task has no facility); D6. */
+const ENGINE_PARTIAL = (tbl: string, def: string) => tbl === "Task" && /\("idempotencyKey"\) WHERE \(source = 'WORKFLOW'/.test(def);
 
 async function refused(sql: string): Promise<boolean> {
   return prisma.$transaction(async (tx) => {
@@ -63,7 +65,7 @@ async function main() {
     const defs = idx.filter((i) => i.tbl === tbl).map((i) => i.def);
     if (ENGINE_KEYS.has(tbl)) continue;
     const perTenant = defs.some((d) => /\("(facilityId|organizationId)", "idempotencyKey"\)/.test(d));
-    const global = defs.some((d) => /\("idempotencyKey"\)/.test(d));
+    const global = defs.some((d) => /\("idempotencyKey"\)/.test(d) && !ENGINE_PARTIAL(tbl, d));
     if (!perTenant || global) problems.push(`${tbl}: ${defs.join(" | ") || "no unique index"}`);
   }
   report(`Every idempotency key is unique per tenant (${keyed.length - ENGINE_KEYS.size} tables)`, problems.length === 0, problems.join("; "));

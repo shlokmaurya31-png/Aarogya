@@ -171,7 +171,7 @@ export async function seedPhase1Extensions(prisma: PrismaClient) {
     await prisma.task.create({
       data: {
         facilityId: primaryFacility.id, title: "Prepare discharge summary", type: "DISCHARGE_PREP", priority: "ROUTINE",
-        status: "OPEN", dueAt: new Date(Date.now() + 2 * 3_600_000), source: "manual",
+        status: "OPEN", dueAt: new Date(Date.now() + 2 * 3_600_000), source: "MANUAL",
         patientId: admittedEncounter.patientId, encounterId: admittedEncounter.id,
         createdByStaffId: pick(doctors, 2).id, ownerStaffId: pick(nurses, 0).id,
       },

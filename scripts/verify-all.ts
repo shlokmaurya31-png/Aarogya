@@ -102,6 +102,7 @@ const ORDER = [
   "verify-postgres-runner",
   "verify-postgres-services-out-of-routes",
   "verify-postgres-adt-events",
+  "verify-postgres-task-merge",
   "verify-postgres-problem-list",
   // Runs last among the gates: checks every row the earlier gates created.
   "verify-postgres-facility-consistency",

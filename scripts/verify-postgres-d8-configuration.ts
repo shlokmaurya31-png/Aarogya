@@ -44,7 +44,9 @@ const KEYPREFIX = "d8gate";
 
 async function cleanup() {
   await prisma.workflowTimer.deleteMany({ where: { instance: { definition: { key: { startsWith: KEYPREFIX } } } } });
-  await prisma.workflowTask.deleteMany({ where: { instance: { definition: { key: { startsWith: KEYPREFIX } } } } });
+  await prisma.task.deleteMany({ where: { workflowInstance: { definition: { key: { startsWith: KEYPREFIX } } } } });
+  // Tasks the seeded platform workflows open for this gate's events (D6: Task rows now reference the facility).
+  await prisma.task.deleteMany({ where: { OR: [{ organizationId: { in: [ID.orgA, ID.orgB] } }, { facility: { organizationId: { in: [ID.orgA, ID.orgB] } } }] } });
   await prisma.workflowStep.deleteMany({ where: { instance: { definition: { key: { startsWith: KEYPREFIX } } } } });
   await prisma.workflowInstance.deleteMany({ where: { definition: { key: { startsWith: KEYPREFIX } } } });
   await prisma.workflowVersion.deleteMany({ where: { definition: { key: { startsWith: KEYPREFIX } } } });

@@ -14,7 +14,7 @@
  *   4. task-generator: a bed-allocation task opens on AdmissionRequested and
  *      closes on BedReserved; discharge prep opens and closes; ED dispositions
  *      create their follow-up/handover tasks. Redelivering every event creates
- *      nothing new.
+ *      nothing new. Each task emits TaskCreated / TaskCompleted once (D6).
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-adt-events.ts
  */
@@ -80,7 +80,7 @@ async function main() {
   await runTick({ budgetMs: 20_000 });
   report("…and PatientDischarged closes it", (await prepTask())?.status === "COMPLETED");
 
-  const journey = await types(enc.id);
+  const journey = (await types(enc.id)).filter((t) => !t.startsWith("Task")); // task events are checked below
   const expected = ["EdArrivalRegistered", "PatientTriaged", "AdmissionRequested", "BedReserved", "AdmissionCreated",
     "IcuAdmitted", "PatientTransferred", "PatientTransferred", "PatientTransferred", "DischargeInitiated", "PatientDischarged", "EncounterClosed"];
   report("The journey's events, in order, correlated by the encounter", journey.join() === expected.join(), journey.join(" → "));
@@ -136,6 +136,9 @@ async function main() {
   const after = await prisma.task.count({ where: { encounterId: { in: [enc.id, left.id, sick.id] } } });
   report("Redelivering every event creates no new task", after === before, `${before} → ${after}`);
   report("…and closed tasks stay closed", (await bedTask())?.status === "COMPLETED" && (await prepTask())?.status === "COMPLETED");
+  const taskEvents = async (taskId: string) => (await prisma.domainEventOutbox.findMany({ where: { aggregateType: "TASK", aggregateId: taskId }, select: { eventType: true } })).map((e) => e.eventType).sort().join();
+  report("D6: the bed task emitted TaskCreated and TaskCompleted once each, redelivery included", await taskEvents((await bedTask())!.id) === "TaskCompleted,TaskCreated");
+  report("…and so did the discharge-prep task", await taskEvents((await prepTask())!.id) === "TaskCompleted,TaskCreated");
   const dead = await prisma.domainEventOutbox.count({ where: { eventId: { in: ids }, status: "DEAD_LETTER" } });
   report("No journey event dead-lettered", dead === 0, String(dead));
 
