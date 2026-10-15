@@ -1,6 +1,7 @@
 # Workflow spine: design (Week 3, phase A)
 
-- **Status:** Draft for review. Nothing in this document is implemented yet.
+- **Status:** Approved 2026-10-15 with changes (scheduling, ordering, ten more
+  events, the reserved rag-indexer). Phase B is being implemented.
 - **Date:** 2026-10-15
 - **Builds on:** ADR 0004 (modules sync through transactional domain events),
   `src/lib/events` (outbox, delivery ledger, catalogue, dispatcher) and
@@ -9,16 +10,16 @@
 > **Source of the planned events.** The brief asks for "the 36 planned events
 > (see the plan's Section 4 table)". That table is not in the repository or in
 > this working session; the only catalogue in the repo is the illustrative one
-> in `docs/EVENT_ARCHITECTURE.md` §4. The 36 planned events in §1.2 were
+> in `docs/EVENT_ARCHITECTURE.md` §4. The first 36 planned events in §1.2 were
 > therefore **derived from the code**: one event per state change on the core
 > journey and its billing tail, each tied to the existing service function that
 > makes the change. Please reconcile §1.2 against the plan's table during
 > review. Names, splits or merges can change without affecting the rest of the
-> design.
+> design. Ten more (#55–#64) were added at design review.
 
 ## Contents
 
-1. Event catalogue (18 existing + 36 planned)
+1. Event catalogue (18 existing + 46 planned)
 2. Consumers
 3. Background runner
 4. D6: one Task model
@@ -159,7 +160,7 @@ transaction.
 |---|---|---|---|---|---|---|
 | 47 | `TaskCreated` | TASK | `src/lib/hospital/task.ts` → `createTask` (new; the unified Task of §4) | create tx | taskId, source, taskType, patientId?, encounterId?, priority, dueAt? | INTERNAL |
 | 48 | `TaskCompleted` | TASK | `src/lib/hospital/task.ts` → `completeTask` / `skipTask` | complete tx | taskId, source, outcome: COMPLETED \| CANCELLED | INTERNAL |
-| 49 | `ClinicalNoteSigned` | CLINICAL_NOTE | `src/lib/hospital/clinicalNote.ts` → `signNote` | sign tx | noteId, encounterId, patientId, noteType | INTERNAL |
+| 49 | `ClinicalNoteSigned` | CLINICAL_NOTE | `src/lib/hospital/clinicalNote.ts` → `signNote` and `amendNote` | sign tx / amend tx | noteId, encounterId, patientId, noteType, supersedesNoteId? (set on an amendment) | INTERNAL |
 
 **Hospital billing and claims (5)**
 
@@ -171,9 +172,41 @@ transaction.
 | 53 | `ClaimDrafted` | CLAIM | `src/lib/hospital/billing/claims.ts` → `createClaimDraft` | draft tx | claimId, invoiceId, coverageId, patientId | LOW |
 | 54 | `ClaimSubmitted` | CLAIM | `src/lib/hospital/nhcx/submission.ts` → `dispatchSubmission` | the exchange create tx | claimId, submissionId, exchangeId, version | LOW |
 
-All planned events are `FACILITY` scope. `MedicationDoseMissed` and
-`TransfusionReactionReported` are `SENSITIVE` because the fact itself is
-clinically sensitive; operator views (`ops.ts`) show their type and IDs only.
+**Added at design review (10)**
+
+| # | Event | Aggregate | Producer (file → function) | Transaction | Payload | Sens. |
+|---|---|---|---|---|---|---|
+| 55 | `PatientDocumentUploaded` | CLINICAL_DOCUMENT | `src/lib/patient/experience/documents.ts` → `uploadPatientDocument` (replaces its Week 2 TODO) | the ClinicalDocument insert (the file is stored before the tx; a rolled-back insert leaves an orphan object that the storage sweep removes) | documentId, patientId, documentType, uploadedBy: PATIENT | INTERNAL |
+| 56 | `DocumentGenerated` | CLINICAL_DOCUMENT | `src/lib/documents/service.ts` → `generateAndStoreDocument` | the GeneratedDocument + ClinicalDocument tx (D4) | documentId, generatedDocumentId, patientId, documentType, isDraft | INTERNAL |
+| 57 | `CriticalResultAcknowledged` | LAB_RESULT / IMAGING_REPORT | `src/lib/hospital/labResultLifecycle.ts` → `acknowledgeResult` and `src/lib/hospital/imagingReportLifecycle.ts` → `acknowledgeReport` (only when the result/report is critical) | the acknowledge tx | resultId? / reportId?, patientId, acknowledgedByStaffId, minutesToAcknowledge | INTERNAL |
+| 58 | `PreauthDecided` | PREAUTH | `src/lib/hospital/billing/preauth.ts` → `decidePreAuth` | the decision tx | preAuthId, coverageId, patientId, decision (APPROVED \| DENIED), approvedAmountMinor?, currency | LOW |
+| 59 | `ClaimSettled` | CLAIM | `src/lib/hospital/billing/claims.ts` → `settleClaim` | the settlement tx | claimId, invoiceId, settledAmountMinor, currency | LOW |
+| 60 | `FamilyAccessGranted` | PATIENT_DELEGATION | `src/lib/patient/experience/family.ts` → `acceptDelegation` (access starts on acceptance, not on invitation) | the accept tx | delegationId, patientId, delegateUserId, scopes (closed codes) | SENSITIVE |
+| 61 | `FamilyAccessRevoked` | PATIENT_DELEGATION | `src/lib/patient/experience/family.ts` → `revokeDelegation` (and expiry, when the sweep in §3.4 expires a delegation) | the revoke tx | delegationId, patientId, delegateUserId, reason: REVOKED \| EXPIRED | SENSITIVE |
+| 62 | `EdDispositionDecided` | ENCOUNTER | `src/lib/hospital/emergency.ts` → `dispositionEncounter` | the disposition tx | dispositionId, encounterId, patientId, dispositionType | INTERNAL |
+| 63 | `StockBelowReorder` | ITEM | `src/lib/hospital/inventory/ledger.ts` → `postLedgerEntry` (only when this entry takes the location balance from at-or-above to below the item's `reorderPoint`) | the ledger tx | itemId, locationId, onHandQty, reorderPoint | LOW |
+| 64 | `GoodsReceived` | GOODS_RECEIPT | `src/lib/hospital/procurement/goodsReceipts.ts` → `approveGoodsReceipt` (stock is posted on approval) | the approve tx | goodsReceiptId, purchaseOrderId, supplierId, lineCount | LOW |
+
+**Deliberately not events**
+
+- **`QueueTokenCalled`.** Calling the next token is high-frequency,
+  short-lived operational state (seconds to minutes) with no cross-module
+  reaction: nothing is billed, scheduled or recorded on the clinical record
+  because of it. The queue screens read `QueueEntry` directly. An event per
+  call would grow the outbox with rows no consumer reads. If a display board
+  or analytics ever needs it, it reads the queue table or a projection.
+- **`DischargeBarrierCleared`.** Discharge barriers aren't stored state: the
+  barrier engine (`src/lib/hospital/dischargeBarrierEngine.ts`) computes them
+  from current facts (pending results, unpaid balance, missing summary) on
+  every read. There is no transition to emit, and the facts that clear a
+  barrier already have their own events (`LabResultReleased`,
+  `HospitalPaymentRecorded`, `DocumentGenerated`, `TaskCompleted`), which the
+  `discharge-readiness` consumer listens to.
+
+All planned events are `FACILITY` scope. `MedicationDoseMissed`,
+`TransfusionReactionReported`, `FamilyAccessGranted` and `FamilyAccessRevoked`
+are `SENSITIVE` because the fact itself is sensitive; operator views (`ops.ts`)
+show their type and IDs only.
 
 ---
 
@@ -201,15 +234,33 @@ order (§3.3).
 | Consumer | Subscribes to | Writes | Idempotency key | Failure / retry / dead letter | Ordered per aggregate |
 |---|---|---|---|---|---|
 | `observability-projection` (exists) | `*` | nothing (the delivery row is the projection) | (eventId, consumer) ledger row | cannot fail | no |
-| `workflow-engine` (exists) | `*` | `WorkflowInstance`, steps, timers, tasks | `WorkflowInstance.idempotencyKey` derived from (definition, eventId) | retry; dead letter on an invalid definition | **yes** (by correlationId) |
+| `workflow-engine` (exists) | `*` | `WorkflowInstance`, steps, timers, tasks | `WorkflowInstance.idempotencyKey` derived from (definition, eventId) | retry; dead letter on an invalid definition | **yes** (per aggregate, like every ordered consumer; it re-reads current state) |
 | `charge-capture` | `ProcedureCompleted`, `SurgeryItemUsed`, `BloodIssued`, `PatientTriaged` (ED triage fee where tariffed), `EncounterOpened` (consultation fee where tariffed), `IcuAdmitted` (ICU admission fee) | `Charge` via `createPricedChargeIfNotExists` | `Charge (sourceType, sourceId)` unique: e.g. (`Surgery`, surgeryId), (`SurgeryItemUsage`, usageId), (`BloodIssue`, issueId) | `PriceNotFoundError` → posts the zero-priced "needs pricing" charge exactly as the in-tx paths do today (never blocks, never silently skips); DB errors retry; a charge on an invoiced encounter → dead letter + reconciliation exception | no (each charge is keyed by its own source) |
 | `stock-movement` | `SurgeryItemUsed`, `MedicationDispensed` (only for the paths migrated per §5.3) | `StockLedgerEntry` via `inventory/issue` | ledger `(sourceType, sourceId)` unique (already used by `postLedgerEntry`) | insufficient stock → dead letter + an inventory exception task (the clinical act already happened; we never roll it back) | no |
-| `task-generator` | `AdmissionRequested`, `BedReserved`, `DischargeInitiated`, `LabResultReleased` (critical only), `ImagingReportReleased` (critical only), `MedicationDoseMissed`, `TransfusionReactionReported` | `Task` (source `EVENT`) | `Task.idempotencyKey = <consumer>:<eventId>:<taskType>` (unique, new column; §4) | retry; dead letter if the patient/encounter is not visible in the tenant | no |
+| `task-generator` | `AdmissionRequested`, `BedReserved`, `DischargeInitiated`, `LabResultReleased` (critical only), `ImagingReportReleased` (critical only), `CriticalResultAcknowledged` (closes the critical-result task), `MedicationDoseMissed`, `TransfusionReactionReported`, `EdDispositionDecided` (admit → admission-request task), `PatientDocumentUploaded` (review task for the care team), `StockBelowReorder` (requisition task) | `Task` (source `EVENT`) | `Task.idempotencyKey = <consumer>:<eventId>:<taskType>` (unique, new column; §4) | retry; dead letter if the patient/encounter is not visible in the tenant | no |
 | `notification-dispatch` | critical `LabResultReleased` / `ImagingReportReleased`, `TransfusionReactionReported`, `MedicationDoseMissed`, `TaskCreated` (STAT only) | `Notification` | `Notification (sourceEventId, recipientUserId)` unique (new) | retry; recipient no longer active → processed with no notification | no |
-| `discharge-readiness` | `LabResultReleased`, `ImagingReportReleased`, `MedicationDispensed`, `HospitalInvoiceIssued`, `HospitalPaymentRecorded`, `ClaimDrafted`, `TaskCompleted` | `Discharge` readiness flags via `updateDischargeReadiness` | absolute recompute (the flags are a pure function of current state, so redelivery converges) | retry | **yes** (per admission: a late-arriving older event must not overwrite a newer recompute; recompute reads current state, so ordering only matters for the audit trail) |
+| `discharge-readiness` | `LabResultReleased`, `ImagingReportReleased`, `MedicationDispensed`, `DocumentGenerated` (discharge summary), `HospitalInvoiceIssued`, `HospitalPaymentRecorded`, `ClaimDrafted`, `PreauthDecided`, `ClaimSettled`, `TaskCompleted` | `Discharge` readiness flags via `updateDischargeReadiness` | absolute recompute (the flags are a pure function of current state, so redelivery converges) | retry | **yes** (per admission: a late-arriving older event must not overwrite a newer recompute; recompute reads current state, so ordering only matters for the audit trail) |
 | `claim-drafting` | `HospitalInvoiceIssued` (encounter with ACTIVE coverage) | `Claim` draft via `createClaimDraft` | `Claim (invoiceId)` unique for non-void claims (existing guard, made a partial unique index) | no coverage → processed, nothing written; preauth missing → draft with a blocker (never submitted automatically) | no |
 | `abdm-care-context` | `PatientDischarged`, `LabResultReleased`, `ImagingReportReleased` (patients with a linked ABHA and a live consent) | `HealthInformationExchange` (OUTBOUND, REQUESTED) via `requestExchange` | HIE `(facilityId, idempotencyKey)` with key = `care-context:<eventId>` | consent revoked → processed, nothing sent (re-checked through `@/lib/consent`); ABDM down → retry | **yes** (per patient) |
 | `mar-scheduler` | `MedicationVerified` | `MedicationAdministration` schedule rows (status SCHEDULED) | `(medicationOrderId, scheduledAt)` unique (new) | retry; order no longer active when it runs → processed, nothing scheduled | **yes** (per order) |
+
+**Reserved for Week 4 (design only, not built in Week 3)**
+
+| Consumer | Subscribes to | Writes | Idempotency key | Failure / retry / dead letter | Ordered per aggregate |
+|---|---|---|---|---|---|
+| `rag-indexer` | `ClinicalNoteSigned`, `LabResultReleased`, `ImagingReportReleased`, `PatientDocumentUploaded`, `DocumentGenerated`, `PatientDischarged`, `ConsentRevoked`, `FamilyAccessRevoked` | the patient's retrieval index (chunks + embeddings, pgvector) and its access list | chunk key = (sourceType, sourceId, chunkNo); one index row per source, replaced in place | retry (embedding provider down); dead letter on a source the tenant can't read | **yes** (per aggregate: an amendment must not be overtaken by its predecessor) |
+
+- **Amendments replace.** `ClinicalNoteSigned` with `supersedesNoteId`, an
+  amended lab result or report: the consumer deletes the superseded source's
+  chunks and indexes the new one in one transaction, so retrieval never sees
+  both versions.
+- **Revocations remove access.** `ConsentRevoked` removes the consent's
+  recipients from the access list of every chunk it covered;
+  `FamilyAccessRevoked` removes the delegate. Retrieval filters by the access
+  list at query time as well, so a revocation is effective even before the
+  consumer runs; the consumer makes it durable and auditable.
+- **IDs only in events.** The consumer re-reads the source through its owning
+  service (with tenancy checks) to get the text; events never carry it.
 
 Note on `mar-scheduler`: today `generateAdministrationSchedule` runs right
 after `createMedicationOrder` commits (outside its transaction). Phase B
@@ -243,13 +294,24 @@ one route).
 0 s when it hit a batch limit; it stops cleanly on SIGINT/SIGTERM after the
 current tick. Development and the replay test use it.
 
-**Staging/production:** `POST /api/cron/tick` (Vercel Cron, every minute;
-Supabase is the database). Authenticated by `CRON_SECRET` in the
-`Authorization` header (constant-time compare), not by a user session, and
-refused unless `NODE_ENV=production` or `ALLOW_CRON_ROUTE=1`. `budgetMs:
-50_000` keeps it inside the function limit. The existing platform-operator
-routes (`enterprise/events/dispatch`, `enterprise/workflow-ops/tick`) stay as
-manual triggers.
+**Staging/production:** `POST /api/cron/tick`, **trigger-agnostic**: it runs
+one bounded tick for whoever calls it with the secret. Authenticated by
+`CRON_SECRET` in the `Authorization: Bearer` header (constant-time compare),
+not by a user session; refused when `CRON_SECRET` is unset. `budgetMs: 50_000`
+keeps it inside the function limit. The existing platform-operator routes
+(`enterprise/events/dispatch`, `enterprise/workflow-ops/tick`) stay as manual
+triggers.
+
+- **Staging trigger:** Vercel Hobby allows only a daily cron, so staging uses
+  **Supabase `pg_cron` + `pg_net`**: a `cron.schedule` job, every minute,
+  `net.http_post`s to `/api/cron/tick` with the secret. This is ops
+  configuration, documented step by step in `docs/STAGING_SUPABASE.md`, not a
+  Prisma migration. It is **the one documented exception** to "extensions are
+  enabled by migrations": `pg_cron` and `pg_net` are staging infrastructure
+  that drives the app from outside, not part of the app's schema, and the app
+  must work without them (local runs use `npm run worker`).
+- **Production option later:** Vercel Pro cron (every minute) calling the same
+  route. Nothing in the app changes.
 
 ### 3.2 Batch size and concurrency
 
@@ -266,8 +328,26 @@ manual triggers.
 
 Today the dispatcher claims with a guarded `UPDATE … WHERE status IN
 (PENDING, RETRY)` plus a claim token. That is safe (one winner), but every
-concurrent worker reads the same candidate list and loses most claims. Phase
-B switches the claim to one statement:
+concurrent worker reads the same candidate list and loses most claims, and it
+orders by `occurredAt`, which can't order events from one transaction:
+`now()` is the transaction start time, so every event in a transaction has the
+same `occurredAt`.
+
+**Order key.** `DomainEventOutbox` gains `seq BIGINT GENERATED ALWAYS AS
+IDENTITY`: monotonic in insert order, so two events emitted in one transaction
+keep the order they were emitted in. Claims order by `seq`, never by
+`occurredAt`. The ordering lookup is indexed:
+`CREATE INDEX … ON "DomainEventOutbox" ("aggregateType", "aggregateId", seq)
+WHERE status IN ('PENDING', 'RETRY', 'PROCESSING')` (partial, so finished
+events don't grow it).
+
+**One ordering key: the aggregate.** Ordering is enforced in the claim, per
+(aggregateType, aggregateId), and nowhere else. No consumer orders by
+`correlationId` or any other key; the consumers marked *ordered* in §2
+(including `workflow-engine`) re-read current state when they run, so
+per-aggregate order is all they need.
+
+Phase B switches the claim to one statement:
 
 ```sql
 UPDATE "DomainEventOutbox" o SET status = 'PROCESSING', "claimToken" = $token,
@@ -279,9 +359,9 @@ WHERE o.id IN (
       SELECT 1 FROM "DomainEventOutbox" e
       WHERE e."aggregateType" = "DomainEventOutbox"."aggregateType"
         AND e."aggregateId" = "DomainEventOutbox"."aggregateId"
-        AND e."occurredAt" < "DomainEventOutbox"."occurredAt"
+        AND e.seq < "DomainEventOutbox".seq
         AND e.status IN ('PENDING', 'RETRY', 'PROCESSING'))
-  ORDER BY "occurredAt", id
+  ORDER BY seq
   FOR UPDATE SKIP LOCKED
   LIMIT $batch)
 RETURNING id;
@@ -319,6 +399,9 @@ RETURNING id;
   follow-up task and alert. A nurse can still record the dose late; that
   writes a new administration row linked to the missed one, never rewriting
   it (the missed fact stays auditable).
+- **Delegation expiry:** the same sweep expires family delegations past
+  `expiresAt` (guarded update) and emits `FamilyAccessRevoked` with
+  `reason: EXPIRED`.
 - **Due soon** is not an event: it is a read (nurse task list query on
   `scheduledAt` within the next window), as today.
 
@@ -480,9 +563,11 @@ caused by):
 | 6 Admit | `admitPatient` | `AdmissionCreated` |
 | 7 ICU | `transferWithinIcu` (ward bed → ICU bed) | `PatientTransferred`, `IcuAdmitted` → `ChargePosted` (ICU fee) |
 | 8 Labs | `placeLabOrder` … `verifyResult` (critical) | `LabOrderPlaced`, `ChargePosted` (in-tx), `SpecimenCollected`, `LabResultReleased` → `TaskCreated` (critical result) + notification |
+| 8a Critical acknowledgement | `acknowledgeResult` | `CriticalResultAcknowledged` → `TaskCompleted` (the critical-result task closes) |
+| 8b Outside report | `uploadPatientDocument` (patient portal, PDF) | `PatientDocumentUploaded` → `TaskCreated` (care-team review) |
 | 9 OT | `requestSurgery`, `scheduleSurgery`, `startProcedure`, `recordItemUsage`, `completeProcedure` | `SurgeryRequested`, `SurgeryScheduled`, `ProcedureStarted`, `SurgeryItemUsed` → `ChargePosted` (consumable) + stock movement, `ProcedureCompleted` → `ChargePosted` (procedure) |
 | 10 Step-down | `transferPatient` (ICU → ward) | `PatientTransferred` |
-| 11 Discharge | `initiateDischarge`, readiness, `finalizeDischarge` | `DischargeInitiated` → `TaskCreated` (discharge prep), `PatientDischarged`, `ChargePosted` (bed-days, in-tx), `EncounterClosed` |
+| 11 Discharge | `initiateDischarge`, discharge summary, readiness, `finalizeDischarge` | `DischargeInitiated` → `TaskCreated` (discharge prep), `DocumentGenerated` (discharge summary), `PatientDischarged`, `ChargePosted` (bed-days, in-tx), `EncounterClosed` |
 | 12 Invoice | `draftInvoiceForAccount`, `issueInvoice` | `HospitalInvoiceIssued` → `ClaimDrafted` (patient has coverage) |
 | 13 Claim draft | (by the consumer) | `ClaimDrafted` (not submitted: submission stays a human action) |
 
@@ -496,6 +581,10 @@ caused by):
   (`replay.ts`) and run the runner again → no new rows anywhere (charges,
   tasks, stock entries, claims, notifications are unchanged in count).
 - Invoice total = sum of the expected charges, each source charged once.
+- The critical-result task created in step 8 is COMPLETED by step 8a, and
+  `minutesToAcknowledge` in the event matches the stored timestamps.
+- The uploaded document from step 8b appears in the Hospital OS document list
+  and has exactly one review task.
 - The claim draft references that invoice and is not submitted.
 - Tenancy: a parallel journey in another facility produces no rows visible
   to the first, and its events never reach the first facility's consumers'
@@ -518,7 +607,8 @@ caused by):
 | 9 | **Route handlers emitting** (registration, encounters, orders) escape the CI rule | move them into services first (phase B step 1); the route allowlist in §6 must reach zero |
 | 10 | **Outbox growth** | retention: archive PROCESSED events older than 90 days (phase C), keep dead letters until resolved |
 | 11 | **Cron overlap** on Vercel | `SKIP LOCKED` + idempotent consumers make overlap harmless |
-| 12 | **The 36 planned events differ from the plan's table** | §1.2 is derived from code; reconcile in review before phase B |
+| 12 | **The planned events differ from the plan's table** | §1.2 #19–#54 are derived from code; reconcile before the step that wires them |
+| 13 | **`pg_cron` job missing or pointed at the wrong URL** on staging | `docs/STAGING_SUPABASE.md` includes a check query (`cron.job_run_details`) and the oldest-pending-age health alert catches a stopped trigger |
 
 ---
 
@@ -526,25 +616,38 @@ caused by):
 
 Each step is its own commit with its gate; verify:all stays green after each.
 
-1. **Runner skeleton:** `runTick`, `npm run worker`, `/api/cron/tick`,
-   `SKIP LOCKED` claim with per-aggregate ordering, stale-claim reaper;
-   consumer registration inside `runTick`. Fix `runAction`'s missing `tx`.
-   Wire `PaymentFailed`.
+1. **Runner skeleton:** `runTick`, `npm run worker`, trigger-agnostic
+   `/api/cron/tick`, the outbox `seq` column and its partial index, the
+   `SKIP LOCKED` claim with per-aggregate ordering by `seq`, the stale-claim
+   reaper; consumer registration inside `runTick`. Fix `runAction`'s missing
+   `tx`. Wire `PaymentFailed`. `docs/STAGING_SUPABASE.md` gets the `pg_cron` +
+   `pg_net` trigger.
 2. **CI rule (§6)** with the current exemptions and route allowlist, so every
    later step is held to it.
 3. **Services out of routes:** `registerPatient`, `openEncounter`,
    `placeLabOrder`, `placeImagingOrder`; move their emits.
-4. **ADT events** (19–30) and the `task-generator` consumer for admission and
-   discharge.
+4. **ADT events** (19–30) plus `EdDispositionDecided` (62), and the
+   `task-generator` consumer for admission, disposition and discharge.
 5. **D6 Task merge** (§4); `TaskCreated`/`TaskCompleted`.
-6. **Orders, results, medication events** (31–38); `mar-scheduler` and the
-   MAR sweep; `notification-dispatch` for critical results and missed doses.
-7. **OT and blood events** (39–46) with the `charge-capture` and
+6. **Orders, results, medication events** (31–38) plus
+   `CriticalResultAcknowledged` (57); `mar-scheduler` and the MAR sweep;
+   `notification-dispatch` for critical results and missed doses.
+7. **Documents and family access:** `PatientDocumentUploaded` (55),
+   `DocumentGenerated` (56), `ClinicalNoteSigned` with `supersedesNoteId` (49),
+   `FamilyAccessGranted`/`Revoked` (60–61) and delegation expiry in the sweep.
+8. **OT and blood events** (39–46) with the `charge-capture` and
    `stock-movement` consumers (new charges only; §5.2).
-8. **Billing events** (50–54); `discharge-readiness` and `claim-drafting`
-   consumers.
-9. **`abdm-care-context`** consumer (behind the ABDM environment switch).
-10. **Core-journey replay test (§7)** in `verify:all`; then retention.
+9. **Billing events** (50–54) plus `PreauthDecided` (58) and `ClaimSettled`
+   (59); `discharge-readiness` and `claim-drafting` consumers.
+10. **Core-journey replay test (§7)** complete in `verify:all`; retention.
+
+**Cut list** (built if Week 3 has room; nothing earlier depends on them):
+
+- `StockBelowReorder` (63) and `GoodsReceived` (64), with the requisition
+  task in `task-generator`.
+- The `abdm-care-context` consumer (behind the ABDM environment switch).
+
+The `rag-indexer` (§2) is Week 4.
 
 The replay test is written early as a skeleton (step 1) and grows a step at a
 time, so each wiring step lengthens the asserted chain.
