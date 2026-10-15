@@ -3800,8 +3800,11 @@ model Task {
   encounterId        String?
   owner              HospitalStaffProfile? @relation("TaskOwner", fields: [ownerStaffId], references: [id])
   ownerStaffId       String?
-  createdBy          HospitalStaffProfile  @relation("TaskCreatedBy", fields: [createdByStaffId], references: [id])
-  createdByStaffId   String
+  /// Null for a task created by the system (an event consumer); see source.
+  createdBy          HospitalStaffProfile? @relation("TaskCreatedBy", fields: [createdByStaffId], references: [id], onDelete: Restrict)
+  createdByStaffId   String?
+  /// Set by event consumers (workflow spine §2): one task per key per facility.
+  idempotencyKey     String?
   completedBy        HospitalStaffProfile? @relation("TaskCompletedBy", fields: [completedByStaffId], references: [id])
   completedByStaffId String?
   completedAt        DateTime?
@@ -3821,6 +3824,7 @@ model Task {
   // this task (brief §12). Nullable: most interventions never create a task.
   carePlanInterventions CarePlanIntervention[] @relation("InterventionTask")
 
+  @@unique([facilityId, idempotencyKey])
   @@index([facilityId])
   @@index([status])
   @@index([orderId])

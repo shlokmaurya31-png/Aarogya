@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { BedStatus } from "@prisma/client";
 import { transitionBed, InvalidBedTransitionError } from "./bed";
 import { admitPatient } from "./admission";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 /**
  * Admission-request layer (brief §28-32) — sits ON TOP of the existing
@@ -52,6 +53,10 @@ export async function createAdmissionRequest(input: {
     await tx.auditEvent.create({
       data: { type: "hospital.admissionRequest.created", userId: input.byUserId, detail: { requestId: request.id, patientId: input.patientId } },
     });
+    await emitFacilityEvent(tx, {
+      type: "AdmissionRequested", aggregateId: request.id, facilityId: input.facilityId, actorUserId: input.byUserId, encounterId: input.encounterId,
+      payload: { admissionRequestId: request.id, encounterId: input.encounterId, patientId: input.patientId, priority: request.priority },
+    });
     return request;
   });
 }
@@ -70,6 +75,10 @@ export async function allocateBed(requestId: string, bedId: string, reviewedBySt
     });
     await tx.auditEvent.create({
       data: { type: "hospital.admissionRequest.bedReserved", userId: byUserId, detail: { requestId, bedId } },
+    });
+    await emitFacilityEvent(tx, {
+      type: "BedReserved", aggregateId: requestId, facilityId: request.facilityId, actorUserId: byUserId, encounterId: request.encounterId,
+      payload: { admissionRequestId: requestId, bedId, patientId: request.patientId },
     });
     return updated;
   });

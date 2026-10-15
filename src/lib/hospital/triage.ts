@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { isEncounterTransitionAllowed } from "./encounterStateMachine";
 import { parseOptionalEnum } from "@/lib/enumValue";
 import { $Enums } from "@prisma/client";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 /**
  * Records a triage assessment (brief §19-20). The clinician/nurse records
@@ -73,6 +74,13 @@ export async function recordTriage(input: {
       updateData.status = "TRIAGED";
     }
     await tx.encounter.update({ where: { id: input.encounterId }, data: updateData });
+    // A draft is not a triage decision; only COMPLETED/AMENDED assessments are events.
+    if (assessment.status !== "DRAFT") {
+      await emitFacilityEvent(tx, {
+        type: "PatientTriaged", aggregateId: input.encounterId, facilityId: encounter.facilityId, actorUserId: input.byUserId, encounterId: input.encounterId,
+        payload: { triageId: assessment.id, encounterId: input.encounterId, patientId: encounter.patientId, acuity: input.acuity },
+      });
+    }
 
     await tx.auditEvent.create({
       data: { type: "hospital.triage.recorded", userId: input.byUserId, detail: { encounterId: input.encounterId, acuity: input.acuity, assignedArea: input.assignedArea } },

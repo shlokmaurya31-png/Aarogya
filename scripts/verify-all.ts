@@ -101,6 +101,7 @@ const ORDER = [
   // Week 3: workflow spine
   "verify-postgres-runner",
   "verify-postgres-services-out-of-routes",
+  "verify-postgres-adt-events",
   "verify-postgres-problem-list",
   // Runs last among the gates: checks every row the earlier gates created.
   "verify-postgres-facility-consistency",

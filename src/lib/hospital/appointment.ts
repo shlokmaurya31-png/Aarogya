@@ -3,6 +3,7 @@ import type { AppointmentType, AccessSource, RequestPriority } from "@prisma/cli
 import { emitDomainEvent } from "@/lib/events/emit";
 import { facilityOrganizationId } from "@/lib/events/tenant";
 import { assertBookable } from "./bookability";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 export class SlotConflictError extends Error {
   constructor() {
@@ -176,6 +177,10 @@ export async function cancelAppointment(appointmentId: string, reason: string, c
       data: { status: "CANCELLED", cancelledReason: reason, cancelledAt: new Date(), cancelledByStaffId },
     });
     await tx.auditEvent.create({ data: { type: "hospital.appointment.cancelled", userId: byUserId, detail: { appointmentId, reason } } });
+    await emitFacilityEvent(tx, {
+      type: "AppointmentCancelled", aggregateId: appointmentId, facilityId: appt.facilityId, actorUserId: byUserId, encounterId: appt.encounterId,
+      payload: { appointmentId, patientId: appt.patientId, byPatient: cancelledByStaffId.startsWith("patient:") },
+    });
     return updated;
   });
 }
@@ -221,6 +226,10 @@ export async function checkInAppointment(appointmentId: string, byUserId: string
         },
       });
       encounterId = encounter.id;
+      await emitFacilityEvent(tx, {
+        type: "EncounterOpened", aggregateId: encounter.id, facilityId: appt.facilityId, actorUserId: byUserId, encounterId: encounter.id,
+        payload: { encounterId: encounter.id, patientId: appt.patientId, encounterType: encounter.type, accessSource: encounter.accessSource ?? undefined },
+      });
     }
 
     const updated = await tx.appointment.update({
@@ -228,6 +237,10 @@ export async function checkInAppointment(appointmentId: string, byUserId: string
       data: { status: "CHECKED_IN", encounterId },
     });
     await tx.auditEvent.create({ data: { type: "hospital.appointment.checkedIn", userId: byUserId, detail: { appointmentId, encounterId } } });
+    await emitFacilityEvent(tx, {
+      type: "PatientCheckedIn", aggregateId: appointmentId, facilityId: appt.facilityId, actorUserId: byUserId, encounterId,
+      payload: { appointmentId, patientId: appt.patientId, encounterId: encounterId ?? undefined },
+    });
     return { appointment: updated, encounterId };
   });
 }

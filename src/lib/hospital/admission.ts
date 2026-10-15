@@ -8,6 +8,7 @@ import { createPricedChargeIfNotExists } from "./billing/chargeCapture";
 import { PriceNotFoundError } from "./billing/pricing";
 import { ceilStayDays } from "./billing/money";
 import { BedConcurrencyError } from "./bed";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 export class BedNotAvailableError extends Error {
   constructor() {
@@ -96,8 +97,10 @@ export async function admitPatient(input: {
       organizationId: await facilityOrganizationId(tx, bed.facilityId),
       facilityId: bed.facilityId,
       actorUserId: input.byUserId,
+      correlationId: input.encounterId,
       payload: { admissionId: created.id, encounterId: input.encounterId, patientId: encounter.patientId, bedId: input.bedId },
     });
+    await emitIcuAdmittedIfEntering(tx, { toBed: bed, fromBed: null, admissionId: created.id, encounterId: input.encounterId, patientId: encounter.patientId, facilityId: bed.facilityId, byUserId: input.byUserId });
 
     return { admission: created, auditContext: { facilityId: bed.facilityId, patientId: encounter.patientId } };
   });
@@ -182,8 +185,30 @@ export async function transferPatientInTx(tx: Prisma.TransactionClient, input: T
       },
     });
 
+    await emitIcuAdmittedIfEntering(tx, { toBed, fromBed, admissionId: input.admissionId, encounterId: admission.encounterId, patientId: admission.encounter.patientId, facilityId: admission.encounter.facilityId, byUserId: input.byUserId });
+    await emitFacilityEvent(tx, {
+      type: "PatientTransferred", aggregateId: input.admissionId, facilityId: admission.encounter.facilityId, actorUserId: input.byUserId, encounterId: admission.encounterId,
+      payload: { transferId: created.id, admissionId: input.admissionId, encounterId: admission.encounterId, patientId: admission.encounter.patientId, fromLocationId: open?.id, toLocationId: opened.id },
+    });
     return { transfer: created, auditContext: { facilityId: admission.encounter.facilityId, patientId: admission.encounter.patientId, encounterId: admission.encounterId } };
   }
+}
+
+/**
+ * IcuAdmitted (workflow spine §1.2 #27): emitted wherever a patient lands in an
+ * ICU-capable bed from a non-ICU bed (or from no bed) — a direct ICU
+ * admission, a ward-to-ICU transfer, or an ED disposition to ICU — in that
+ * transaction. ICU-to-ICU moves are transfers only.
+ */
+export async function emitIcuAdmittedIfEntering(
+  tx: Prisma.TransactionClient,
+  input: { toBed: { icuCapable: boolean }; fromBed: { icuCapable: boolean } | null; admissionId: string; encounterId: string; patientId: string; facilityId: string; byUserId: string },
+) {
+  if (!input.toBed.icuCapable || input.fromBed?.icuCapable) return;
+  await emitFacilityEvent(tx, {
+    type: "IcuAdmitted", aggregateId: input.admissionId, facilityId: input.facilityId, actorUserId: input.byUserId, encounterId: input.encounterId,
+    payload: { admissionId: input.admissionId, encounterId: input.encounterId, patientId: input.patientId, viaTransfer: input.fromBed !== null },
+  });
 }
 
 /** Include for reading a Transfer's from/to beds and time (from its EncounterLocation rows). */
@@ -200,8 +225,15 @@ export function transferRouteLabel(t: Prisma.TransferGetPayload<{ include: typeo
 
 /** Initiates the discharge workflow (brief §36) — creates a Discharge row with readiness flags, all false initially. Does NOT free the bed yet; that happens at finalizeDischarge(). */
 export async function initiateDischarge(admissionId: string, byUserId: string, initiatedByStaffId?: string) {
-  const discharge = await prisma.discharge.create({ data: { admissionId, initiatedByStaffId } });
-  const admission = await prisma.admission.findUnique({ where: { id: admissionId }, include: { encounter: true } });
+  const { discharge, admission } = await prisma.$transaction(async (tx) => {
+    const admission = await tx.admission.findUniqueOrThrow({ where: { id: admissionId }, include: { encounter: true } });
+    const discharge = await tx.discharge.create({ data: { admissionId, initiatedByStaffId } });
+    await emitFacilityEvent(tx, {
+      type: "DischargeInitiated", aggregateId: discharge.id, facilityId: admission.encounter.facilityId, actorUserId: byUserId, encounterId: admission.encounterId,
+      payload: { dischargeId: discharge.id, admissionId, encounterId: admission.encounterId, patientId: admission.encounter.patientId },
+    });
+    return { discharge, admission };
+  });
   await recordAuditEvent(
     "hospital.discharge.initiated",
     byUserId,
@@ -286,6 +318,10 @@ export async function finalizeDischarge(dischargeId: string, byUserId: string, d
       where: { id: discharge.admission.encounterId },
       data: { status: EncounterStatus.DISCHARGED, closedAt: new Date() },
     });
+    const ev = { facilityId: discharge.admission.encounter.facilityId, actorUserId: byUserId, encounterId: discharge.admission.encounterId };
+    const ids = { encounterId: discharge.admission.encounterId, patientId: discharge.admission.encounter.patientId };
+    await emitFacilityEvent(tx, { ...ev, type: "PatientDischarged", aggregateId: dischargeId, payload: { dischargeId, admissionId: discharge.admission.id, ...ids } });
+    await emitFacilityEvent(tx, { ...ev, type: "EncounterClosed", aggregateId: ids.encounterId, payload: { ...ids, toStatus: EncounterStatus.DISCHARGED } });
 
     return {
       discharge: updated,

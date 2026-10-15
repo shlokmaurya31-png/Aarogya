@@ -51,6 +51,72 @@ export const EVENT_CONTRACTS: EventContract[] = [
     sensitivity: "INTERNAL", producer: "admissions (admitPatient)",
     payload: z.object({ admissionId: id, encounterId: id, patientId: id, bedId: optId }).strict(),
   }),
+  // ── ADT, scheduling and ED (workflow spine §1.2 #19–30, #62) ─────────────
+  contract({
+    type: "EncounterOpened", version: 1, aggregateType: "ENCOUNTER", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "encounters (openEncounter)",
+    payload: z.object({ encounterId: id, patientId: id, encounterType: id, accessSource: optId }).strict(),
+  }),
+  contract({
+    type: "EdArrivalRegistered", version: 1, aggregateType: "ENCOUNTER", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "emergency (registerEdArrival)",
+    payload: z.object({ encounterId: id, patientId: id, arrivalMode: optId, traumaIndicator: z.boolean() }).strict(),
+  }),
+  contract({
+    type: "PatientCheckedIn", version: 1, aggregateType: "APPOINTMENT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "scheduling (checkInAppointment)",
+    payload: z.object({ appointmentId: id, patientId: id, encounterId: optId }).strict(),
+  }),
+  contract({
+    type: "AppointmentCancelled", version: 1, aggregateType: "APPOINTMENT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "scheduling (cancelAppointment)",
+    payload: z.object({ appointmentId: id, patientId: id, byPatient: z.boolean() }).strict(),
+  }),
+  contract({
+    type: "PatientTriaged", version: 1, aggregateType: "ENCOUNTER", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "triage (recordTriage, COMPLETED only)",
+    payload: z.object({ triageId: id, encounterId: id, patientId: id, acuity: z.number().int().min(1).max(5) }).strict(),
+  }),
+  contract({
+    type: "AdmissionRequested", version: 1, aggregateType: "ADMISSION_REQUEST", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "admission requests (createAdmissionRequest)",
+    payload: z.object({ admissionRequestId: id, encounterId: id, patientId: id, priority: id }).strict(),
+  }),
+  contract({
+    type: "BedReserved", version: 1, aggregateType: "ADMISSION_REQUEST", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "admission requests (allocateBed)",
+    payload: z.object({ admissionRequestId: id, bedId: id, patientId: id }).strict(),
+  }),
+  contract({
+    type: "PatientTransferred", version: 1, aggregateType: "ADMISSION", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "admissions (transferPatientInTx)",
+    payload: z.object({ transferId: id, admissionId: id, encounterId: id, patientId: id, fromLocationId: optId, toLocationId: id }).strict(),
+  }),
+  contract({
+    type: "IcuAdmitted", version: 1, aggregateType: "ADMISSION", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "ICU (admitToIcu, transferWithinIcu into an ICU bed)",
+    payload: z.object({ admissionId: id, encounterId: id, patientId: id, icuUnitId: optId, viaTransfer: z.boolean() }).strict(),
+  }),
+  contract({
+    type: "DischargeInitiated", version: 1, aggregateType: "DISCHARGE", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "admissions (initiateDischarge)",
+    payload: z.object({ dischargeId: id, admissionId: id, encounterId: id, patientId: id }).strict(),
+  }),
+  contract({
+    type: "PatientDischarged", version: 1, aggregateType: "DISCHARGE", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "admissions (finalizeDischarge)",
+    payload: z.object({ dischargeId: id, admissionId: id, encounterId: id, patientId: id }).strict(),
+  }),
+  contract({
+    type: "EncounterClosed", version: 1, aggregateType: "ENCOUNTER", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "encounter state machine (transitionEncounter, terminal status)",
+    payload: z.object({ encounterId: id, patientId: id, toStatus: id }).strict(),
+  }),
+  contract({
+    type: "EdDispositionDecided", version: 1, aggregateType: "ENCOUNTER", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "emergency (dispositionEncounter)",
+    payload: z.object({ dispositionId: id, encounterId: id, patientId: id, dispositionType: id }).strict(),
+  }),
   contract({
     type: "MedicationOrdered", version: 1, aggregateType: "MEDICATION_ORDER", scope: "FACILITY",
     sensitivity: "INTERNAL", producer: "medication lifecycle (createMedicationOrder)",
