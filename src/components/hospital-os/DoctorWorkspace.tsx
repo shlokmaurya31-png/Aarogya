@@ -8,10 +8,11 @@ import { StatusPill } from "@/components/ui/StatusPill";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { HandoffInbox } from "@/components/hospital-os/shared/HandoffInbox";
+import { ageLabel } from "@/lib/patient/age";
 
 interface Encounter {
   id: string; type: string; status: string; chiefComplaint: string | null; triageLevel: number | null;
-  patient: { id: string; fullName: string; uhid: string; ageYears: number | null; sex: string };
+  patient: { id: string; fullName: string; uhid: string; dob: string | null; dobPrecision?: string; sex: string };
   admission: { bed: { label: string } } | null;
 }
 interface QueueEntry {
@@ -160,7 +161,7 @@ export function DoctorWorkspace({ staffId }: { staffId?: string }) {
           <Link key={e.id} href={`/hospital-os/doctor/patients/${e.patient.id}?encounterId=${e.id}`}>
             <Card className="flex items-center justify-between rounded-lg transition hover:border-cyan/30">
               <div>
-                <p className="text-[13.5px] font-medium">{e.patient.fullName} <span className="font-normal text-text-tertiary">· {e.patient.ageYears}{e.patient.sex[0]?.toUpperCase()}</span></p>
+                <p className="text-[13.5px] font-medium">{e.patient.fullName} <span className="font-normal text-text-tertiary">· {ageLabel(e.patient)}{e.patient.sex[0]?.toUpperCase()}</span></p>
                 <p className="text-[11.5px] text-text-tertiary">{e.patient.uhid} · {e.chiefComplaint ?? "—"}{e.admission ? ` · Bed ${e.admission.bed.label}` : ""}</p>
               </div>
               <div className="flex items-center gap-1.5">

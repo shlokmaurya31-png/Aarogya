@@ -37,7 +37,7 @@ export async function checkMedicationSafety(
     if (needle.includes(substance) || substance.includes(needle)) {
       flags.push({
         rule: "allergy-conflict",
-        severity: allergy.severity === "severe" ? "danger" : "warning",
+        severity: allergy.severity === "SEVERE" ? "danger" : "warning",
         message: `Patient has a documented ${allergy.severity} allergy to "${allergy.substance}"${allergy.reaction ? ` (reaction: ${allergy.reaction})` : ""}.`,
         sourceId: allergy.id,
       });

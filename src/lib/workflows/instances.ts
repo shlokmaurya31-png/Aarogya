@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, $Enums, type WorkflowInstanceStatus } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { NotFoundError, BadRequestError, ConflictError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
@@ -6,6 +6,7 @@ import { type ActorMemberships } from "@/lib/auth/tenantContext";
 import { requireWorkflowPlatform, assertCanReadWorkflowScope, workflowFacilityWhere } from "./authz";
 import { cancelInstanceTimersTx } from "./timers";
 import { runInstance } from "./engine";
+import { parseEnum } from "@/lib/enumValue";
 
 /**
  * Phase D7 — workflow instance operations (§17/§18): scoped reads, platform-only
@@ -31,7 +32,7 @@ export async function getInstance(m: ActorMemberships, instanceId: string) {
 
 export async function listInstances(m: ActorMemberships, opts?: { organizationId?: string; status?: string; workflowDefinitionId?: string; limit?: number }) {
   const where: Prisma.WorkflowInstanceWhereInput = {};
-  if (opts?.status) where.status = opts.status;
+  if (opts?.status) where.status = parseEnum($Enums.WorkflowInstanceStatus, opts.status, "status");
   if (opts?.workflowDefinitionId) where.workflowDefinitionId = opts.workflowDefinitionId;
   if (m.isPlatformAdmin) {
     if (opts?.organizationId) where.organizationId = opts.organizationId;
@@ -42,7 +43,7 @@ export async function listInstances(m: ActorMemberships, opts?: { organizationId
   return prisma.workflowInstance.findMany({ where, orderBy: { createdAt: "desc" }, take: Math.min(opts?.limit ?? 100, 500), include: { definition: { select: { key: true, name: true } } } });
 }
 
-const NON_TERMINAL = ["RUNNABLE", "RUNNING", "WAITING"];
+const NON_TERMINAL: WorkflowInstanceStatus[] = ["RUNNABLE", "RUNNING", "WAITING"];
 
 /** Platform-only cancellation. Guarded so a concurrent execution converges to CANCELLED. */
 export async function cancelInstance(m: ActorMemberships, instanceId: string, reason: string) {

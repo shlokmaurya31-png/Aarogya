@@ -18,7 +18,7 @@ export default async function HospitalOsLayout({ children }: { children: React.R
     <HospitalShell
       displayName={user.displayName}
       displayRole={user.hospitalStaffProfile?.displayRole ?? "Platform Admin"}
-      facilityName={user.hospitalStaffProfile?.facility.name ?? "All facilities"}
+      facilityName={user.primaryFacility?.name ?? "All facilities"}
       role={user.role}
     >
       {children}

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, NotFoundError, BadRequestError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { syncOrderStatus } from "@/lib/hospital/orderEnvelope";
 
 const VALID_STATUSES = ["ACKNOWLEDGED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "REJECTED"];
 
@@ -25,15 +26,19 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const { status, notes } = body ?? {};
     if (!status || !VALID_STATUSES.includes(status)) throw new BadRequestError(`status must be one of ${VALID_STATUSES.join(", ")}.`);
 
-    const updated = await prisma.referral.update({
-      where: { id },
-      data: {
-        status,
-        notes: notes ?? referral.notes,
-        toStaffId: referral.toStaffId ?? staff?.id,
-        respondedAt: new Date(),
-        acceptedAt: status === "ACKNOWLEDGED" && !referral.acceptedAt ? new Date() : referral.acceptedAt,
-      },
+    const updated = await prisma.$transaction(async (tx) => {
+      const row = await tx.referral.update({
+        where: { id },
+        data: {
+          status,
+          notes: notes ?? referral.notes,
+          toStaffId: referral.toStaffId ?? staff?.id,
+          respondedAt: new Date(),
+          acceptedAt: status === "ACKNOWLEDGED" && !referral.acceptedAt ? new Date() : referral.acceptedAt,
+        },
+      });
+      await syncOrderStatus(tx, "REFERRAL", id);
+      return row;
     });
 
     await recordAuditEvent(

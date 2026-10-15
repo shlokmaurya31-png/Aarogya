@@ -15,6 +15,7 @@ import { draftInvoiceForAccount, addChargeToInvoice, issueInvoice } from "../../
 import { recordPayment, allocatePayment } from "../../src/lib/hospital/billing/payments";
 import { addPatientCoverage } from "../../src/lib/hospital/billing/coverage";
 import { createClaimDraft, submitClaim, recordClaimDecision } from "../../src/lib/hospital/billing/claims";
+import { staffAtFacilityWhere } from "../../src/lib/auth/staffFacility";
 
 const DEMO_CASH_PAYER_NAME = "Cash / Self-Pay";
 const DEMO_INSURER_NAME = "Star Universal Health Insurance (Demo)";
@@ -49,8 +50,8 @@ export async function seedPhase5Billing(prisma: PrismaClient) {
   const effectiveFrom = new Date("2026-01-01");
 
   for (const facility of facilities) {
-    const billingStaff = await prisma.hospitalStaffProfile.findFirst({ where: { facilityId: facility.id, user: { role: "BILLING_STAFF" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
-    const admin = await prisma.hospitalStaffProfile.findFirst({ where: { facilityId: facility.id, user: { role: "HOSPITAL_ADMIN" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+    const billingStaff = await prisma.hospitalStaffProfile.findFirst({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "BILLING_STAFF" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+    const admin = await prisma.hospitalStaffProfile.findFirst({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "HOSPITAL_ADMIN" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
     const createdByUser = billingStaff ?? admin;
     if (!createdByUser) continue; // a facility with neither role seeded has nothing to attribute tariffs to — skip rather than fabricate an actor
     billingStaffByFacility.set(facility.id, { userId: createdByUser.userId });

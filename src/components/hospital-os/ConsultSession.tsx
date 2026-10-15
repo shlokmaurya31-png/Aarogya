@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
+import { ageLabel } from "@/lib/patient/age";
 
 // Mirror of the server windows (src/lib/patient/accessSession.ts).
 const WARN_THRESHOLD_MS = 1000 * 60 * 3;
@@ -15,7 +16,7 @@ const WARN_THRESHOLD_MS = 1000 * 60 * 3;
 interface HistoryData {
   session: { id: string; status: string; redeemedAt: string | null; doctorName: string | null; activeExpiresAt: string | null; extensionCount?: number };
   patient: {
-    id: string; fullName: string; uhid: string; sex: string; ageYears: number | null; bloodGroup: string | null;
+    id: string; fullName: string; uhid: string; sex: string; dob: string | null; dobPrecision?: string; bloodGroup: string | null;
     allergies: { id: string; substance?: string; reaction?: string | null; severity?: string | null }[];
     problems: { id: string; description?: string; name?: string; status?: string | null }[];
     diagnoses: { id: string; description?: string; code?: string | null; createdAt: string }[];
@@ -179,7 +180,7 @@ export function ConsultSession({ sessionId }: { sessionId: string }) {
           <div>
             <p className="text-[14px] font-semibold">{p.fullName} · <span className="font-normal text-text-secondary">{p.uhid}</span></p>
             <p className="text-[12px] text-text-tertiary">
-              {p.sex}{p.ageYears != null ? `, ${p.ageYears}y` : ""}{p.bloodGroup ? ` · ${p.bloodGroup}` : ""} · Access granted by patient code · opened {fmt(data.session.redeemedAt)}
+              {p.sex}{p.dob ? `, ${ageLabel(p)}y` : ""}{p.bloodGroup ? ` · ${p.bloodGroup}` : ""} · Access granted by patient code · opened {fmt(data.session.redeemedAt)}
             </p>
           </div>
         </div>

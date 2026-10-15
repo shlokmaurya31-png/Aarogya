@@ -3,6 +3,8 @@ import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { parseEnum, parseOptionalEnum } from "@/lib/enumValue";
+import { $Enums } from "@prisma/client";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return withApiErrors(async () => {
@@ -32,7 +34,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!substance || !severity) throw new BadRequestError("substance and severity are required.");
 
     const allergy = await prisma.allergy.create({
-      data: { patientId: id, substance, reaction, severity, status: "ACTIVE", verification: body?.verification ?? "UNCONFIRMED" },
+      data: {
+        patientId: id, substance, reaction, status: "ACTIVE",
+        // The chart sends lowercase (mild/moderate/severe); stored as the Severity enum.
+        severity: parseEnum($Enums.Severity, String(severity).toUpperCase(), "severity"),
+        criticality: parseOptionalEnum($Enums.AllergyCriticality, body?.criticality, "criticality"),
+        verification: parseEnum($Enums.AllergyVerification, body?.verification ?? "UNCONFIRMED", "verification"),
+      },
     });
 
     await recordAuditEvent(

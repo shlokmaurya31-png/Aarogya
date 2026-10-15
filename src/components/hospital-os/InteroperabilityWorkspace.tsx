@@ -15,7 +15,7 @@ import type { checkAbdmHealth } from "@/lib/hospital/interoperability/abdm/healt
 import type { describeCallbackRoutes } from "@/lib/hospital/interoperability/abdm/callbacks";
 import type { describeProfileCoverage } from "@/lib/hospital/interoperability/fhir/profiles";
 import type { listExternalIdentifiers } from "@/lib/hospital/interoperability/externalIdentity";
-import type { listConsents } from "@/lib/hospital/interoperability/consent";
+import type { listConsents } from "@/lib/consent";
 import type { listExchanges } from "@/lib/hospital/interoperability/exchange";
 import type { listImportedResources } from "@/lib/hospital/interoperability/fhir/import";
 

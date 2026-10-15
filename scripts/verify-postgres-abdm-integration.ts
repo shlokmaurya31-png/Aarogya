@@ -23,8 +23,9 @@ import { recordProtocolTransition } from "../src/lib/hospital/interoperability/a
 import { isProtocolTransitionAllowed, protocolPermitsDataFetch } from "../src/lib/hospital/interoperability/abdm/protocolState";
 import { createExchange, authorizeExchange, dispatchExchange } from "../src/lib/hospital/interoperability/exchange";
 import { StubExchangeAdapter } from "../src/lib/hospital/interoperability/adapters/abdm";
-import { requestConsent, grantConsent, revokeConsent } from "../src/lib/hospital/interoperability/consent";
+import { requestConsent, grantConsent, revokeConsent } from "../src/lib/consent";
 import { resetRateLimiter } from "../src/lib/hospital/interoperability/abdm/rateLimit";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
 let pass = 0, fail = 0;
@@ -77,7 +78,7 @@ async function main() {
 
   const facA = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
   const facB = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Noida Hospital" } });
-  const a1 = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facA.id, status: "ACTIVE" } });
+  const a1 = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facA.id), status: "ACTIVE" } });
   const patA = await prisma.patient.findFirstOrThrow({ where: { facilityId: facA.id } });
 
   console.log(`\n=== A=${facA.name} / B=${facB.name} ===\n`);

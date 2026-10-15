@@ -1,30 +1,20 @@
 import { NextRequest } from "next/server";
-import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
-import { withApiErrors, NotFoundError } from "@/lib/auth/rbac";
+import { withApiErrors } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { revokeConsent } from "@/lib/consent";
 
-/** Revocation (brief §27's REVOKED status) — a consent is never deleted, only transitioned. */
+/** Revocation — a consent is never deleted, only transitioned (via the consent service). */
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return withApiErrors(async () => {
     const { id } = await params;
     const body = await req.json().catch(() => null);
-    const { session, facilityId } = await requireFacilityStaff("consent:manage", body?.facilityId);
-
-    const consent = await prisma.consent.findUnique({ where: { id }, include: { patient: true } });
-    if (!consent || consent.patient.facilityId !== facilityId) throw new NotFoundError("Consent not found.");
-
-    const updated = await prisma.consent.update({
-      where: { id },
-      data: { status: "REVOKED", revokedAt: new Date() },
+    const { session, facilityId, staff } = await requireFacilityStaff("consent:manage", body?.facilityId);
+    const consent = await revokeConsent({
+      facilityId, consentId: id, reason: typeof body?.reason === "string" ? body.reason : undefined,
+      revokedByStaffId: staff?.id, byUserId: session.userId,
     });
-
-    await recordAuditEvent(
-      "hospital.consent.revoked",
-      session.userId,
-      { consentId: id },
-      { facilityId, patientId: consent.patient.id }
-    );
-    return { consent: updated };
+    await recordAuditEvent("hospital.consent.revoked", session.userId, { consentId: id }, { facilityId, patientId: consent.patientId });
+    return { consent };
   });
 }

@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { listPatientIdentifiers } from "@/lib/patient/identifiers";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return withApiErrors(async () => {
@@ -16,7 +17,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       include: { identifiers: true, emergencyContacts: { orderBy: { priority: "asc" } } },
     });
     if (!patient || patient.facilityId !== facilityId) throw new NotFoundError("Patient not found.");
-    return { patient };
+    const { externalIdentifiers } = await listPatientIdentifiers(facilityId, id);
+    return { patient: { ...patient, externalIdentifiers } };
   });
 }
 

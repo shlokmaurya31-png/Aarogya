@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import type { Prisma } from "@prisma/client";
+import { isStaffInFacility } from "@/lib/auth/staffFacility";
 
 /**
  * Shared helpers for the Phase B9 Hospital Operations layer. All lifecycles are
@@ -87,7 +88,7 @@ export function isTransitionAllowed(map: Record<string, string[]>, from: string,
 /** Validates that a staff id is an ACTIVE profile of the given facility. Never trusts a client-supplied staff id. */
 export async function assertStaffActiveInFacility(db: Tx | typeof prisma, staffId: string, facilityId: string) {
   const staff = await db.hospitalStaffProfile.findUnique({ where: { id: staffId } });
-  if (!staff || staff.facilityId !== facilityId) throw new NotFoundError("Staff member not found in this facility.");
+  if (!staff || !(await isStaffInFacility(db, staff.id, facilityId))) throw new NotFoundError("Staff member not found in this facility.");
   if (staff.status !== "ACTIVE") throw new BadRequestError("Staff member is not active.");
   return staff;
 }

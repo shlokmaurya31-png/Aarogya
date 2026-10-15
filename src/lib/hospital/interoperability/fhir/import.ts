@@ -8,6 +8,8 @@ import {
   parseFhirPayload, validateResource, validateBundle, readIdentifiers,
   stripUntrustedMeta, FhirValidationError, type ValidatedResource,
 } from "./validate";
+import { parseEnum } from "@/lib/enumValue";
+import { $Enums } from "@prisma/client";
 
 /**
  * Phase C1 — controlled FHIR import.
@@ -300,7 +302,7 @@ export async function importFhirPayload(req: ImportRequest): Promise<ImportResul
 /** Review queue for staged resources that need a human decision. */
 export async function listImportedResources(args: { facilityId: string; status?: string }) {
   return prisma.importedResource.findMany({
-    where: { facilityId: args.facilityId, ...(args.status ? { status: args.status } : {}) },
+    where: { facilityId: args.facilityId, ...(args.status ? { status: parseEnum($Enums.ImportedResourceStatus, args.status, "status") } : {}) },
     orderBy: { receivedAt: "desc" },
     take: 200,
   });

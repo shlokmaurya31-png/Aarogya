@@ -1,6 +1,8 @@
+import { $Enums } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError, ConflictError } from "../rbac";
 import { recordAuditEvent } from "../audit";
+import { parseEnum } from "@/lib/enumValue";
 
 /**
  * Phase C4 — privacy request workflow.
@@ -138,7 +140,7 @@ export async function transitionPrivacyRequest(input: {
     const r = await tx.privacyRequest.updateMany({
       where: { id: request.id, status: request.status, version: request.version },
       data: {
-        status: input.to,
+        status: parseEnum($Enums.PrivacyRequestStatus, input.to, "status"),
         version: { increment: 1 },
         ...(["APPROVED", "REJECTED"].includes(input.to)
           ? { reviewedByUserId: input.byUserId, reviewedAt: new Date(), decisionNote: input.decisionNote }
@@ -211,7 +213,7 @@ export async function listPrivacyRequests(args: {
   return prisma.privacyRequest.findMany({
     where: {
       facilityId: args.facilityId,
-      ...(args.status ? { status: args.status } : {}),
+      ...(args.status ? { status: parseEnum($Enums.PrivacyRequestStatus, args.status, "status") } : {}),
       ...(args.restrictToPatientId
         ? { patientId: args.restrictToPatientId }
         : args.patientId

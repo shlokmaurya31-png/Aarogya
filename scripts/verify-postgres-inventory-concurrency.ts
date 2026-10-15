@@ -15,6 +15,7 @@ import { reserveStock } from "../src/lib/hospital/inventory/reservation";
 import { initiateTransfer, receiveTransfer, TransferConcurrencyError } from "../src/lib/hospital/inventory/transfer";
 import { createAdjustment } from "../src/lib/hospital/inventory/adjustment";
 import { getOrCreateStockBalance } from "../src/lib/hospital/inventory/stockBalance";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
 const runId = Date.now();
@@ -44,7 +45,7 @@ async function seedBalance(facilityId: string, itemId: string, lotId: string, lo
 
 async function main() {
   const facility = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
-  const staff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facility.id, user: { role: "PHARMACIST" } } });
+  const staff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "PHARMACIST" } } });
 
   // 1. Genuine parallel race: two concurrent issues for the last 5 units — exactly one succeeds.
   {

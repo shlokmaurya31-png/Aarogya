@@ -7,6 +7,7 @@ import { createSession } from "@/lib/auth/session";
 import { decideInitialVerificationStatus } from "@/lib/verification/decide";
 import { getVerificationProvider } from "@/lib/verification/provider";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { validateUpload, StorageValidationError } from "@/lib/storage";
 
 const RegisterSchema = z.object({
   fullLegalName: z.string().min(2),
@@ -39,6 +40,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "An account with this email already exists." }, { status: 409 });
   }
 
+  // Check the optional verification document BEFORE creating anything, so a
+  // rejected file never leaves a half-created account behind. The storage
+  // adapter validates again when it stores the bytes.
+  const file = form.get("document");
+  const upload = file instanceof File && file.size > 0 ? { bytes: Buffer.from(await file.arrayBuffer()), name: file.name, type: file.type } : null;
+  if (upload) {
+    try {
+      validateUpload("verification", upload.bytes, upload.type);
+    } catch (err) {
+      if (err instanceof StorageValidationError) {
+        return NextResponse.json({ error: `Verification document rejected: ${err.message}` }, { status: 400 });
+      }
+      throw err;
+    }
+  }
+
   const passwordHash = await hashPassword(input.password);
   const status = await decideInitialVerificationStatus(input.verificationMethod, input.institutionEmail || undefined);
 
@@ -48,14 +65,13 @@ export async function POST(req: NextRequest) {
       passwordHash,
       role: Role.STUDENT,
       displayName: input.preferredName || input.fullLegalName,
+      legalName: input.fullLegalName,
     },
   });
 
   const studentProfile = await prisma.studentProfile.create({
     data: {
       userId: user.id,
-      fullLegalName: input.fullLegalName,
-      preferredName: input.preferredName,
       institutionNameFreeText: input.institutionName,
       course: input.course,
       learningTrack: input.learningTrack,
@@ -64,12 +80,10 @@ export async function POST(req: NextRequest) {
       expectedGraduation: input.expectedGraduation,
       studentIdentifier: input.studentIdentifier,
       institutionEmail: input.institutionEmail || undefined,
-      clinicalInterests: JSON.stringify(
-        (input.clinicalInterests || "")
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean)
-      ),
+      clinicalInterests: (input.clinicalInterests || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
       verificationStatus: status,
       verificationMethod: input.verificationMethod,
       verifiedAt: status === VerificationStatus.VERIFIED ? new Date() : undefined,
@@ -77,11 +91,9 @@ export async function POST(req: NextRequest) {
   });
 
   // Optional document upload for METHOD B/C — stored via the restricted VerificationProvider, never inline in the DB.
-  const file = form.get("document");
-  if (file instanceof File && file.size > 0) {
-    const bytes = Buffer.from(await file.arrayBuffer());
+  if (upload) {
     const provider = getVerificationProvider();
-    const stored = await provider.store(studentProfile.id, input.verificationMethod, bytes, file.name);
+    const stored = await provider.store(studentProfile.id, input.verificationMethod, upload.bytes, upload.name, upload.type);
     await prisma.verificationDocument.create({
       data: { studentProfileId: studentProfile.id, kind: input.verificationMethod, storageRef: stored.storageRef, sha256: stored.sha256 },
     });

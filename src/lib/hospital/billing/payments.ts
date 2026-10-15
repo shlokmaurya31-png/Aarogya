@@ -45,7 +45,7 @@ interface RecordPaymentInput {
  * client/gateway-generated key on retry must never produce two postings.
  */
 export async function recordPayment(tx: Tx, input: RecordPaymentInput) {
-  const existing = await tx.payment.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
+  const existing = await tx.payment.findUnique({ where: { facilityId_idempotencyKey: { facilityId: input.facilityId, idempotencyKey: input.idempotencyKey } } });
   if (existing) return { payment: assertPaymentReplay(existing, input), alreadyExisted: true as const };
 
   if (input.amountMinor <= 0) throw new BadRequestError("amountMinor must be positive.");
@@ -71,9 +71,9 @@ export async function recordPayment(tx: Tx, input: RecordPaymentInput) {
   const rowsInserted = await tx.$executeRaw`
     INSERT INTO "Payment" (id, "billingAccountId", "patientId", "facilityId", "amountMinor", method, "idempotencyKey", "referenceNo", "receivedByUserId")
     VALUES (${randomUUID()}, ${account.id}, ${input.patientId}, ${input.facilityId}, ${input.amountMinor}, ${Prisma.raw(`'${input.method}'`)}, ${input.idempotencyKey}, ${input.referenceNo ?? null}, ${input.receivedByUserId})
-    ON CONFLICT ("idempotencyKey") DO NOTHING
+    ON CONFLICT ("facilityId", "idempotencyKey") DO NOTHING
   `;
-  const payment = assertPaymentReplay(await tx.payment.findUniqueOrThrow({ where: { idempotencyKey: input.idempotencyKey } }), input);
+  const payment = assertPaymentReplay(await tx.payment.findUniqueOrThrow({ where: { facilityId_idempotencyKey: { facilityId: input.facilityId, idempotencyKey: input.idempotencyKey } } }), input);
 
   return { payment, alreadyExisted: rowsInserted === 0 };
 }

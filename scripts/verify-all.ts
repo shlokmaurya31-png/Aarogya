@@ -83,6 +83,26 @@ const ORDER = [
   // Every hospital list/search/lookup endpoint over HTTP, as every role:
   // no other facility's rows (builds and starts the app itself)
   "verify-postgres-tenancy-sweep",
+  // Week 2: identity and records
+  "verify-postgres-ai-assistant",
+  "verify-postgres-verification-uploads",
+  "verify-postgres-patient-self-registration",
+  "verify-postgres-patient-documents",
+  // Gate 2: one patient, one record, everywhere (HTTP; builds the app)
+  "verify-postgres-one-patient",
+  // Week 2 duplicate merges (docs/DATA_DICTIONARY.md §1)
+  "verify-postgres-consent-revocation",
+  "verify-postgres-patient-identifiers",
+  "verify-postgres-generated-documents",
+  "verify-postgres-location-history",
+  "verify-postgres-bookability",
+  "verify-postgres-walk-ins",
+  "verify-postgres-schema-constraints",
+  "verify-postgres-problem-list",
+  // Runs last among the gates: checks every row the earlier gates created.
+  "verify-postgres-facility-consistency",
+  // Runs late: its whole-database check covers every earlier gate's orders.
+  "verify-postgres-order-status",
 ];
 const LAST = "verify-postgres-phase-b-final";
 

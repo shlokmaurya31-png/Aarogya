@@ -3,6 +3,7 @@ import { VerificationStatus } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requirePermission, withApiErrors, BadRequestError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { studentNames } from "@/lib/student/name";
 
 export async function GET() {
   return withApiErrors(async () => {
@@ -15,7 +16,7 @@ export async function GET() {
       applications: profiles.map((p) => ({
         id: p.id,
         userId: p.userId,
-        name: p.fullLegalName,
+        name: studentNames(p.user).fullLegalName,
         email: p.user.email,
         institution: p.institution?.name ?? p.institutionNameFreeText,
         course: p.course,

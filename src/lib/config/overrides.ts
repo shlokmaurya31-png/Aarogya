@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, $Enums } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { BadRequestError, ConflictError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
@@ -7,6 +7,7 @@ import { resolveKeySpec } from "./registry";
 import { resolveScopeRef, assertCanConfigureScope, assertCanReadScope, type ScopeArgs } from "./authz";
 import { invalidateOrg } from "./cache";
 import { CONFIG_LIMITS, ConfigError } from "./types";
+import { parseEnum } from "@/lib/enumValue";
 
 /**
  * Phase D8 — governed override lifecycle (§8/§9/§12/§13/§32).
@@ -169,7 +170,7 @@ export async function getHistory(m: ActorMemberships, input: ScopeArgs & { key: 
 export async function listOverrides(m: ActorMemberships, organizationId: string, opts?: { status?: string }) {
   await assertCanReadScope(m, { scope: "ORGANIZATION", organizationId });
   return prisma.configurationOverride.findMany({
-    where: { organizationId, ...(opts?.status ? { status: opts.status } : {}) },
+    where: { organizationId, ...(opts?.status ? { status: parseEnum($Enums.ConfigurationOverrideStatus, opts.status, "status") } : {}) },
     orderBy: [{ key: "asc" }, { scope: "asc" }, { version: "desc" }],
     take: 1000,
   });

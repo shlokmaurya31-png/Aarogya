@@ -1,4 +1,4 @@
-import type { AIProvider, CaseFactSheet } from "./provider";
+import type { AIProvider, AssistantInput, CaseFactSheet } from "./provider";
 
 /**
  * Deterministic, scripted fallback used whenever ANTHROPIC_API_KEY is absent
@@ -39,5 +39,15 @@ export class MockAIProvider implements AIProvider {
       return `Focus your revision on ${input.weakDimension.toLowerCase()} — that's the biggest gap between your answer and the reference pathway.`;
     }
     return "AI Tutor unavailable — structured case mode remains available. Review the debrief panel for the reference reasoning.";
+  }
+
+  /**
+   * No model is configured: say so plainly instead of pretending to answer.
+   * The record itself stays available in the portal's own sections.
+   */
+  async assistantReply(input: AssistantInput): Promise<string> {
+    return input.audience === "patient"
+      ? "Aarogya AI isn't connected right now, so I can't answer questions yet. Your appointments, medicines, reports and bills are all in the sections of this portal."
+      : "The clinical assistant isn't connected in this environment (no AI provider configured). The chart and worklists are unaffected.";
   }
 }

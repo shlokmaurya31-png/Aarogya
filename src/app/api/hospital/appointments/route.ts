@@ -1,9 +1,11 @@
+import { $Enums } from "@prisma/client";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError } from "@/lib/auth/rbac";
 import { bookAppointment, SlotConflictError } from "@/lib/hospital/appointment";
+import { parseOptionalEnum } from "@/lib/enumValue";
 
 export async function GET(req: NextRequest) {
   return withApiErrors(async () => {
@@ -12,7 +14,7 @@ export async function GET(req: NextRequest) {
 
     const doctorStaffId = searchParams.get("doctorStaffId");
     const date = searchParams.get("date"); // yyyy-mm-dd
-    const status = searchParams.get("status");
+    const status = parseOptionalEnum($Enums.AppointmentStatus, searchParams.get("status"), "status");
 
     let dateFilter: { gte: Date; lt: Date } | undefined;
     if (date) {

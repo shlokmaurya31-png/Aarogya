@@ -50,9 +50,9 @@ export async function initiateTransfer(tx: Tx, input: InitiateTransferInput) {
       (id, "facilityId", "itemId", "lotId", "fromLocationId", "toLocationId", quantity, status, reason, "requestedByStaffId", "initiatedAt", "idempotencyKey", "createdAt")
     VALUES
       (${id}, ${input.facilityId}, ${input.itemId}, ${input.lotId}, ${input.fromLocationId}, ${input.toLocationId}, ${input.quantity}, ${Prisma.raw("'IN_TRANSIT'")}, ${input.reason ?? null}, ${input.requestedByStaffId}, CURRENT_TIMESTAMP, ${input.idempotencyKey}, CURRENT_TIMESTAMP)
-    ON CONFLICT ("idempotencyKey") DO NOTHING
+    ON CONFLICT ("facilityId", "idempotencyKey") DO NOTHING
   `;
-  const transfer = assertReplayInFacility(await tx.stockTransfer.findUniqueOrThrow({ where: { idempotencyKey: input.idempotencyKey } }), input.facilityId);
+  const transfer = assertReplayInFacility(await tx.stockTransfer.findUniqueOrThrow({ where: { facilityId_idempotencyKey: { facilityId: input.facilityId, idempotencyKey: input.idempotencyKey } } }), input.facilityId);
   if (rowsInserted === 0) return { transfer, alreadyExisted: true as const };
 
   const item = await tx.item.findUniqueOrThrow({ where: { id: input.itemId } });

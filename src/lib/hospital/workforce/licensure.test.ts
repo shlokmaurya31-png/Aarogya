@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const db = vi.hoisted(() => ({
-  hospitalStaffProfile: { findUnique: vi.fn() },
+  hospitalStaffProfile: { findUnique: vi.fn(), count: vi.fn() },
   credential: { findMany: vi.fn() },
   staffPrivilege: { findMany: vi.fn() },
 }));
@@ -14,7 +14,8 @@ const day = 24 * 3600_000;
 
 beforeEach(() => {
   vi.resetAllMocks();
-  db.hospitalStaffProfile.findUnique.mockResolvedValue({ id: "s1", facilityId: "f1", status: "ACTIVE" });
+  db.hospitalStaffProfile.findUnique.mockResolvedValue({ id: "s1", status: "ACTIVE" });
+  db.hospitalStaffProfile.count.mockResolvedValue(1); // an ACTIVE membership at f1 (D8)
 });
 
 describe("enforceLicensure", () => {

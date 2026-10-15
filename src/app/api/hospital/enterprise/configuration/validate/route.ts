@@ -14,7 +14,8 @@ export async function POST(req: NextRequest) {
       const normalized = spec.normalize(String(body?.value ?? ""));
       return { valid: true, valueType: spec.valueType, normalized };
     } catch (e) {
-      if (e instanceof ConfigError) return { valid: false, error: e.message };
+      // A successful answer ("not valid, because …"), so 200 with a reason, not an error body.
+      if (e instanceof ConfigError) return { valid: false, reason: e.message };
       throw e;
     }
   });

@@ -6,8 +6,9 @@ import { Card, CardLabel } from "@/components/ui/Card";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
+import { ageLabel } from "@/lib/patient/age";
 
-interface Patient { id: string; fullName: string; uhid: string; sex: string; ageYears: number | null; phone: string | null }
+interface Patient { id: string; fullName: string; uhid: string; sex: string; dob: string | null; dobPrecision?: string; phone: string | null }
 interface Duplicate { patientId: string; uhid: string; fullName: string; confidence: string; score: number }
 interface Doctor { staffId: string; displayName: string; displayRole: string; departmentName: string | null }
 interface Slot { start: string; end: string; roomLabel: string | null; remainingCapacity: number }
@@ -153,7 +154,7 @@ export function FrontDeskWorkspace() {
               <div className="mt-3 space-y-1.5">
                 {results.map((p) => (
                   <button key={p.id} onClick={() => setBookPatientId(p.id)} className={`flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-[12.5px] ${bookPatientId === p.id ? "border-cyan/50 bg-cyan/5" : "border-hairline hover:border-cyan/30"}`}>
-                    <span>{p.fullName} <span className="text-text-tertiary">· {p.uhid} · {p.ageYears ?? "?"}{p.sex[0]?.toUpperCase()}</span></span>
+                    <span>{p.fullName} <span className="text-text-tertiary">· {p.uhid} · {ageLabel(p)}{p.sex[0]?.toUpperCase()}</span></span>
                     {bookPatientId === p.id && <StatusPill label="Selected for booking" tone="cyan" className="rounded-md" />}
                   </button>
                 ))}

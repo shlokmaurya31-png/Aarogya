@@ -2,15 +2,12 @@ import { prisma } from "@/lib/db";
 import type { AppointmentType, AccessSource, RequestPriority } from "@prisma/client";
 import { emitDomainEvent } from "@/lib/events/emit";
 import { facilityOrganizationId } from "@/lib/events/tenant";
+import { assertBookable } from "./bookability";
 
 export class SlotConflictError extends Error {
   constructor() {
     super("This doctor already has an appointment at that time (slot is full).");
   }
-}
-
-function isSameCalendarDate(a: Date, b: Date): boolean {
-  return a.getUTCFullYear() === b.getUTCFullYear() && a.getUTCMonth() === b.getUTCMonth() && a.getUTCDate() === b.getUTCDate();
 }
 
 /**
@@ -91,29 +88,10 @@ export async function bookAppointment(input: {
     // Postgres hash; _xact_ scope means it auto-releases on commit/rollback.
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${input.doctorStaffId}))`;
 
-    const dayStart = new Date(input.scheduledStart);
-    dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(dayStart.getTime() + 24 * 3_600_000);
-
-    // Candidate schedule blocks for the day; a specificDate override is a
-    // full calendar date, not a timestamp, so it must be range-matched
-    // (dayStart/dayEnd) and calendar-compared, never compared for exact
-    // Date equality against a timestamp that carries a time-of-day.
-    const candidateBlock = await tx.doctorScheduleBlock.findFirst({
-      where: {
-        staffId: input.doctorStaffId,
-        type: "CLINIC_SESSION",
-        OR: [{ dayOfWeek: input.scheduledStart.getDay() }, { specificDate: { gte: dayStart, lt: dayEnd } }],
-      },
-      // A weekly block and a date-specific block can both match; the
-      // date-specific one wins, then oldest, so the capacity is deterministic.
-      orderBy: [{ specificDate: { sort: "desc", nulls: "last" } }, { createdAt: "asc" }, { id: "asc" }],
-    });
-    const block =
-      candidateBlock && (!candidateBlock.specificDate || isSameCalendarDate(candidateBlock.specificDate, input.scheduledStart))
-        ? candidateBlock
-        : null;
-    const maxConcurrent = block?.maxConcurrentAppointments ?? 1;
+    // D7: inside a clinic session, not on leave/absent, not off shift — the
+    // same rule the slot listing uses. Checked under the doctor's lock.
+    const block = await assertBookable(tx, input.doctorStaffId, input.scheduledStart, input.scheduledEnd);
+    const maxConcurrent = block.maxConcurrentAppointments;
 
     // Real half-open-interval overlap: [scheduledStart, scheduledEnd) vs
     // [existing.scheduledStart, existing.scheduledEnd) for the same doctor.
@@ -137,7 +115,7 @@ export async function bookAppointment(input: {
         type: input.type ?? "NEW",
         source: input.source ?? "APPOINTMENT",
         priority: input.priority ?? "ROUTINE",
-        roomLabel: input.roomLabel ?? block?.roomLabel,
+        roomLabel: input.roomLabel ?? block.roomLabel,
         scheduledStart: input.scheduledStart,
         scheduledEnd: input.scheduledEnd,
         reason: input.reason,

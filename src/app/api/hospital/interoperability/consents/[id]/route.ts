@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError } from "@/lib/auth/rbac";
-import { getConsent, grantConsent, revokeConsent, closeConsentRequest } from "@/lib/hospital/interoperability/consent";
+import { getConsent, grantConsent, revokeConsent, closeConsentRequest } from "@/lib/consent";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return withApiErrors(async () => {

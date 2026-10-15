@@ -18,7 +18,12 @@ const future = () => new Date(Date.now() + 365 * DAY);
 type Row = Record<string, unknown>;
 function fakeDb(opts: { staff?: Row | null; privileges?: Row[]; credentials?: Row[] }) {
   return {
-    hospitalStaffProfile: { findUnique: async () => opts.staff ?? null },
+    hospitalStaffProfile: {
+      findUnique: async () => opts.staff ?? null,
+      // D8: facility access is an ACTIVE FacilityMembership; `staff.facilityId` stands in for it here.
+      count: async ({ where }: { where: unknown }) =>
+        opts.staff && JSON.stringify(where).includes(`"facilityId":"${opts.staff.facilityId}","status":"ACTIVE"`) ? 1 : 0,
+    },
     staffPrivilege: { findMany: async () => opts.privileges ?? [] },
     credential: { findMany: async () => opts.credentials ?? [] },
   } as never;

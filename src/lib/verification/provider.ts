@@ -2,13 +2,20 @@
  * Verification document storage boundary. Documents (student ID cards,
  * enrollment letters) are sensitive — they must never be reachable from a
  * public route, never appear in a student's own profile response, and never
- * be usable as model training data. This interface lets the mock local-disk
- * implementation be swapped for a real secure object store (S3 + KMS, etc.)
- * without touching any calling code. See docs/CLINICAL_EDUCATION_PRIVACY.md §4.
+ * be usable as model training data. See docs/CLINICAL_EDUCATION_PRIVACY.md §4.
+ *
+ * Stored through the object-storage adapter (src/lib/storage) in the private
+ * `verification` bucket, scoped by student profile: local disk in dev, S3 /
+ * Supabase Storage when STORAGE_S3_* is set (ADR 0003). The bucket's policy
+ * applies to every upload: PDF/JPEG/PNG/WebP only, the content must match the
+ * declared type (magic bytes), 15 MB maximum.
+ *
+ * `storageRef` is the adapter's logical ref (`verification/<profile>/<sha16>-
+ * <name>`), never a filesystem path. Reads and deletes refuse any ref outside
+ * the `verification` bucket — including the absolute paths the old local-disk
+ * store persisted (scripts/migrate-verification-uploads.ts moves those).
  */
-import { createHash } from "crypto";
-import { mkdir, writeFile, readFile, unlink } from "fs/promises";
-import path from "path";
+import { getStorageAdapter, assertSafeRef, StorageRefError } from "@/lib/storage";
 
 export interface StoredDocument {
   storageRef: string;
@@ -16,48 +23,44 @@ export interface StoredDocument {
 }
 
 export interface VerificationProvider {
-  store(studentProfileId: string, kind: string, bytes: Buffer, originalName: string): Promise<StoredDocument>;
+  store(studentProfileId: string, kind: string, bytes: Buffer, originalName: string, contentType: string): Promise<StoredDocument>;
   read(storageRef: string): Promise<Buffer>;
   delete(storageRef: string): Promise<void>;
 }
 
-const UPLOAD_ROOT = path.join(process.cwd(), ".data", "verification-uploads");
+/** Throws unless `storageRef` is a logical ref in the verification bucket. */
+export function assertVerificationRef(storageRef: string): void {
+  if (assertSafeRef(storageRef) !== "verification") {
+    throw new StorageRefError(`Not a verification-document ref: ${storageRef}`);
+  }
+}
 
-/**
- * Writes to a local, gitignored directory outside of `public/` — never
- * served by a Next.js route, and never joined into the ClinicalCase table
- * a student can query. Real deployments should replace this with a private
- * object-store adapter with its own access-logged retrieval path.
- */
-export class MockVerificationProvider implements VerificationProvider {
-  async store(studentProfileId: string, kind: string, bytes: Buffer, originalName: string): Promise<StoredDocument> {
-    await mkdir(UPLOAD_ROOT, { recursive: true });
-    const sha256 = createHash("sha256").update(bytes).digest("hex");
-    const safeExt = path.extname(originalName).replace(/[^a-zA-Z0-9.]/g, "").slice(0, 10) || ".bin";
-    const filename = `${studentProfileId}-${kind}-${sha256.slice(0, 16)}${safeExt}`;
-    const storageRef = path.join(UPLOAD_ROOT, filename);
-    await writeFile(storageRef, bytes);
-    return { storageRef, sha256 };
+export class StorageVerificationProvider implements VerificationProvider {
+  async store(studentProfileId: string, kind: string, bytes: Buffer, originalName: string, contentType: string): Promise<StoredDocument> {
+    const stored = await getStorageAdapter().put({
+      bucket: "verification",
+      bytes,
+      contentType,
+      originalName: `${kind.toLowerCase()}-${originalName}`,
+      scope: studentProfileId,
+    });
+    return { storageRef: stored.storageRef, sha256: stored.sha256 };
   }
 
   async read(storageRef: string): Promise<Buffer> {
-    if (!storageRef.startsWith(UPLOAD_ROOT)) {
-      throw new Error("Refusing to read outside the restricted verification-upload store.");
-    }
-    return readFile(storageRef);
+    assertVerificationRef(storageRef);
+    return (await getStorageAdapter().get(storageRef)).bytes;
   }
 
   async delete(storageRef: string): Promise<void> {
-    if (!storageRef.startsWith(UPLOAD_ROOT)) {
-      throw new Error("Refusing to delete outside the restricted verification-upload store.");
-    }
-    await unlink(storageRef).catch(() => undefined);
+    assertVerificationRef(storageRef);
+    await getStorageAdapter().delete(storageRef);
   }
 }
 
 /**
  * Documented, not implemented: what a real institutional/manual review
- * adapter would need. A future implementer replaces MockVerificationProvider
+ * adapter would need. A future implementer replaces StorageVerificationProvider
  * with something like this, backed by an actual reviewer queue and
  * retention policy — see docs/CLINICAL_EDUCATION_PRIVACY.md.
  */
@@ -75,6 +78,6 @@ export class ManualVerificationProviderStub implements VerificationProvider {
 
 let cached: VerificationProvider | null = null;
 export function getVerificationProvider(): VerificationProvider {
-  if (!cached) cached = new MockVerificationProvider();
+  if (!cached) cached = new StorageVerificationProvider();
   return cached;
 }

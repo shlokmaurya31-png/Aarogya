@@ -53,9 +53,9 @@ export async function createPaymentAttempt(tx: Tx, input: CreateAttemptInput) {
   await tx.$executeRaw`
     INSERT INTO "BillingPaymentAttempt" (id, "invoiceId", "organizationId", "amountMinor", currency, "idempotencyKey", "providerKind", "createdByUserId")
     VALUES (${randomUUID()}, ${input.invoiceId}, ${invoice.organizationId}, ${input.amountMinor}, ${invoice.currency}, ${input.idempotencyKey}, ${rawEnum(providerKind)}, ${input.createdByUserId})
-    ON CONFLICT ("idempotencyKey") DO NOTHING
+    ON CONFLICT ("organizationId", "idempotencyKey") DO NOTHING
   `;
-  return tx.billingPaymentAttempt.findUniqueOrThrow({ where: { idempotencyKey: input.idempotencyKey } });
+  return tx.billingPaymentAttempt.findUniqueOrThrow({ where: { organizationId_idempotencyKey: { organizationId: invoice.organizationId, idempotencyKey: input.idempotencyKey } } });
 }
 
 /** Transition an attempt (INITIATED/PENDING -> SUCCEEDED/FAILED/CANCELLED), guarded. */
@@ -93,9 +93,9 @@ export async function recordPayment(tx: Tx, input: RecordPaymentInput) {
   const rowsInserted = await tx.$executeRaw`
     INSERT INTO "BillingPayment" (id, "invoiceId", "organizationId", "attemptId", "amountMinor", currency, method, "providerKind", "providerPaymentRef", "idempotencyKey", "createdByUserId")
     VALUES (${randomUUID()}, ${input.invoiceId}, ${invoice.organizationId}, ${input.attemptId ?? null}, ${input.amountMinor}, ${invoice.currency}, ${input.method ?? null}, ${rawEnum(providerKind)}, ${input.providerPaymentRef ?? null}, ${input.idempotencyKey}, ${input.createdByUserId})
-    ON CONFLICT ("idempotencyKey") DO NOTHING
+    ON CONFLICT ("organizationId", "idempotencyKey") DO NOTHING
   `;
-  const payment = await tx.billingPayment.findUniqueOrThrow({ where: { idempotencyKey: input.idempotencyKey } });
+  const payment = await tx.billingPayment.findUniqueOrThrow({ where: { organizationId_idempotencyKey: { organizationId: invoice.organizationId, idempotencyKey: input.idempotencyKey } } });
 
   // Apply money exactly once — only when THIS call created the payment row.
   if (Number(rowsInserted) === 1) {

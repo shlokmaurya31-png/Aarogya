@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import type { CommandContext } from "./authz";
 import { metric, driver, section } from "./_build";
 import type { CommandSection } from "./types";
+import type { Prisma } from "@prisma/client";
 
 /**
  * INFECTION — operational status from the canonical infection-control model
@@ -11,7 +12,7 @@ import type { CommandSection } from "./types";
  */
 export async function getInfection(ctx: CommandContext): Promise<CommandSection> {
   const f = ctx.facilityId;
-  const active = { facilityId: f, status: { notIn: ["RESOLVED", "CLOSED", "CANCELLED"] } };
+  const active = { facilityId: f, status: { notIn: ["RESOLVED", "CLOSED", "CANCELLED"] } } satisfies Prisma.InfectionIncidentWhereInput;
   const [activeCount, isolation, actionRequired, openInvestigations, byType] = await Promise.all([
     prisma.infectionIncident.count({ where: active }),
     prisma.infectionIncident.count({ where: { ...active, isolationRequired: true } }),

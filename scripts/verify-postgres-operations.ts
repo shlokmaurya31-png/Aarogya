@@ -14,6 +14,7 @@ import {
   createAmbulance, createAmbulanceTrip, dispatchAmbulanceTrip, createMaintenanceRequest, transitionMaintenance,
   createInfectionIncident, transitionInfectionIncident, createEquipment, moveEquipment,
 } from "../src/lib/hospital/operations/service";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
 const runId = Date.now();
@@ -26,7 +27,7 @@ function report(name: string, ok: boolean, detail?: string) {
 
 async function main() {
   const facility = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
-  const staffList = await prisma.hospitalStaffProfile.findMany({ where: { facilityId: facility.id, status: "ACTIVE" }, take: 2 });
+  const staffList = await prisma.hospitalStaffProfile.findMany({ where: { ...staffAtFacilityWhere(facility.id), status: "ACTIVE" }, take: 2 });
   const staff = staffList[0];
   const staff2 = staffList[1] ?? staffList[0];
   const patient = await prisma.patient.findFirstOrThrow({ where: { facilityId: facility.id } });
@@ -109,7 +110,7 @@ async function main() {
     const other = await prisma.facility.findFirst({ where: { id: { not: facility.id } } });
     const req = await createHousekeepingRequest({ facilityId: facility.id, requestType: "ROUTINE", areaLabel: "Ward C", requestedByStaffId: staff.id, byUserId: staff.userId });
     if (other) {
-      const otherStaff = await prisma.hospitalStaffProfile.findFirst({ where: { facilityId: other.id } });
+      const otherStaff = await prisma.hospitalStaffProfile.findFirst({ where: { ...staffAtFacilityWhere(other.id) } });
       if (otherStaff) {
         const r = await transitionHousekeeping({ requestId: req.id, facilityId: facility.id, to: "ASSIGNED", actorStaffId: otherStaff.id, byUserId: staff.userId }).then(() => ({ ok: true as const }), () => ({ ok: false as const }));
         report("Assigning a staff member from another facility is denied", !r.ok, `assigned=${r.ok}`);

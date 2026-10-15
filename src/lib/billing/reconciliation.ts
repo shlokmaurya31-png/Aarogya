@@ -4,6 +4,7 @@ import { recordAuditEvent } from "@/lib/auth/audit";
 import { type ActorMemberships } from "@/lib/auth/tenantContext";
 import { requirePlatform } from "./authz";
 import { getProvider } from "./provider";
+import type { ReconciliationSeverity } from "@prisma/client";
 
 /**
  * Phase D3 — lightweight reconciliation boundary (NOT a finance analytics engine).
@@ -18,7 +19,7 @@ import { getProvider } from "./provider";
 
 const STUCK_ATTEMPT_MS = 60 * 60 * 1000; // 1 hour
 
-const SEVERITY: Record<string, string> = {
+const SEVERITY: Record<string, ReconciliationSeverity> = {
   STATE_MISMATCH: "HIGH", REFUND_MISMATCH: "CRITICAL", MISSING_PROVIDER_PAYMENT: "HIGH", STUCK_PAYMENT: "MEDIUM",
 };
 

@@ -19,6 +19,7 @@ import { ensureBillingBootstrap } from "../src/lib/billing/bootstrap";
 import { ensureWorkflowSeed } from "../src/lib/workflows/seed";
 import { ensureConfigSeed } from "../src/lib/config/seed";
 import { seedDemoLicensure } from "./seedData/licensure";
+import { syncSeededOrderStatuses } from "./seedData/orderStatus";
 
 const prisma = new PrismaClient();
 
@@ -77,13 +78,13 @@ async function seedUsers() {
     academicYear: number,
     verified: boolean
   ) {
+    // The name lives on the User (legalName + preferred displayName).
+    await prisma.user.update({ where: { id: userId }, data: { legalName: fullLegalName, displayName: fullLegalName.split(" ")[0] } });
     await prisma.studentProfile.upsert({
       where: { userId },
       update: {},
       create: {
         userId,
-        fullLegalName,
-        preferredName: fullLegalName.split(" ")[0],
         institutionId: institution.id,
         institutionNameFreeText: institution.name,
         course,
@@ -93,7 +94,7 @@ async function seedUsers() {
         expectedGraduation: new Date().getFullYear() + (5 - academicYear),
         institutionEmail: `${fullLegalName.toLowerCase().split(" ")[0]}@aims-demo.edu.in`,
         currentRotation: "Internal Medicine",
-        clinicalInterests: JSON.stringify(["Cardiology", "Emergency Medicine"]),
+        clinicalInterests: ["Cardiology", "Emergency Medicine"],
         verificationStatus: verified ? VerificationStatus.VERIFIED : VerificationStatus.UNDER_REVIEW,
         verificationMethod: verified ? VerificationMethod.INSTITUTIONAL_EMAIL : undefined,
         verifiedAt: verified ? new Date() : undefined,
@@ -138,13 +139,13 @@ async function seedCases() {
         difficulty: built.difficulty,
         acuity: built.acuity,
         sourceType: built.sourceType,
-        learnerTracks: JSON.stringify(built.learnerTracks),
+        learnerTracks: built.learnerTracks,
         patientName: built.patientName,
         patientAgeBand: built.patientAgeBand,
         patientAgeExact: built.patientAgeExact,
         patientSex: built.patientSex,
         chiefComplaint: built.chiefComplaint,
-        learningObjectives: JSON.stringify(built.learningObjectives),
+        learningObjectives: built.learningObjectives,
         content: built.content as object,
         referenceDx: built.referenceDx,
         rubric: built.rubric as object,
@@ -159,13 +160,13 @@ async function seedCases() {
         difficulty: built.difficulty,
         acuity: built.acuity,
         sourceType: built.sourceType,
-        learnerTracks: JSON.stringify(built.learnerTracks),
+        learnerTracks: built.learnerTracks,
         patientName: built.patientName,
         patientAgeBand: built.patientAgeBand,
         patientAgeExact: built.patientAgeExact,
         patientSex: built.patientSex,
         chiefComplaint: built.chiefComplaint,
-        learningObjectives: JSON.stringify(built.learningObjectives),
+        learningObjectives: built.learningObjectives,
         content: built.content as object,
         referenceDx: built.referenceDx,
         rubric: built.rubric as object,
@@ -208,6 +209,7 @@ async function main() {
   await seedPhase5Billing(prisma);
   await seedPhase6aInventory(prisma);
   await seedDemoLicensure(prisma);
+  console.log(`Order statuses derived for ${await syncSeededOrderStatuses(prisma)} specific order(s).`);
   // Phase D2 — materialise the commercial registry (entitlement definitions,
   // plans) and give every organization an explicit commercial state. Idempotent.
   const boot = await ensureCommercialBootstrap(prisma);

@@ -44,9 +44,9 @@ export async function refundPaymentTx(tx: Tx, input: RefundInput) {
   const rowsInserted = await tx.$executeRaw`
     INSERT INTO "BillingRefund" (id, "paymentId", "organizationId", "amountMinor", reason, "idempotencyKey", "providerKind", "providerRefundRef", "createdByUserId")
     VALUES (${randomUUID()}, ${input.paymentId}, ${payment.organizationId}, ${input.amountMinor}, ${input.reason}, ${input.idempotencyKey}, ${rawEnum(providerKind)}, ${input.providerRefundRef ?? null}, ${input.createdByUserId})
-    ON CONFLICT ("idempotencyKey") DO NOTHING
+    ON CONFLICT ("organizationId", "idempotencyKey") DO NOTHING
   `;
-  const refund = await tx.billingRefund.findUniqueOrThrow({ where: { idempotencyKey: input.idempotencyKey } });
+  const refund = await tx.billingRefund.findUniqueOrThrow({ where: { organizationId_idempotencyKey: { organizationId: payment.organizationId, idempotencyKey: input.idempotencyKey } } });
 
   // Apply to the payment's guarded refundedMinor exactly once.
   if (Number(rowsInserted) === 1) {
@@ -93,11 +93,13 @@ export async function refundPayment(m: ActorMemberships, input: Omit<RefundInput
  */
 export async function refundViaProvider(m: ActorMemberships, input: { paymentId: string; amountMinor: number; reason: string; idempotencyKey: string; providerKind: "FAKE" | "RAZORPAY" }) {
   requirePlatform(m);
-  const existing = await prisma.billingRefund.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
-  if (existing) return existing; // idempotent — never re-call the provider
-
   const payment = await prisma.billingPayment.findUnique({ where: { id: input.paymentId } });
   if (!payment) throw new NotFoundError();
+  // Keys are unique per organization (§8.4): look the replay up in the payment's organization.
+  const existing = await prisma.billingRefund.findUnique({
+    where: { organizationId_idempotencyKey: { organizationId: payment.organizationId, idempotencyKey: input.idempotencyKey } },
+  });
+  if (existing) return existing; // idempotent — never re-call the provider
   if (input.amountMinor <= 0) throw new BadRequestError("Refund amount must be positive.");
   if (input.amountMinor > payment.amountMinor - payment.refundedMinor) throw new BadRequestError("Refund would exceed the payment's un-refunded balance.");
   if (!payment.providerPaymentRef) throw new BadRequestError("Payment has no provider reference to refund against.");

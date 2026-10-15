@@ -2,6 +2,8 @@ import { randomUUID } from "crypto";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError, ConflictError } from "../rbac";
 import { recordAuditEvent } from "../audit";
+import { $Enums } from "@prisma/client";
+import { parseEnum } from "@/lib/enumValue";
 
 /**
  * Phase C4 — break-glass emergency access.
@@ -224,7 +226,7 @@ export async function listBreakGlass(args: { facilityId: string; status?: string
   return prisma.breakGlassAccess.findMany({
     where: {
       facilityId: args.facilityId,
-      ...(args.status ? { status: args.status } : {}),
+      ...(args.status ? { status: parseEnum($Enums.BreakGlassAccessStatus, args.status, "status") } : {}),
       ...(args.patientId ? { patientId: args.patientId } : {}),
     },
     orderBy: { activatedAt: "desc" },

@@ -49,9 +49,9 @@ export async function reserveStock(tx: Tx, input: ReserveStockInput) {
       (id, "facilityId", "itemId", "lotId", "locationId", quantity, status, "reservedForType", "reservedForId", "patientId", "encounterId", "requestedByStaffId", "expiresAt", "idempotencyKey", "createdAt")
     VALUES
       (${id}, ${input.facilityId}, ${input.itemId}, ${lotId}, ${input.locationId}, ${input.quantity}, ${Prisma.raw("'ACTIVE'")}, ${input.reservedForType ?? null}, ${input.reservedForId ?? null}, ${input.patientId ?? null}, ${input.encounterId ?? null}, ${input.requestedByStaffId}, ${input.expiresAt ?? null}, ${input.idempotencyKey}, CURRENT_TIMESTAMP)
-    ON CONFLICT ("idempotencyKey") DO NOTHING
+    ON CONFLICT ("facilityId", "idempotencyKey") DO NOTHING
   `;
-  const reservation = assertReplayInFacility(await tx.stockReservation.findUniqueOrThrow({ where: { idempotencyKey: input.idempotencyKey } }), input.facilityId);
+  const reservation = assertReplayInFacility(await tx.stockReservation.findUniqueOrThrow({ where: { facilityId_idempotencyKey: { facilityId: input.facilityId, idempotencyKey: input.idempotencyKey } } }), input.facilityId);
   if (rowsInserted === 0) return { reservation, alreadyExisted: true as const };
 
   const item = await tx.item.findUniqueOrThrow({ where: { id: input.itemId } });

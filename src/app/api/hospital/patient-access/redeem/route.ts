@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
 
     const patient = await prisma.patient.findUnique({
       where: { id: accessSession.patientId },
-      select: { id: true, fullName: true, uhid: true, sex: true, ageYears: true, bloodGroup: true },
+      select: { id: true, fullName: true, uhid: true, sex: true, dob: true, dobPrecision: true, bloodGroup: true },
     });
 
     return {

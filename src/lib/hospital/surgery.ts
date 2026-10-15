@@ -1,8 +1,11 @@
+import { $Enums } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { issueStock } from "@/lib/hospital/inventory/issue";
 import type { Prisma, SurgeryStatus, AnesthesiaType } from "@prisma/client";
+import { isStaffInFacility } from "@/lib/auth/staffFacility";
+import { parseEnum } from "@/lib/enumValue";
 
 /**
  * Operating Theatre & Surgical Workflow service (Phase B3). Composes the
@@ -77,7 +80,7 @@ export async function requestSurgery(input: {
     data: {
       facilityId: input.facilityId, patientId: input.patientId, encounterId: input.encounterId,
       procedureId: input.procedureId, procedureName, indication: input.indication, laterality: input.laterality,
-      urgency: input.urgency ?? "ELECTIVE", requestedByStaffId: input.requestedByStaffId, requestedDate: input.requestedDate,
+      urgency: parseEnum($Enums.SurgeryUrgency, input.urgency ?? "ELECTIVE", "urgency"), requestedByStaffId: input.requestedByStaffId, requestedDate: input.requestedDate,
     },
   });
   await recordAuditEvent("hospital.ot.surgeryRequested", input.byUserId, { surgeryId: surgery.id, procedureName }, { facilityId: input.facilityId, patientId: input.patientId, encounterId: input.encounterId });
@@ -169,7 +172,7 @@ export async function setTeamMember(input: { surgeryId: string; facilityId: stri
   const surgery = await prisma.surgery.findUnique({ where: { id: input.surgeryId } });
   if (!surgery || surgery.facilityId !== input.facilityId) throw new NotFoundError("Surgery not found.");
   const staff = await prisma.hospitalStaffProfile.findUnique({ where: { id: input.staffId } });
-  if (!staff || staff.facilityId !== input.facilityId) throw new NotFoundError("Staff member not found in this facility.");
+  if (!staff || !(await isStaffInFacility(prisma, staff.id, input.facilityId))) throw new NotFoundError("Staff member not found in this facility.");
   return prisma.surgeryTeamMember.upsert({
     where: { surgeryId_staffId_role: { surgeryId: input.surgeryId, staffId: input.staffId, role: input.role } },
     create: { surgeryId: input.surgeryId, staffId: input.staffId, role: input.role },
@@ -227,8 +230,8 @@ export async function recordAnesthesia(input: { surgeryId: string; facilityId: s
   if (!surgery || surgery.facilityId !== input.facilityId) throw new NotFoundError("Surgery not found.");
   const rec = await prisma.anesthesiaRecord.upsert({
     where: { surgeryId: input.surgeryId },
-    create: { surgeryId: input.surgeryId, type: input.type, anesthetistStaffId: input.anesthetistStaffId, status: input.status ?? "PLANNED", startAt: input.startAt, endAt: input.endAt, intraOpNotes: input.intraOpNotes, complications: input.complications },
-    update: { type: input.type, anesthetistStaffId: input.anesthetistStaffId, ...(input.status ? { status: input.status } : {}), ...(input.startAt ? { startAt: input.startAt } : {}), ...(input.endAt ? { endAt: input.endAt } : {}), ...(input.intraOpNotes !== undefined ? { intraOpNotes: input.intraOpNotes } : {}), ...(input.complications !== undefined ? { complications: input.complications } : {}) },
+    create: { surgeryId: input.surgeryId, type: input.type, anesthetistStaffId: input.anesthetistStaffId, status: parseEnum($Enums.AnesthesiaRecordStatus, input.status ?? "PLANNED", "status"), startAt: input.startAt, endAt: input.endAt, intraOpNotes: input.intraOpNotes, complications: input.complications },
+    update: { type: input.type, anesthetistStaffId: input.anesthetistStaffId, ...(input.status ? { status: parseEnum($Enums.AnesthesiaRecordStatus, input.status, "status") } : {}), ...(input.startAt ? { startAt: input.startAt } : {}), ...(input.endAt ? { endAt: input.endAt } : {}), ...(input.intraOpNotes !== undefined ? { intraOpNotes: input.intraOpNotes } : {}), ...(input.complications !== undefined ? { complications: input.complications } : {}) },
   });
   await recordAuditEvent("hospital.ot.anesthesiaRecorded", input.byUserId, { surgeryId: input.surgeryId, type: input.type, status: rec.status }, { facilityId: surgery.facilityId, patientId: surgery.patientId, encounterId: surgery.encounterId });
   return rec;
@@ -340,7 +343,7 @@ export async function updateRecovery(input: { surgeryId: string; facilityId: str
       const result = await tx.recoveryRecord.updateMany({
         where: { surgeryId: input.surgeryId, status: existing.status },
         data: {
-          ...(input.status ? { status: input.status } : {}),
+          ...(input.status ? { status: parseEnum($Enums.RecoveryRecordStatus, input.status, "status") } : {}),
           ...(input.destination !== undefined ? { destination: input.destination } : {}),
           ...(input.responsibleStaffId !== undefined ? { responsibleStaffId: input.responsibleStaffId } : {}),
           ...(input.nurseStaffId !== undefined ? { nurseStaffId: input.nurseStaffId } : {}),
@@ -351,7 +354,7 @@ export async function updateRecovery(input: { surgeryId: string; facilityId: str
       });
       if (result.count !== 1) throw new BadRequestError("Recovery state changed concurrently — refresh and try again.");
     } else if (!existing) {
-      await tx.recoveryRecord.create({ data: { surgeryId: input.surgeryId, status: input.status ?? "PENDING", destination: input.destination, responsibleStaffId: input.responsibleStaffId, nurseStaffId: input.nurseStaffId, notes: input.notes, arrivalAt: input.status === "IN_RECOVERY" ? new Date() : undefined } });
+      await tx.recoveryRecord.create({ data: { surgeryId: input.surgeryId, status: parseEnum($Enums.RecoveryRecordStatus, input.status ?? "PENDING", "status"), destination: input.destination, responsibleStaffId: input.responsibleStaffId, nurseStaffId: input.nurseStaffId, notes: input.notes, arrivalAt: input.status === "IN_RECOVERY" ? new Date() : undefined } });
     }
 
     await tx.auditEvent.create({ data: { type: "hospital.ot.recoveryUpdated", userId: input.byUserId, detail: { surgeryId: input.surgeryId, status: input.status }, facilityId: surgery.facilityId, patientId: surgery.patientId, encounterId: surgery.encounterId } });

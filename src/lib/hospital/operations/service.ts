@@ -1,3 +1,4 @@
+import { $Enums } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
@@ -5,6 +6,7 @@ import {
   HOUSEKEEPING_TRANSITIONS, TRANSPORT_TRANSITIONS, AMBULANCE_TRIP_TRANSITIONS, MEAL_TRANSITIONS,
   MAINTENANCE_TRANSITIONS, INFECTION_TRANSITIONS, isTransitionAllowed, assertStaffActiveInFacility,
 } from "@/lib/hospital/operations/shared";
+import { parseEnum } from "@/lib/enumValue";
 
 /**
  * Phase B9 Hospital Operations service — housekeeping, dietary, transport,
@@ -34,7 +36,7 @@ async function assertBedInFacility(bedId: string, facilityId: string) {
 export async function createHousekeepingRequest(input: { facilityId: string; requestType: string; bedId?: string; wardId?: string; areaLabel?: string; priority?: string; reason?: string; isDischargeCleaning?: boolean; encounterId?: string; requestedByStaffId: string; byUserId: string }) {
   if (input.bedId) await assertBedInFacility(input.bedId, input.facilityId);
   const req = await prisma.housekeepingRequest.create({
-    data: { facilityId: input.facilityId, requestType: input.requestType, bedId: input.bedId, wardId: input.wardId, areaLabel: input.areaLabel, priority: input.priority ?? "ROUTINE", reason: input.reason, isDischargeCleaning: input.isDischargeCleaning ?? false, encounterId: input.encounterId, requestedByStaffId: input.requestedByStaffId },
+    data: { facilityId: input.facilityId, requestType: input.requestType, bedId: input.bedId, wardId: input.wardId, areaLabel: input.areaLabel, priority: parseEnum($Enums.Priority, input.priority ?? "ROUTINE", "priority"), reason: input.reason, isDischargeCleaning: input.isDischargeCleaning ?? false, encounterId: input.encounterId, requestedByStaffId: input.requestedByStaffId },
   });
   await recordAuditEvent("hospital.ops.housekeepingCreated", input.byUserId, { requestId: req.id, requestType: req.requestType, bedId: input.bedId }, { facilityId: input.facilityId, encounterId: input.encounterId });
   return req;
@@ -119,7 +121,7 @@ export async function createTransportRequest(input: { facilityId: string; patien
   if (input.pickupBedId) await assertBedInFacility(input.pickupBedId, input.facilityId);
   if (input.destinationBedId) await assertBedInFacility(input.destinationBedId, input.facilityId);
   const req = await prisma.patientTransportRequest.create({
-    data: { facilityId: input.facilityId, patientId: input.patientId, encounterId: input.encounterId, transportType: input.transportType, pickupBedId: input.pickupBedId, pickupLabel: input.pickupLabel, destinationBedId: input.destinationBedId, destinationLabel: input.destinationLabel, priority: input.priority ?? "ROUTINE", equipmentNote: input.equipmentNote, requestedByStaffId: input.requestedByStaffId },
+    data: { facilityId: input.facilityId, patientId: input.patientId, encounterId: input.encounterId, transportType: input.transportType, pickupBedId: input.pickupBedId, pickupLabel: input.pickupLabel, destinationBedId: input.destinationBedId, destinationLabel: input.destinationLabel, priority: parseEnum($Enums.Priority, input.priority ?? "ROUTINE", "priority"), equipmentNote: input.equipmentNote, requestedByStaffId: input.requestedByStaffId },
   });
   await recordAuditEvent("hospital.ops.transportCreated", input.byUserId, { requestId: req.id, transportType: req.transportType }, { facilityId: input.facilityId, patientId: input.patientId, encounterId: input.encounterId });
   return req;
@@ -211,7 +213,7 @@ export async function transitionAmbulanceTrip(input: { tripId: string; facilityI
 // ══ MAINTENANCE ══════════════════════════════════════════════════════════════
 export async function createMaintenanceRequest(input: { facilityId: string; issueType: string; description: string; locationLabel?: string; wardId?: string; equipmentId?: string; priority?: string; requestedByStaffId: string; byUserId: string }) {
   if (input.equipmentId) { const eq = await prisma.biomedicalEquipment.findUnique({ where: { id: input.equipmentId } }); if (!eq || eq.facilityId !== input.facilityId) throw new NotFoundError("Equipment not found in this facility."); }
-  const req = await prisma.maintenanceRequest.create({ data: { facilityId: input.facilityId, issueType: input.issueType, description: input.description, locationLabel: input.locationLabel, wardId: input.wardId, equipmentId: input.equipmentId, priority: input.priority ?? "ROUTINE", requestedByStaffId: input.requestedByStaffId } });
+  const req = await prisma.maintenanceRequest.create({ data: { facilityId: input.facilityId, issueType: input.issueType, description: input.description, locationLabel: input.locationLabel, wardId: input.wardId, equipmentId: input.equipmentId, priority: parseEnum($Enums.Priority, input.priority ?? "ROUTINE", "priority"), requestedByStaffId: input.requestedByStaffId } });
   await recordAuditEvent("hospital.ops.maintenanceCreated", input.byUserId, { requestId: req.id, issueType: req.issueType }, { facilityId: input.facilityId });
   return req;
 }
@@ -284,7 +286,7 @@ export async function setEquipmentStatus(input: { equipmentId: string; facilityI
   if (!valid.includes(input.to)) throw new BadRequestError("Invalid equipment status.");
   const eq = await prisma.biomedicalEquipment.findUnique({ where: { id: input.equipmentId } });
   if (!eq || eq.facilityId !== input.facilityId) throw new NotFoundError("Equipment not found.");
-  const updated = await prisma.biomedicalEquipment.update({ where: { id: eq.id }, data: { status: input.to } });
+  const updated = await prisma.biomedicalEquipment.update({ where: { id: eq.id }, data: { status: parseEnum($Enums.BiomedicalEquipmentStatus, input.to, "status") } });
   await recordAuditEvent("hospital.ops.equipmentStatusChanged", input.byUserId, { equipmentId: eq.id, to: input.to }, { facilityId: input.facilityId });
   return updated;
 }

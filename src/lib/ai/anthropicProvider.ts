@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { AIProvider, CaseFactSheet } from "./provider";
-import { buildPatientDialoguePrompt, buildVivaExaminerPrompt, buildTutorPrompt } from "./prompts";
+import type { AIProvider, AssistantInput, CaseFactSheet } from "./provider";
+import { buildPatientDialoguePrompt, buildVivaExaminerPrompt, buildTutorPrompt, buildAssistantPrompt } from "./prompts";
 
 const MODEL = "claude-sonnet-5";
 
@@ -47,5 +47,9 @@ export class AnthropicAIProvider implements AIProvider {
       input.weakDimension ? `\nWeakest dimension: ${input.weakDimension}` : ""
     }\n\nProvide feedback in ${input.mode} mode.`;
     return this.complete(buildTutorPrompt(input.mode), userMessage, input.mode === "DEBRIEF" ? 500 : 200);
+  }
+
+  async assistantReply(input: AssistantInput): Promise<string> {
+    return this.complete(buildAssistantPrompt(input), input.message, 512);
   }
 }

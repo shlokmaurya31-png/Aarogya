@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/db";
 import type { Prisma } from "@prisma/client";
+import { isStaffInFacility } from "@/lib/auth/staffFacility";
+import { absenceInEffectWhere } from "@/lib/hospital/bookability";
 
 /**
  * Phase B10 credential-aware authorization FOUNDATION. This does NOT replace
@@ -54,19 +56,18 @@ export function deriveExpiryState(expiresAt: Date | null | undefined, now = new 
 /** A staff member's canonical facility assignment IS an authorization input (brief §14). */
 export async function isStaffAssignedToFacility(db: Db, staffId: string, facilityId: string): Promise<boolean> {
   const staff = await db.hospitalStaffProfile.findUnique({ where: { id: staffId } });
-  return !!staff && staff.facilityId === facilityId;
+  return !!staff && (await isStaffInFacility(db, staff.id, facilityId));
 }
 
 export async function isStaffOperationallyActive(db: Db, staffId: string, facilityId: string): Promise<boolean> {
   const staff = await db.hospitalStaffProfile.findUnique({ where: { id: staffId } });
-  return !!staff && staff.facilityId === facilityId && staff.status === "ACTIVE";
+  return !!staff && staff.status === "ACTIVE" && (await isStaffInFacility(db, staff.id, facilityId));
 }
 
-/** Availability defaults to available when no record exists (roster is a foundation, not mandatory). */
+/** Available unless an absence (D7: StaffAbsence) is in effect now at this facility. */
 export async function isStaffAvailable(db: Db, staffId: string, facilityId: string): Promise<boolean> {
-  const rec = await db.staffAvailability.findUnique({ where: { staffId } });
-  if (!rec || rec.facilityId !== facilityId) return true;
-  return rec.availability === "AVAILABLE" || rec.availability === "OFF_DUTY" ? rec.availability === "AVAILABLE" : false;
+  const n = await db.staffAbsence.count({ where: { staffId, facilityId, ...absenceInEffectWhere(new Date()) } });
+  return n === 0;
 }
 
 export async function hasActiveCredential(db: Db, staffId: string, facilityId: string, credentialType: string): Promise<boolean> {
@@ -88,7 +89,7 @@ export async function hasActivePrivilege(db: Db, staffId: string, facilityId: st
  */
 export async function requirePrivilege(db: Db, args: { staffId: string; facilityId: string; privilegeType: string }): Promise<void> {
   const staff = await db.hospitalStaffProfile.findUnique({ where: { id: args.staffId } });
-  if (!staff || staff.facilityId !== args.facilityId) throw new CredentialAuthorizationError("WRONG_FACILITY", "Not authorized in this facility.");
+  if (!staff || !(await isStaffInFacility(db, staff.id, args.facilityId))) throw new CredentialAuthorizationError("WRONG_FACILITY", "Not authorized in this facility.");
   if (staff.status !== "ACTIVE") throw new CredentialAuthorizationError("INACTIVE_STAFF", "Staff member is not active.");
   const privs = await db.staffPrivilege.findMany({ where: { staffId: args.staffId, facilityId: args.facilityId, privilegeType: args.privilegeType } });
   if (privs.length === 0) throw new CredentialAuthorizationError("MISSING_PRIVILEGE", "Required clinical privilege has not been granted.");
@@ -109,7 +110,7 @@ export async function requirePrivilege(db: Db, args: { staffId: string; facility
 
 export async function requireCredential(db: Db, args: { staffId: string; facilityId: string; credentialType: string }): Promise<void> {
   const staff = await db.hospitalStaffProfile.findUnique({ where: { id: args.staffId } });
-  if (!staff || staff.facilityId !== args.facilityId) throw new CredentialAuthorizationError("WRONG_FACILITY", "Not authorized in this facility.");
+  if (!staff || !(await isStaffInFacility(db, staff.id, args.facilityId))) throw new CredentialAuthorizationError("WRONG_FACILITY", "Not authorized in this facility.");
   if (staff.status !== "ACTIVE") throw new CredentialAuthorizationError("INACTIVE_STAFF", "Staff member is not active.");
   const creds = await db.credential.findMany({ where: { staffId: args.staffId, facilityId: args.facilityId, credentialType: args.credentialType } });
   if (creds.length === 0) throw new CredentialAuthorizationError("MISSING_CREDENTIAL", "Required credential is missing.");

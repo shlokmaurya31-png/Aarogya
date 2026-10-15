@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
-import { createOrderEnvelope } from "@/lib/hospital/orderEnvelope";
+import { createOrderEnvelope, syncOrderStatus } from "@/lib/hospital/orderEnvelope";
 import { mapDiagnosticPriorityToOrderPriority } from "@/lib/hospital/diagnosticsLifecycle";
 import { accessionSpecimen } from "@/lib/hospital/specimenLifecycle";
 import { createPricedChargeIfNotExists } from "@/lib/hospital/billing/chargeCapture";
@@ -110,6 +110,7 @@ export async function POST(req: NextRequest) {
           panelId: panelId ?? undefined,
         },
       });
+      await syncOrderStatus(tx, "LAB", createdOrder.id);
       const createdSpecimen = await accessionSpecimen(tx, {
         labOrderId: createdOrder.id,
         facilityId,

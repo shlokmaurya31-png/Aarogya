@@ -5,6 +5,7 @@ import { emitDomainEvent } from "@/lib/events/emit";
 import { type ActorMemberships } from "@/lib/auth/tenantContext";
 import { requirePlatform } from "@/lib/billing/authz";
 import { resolveCurrentPrice } from "@/lib/billing/pricing";
+import type { ReconciliationSeverity } from "@prisma/client";
 
 /**
  * Phase D5 — deterministic revenue-leakage detection.
@@ -15,7 +16,7 @@ import { resolveCurrentPrice } from "@/lib/billing/pricing";
  * de-duplicated per (kind, entityId) while unresolved. Platform-only.
  */
 
-async function createFinding(input: { kind: BillingReconciliationKind; organizationId: string | null; entityType: string; entityId: string; severity: string; description: string; actorUserId: string | null }) {
+async function createFinding(input: { kind: BillingReconciliationKind; organizationId: string | null; entityType: string; entityId: string; severity: ReconciliationSeverity; description: string; actorUserId: string | null }) {
   // Race-safe de-duplication: findingKey is UNIQUE while a finding is OPEN. Two
   // concurrent detection runs both attempt the insert; exactly one succeeds and
   // the other hits the unique constraint (P2002) and is skipped — no duplicate.

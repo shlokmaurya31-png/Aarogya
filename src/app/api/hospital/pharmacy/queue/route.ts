@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
     const orders = await prisma.medicationOrder.findMany({
       where: { encounter: { facilityId }, status: status as never },
       include: {
-        patient: { include: { allergies: true, problems: { where: { status: "active" } } } },
+        patient: { include: { allergies: true, problems: { where: { status: "ACTIVE" } } } },
         orderedBy: { include: { user: true } },
         safetyWarnings: { where: { acknowledgedAt: null } },
         order: true,

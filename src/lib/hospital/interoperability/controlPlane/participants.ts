@@ -3,6 +3,8 @@ import { BadRequestError, NotFoundError, ConflictError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import type { AuthorizationActor } from "@/lib/auth/authorize/types";
 import { assertKnownSystem } from "./registry";
+import { parseEnum } from "@/lib/enumValue";
+import { $Enums } from "@prisma/client";
 
 /**
  * Phase C6 — external participant registry.
@@ -95,7 +97,7 @@ export async function registerParticipant(input: {
         name: input.name.trim().slice(0, 200),
         externalId: input.externalId.trim().slice(0, 200),
         externalIdSystem: input.externalIdSystem?.slice(0, 200) ?? null,
-        environment,
+        environment: parseEnum($Enums.IntegrationEnvironment, environment, "environment"),
         status: "ACTIVE",
         // Always. There is no argument, imported or otherwise, that can make
         // this VERIFIED at creation.
@@ -146,7 +148,7 @@ export async function setParticipantTrust(input: {
     const r = await tx.externalParticipant.updateMany({
       where: { id: p.id, trustStatus: p.trustStatus, version: p.version },
       data: {
-        trustStatus: input.to,
+        trustStatus: parseEnum($Enums.ExternalParticipantTrustStatus, input.to, "trustStatus"),
         verificationNote: input.note.trim().slice(0, 500),
         ...(input.to === "VERIFIED"
           ? { verifiedAt: new Date(), verifiedByUserId: input.actor.userId, suspendedAt: null, suspendedReason: null }
@@ -187,7 +189,7 @@ export async function resolveParticipant(args: {
       facilityId_system_environment_externalId: {
         facilityId: args.facilityId,
         system: args.system,
-        environment: args.environment,
+        environment: parseEnum($Enums.IntegrationEnvironment, args.environment, "environment"),
         externalId: args.externalId,
       },
     },
@@ -202,7 +204,7 @@ export async function listParticipants(args: {
       facilityId: args.facilityId,
       ...(args.system ? { system: args.system } : {}),
       ...(args.type ? { type: args.type } : {}),
-      ...(args.trustStatus ? { trustStatus: args.trustStatus } : {}),
+      ...(args.trustStatus ? { trustStatus: parseEnum($Enums.ExternalParticipantTrustStatus, args.trustStatus, "trustStatus") } : {}),
     },
     orderBy: [{ system: "asc" }, { name: "asc" }],
     take: 300,

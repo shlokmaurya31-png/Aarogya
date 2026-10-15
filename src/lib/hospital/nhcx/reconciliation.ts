@@ -2,6 +2,8 @@ import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError, ConflictError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { SETTLEMENT_TRANSITIONS, EXCEPTION_TRANSITIONS, isTransitionAllowed } from "./stateMachines";
+import { $Enums } from "@prisma/client";
+import { parseEnum } from "@/lib/enumValue";
 
 /**
  * Phase C5 — settlement and reconciliation.
@@ -188,7 +190,7 @@ export async function raiseException(input: {
       paymentId: input.paymentId ?? null,
       settlementId: input.settlementId ?? null,
       exceptionType: input.exceptionType,
-      severity: input.severity ?? "WARNING",
+      severity: parseEnum($Enums.AlertSeverity, input.severity ?? "WARNING", "severity"),
       expectedAmountMinor: input.expectedAmountMinor ?? null,
       actualAmountMinor: input.actualAmountMinor ?? null,
       varianceMinor: variance,
@@ -306,7 +308,7 @@ export async function resolveException(input: {
     const r = await tx.reconciliationException.updateMany({
       where: { id: ex.id, status: ex.status, version: ex.version },
       data: {
-        status: input.to, resolutionNote: input.note, resolvedByUserId: input.byUserId,
+        status: parseEnum($Enums.ReconciliationExceptionStatus, input.to, "status"), resolutionNote: input.note, resolvedByUserId: input.byUserId,
         resolvedAt: ["RESOLVED", "DISMISSED"].includes(input.to) ? new Date() : null,
         version: { increment: 1 },
       },
@@ -318,7 +320,7 @@ export async function resolveException(input: {
 
 export async function listExceptions(args: { facilityId: string; status?: string }) {
   return prisma.reconciliationException.findMany({
-    where: { facilityId: args.facilityId, ...(args.status ? { status: args.status } : {}) },
+    where: { facilityId: args.facilityId, ...(args.status ? { status: parseEnum($Enums.ReconciliationExceptionStatus, args.status, "status") } : {}) },
     orderBy: [{ severity: "desc" }, { detectedAt: "desc" }],
     take: 200,
   });

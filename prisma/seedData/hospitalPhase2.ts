@@ -6,8 +6,11 @@
  * seedPhase1Extensions() — no duplicate users beyond the one genuinely new
  * persona (front desk) the brief's demo-personas section asks for.
  */
+import type { AppointmentStatus } from "@prisma/client";
 import { PrismaClient, Role, BedStatus } from "@prisma/client";
 import { hashPassword } from "../../src/lib/auth/password";
+import { staffAtFacilityWhere } from "../../src/lib/auth/staffFacility";
+import { ensurePrimaryMembership } from "./staffMembership";
 
 function startOfToday(): Date {
   const d = new Date();
@@ -34,11 +37,12 @@ export async function seedPhase2PatientFlow(prisma: PrismaClient) {
   const frontDeskStaff = await prisma.hospitalStaffProfile.upsert({
     where: { userId: frontDeskUser.id },
     update: {},
-    create: { userId: frontDeskUser.id, facilityId: facility.id, displayRole: "Front Desk Coordinator", status: "ACTIVE" },
+    create: { userId: frontDeskUser.id, displayRole: "Front Desk Coordinator", status: "ACTIVE" },
   });
+  await ensurePrimaryMembership(prisma, frontDeskUser.id, facility.id);
 
-  const doctors = await prisma.hospitalStaffProfile.findMany({ where: { facilityId: facility.id, user: { role: "DOCTOR" } }, include: { user: true, department: true }, orderBy: { user: { displayName: "asc" } } });
-  const nurses = await prisma.hospitalStaffProfile.findMany({ where: { facilityId: facility.id, user: { role: "NURSE" } }, take: 5, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+  const doctors = await prisma.hospitalStaffProfile.findMany({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "DOCTOR" } }, include: { user: true, department: true }, orderBy: { user: { displayName: "asc" } } });
+  const nurses = await prisma.hospitalStaffProfile.findMany({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "NURSE" } }, take: 5, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
   const emergencyDoctor = doctors.find((d) => d.department?.name === "Emergency") ?? doctors[0];
   const opdDoctors = doctors.filter((d) => d.department?.name !== "Emergency").slice(0, 3);
   const patients = await prisma.patient.findMany({ where: { facilityId: facility.id }, take: 40, orderBy: { createdAt: "asc" } });
@@ -50,22 +54,23 @@ export async function seedPhase2PatientFlow(prisma: PrismaClient) {
       await prisma.doctorScheduleBlock.create({
         data: {
           staffId: doc.id, facilityId: facility.id, departmentId: doc.departmentId ?? undefined,
-          type: "CLINIC_SESSION", dayOfWeek: dow, startMinute: 540, endMinute: 780, // 09:00-13:00
+          dayOfWeek: dow, startMinute: 540, endMinute: 780, // 09:00-13:00
           slotDurationMinutes: 15, maxConcurrentAppointments: 1, roomLabel: `OPD-${doc.displayRole.slice(0, 4)}`,
         },
       });
     }
   }
-  // One doctor has a leave day today, to prove LEAVE overrides a recurring session (brief §7).
+  // One doctor has a leave day today, to prove leave overrides a recurring session (brief §7; D7: a StaffAbsence).
   if (opdDoctors[0]) {
-    await prisma.doctorScheduleBlock.create({
-      data: { staffId: opdDoctors[0].id, facilityId: facility.id, type: "LEAVE", specificDate: startOfToday(), reason: "Annual leave" },
+    const day = startOfToday();
+    await prisma.staffAbsence.create({
+      data: { staffId: opdDoctors[0].id, facilityId: facility.id, kind: "LEAVE", startAt: day, endAt: new Date(day.getTime() + 24 * 3_600_000), reason: "Annual leave" },
     });
   }
 
   // ── OPD Day scenario (brief §65): appointments across the full status range ──
   const today = startOfToday();
-  const apptStatuses = ["REQUESTED", "CONFIRMED", "CHECKED_IN", "COMPLETED", "CANCELLED", "NO_SHOW"];
+  const apptStatuses: AppointmentStatus[] = ["REQUESTED", "CONFIRMED", "CHECKED_IN", "COMPLETED", "CANCELLED", "NO_SHOW"];
   let apptCount = 0;
   for (let i = 0; i < 18 && i + 5 < patients.length; i++) {
     const doctor = opdDoctors[1] ?? opdDoctors[0]; // a doctor WITHOUT the leave-day override above

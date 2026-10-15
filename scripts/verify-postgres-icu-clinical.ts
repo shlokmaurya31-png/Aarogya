@@ -11,6 +11,7 @@ import { PrismaClient } from "@prisma/client";
 import { createIcuUnit, admitToIcu, recordObservation, recordInfusion, updateInfusionStatus, recordDevice, buildIcuRounding, buildIcuTimeline } from "../src/lib/hospital/icu";
 import { transferPatient } from "../src/lib/hospital/admission";
 import { NotFoundError } from "../src/lib/auth/rbac";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
 const runId = Date.now();
@@ -24,7 +25,7 @@ function report(name: string, ok: boolean, detail?: string) {
 
 async function main() {
   const facility = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
-  const staff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facility.id, user: { role: "DOCTOR" } } });
+  const staff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "DOCTOR" } } });
   const patient = await prisma.patient.findFirstOrThrow({ where: { facilityId: facility.id } });
   const icuWard = await prisma.ward.create({ data: { facilityId: facility.id, name: `ICU Clin Ward ${runId}`, wardType: "ICU" } });
   const generalWard = await prisma.ward.create({ data: { facilityId: facility.id, name: `Stepdown Ward ${runId}`, wardType: "GENERAL" } });

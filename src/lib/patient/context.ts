@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { prisma } from "@/lib/db";
+import { activeDelegationsTo } from "@/lib/consent/delegation";
 import { requireSession, ForbiddenError, NotFoundError } from "@/lib/auth/rbac";
 import { roleHasPermission } from "@/lib/auth/permissions";
 import type { SessionPayload } from "@/lib/auth/session";
@@ -125,16 +126,8 @@ export async function listAccessiblePatients(ctx: PatientContext): Promise<Acces
   if (ctx.selfPatientId) {
     out.push({ patientId: ctx.selfPatientId, isSelf: true, relationship: "SELF", scopes: [] });
   }
-  const now = new Date();
-  const delegations = await prisma.patientDelegation.findMany({
-    where: {
-      delegateUserId: ctx.userId,
-      status: "ACTIVE",
-      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-    },
-    include: { scopes: true },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-  });
+  // Delegation is consent: the consent service decides which ones are live.
+  const delegations = await activeDelegationsTo(ctx.userId);
   for (const d of delegations) {
     // Never let a delegate observe their own record via the delegate path.
     if (d.patientId === ctx.selfPatientId) continue;

@@ -9,6 +9,9 @@
  */
 import { PrismaClient, WardType, BedStatus, EncounterType, EncounterStatus, Role } from "@prisma/client";
 import { hashPassword } from "../../src/lib/auth/password";
+import { ensurePrimaryMembership } from "./staffMembership";
+import { staffAtFacilityWhere } from "../../src/lib/auth/staffFacility";
+import { estimatedDobFromAge } from "../../src/lib/patient/age";
 
 export async function seedPhase1Extensions(prisma: PrismaClient) {
   const alreadySeeded = await prisma.episodeOfCare.count();
@@ -66,8 +69,9 @@ export async function seedPhase1Extensions(prisma: PrismaClient) {
   const noidaDoctorStaff = await prisma.hospitalStaffProfile.upsert({
     where: { userId: noidaDoctorUser.id },
     update: {},
-    create: { userId: noidaDoctorUser.id, facilityId: noida.id, departmentId: noidaDepts.get("Orthopedics"), displayRole: "Orthopedic Surgeon", status: "ACTIVE" },
+    create: { userId: noidaDoctorUser.id, departmentId: noidaDepts.get("Orthopedics"), displayRole: "Orthopedic Surgeon", status: "ACTIVE" },
   });
+  await ensurePrimaryMembership(prisma, noidaDoctorUser.id, noida.id);
   const noidaAdminUser = await prisma.user.upsert({
     where: { email: "admin@noida-demo.aarogya" },
     update: {},
@@ -76,8 +80,9 @@ export async function seedPhase1Extensions(prisma: PrismaClient) {
   await prisma.hospitalStaffProfile.upsert({
     where: { userId: noidaAdminUser.id },
     update: {},
-    create: { userId: noidaAdminUser.id, facilityId: noida.id, displayRole: "Hospital Administrator", status: "ACTIVE" },
+    create: { userId: noidaAdminUser.id, displayRole: "Hospital Administrator", status: "ACTIVE" },
   });
+  await ensurePrimaryMembership(prisma, noidaAdminUser.id, noida.id, { isAdmin: true });
 
   const noidaPatientNames = [
     "Vikas Oberoi", "Rina Chawla", "Sameer Kapoor", "Tanvi Malhotra", "Arun Bhargava",
@@ -96,7 +101,7 @@ export async function seedPhase1Extensions(prisma: PrismaClient) {
         facilityId: noida.id,
         fullName: noidaPatientNames[i],
         sex: i % 2 === 0 ? "male" : "female",
-        ageYears: 20 + (i * 6),
+        dob: estimatedDobFromAge(20 + (i * 6)), dobPrecision: "ESTIMATED_FROM_AGE",
         phone: `+91 97${String(300000 + i * 41).padStart(6, "0")}`,
       },
     });
@@ -133,8 +138,8 @@ export async function seedPhase1Extensions(prisma: PrismaClient) {
 
   // ── Phase 1 clinical-core entities attached to the FIRST facility's existing patients ──
   const patients = await prisma.patient.findMany({ where: { facilityId: primaryFacility.id }, take: 15, orderBy: { createdAt: "asc" } });
-  const doctors = await prisma.hospitalStaffProfile.findMany({ where: { facility: { id: primaryFacility.id }, user: { role: "DOCTOR" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
-  const nurses = await prisma.hospitalStaffProfile.findMany({ where: { facility: { id: primaryFacility.id }, user: { role: "NURSE" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+  const doctors = await prisma.hospitalStaffProfile.findMany({ where: { ...staffAtFacilityWhere(primaryFacility.id), user: { role: "DOCTOR" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+  const nurses = await prisma.hospitalStaffProfile.findMany({ where: { ...staffAtFacilityWhere(primaryFacility.id), user: { role: "NURSE" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
   const encounters = await prisma.encounter.findMany({ where: { patientId: { in: patients.map((p) => p.id) } }, orderBy: [{ registeredAt: "asc" }, { id: "asc" }] });
   const departments = await prisma.department.findMany({ where: { facilityId: primaryFacility.id }, orderBy: [{ name: "asc" }, { id: "asc" }] });
 
@@ -151,7 +156,7 @@ export async function seedPhase1Extensions(prisma: PrismaClient) {
         type: "PRIMARY", diagnosedByStaffId: pick(doctors, 1).id, onsetDate: new Date(Date.now() - 30 * 86_400_000),
       },
     });
-    await prisma.problem.create({ data: { patientId: scenarioA.id, diagnosis: "Essential hypertension", status: "active", severity: "moderate" } });
+    await prisma.problem.create({ data: { patientId: scenarioA.id, diagnosis: "Essential hypertension", status: "ACTIVE", severity: "MODERATE" } });
   }
 
   // Demo Scenario B (inpatient): find an admitted patient, add problem + diagnosis + task.
@@ -207,8 +212,14 @@ export async function seedPhase1Extensions(prisma: PrismaClient) {
       authorStaffId: pick(doctors, 3).id, uploadedByStaffId: pick(doctors, 3).id,
     },
   });
-  await prisma.consent.create({
-    data: { patientId: scenarioC.id, purpose: "TREATMENT", scope: "Chronic disease management program", status: "GRANTED", grantedAt: new Date(), actorStaffId: pick(doctors, 3).id },
+  // A staff-recorded treatment consent, in the single consent model (D2).
+  await prisma.interopConsent.create({
+    data: {
+      facilityId: primaryFacility.id, patientId: scenarioC.id, purpose: "TREATMENT", description: "Chronic disease management program",
+      status: "GRANTED", grantedAt: new Date(), grantedBy: "STAFF_RECORDED", createdByStaffId: pick(doctors, 3).id,
+      recipientType: "FACILITY", recipientIdentifier: primaryFacility.id, recipientName: primaryFacility.name,
+      scopes: { create: [{ scope: "ALL_CLINICAL" }] },
+    },
   });
 
   // Department membership example (brief §5: "Dr. Sharma: Cardiology + Emergency").
@@ -230,7 +241,7 @@ export async function seedPhase1Extensions(prisma: PrismaClient) {
     update: {},
     create: {
       uhid: "UHID-AMC-DUP1", facilityId: primaryFacility.id, fullName: dupSource.fullName,
-      sex: dupSource.sex, phone: dupSource.phone ?? undefined, ageYears: dupSource.ageYears,
+      sex: dupSource.sex, phone: dupSource.phone ?? undefined, dob: dupSource.dob, dobPrecision: dupSource.dobPrecision,
     },
   });
 

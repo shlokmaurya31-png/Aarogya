@@ -17,6 +17,7 @@ import { createRequisitionDraft, addRequisitionLine, submitRequisition, approveR
 import { createPurchaseOrderDraft, addPurchaseOrderLine, submitForApproval, approvePurchaseOrder } from "../../src/lib/hospital/procurement/purchaseOrders";
 import { recordGoodsReceipt, approveGoodsReceipt, assignGoodsReceiptNumber } from "../../src/lib/hospital/procurement/goodsReceipts";
 import { initiateTransfer, receiveTransfer } from "../../src/lib/hospital/inventory/transfer";
+import { staffAtFacilityWhere } from "../../src/lib/auth/staffFacility";
 
 const SEEDED_DRUGS: Array<{ drugName: string; sku: string }> = [
   { drugName: "Nitrofurantoin", sku: "MED-NITROFURANTOIN-100MG" },
@@ -43,7 +44,7 @@ export async function seedPhase6aInventory(prisma: PrismaClient) {
   const facilities = await prisma.facility.findMany({ orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
 
   for (const facility of facilities) {
-    const admin = await prisma.hospitalStaffProfile.findFirst({ where: { facilityId: facility.id, user: { role: "HOSPITAL_ADMIN" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+    const admin = await prisma.hospitalStaffProfile.findFirst({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "HOSPITAL_ADMIN" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
     if (!admin) continue; // no admin seeded at this facility — nothing to attribute procurement approvals to, skip rather than fabricate an actor
 
     const centralStore = await prisma.$transaction((tx) => createStockLocation(tx, { facilityId: facility.id, name: "Central Store", type: "WAREHOUSE" }));
@@ -85,7 +86,7 @@ export async function seedPhase6aInventory(prisma: PrismaClient) {
     // staffId, and there's only one HOSPITAL_ADMIN seeded per facility;
     // approve via a second staff profile if one exists, else skip approval
     // and leave the demo chain at SUBMITTED (still a valid, inspectable state).
-    const secondApprover = await prisma.hospitalStaffProfile.findFirst({ where: { facilityId: facility.id, id: { not: admin.id }, user: { role: { in: ["HOSPITAL_ADMIN", "PHARMACIST"] } } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+    const secondApprover = await prisma.hospitalStaffProfile.findFirst({ where: { ...staffAtFacilityWhere(facility.id), id: { not: admin.id }, user: { role: { in: ["HOSPITAL_ADMIN", "PHARMACIST"] } } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
     if (!secondApprover) {
       console.log(`Seeded Phase 6A inventory foundation for ${facility.name}: items/locations/supplier/requisition (left SUBMITTED — no second approver role seeded at this facility to demonstrate approval without a same-actor violation).`);
       continue;

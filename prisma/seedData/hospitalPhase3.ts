@@ -7,6 +7,7 @@
  * PrismaClient instance).
  */
 import { PrismaClient, MedicationOrderStatus } from "@prisma/client";
+import { staffAtFacilityWhere } from "../../src/lib/auth/staffFacility";
 
 export async function seedPhase3Clinical(prisma: PrismaClient) {
   const already = await prisma.carePlan.count();
@@ -16,9 +17,9 @@ export async function seedPhase3Clinical(prisma: PrismaClient) {
   }
 
   const facility = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
-  const doctors = await prisma.hospitalStaffProfile.findMany({ where: { facilityId: facility.id, user: { role: "DOCTOR" } }, include: { user: true }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
-  const nurses = await prisma.hospitalStaffProfile.findMany({ where: { facilityId: facility.id, user: { role: "NURSE" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
-  const pharmacist = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facility.id, user: { role: "PHARMACIST" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+  const doctors = await prisma.hospitalStaffProfile.findMany({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "DOCTOR" } }, include: { user: true }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+  const nurses = await prisma.hospitalStaffProfile.findMany({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "NURSE" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+  const pharmacist = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "PHARMACIST" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
   const doctor = doctors[0];
 
   // ── Configurable abnormal-vital thresholds (brief §13) — explicit, hospital-configured example values, not a clinical claim ──

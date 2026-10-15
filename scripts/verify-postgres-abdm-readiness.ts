@@ -32,10 +32,11 @@ import { createMockAbdmFetch } from "../src/lib/hospital/interoperability/adapte
 import { reconcileConsentStatus } from "../src/lib/hospital/interoperability/abdm/mapping";
 import { createExchange, authorizeExchange, dispatchExchange } from "../src/lib/hospital/interoperability/exchange";
 import { StubExchangeAdapter } from "../src/lib/hospital/interoperability/adapters/abdm";
-import { requestConsent, grantConsent, revokeConsent } from "../src/lib/hospital/interoperability/consent";
+import { requestConsent, grantConsent, revokeConsent } from "../src/lib/consent";
 import { linkExternalIdentifier } from "../src/lib/hospital/interoperability/externalIdentity";
 import { importFhirPayload } from "../src/lib/hospital/interoperability/fhir/import";
 import { IDENTIFIER_SYSTEMS } from "../src/lib/hospital/interoperability/shared";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
 let pass = 0, fail = 0;
@@ -86,8 +87,8 @@ async function main() {
   const tag = `c2-${Date.now()}`;
   const facA = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
   const facB = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Noida Hospital" } });
-  const a1 = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facA.id, status: "ACTIVE" } });
-  const b1 = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facB.id, status: "ACTIVE" } });
+  const a1 = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facA.id), status: "ACTIVE" } });
+  const b1 = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facB.id), status: "ACTIVE" } });
   const patA = await prisma.patient.findFirstOrThrow({ where: { facilityId: facA.id } });
   const patB = await prisma.patient.findFirstOrThrow({ where: { facilityId: facB.id } });
 

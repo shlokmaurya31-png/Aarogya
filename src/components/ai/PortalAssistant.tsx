@@ -24,8 +24,9 @@ import { cn } from "@/lib/utils";
  *  - configForRole()        role → copy/mode, shared with the cockpit.
  */
 
-// The /api/chat route only distinguishes "patient" from everything-else
-// ("doctor" clinical briefing). Map each portal role onto one of those.
+// The copy and fallbacks differ for patients and everyone else. The server
+// decides the assistant's audience and record from the session, not from
+// anything sent here.
 type ChatMode = "patient" | "doctor";
 
 export interface AssistantConfig {
@@ -198,7 +199,7 @@ export function AiConversation({
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: toSend, mode: config.mode, page: pageLabel }),
+        body: JSON.stringify({ message: toSend, page: pageLabel }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? "Request failed");

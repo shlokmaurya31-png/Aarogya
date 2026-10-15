@@ -9,6 +9,7 @@
 import { PrismaClient } from "@prisma/client";
 import { createOperatingTheatre, createProcedure, requestSurgery, transitionSurgery, scheduleSurgery, startProcedure, completeProcedure, recordItemUsage, SurgeryScheduleConflictError, SurgeryTransitionError } from "../src/lib/hospital/surgery";
 import { createAdjustment } from "../src/lib/hospital/inventory/adjustment";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
 const runId = Date.now();
@@ -30,7 +31,7 @@ async function approvedSurgery(facilityId: string, patientId: string, staffId: s
 
 async function main() {
   const facility = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
-  const staff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facility.id, user: { role: "DOCTOR" } } });
+  const staff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "DOCTOR" } } });
   const patient = await prisma.patient.findFirstOrThrow({ where: { facilityId: facility.id } });
   const ot = await createOperatingTheatre({ facilityId: facility.id, name: `OT-${runId}`, type: "GENERAL", byUserId: staff.userId });
   await createProcedure({ facilityId: facility.id, code: `APPY-${runId}`, name: "Appendectomy", byUserId: staff.userId });

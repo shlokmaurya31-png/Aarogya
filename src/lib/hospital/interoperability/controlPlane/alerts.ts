@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError, ConflictError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { parseEnum } from "@/lib/enumValue";
+import { $Enums } from "@prisma/client";
 
 /**
  * Phase C6 — deterministic operational alerts.
@@ -145,7 +147,7 @@ export async function listAlerts(args: { facilityId: string; status?: string; sy
   return prisma.integrationAlert.findMany({
     where: {
       facilityId: args.facilityId,
-      ...(args.status ? { status: args.status } : {}),
+      ...(args.status ? { status: parseEnum($Enums.IntegrationAlertStatus, args.status, "status") } : {}),
       ...(args.system ? { system: args.system } : {}),
     },
     orderBy: [{ severity: "desc" }, { lastDetectedAt: "desc" }],

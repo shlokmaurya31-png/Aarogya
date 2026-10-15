@@ -18,6 +18,8 @@ import { enterResult, verifyResult } from "../../src/lib/hospital/labResultLifec
 import { scheduleStudy, checkInStudy, startStudy, completeStudy } from "../../src/lib/hospital/imagingStudyLifecycle";
 import { enterReport, verifyReport, amendReport } from "../../src/lib/hospital/imagingReportLifecycle";
 import { createCharge } from "../../src/lib/hospital/billing/chargeCapture";
+import { ensurePrimaryMembership } from "./staffMembership";
+import { estimatedDobFromAge, ageInYears } from "../../src/lib/patient/age";
 
 /**
  * Small, explicitly-demo lab catalog (brief §8-10, §54). Global
@@ -238,7 +240,6 @@ export async function seedHospital(prisma: PrismaClient) {
       update: {},
       create: {
         userId: user.id,
-        facilityId: facility.id,
         departmentId: deptName ? departments.get(deptName)?.id : undefined,
         displayRole,
         status: "ACTIVE",
@@ -250,11 +251,9 @@ export async function seedHospital(prisma: PrismaClient) {
     // administrator; `orgAdmin` additionally makes them an organization
     // administrator (used for the demo hospital admin so the enterprise control
     // plane is operable without a separate platform login).
-    await prisma.facilityMembership.upsert({
-      where: { userId_facilityId: { userId: user.id, facilityId: facility.id } },
-      update: {},
-      create: { userId: user.id, facilityId: facility.id, isAdmin: role === Role.HOSPITAL_ADMIN },
-    });
+    // D8: the membership is the staff member's facility access; this one is
+    // their primary (home) facility.
+    await ensurePrimaryMembership(prisma, user.id, facility.id, { isAdmin: role === Role.HOSPITAL_ADMIN });
     await prisma.organizationMembership.upsert({
       where: { userId_organizationId: { userId: user.id, organizationId: org.id } },
       update: {},
@@ -303,7 +302,7 @@ export async function seedHospital(prisma: PrismaClient) {
         facilityId: facility.id,
         fullName: p.name,
         sex: p.sex,
-        ageYears: 5 + ((i * 7) % 80),
+        dob: estimatedDobFromAge(5 + ((i * 7) % 80)), dobPrecision: "ESTIMATED_FROM_AGE",
         phone: `+91 98${String(200000 + i * 37).padStart(6, "0")}`,
         bloodGroup: pick(["A+", "B+", "O+", "AB+", "O-", "A-"], i),
       },
@@ -315,14 +314,14 @@ export async function seedHospital(prisma: PrismaClient) {
       await prisma.allergy.upsert({
         where: { id: `allergy-seed-${i}` },
         update: {},
-        create: { id: `allergy-seed-${i}`, patientId: patient.id, substance: "penicillin", severity: "severe", reaction: "anaphylaxis" },
+        create: { id: `allergy-seed-${i}`, patientId: patient.id, substance: "penicillin", severity: "SEVERE", reaction: "anaphylaxis" },
       });
     }
     if (i % 9 === 0) {
       await prisma.allergy.upsert({
         where: { id: `allergy-seed-b-${i}` },
         update: {},
-        create: { id: `allergy-seed-b-${i}`, patientId: patient.id, substance: "sulfa drugs", severity: "moderate", reaction: "rash" },
+        create: { id: `allergy-seed-b-${i}`, patientId: patient.id, substance: "sulfa drugs", severity: "MODERATE", reaction: "rash" },
       });
     }
   }
@@ -547,7 +546,7 @@ export async function seedHospital(prisma: PrismaClient) {
 
     // Problems for a subset — active diagnosis list.
     if (i % 4 === 0) {
-      await prisma.problem.create({ data: { patientId: patient.id, diagnosis: complaint, status: "active", severity: "moderate" } });
+      await prisma.problem.create({ data: { patientId: patient.id, diagnosis: complaint, status: "ACTIVE", severity: "MODERATE" } });
     }
   }
 
@@ -611,7 +610,7 @@ export async function seedHospital(prisma: PrismaClient) {
     const collected = await collectSpecimen(prisma, specimen.id, labTechProfile.id);
     const received = await receiveSpecimen(prisma, collected.id, labTechProfile.id);
     await acceptSpecimen(prisma, received.id, labTechProfile.id);
-    const result = await enterResult(prisma, { labOrderId: order.id, specimenId: specimen.id, catalogTestId: labCatalog.get("CHEM-NA"), resultType: "NUMERIC", value: "138", unit: "mmol/L", numericValue: 138, isCritical: false, releasedByStaffId: labTechProfile.id, patientSex: scenarioAPatient.sex, patientAgeYears: scenarioAPatient.ageYears });
+    const result = await enterResult(prisma, { labOrderId: order.id, specimenId: specimen.id, catalogTestId: labCatalog.get("CHEM-NA"), resultType: "NUMERIC", value: "138", unit: "mmol/L", numericValue: 138, isCritical: false, releasedByStaffId: labTechProfile.id, patientSex: scenarioAPatient.sex, patientAgeYears: ageInYears(scenarioAPatient.dob) });
     await verifyResult(prisma, result.id, labTechProfile.id);
   }
 
@@ -631,7 +630,7 @@ export async function seedHospital(prisma: PrismaClient) {
     const recollectedCollected = await collectSpecimen(prisma, recollected.id, labTechProfile.id);
     const recollectedReceived = await receiveSpecimen(prisma, recollectedCollected.id, labTechProfile.id);
     await acceptSpecimen(prisma, recollectedReceived.id, labTechProfile.id);
-    await enterResult(prisma, { labOrderId: order.id, specimenId: recollected.id, catalogTestId: labCatalog.get("CBC-HB"), resultType: "NUMERIC", value: "12.5", unit: "g/dL", numericValue: 12.5, isCritical: false, releasedByStaffId: labTechProfile.id, patientSex: scenarioBPatient.sex, patientAgeYears: scenarioBPatient.ageYears });
+    await enterResult(prisma, { labOrderId: order.id, specimenId: recollected.id, catalogTestId: labCatalog.get("CBC-HB"), resultType: "NUMERIC", value: "12.5", unit: "g/dL", numericValue: 12.5, isCritical: false, releasedByStaffId: labTechProfile.id, patientSex: scenarioBPatient.sex, patientAgeYears: ageInYears(scenarioBPatient.dob) });
   }
 
   // Scenario C — critical result reaching the alert engine through the new specimen-driven pipeline (distinct from the legacy direct-insert critical fixture above), verified but deliberately left unacknowledged.
@@ -646,7 +645,7 @@ export async function seedHospital(prisma: PrismaClient) {
     const collected = await collectSpecimen(prisma, specimen.id, labTechProfile.id);
     const received = await receiveSpecimen(prisma, collected.id, labTechProfile.id);
     await acceptSpecimen(prisma, received.id, labTechProfile.id);
-    const result = await enterResult(prisma, { labOrderId: order.id, specimenId: specimen.id, catalogTestId: labCatalog.get("CHEM-TROP"), resultType: "NUMERIC", value: "0.8", unit: "ng/mL", numericValue: 0.8, isCritical: true, releasedByStaffId: labTechProfile.id, patientSex: scenarioCPatient.sex, patientAgeYears: scenarioCPatient.ageYears });
+    const result = await enterResult(prisma, { labOrderId: order.id, specimenId: specimen.id, catalogTestId: labCatalog.get("CHEM-TROP"), resultType: "NUMERIC", value: "0.8", unit: "ng/mL", numericValue: 0.8, isCritical: true, releasedByStaffId: labTechProfile.id, patientSex: scenarioCPatient.sex, patientAgeYears: ageInYears(scenarioCPatient.dob) });
     await verifyResult(prisma, result.id, labTechProfile.id); // verified, still isCritical + unacknowledged — alert engine/Command Center must surface it
   }
 

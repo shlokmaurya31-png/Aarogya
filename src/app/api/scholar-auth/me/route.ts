@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
+import { studentNames } from "@/lib/student/name";
 
 export async function GET() {
   const session = await getSession();
@@ -20,8 +21,7 @@ export async function GET() {
       displayName: user.displayName,
       studentProfile: user.studentProfile
         ? {
-            fullLegalName: user.studentProfile.fullLegalName,
-            preferredName: user.studentProfile.preferredName,
+            ...studentNames(user),
             institutionName: user.studentProfile.institution?.name ?? user.studentProfile.institutionNameFreeText,
             course: user.studentProfile.course,
             learningTrack: user.studentProfile.learningTrack,
@@ -30,7 +30,7 @@ export async function GET() {
             verificationStatus: user.studentProfile.verificationStatus,
             streakDays: user.studentProfile.streakDays,
             clinicalXp: user.studentProfile.clinicalXp,
-            clinicalInterests: JSON.parse(user.studentProfile.clinicalInterests || "[]"),
+            clinicalInterests: user.studentProfile.clinicalInterests,
           }
         : null,
     },

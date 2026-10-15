@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import { Card, CardLabel } from "@/components/ui/Card";
 import { StatusPill } from "@/components/ui/StatusPill";
+import { ageLabel } from "@/lib/patient/age";
 
 interface PatientMeResponse {
   summary: {
-    patient: { uhid: string; fullName: string; sex: string; ageYears: number | null; bloodGroup: string | null };
+    patient: { uhid: string; fullName: string; sex: string; dob: string | null; dobPrecision?: string; bloodGroup: string | null };
     activeProblems: { id: string; diagnosis: string; status: string }[];
     activeAllergies: { id: string; substance: string; severity: string }[];
     activeMedications: { id: string; drugName: string; dose: string; frequency: string }[];
@@ -37,7 +38,7 @@ export function PatientRecordView() {
         <div className="flex items-center justify-between">
           <div>
             <p className="text-[16px] font-semibold">{summary.patient.fullName}</p>
-            <p className="text-[12px] text-text-tertiary">{summary.patient.uhid} · {summary.patient.ageYears ?? "—"}{summary.patient.sex[0]?.toUpperCase()} · {summary.patient.bloodGroup ?? "Blood group unknown"}</p>
+            <p className="text-[12px] text-text-tertiary">{summary.patient.uhid} · {ageLabel(summary.patient)}{summary.patient.sex[0]?.toUpperCase()} · {summary.patient.bloodGroup ?? "Blood group unknown"}</p>
           </div>
         </div>
         {summary.activeAllergies.length > 0 && (

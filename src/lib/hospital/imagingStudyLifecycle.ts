@@ -2,6 +2,7 @@ import { Prisma, ImagingStudyStatus } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { generateAccessionNumber } from "./accessionNumber";
+import { syncOrderStatus } from "./orderEnvelope";
 
 type Tx = Prisma.TransactionClient;
 
@@ -141,6 +142,7 @@ export async function scheduleStudy(
   }
 
   await tx.imagingOrder.updateMany({ where: { id: input.imagingOrderId, status: "ORDERED" }, data: { status: "SCHEDULED" } });
+  await syncOrderStatus(tx, "IMAGING", input.imagingOrderId);
   return study;
 }
 
@@ -199,6 +201,7 @@ export async function startStudy(
 export async function completeStudy(tx: Tx, studyId: string, input: { contrastGiven?: boolean; notes?: string } = {}) {
   const study = await guardedTransition(tx, studyId, "IN_PROGRESS", "COMPLETED", { performedAt: new Date(), contrastGiven: input.contrastGiven ?? false, notes: input.notes }, "completed");
   await tx.imagingOrder.updateMany({ where: { id: study.imagingOrderId, status: "SCHEDULED" }, data: { status: "ACQUIRED" } });
+  await syncOrderStatus(tx, "IMAGING", study.imagingOrderId);
   return study;
 }
 

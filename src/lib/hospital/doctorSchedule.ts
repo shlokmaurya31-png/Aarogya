@@ -1,9 +1,10 @@
 import { prisma } from "@/lib/db";
+import { loadDayContext, evaluateBookability } from "./bookability";
 
 /**
- * Doctor scheduling foundation (brief §7) — working hours, leave/holiday/
- * blocked periods and clinic sessions only, no payroll/HR. Available
- * slots are computed on demand from `DoctorScheduleBlock` rows, not
+ * Doctor scheduling foundation (brief §7) — clinic sessions
+ * (DoctorScheduleBlock), with leave/holiday/blocked time in StaffAbsence (D7),
+ * no payroll/HR. Available slots are computed on demand, not
  * pre-generated/persisted — avoids a second source of truth that would
  * need to be regenerated whenever a block changes.
  */
@@ -14,33 +15,16 @@ export interface AvailableSlot {
   remainingCapacity: number;
 }
 
-function isSameCalendarDate(a: Date, b: Date): boolean {
-  return a.getUTCFullYear() === b.getUTCFullYear() && a.getUTCMonth() === b.getUTCMonth() && a.getUTCDate() === b.getUTCDate();
-}
-
-/** Computes bookable slots for one doctor on one date, honoring blocked/leave/holiday overrides and existing bookings. */
+/**
+ * Computes bookable slots for one doctor on one date: each slot of each clinic
+ * session that passes the D7 bookability rule (no absence, not off shift) and
+ * has capacity left.
+ */
 export async function getAvailableSlots(staffId: string, date: Date): Promise<AvailableSlot[]> {
-  const dayOfWeek = date.getDay();
-  const dayStart = new Date(date);
-  dayStart.setHours(0, 0, 0, 0);
+  const ctx = await loadDayContext(prisma, staffId, date);
+  if (ctx.sessions.length === 0) return [];
+  const dayStart = ctx.dayStart;
   const dayEnd = new Date(dayStart.getTime() + 24 * 3_600_000);
-
-  const blocks = await prisma.doctorScheduleBlock.findMany({
-    where: {
-      staffId,
-      OR: [{ dayOfWeek }, { specificDate: { gte: dayStart, lt: dayEnd } }],
-    },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-  });
-
-  // A one-off LEAVE/HOLIDAY/BLOCKED override for this specific date cancels any recurring session that day.
-  const dayOverride = blocks.find((b) => b.specificDate && isSameCalendarDate(b.specificDate, date) && b.type !== "CLINIC_SESSION");
-  if (dayOverride) return [];
-
-  const sessions = blocks.filter(
-    (b) => b.type === "CLINIC_SESSION" && b.startMinute != null && b.endMinute != null && (b.specificDate ? isSameCalendarDate(b.specificDate, date) : b.dayOfWeek === dayOfWeek)
-  );
-  if (sessions.length === 0) return [];
 
   const existing = await prisma.appointment.findMany({
     where: { doctorStaffId: staffId, scheduledStart: { gte: dayStart, lt: dayEnd }, status: { notIn: ["CANCELLED", "NO_SHOW"] } },
@@ -53,12 +37,13 @@ export async function getAvailableSlots(staffId: string, date: Date): Promise<Av
   }
 
   const slots: AvailableSlot[] = [];
-  for (const session of sessions) {
+  for (const session of ctx.sessions) {
     const duration = session.slotDurationMinutes ?? 15;
     const maxConcurrent = session.maxConcurrentAppointments;
-    for (let minute = session.startMinute!; minute + duration <= session.endMinute!; minute += duration) {
+    for (let minute = session.startMinute; minute + duration <= session.endMinute; minute += duration) {
       const start = new Date(dayStart.getTime() + minute * 60_000);
       const end = new Date(start.getTime() + duration * 60_000);
+      if (!evaluateBookability(ctx, start, end).bookable) continue;
       const booked = bookedCount.get(start.getTime()) ?? 0;
       const remaining = maxConcurrent - booked;
       if (remaining > 0) {

@@ -14,6 +14,9 @@ import { resolveItemForDrugName } from "@/lib/hospital/inventory/itemMedicationL
 import { createPricedChargeIfNotExists } from "@/lib/hospital/billing/chargeCapture";
 import { PriceNotFoundError } from "@/lib/hospital/billing/pricing";
 import type { Prisma, MedicationOrderStatus, MedicationReturnSource, MedicationReturnClassification, WasteReason, RequestPriority, PharmacyRequestStatus } from "@prisma/client";
+import { syncOrderStatus } from "./orderEnvelope";
+import { parseOptionalEnum } from "@/lib/enumValue";
+import { $Enums } from "@prisma/client";
 
 /**
  * Enterprise Pharmacy service (Phase B6). An ORCHESTRATION layer over the
@@ -103,6 +106,7 @@ async function advanceDispensedOrder(tx: Tx, orderId: string, current: Medicatio
     if (status === to) continue;
     if (!isMedicationOrderTransitionAllowed(status, to)) break;
     const r = await tx.medicationOrder.updateMany({ where: { id: orderId, status }, data: { status: to } });
+    await syncOrderStatus(tx, "MEDICATION", orderId);
     if (r.count !== 1) break;
     await tx.auditEvent.create({ data: { type: "hospital.medication.statusChanged", userId: byUserId, detail: { orderId, from: status, to } } });
     status = to;
@@ -348,7 +352,7 @@ export async function getExpiryReport(facilityId: string, opts?: { windowDays?: 
 export async function recordStorageCheck(input: { facilityId: string; locationId: string; recordedValue: number; unit: string; status?: string; recordedByStaffId: string; notes?: string; byUserId: string }) {
   const loc = await prisma.stockLocation.findUnique({ where: { id: input.locationId } });
   if (!loc || loc.facilityId !== input.facilityId) throw new NotFoundError("Location not found in this facility.");
-  const check = await prisma.pharmacyStorageCheck.create({ data: { facilityId: input.facilityId, locationId: input.locationId, recordedValue: input.recordedValue, unit: input.unit, status: input.status, recordedByStaffId: input.recordedByStaffId, notes: input.notes } });
+  const check = await prisma.pharmacyStorageCheck.create({ data: { facilityId: input.facilityId, locationId: input.locationId, recordedValue: input.recordedValue, unit: input.unit, status: parseOptionalEnum($Enums.StorageCheckStatus, input.status, "status"), recordedByStaffId: input.recordedByStaffId, notes: input.notes } });
   await recordAuditEvent("hospital.pharmacy.storageCheck", input.byUserId, { checkId: check.id, locationId: input.locationId, value: input.recordedValue }, { facilityId: input.facilityId });
   return check;
 }

@@ -13,6 +13,7 @@ import {
   canonicalStatusForSubmission, type SubmissionStatus, type ProtocolState,
 } from "./stateMachines";
 import { nextRetryDelayMs, type NhcxErrorCategory } from "./errors";
+import { activePatientExternalIdentifiers } from "@/lib/patient/identifiers";
 
 /**
  * Phase C5 — claim submission lifecycle.
@@ -126,11 +127,7 @@ export async function buildSubmission(input: BuildSubmissionInput) {
 
   const participantCode = await resolveParticipantCode(input.facilityId, pkg.coverage.payerId);
   const facility = await prisma.facility.findUniqueOrThrow({ where: { id: input.facilityId } });
-  const patientExternalIds = await prisma.externalIdentifier.findMany({
-    where: { facilityId: input.facilityId, entityType: "PATIENT", entityId: pkg.patient.id, status: "ACTIVE" },
-    select: { system: true, value: true, use: true, status: true },
-    orderBy: [{ system: "asc" }, { id: "asc" }],
-  });
+  const patientExternalIds = await activePatientExternalIdentifiers(prisma, input.facilityId, pkg.patient.id);
 
   const bundleId = `${claim.id}-v${version}`;
   const bundle = buildClaimBundle(pkg, {
@@ -242,7 +239,7 @@ export async function dispatchSubmission(
   });
 
   // Idempotency: an identical dispatch resolves to the EXISTING exchange.
-  const existing = await prisma.nhcxExchange.findUnique({ where: { idempotencyKey } });
+  const existing = await prisma.nhcxExchange.findUnique({ where: { facilityId_idempotencyKey: { facilityId: input.facilityId, idempotencyKey } } });
   if (existing) {
     if (existing.facilityId !== input.facilityId) {
       throw new ConflictError("That submission is already in progress.");
@@ -269,7 +266,7 @@ export async function dispatchSubmission(
   } catch (e) {
     // Lost the insert race: somebody else created the same logical exchange.
     if ((e as { code?: string })?.code === "P2002") {
-      const raced = await prisma.nhcxExchange.findUnique({ where: { idempotencyKey } });
+      const raced = await prisma.nhcxExchange.findUnique({ where: { facilityId_idempotencyKey: { facilityId: input.facilityId, idempotencyKey } } });
       if (raced && raced.facilityId === input.facilityId) {
         return { exchange: raced, deduplicated: true, result: null };
       }

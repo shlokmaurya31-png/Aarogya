@@ -17,6 +17,7 @@ import { draftInvoiceForAccount, addChargeToInvoice, issueInvoice, InvoiceConcur
 import { getOrCreateBillingAccount } from "../src/lib/hospital/billing/billingAccount";
 import { createTariff, TariffConflictError } from "../src/lib/hospital/billing/pricing";
 import { createClaimDraft, submitClaim, ClaimConcurrencyError } from "../src/lib/hospital/billing/claims";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
 let pass = 0;
@@ -38,7 +39,7 @@ async function main() {
   const facility = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
   const patient = await prisma.patient.findFirstOrThrow({ where: { facilityId: facility.id } });
   const encounter = await prisma.encounter.findFirstOrThrow({ where: { facilityId: facility.id, patientId: patient.id } });
-  const staff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facility.id, user: { role: "BILLING_STAFF" } } });
+  const staff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "BILLING_STAFF" } } });
   const cashPayer = await prisma.payer.findFirstOrThrow({ where: { type: "CASH" } });
 
   // 1. Charge race: two concurrent order-creation charge hooks for the SAME sourceId must produce exactly one Charge.
@@ -228,7 +229,7 @@ async function main() {
     const { payment } = await prisma.$transaction((tx) => recordPayment(tx, { encounterId: encounter.id, patientId: patient.id, facilityId: facility.id, amountMinor: 100000, method: "UPI", idempotencyKey: key, receivedByUserId: staff.userId }));
     const { refund: refundA } = await prisma.$transaction((tx) => requestRefund(tx, { paymentId: payment.id, amountMinor: 60000, reason: "race test A", requestedByUserId: staff.userId, idempotencyKey: `${key}-refund-a` }));
     const { refund: refundB } = await prisma.$transaction((tx) => requestRefund(tx, { paymentId: payment.id, amountMinor: 60000, reason: "race test B", requestedByUserId: staff.userId, idempotencyKey: `${key}-refund-b` }));
-    const admin = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facility.id, user: { role: "HOSPITAL_ADMIN" } } });
+    const admin = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "HOSPITAL_ADMIN" } } });
     await prisma.$transaction((tx) => approveRefund(tx, refundA.id, { approvedByUserId: admin.userId }));
     await prisma.$transaction((tx) => approveRefund(tx, refundB.id, { approvedByUserId: admin.userId }));
     const results = await Promise.allSettled([prisma.$transaction((tx) => completeRefund(tx, refundA.id)), prisma.$transaction((tx) => completeRefund(tx, refundB.id))]);

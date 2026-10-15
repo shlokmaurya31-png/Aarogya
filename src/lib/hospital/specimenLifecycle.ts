@@ -2,6 +2,7 @@ import { Prisma, SpecimenStatus, SpecimenRejectionReason } from "@prisma/client"
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { generateAccessionNumber as generateAccessionNumberWithPrefix } from "./accessionNumber";
+import { syncOrderStatus } from "./orderEnvelope";
 
 type Tx = Prisma.TransactionClient;
 
@@ -100,6 +101,7 @@ async function guardedTransition(
 export async function collectSpecimen(tx: Tx, specimenId: string, collectedByStaffId: string, notes?: string) {
   const specimen = await guardedTransition(tx, specimenId, "COLLECTION_PENDING", "COLLECTED", { collectedByStaffId, collectedAt: new Date(), collectionNotes: notes }, "collected");
   await tx.labOrder.updateMany({ where: { id: specimen.labOrderId, status: "ORDERED" }, data: { status: "COLLECTED" } });
+  await syncOrderStatus(tx, "LAB", specimen.labOrderId);
   return specimen;
 }
 
@@ -110,6 +112,7 @@ export async function receiveSpecimen(tx: Tx, specimenId: string, receivedByStaf
 export async function acceptSpecimen(tx: Tx, specimenId: string, acceptedByStaffId: string) {
   const specimen = await guardedTransition(tx, specimenId, "RECEIVED", "ACCEPTED", { acceptedByStaffId, acceptedAt: new Date() }, "accepted");
   await tx.labOrder.updateMany({ where: { id: specimen.labOrderId, status: "COLLECTED" }, data: { status: "IN_PROGRESS" } });
+  await syncOrderStatus(tx, "LAB", specimen.labOrderId);
   return specimen;
 }
 

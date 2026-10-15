@@ -358,7 +358,7 @@ export async function authorizeAccess(
           deniedAt: "consent", relationship, dataClass,
         }), policy, options);
       }
-      const { evaluateConsent } = await import("./consent");
+      const { evaluateConsent } = await import("@/lib/consent");
       const verdict = await evaluateConsent({
         facilityId: resource.facilityId ?? actor.facilityId ?? "",
         patientId: resource.patientId,

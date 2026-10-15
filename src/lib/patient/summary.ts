@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { resolvePatientIdsForRead } from "./merge";
+import { activePatientExternalIdentifiers } from "./identifiers";
 
 /**
  * Server-side patient summary (brief §31) — aggregates only entities that
@@ -13,7 +14,7 @@ export async function buildPatientSummary(patientId: string) {
   const [patient, activeProblems, activeAllergies, activeMedications, recentVitals, recentEncounters, pendingLabOrders, pendingImagingOrders, recentNotes, activeCarePlans, currentLocation, activeAdmission, recentDocuments] =
     await Promise.all([
       prisma.patient.findUnique({ where: { id: patientId }, include: { emergencyContacts: true, identifiers: true } }),
-      prisma.problem.findMany({ where: { patientId: { in: patientIds }, status: "active" }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] }),
+      prisma.problem.findMany({ where: { patientId: { in: patientIds }, status: "ACTIVE" }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] }),
       prisma.allergy.findMany({ where: { patientId: { in: patientIds }, status: "ACTIVE" }, orderBy: [{ recordedAt: "asc" }, { id: "asc" }] }),
       prisma.medicationOrder.findMany({
         where: { patientId: { in: patientIds }, status: { in: ["ORDERED", "VERIFIED", "DISPENSED"] } },
@@ -63,8 +64,11 @@ export async function buildPatientSummary(patientId: string) {
       }),
     ]);
 
+  // D1: ABHA, insurer member IDs and other external identifiers live in ExternalIdentifier.
+  const externalIdentifiers = patient ? await activePatientExternalIdentifiers(prisma, patient.facilityId, patient.id) : [];
+
   return {
-    patient,
+    patient: patient ? { ...patient, externalIdentifiers } : patient,
     mergedPatientIds: patientIds.filter((id) => id !== patientId),
     activeProblems,
     activeAllergies,

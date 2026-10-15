@@ -9,6 +9,7 @@ import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { HandoffComposer } from "@/components/hospital-os/shared/HandoffComposer";
 import { HandoffInbox } from "@/components/hospital-os/shared/HandoffInbox";
+import { ageLabel } from "@/lib/patient/age";
 
 const FINDING_SECTIONS: { key: string; label: string }[] = [
   { key: "general", label: "General appearance" },
@@ -25,7 +26,7 @@ type Findings = Record<string, string>;
 const EMPTY_FINDINGS: Findings = Object.fromEntries(FINDING_SECTIONS.map((s) => [s.key, ""]));
 
 interface ChartData {
-  patient: { id: string; uhid: string; fullName: string; sex: string; ageYears: number | null };
+  patient: { id: string; uhid: string; fullName: string; sex: string; dob: string | null; dobPrecision?: string };
   notes: { id: string; type: string; status: string; content: { assessment?: string; [k: string]: unknown }; author: { user: { displayName: string } }; createdAt: string }[];
   medicationOrders: { id: string; drugName: string; dose: string; route: string; status: string }[];
 }
@@ -148,7 +149,7 @@ export function NursingWorkspace({ patientId }: { patientId: string }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-[20px] font-semibold tracking-tight">{chart.patient.fullName}</h1>
-          <p className="mt-1 text-[12.5px] text-text-secondary">{chart.patient.uhid} · {chart.patient.ageYears}{chart.patient.sex[0]?.toUpperCase()}</p>
+          <p className="mt-1 text-[12.5px] text-text-secondary">{chart.patient.uhid} · {ageLabel(chart.patient)}{chart.patient.sex[0]?.toUpperCase()}</p>
         </div>
         <button onClick={() => setHandoffOpen((v) => !v)} className="flex items-center gap-1.5 rounded-md border border-hairline-strong px-3 py-1.5 text-[12px] font-medium hover:border-cyan/40 hover:text-cyan">
           <Send size={12} /> Handoff

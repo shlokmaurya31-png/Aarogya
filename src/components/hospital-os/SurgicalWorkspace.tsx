@@ -6,6 +6,7 @@ import { Card, CardLabel } from "@/components/ui/Card";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
+import { ageLabel } from "@/lib/patient/age";
 
 interface Workspace {
   surgery: {
@@ -13,7 +14,7 @@ interface Workspace {
     laterality: string | null; urgency: string; status: string; surgeonStaffId: string | null; consentStatus: string | null;
     actualStart: string | null; actualEnd: string | null; operativeFindings: string | null; complications: string | null;
     estimatedBloodLossMl: number | null; recoveryDestination: string | null; operativeNoteId: string | null;
-    patient: { fullName: string; uhid: string; sex: string; ageYears: number | null };
+    patient: { fullName: string; uhid: string; sex: string; dob: string | null; dobPrecision?: string };
     procedure: { name: string; code: string } | null;
     schedule: { startAt: string; endAt: string; status: string; operatingTheatre: { name: string } } | null;
     team: { id: string; staffId: string; role: string }[];
@@ -79,7 +80,7 @@ export function SurgicalWorkspace({ surgeryId }: { surgeryId: string }) {
             <Scissors size={18} className="mt-0.5 text-cyan" />
             <div>
               <h1 className="text-[20px] font-semibold tracking-tight">{s.procedureName}{s.laterality && s.laterality !== "NA" ? ` · ${s.laterality}` : ""}</h1>
-              <p className="text-[12px] text-text-secondary">{s.patient.fullName} · {s.patient.uhid} · {s.patient.ageYears}{s.patient.sex[0]?.toUpperCase()}
+              <p className="text-[12px] text-text-secondary">{s.patient.fullName} · {s.patient.uhid} · {ageLabel(s.patient)}{s.patient.sex[0]?.toUpperCase()}
                 {s.schedule ? ` · ${s.schedule.operatingTheatre.name} · ${new Date(s.schedule.startAt).toLocaleString()}` : ""}
                 {data.location?.bed ? ` · ${data.location.bed.ward.name} ${data.location.bed.label}` : ""}
               </p>

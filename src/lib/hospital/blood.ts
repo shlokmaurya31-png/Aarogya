@@ -1,7 +1,9 @@
+import { $Enums } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import type { Prisma, AboGroup, RhStatus, BloodUnitStatus, BloodRequestStatus, BloodRequestPriority } from "@prisma/client";
+import { parseEnum } from "@/lib/enumValue";
 
 /**
  * Blood Bank & Transfusion service (Phase B4). Composes the canonical
@@ -313,7 +315,7 @@ export async function recordCompatibility(input: {
   const test = await prisma.bloodCompatibilityTest.create({
     data: {
       facilityId: input.facilityId, requestId: request.id, patientId: request.patientId, encounterId: request.encounterId,
-      unitId: input.unitId, testType: input.testType ?? "CROSSMATCH", aboResult: input.aboResult, rhResult: input.rhResult,
+      unitId: input.unitId, testType: parseEnum($Enums.BloodCompatibilityTestTestType, input.testType ?? "CROSSMATCH", "testType"), aboResult: input.aboResult, rhResult: input.rhResult,
       antibodyScreen: input.antibodyScreen, crossmatchResult: input.crossmatchResult, status: input.status ?? "PENDING",
       testedByStaffId: input.testedByStaffId, notes: input.notes,
     },

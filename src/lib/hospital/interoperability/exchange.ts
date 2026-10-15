@@ -2,7 +2,7 @@ import { createHash } from "crypto";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError, ConflictError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
-import { assertExchangeAuthorized } from "./consent";
+import { assertExchangeAuthorized } from "@/lib/consent";
 import { recordProvenance } from "./provenance";
 import { getExchangeAdapter } from "./adapters/abdm";
 import { exportPatientToFhir } from "./fhir/export";
@@ -10,6 +10,8 @@ import {
   EXCHANGE_DIRECTIONS, EXCHANGE_TRANSITIONS, CONSENT_PURPOSES,
   assertOneOf, isTransitionAllowed, assertStaffInFacility,
 } from "./shared";
+import { parseEnum } from "@/lib/enumValue";
+import { $Enums } from "@prisma/client";
 
 /**
  * Phase C1 — health information exchange lifecycle.
@@ -101,7 +103,7 @@ export async function createExchange(input: CreateExchangeInput) {
     patientId: input.patientId, purpose: input.purpose, scopes, consentId, clientKey: input.idempotencyKey,
   });
 
-  const existing = await prisma.healthInformationExchange.findUnique({ where: { idempotencyKey } });
+  const existing = await prisma.healthInformationExchange.findUnique({ where: { facilityId_idempotencyKey: { facilityId: input.facilityId, idempotencyKey } } });
   if (existing) {
     if (existing.facilityId !== input.facilityId) {
       // Defence in depth: keys are facility-namespaced, so this should be
@@ -117,7 +119,7 @@ export async function createExchange(input: CreateExchangeInput) {
       data: {
         facilityId: input.facilityId,
         patientId: input.patientId ?? null,
-        direction: input.direction,
+        direction: parseEnum($Enums.ExchangeDirection, input.direction, "direction"),
         purpose: input.purpose,
         consentId,
         destinationSystem: input.destinationSystem.trim(),
@@ -130,7 +132,7 @@ export async function createExchange(input: CreateExchangeInput) {
     })
     .catch(async (e: unknown) => {
       if ((e as { code?: string })?.code === "P2002") {
-        const raced = await prisma.healthInformationExchange.findUnique({ where: { idempotencyKey } });
+        const raced = await prisma.healthInformationExchange.findUnique({ where: { facilityId_idempotencyKey: { facilityId: input.facilityId, idempotencyKey } } });
         if (raced && raced.facilityId === input.facilityId) return raced;
         throw new ConflictError("That exchange was created concurrently.");
       }
@@ -161,7 +163,7 @@ async function transition(
     }
     const r = await tx.healthInformationExchange.updateMany({
       where: { id: ex.id, status: ex.status, version: ex.version },
-      data: { ...data, status: to, version: { increment: 1 } },
+      data: { ...data, status: parseEnum($Enums.HealthInformationExchangeStatus, to, "status"), version: { increment: 1 } },
     });
     if (r.count !== 1) throw new ExchangeConcurrencyError();
     await tx.auditEvent.create({
@@ -412,7 +414,7 @@ export async function listExchanges(args: { facilityId: string; status?: string;
   return prisma.healthInformationExchange.findMany({
     where: {
       facilityId: args.facilityId,
-      ...(args.status ? { status: args.status } : {}),
+      ...(args.status ? { status: parseEnum($Enums.HealthInformationExchangeStatus, args.status, "status") } : {}),
       ...(args.patientId ? { patientId: args.patientId } : {}),
     },
     orderBy: { requestedAt: "desc" },

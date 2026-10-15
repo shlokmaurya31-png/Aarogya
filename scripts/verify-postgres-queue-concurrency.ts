@@ -9,6 +9,7 @@
  */
 import { PrismaClient } from "@prisma/client";
 import { callNext } from "../src/lib/hospital/queue";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
 
@@ -25,7 +26,7 @@ async function main() {
   const facility = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
   const patient = await prisma.patient.findFirstOrThrow({ where: { facilityId: facility.id } });
   const encounter = await prisma.encounter.findFirstOrThrow({ where: { facilityId: facility.id, patientId: patient.id } });
-  const staff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facility.id } });
+  const staff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facility.id) } });
   const queueType = `VERIFY_SCRIPT_${Date.now()}`;
 
   // Exactly one WAITING entry; two concurrent callNext() calls race for it.

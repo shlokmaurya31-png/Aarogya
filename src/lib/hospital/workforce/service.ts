@@ -1,8 +1,11 @@
+import { $Enums } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { deriveExpiryState } from "@/lib/hospital/workforce/authorization";
 import type { Prisma } from "@prisma/client";
+import { isStaffInFacility } from "@/lib/auth/staffFacility";
+import { parseEnum } from "@/lib/enumValue";
 
 /**
  * Phase B10 Workforce foundation — operational assignments, availability, shift/
@@ -23,7 +26,7 @@ type Db = Prisma.TransactionClient | typeof prisma;
 
 async function assertStaffInFacility(db: Db, staffId: string, facilityId: string) {
   const staff = await db.hospitalStaffProfile.findUnique({ where: { id: staffId } });
-  if (!staff || staff.facilityId !== facilityId) throw new NotFoundError("Staff member not found in this facility.");
+  if (!staff || !(await isStaffInFacility(prisma, staff.id, facilityId))) throw new NotFoundError("Staff member not found in this facility.");
   return staff;
 }
 
@@ -40,7 +43,7 @@ export async function createAssignment(input: {
   const assignment = await prisma.workforceAssignment.create({
     data: {
       facilityId: input.facilityId, staffId: input.staffId, departmentId: input.departmentId,
-      operationalRole: input.operationalRole, assignmentType: input.assignmentType ?? "PRIMARY",
+      operationalRole: input.operationalRole, assignmentType: parseEnum($Enums.WorkforceAssignmentAssignmentType, input.assignmentType ?? "PRIMARY", "assignmentType"),
       supervisorStaffId: input.supervisorStaffId, startAt: input.startAt ?? new Date(), createdByStaffId: input.createdByStaffId,
     },
   });
@@ -59,23 +62,34 @@ export async function endAssignment(input: { facilityId: string; assignmentId: s
   });
 }
 
-// ══ AVAILABILITY (version-guarded single-winner) ═══════════════════════════════
+// ══ AVAILABILITY (D7: recorded as StaffAbsence intervals) ═══════════════════════
+/**
+ * Set a staff member's operational availability from now. AVAILABLE ends any
+ * open-ended absence; anything else starts an absence (until effectiveTo, or
+ * until further notice). Serialized per staff member with a transaction-scoped
+ * advisory lock, so two concurrent changes apply one after the other.
+ */
 export async function setAvailability(input: { facilityId: string; staffId: string; availability: string; reason?: string; effectiveTo?: Date; setByStaffId: string; byUserId: string }) {
-  const valid = ["AVAILABLE", "UNAVAILABLE", "ON_LEAVE", "SUSPENDED", "OFF_DUTY"];
-  if (!valid.includes(input.availability)) throw new BadRequestError("Unknown availability state.");
+  const kinds: Record<string, string | null> = { AVAILABLE: null, UNAVAILABLE: "UNAVAILABLE", ON_LEAVE: "LEAVE", SUSPENDED: "SUSPENDED", OFF_DUTY: "OFF_DUTY" };
+  if (!(input.availability in kinds)) throw new BadRequestError("Unknown availability state.");
   await assertStaffInFacility(prisma, input.staffId, input.facilityId);
+  const now = new Date();
+  if (input.effectiveTo && input.effectiveTo <= now) throw new BadRequestError("effectiveTo must be in the future.");
   return prisma.$transaction(async (tx) => {
-    const existing = await tx.staffAvailability.findUnique({ where: { staffId: input.staffId } });
-    if (!existing) {
-      const created = await tx.staffAvailability.create({ data: { facilityId: input.facilityId, staffId: input.staffId, availability: input.availability, reason: input.reason, effectiveTo: input.effectiveTo, setByStaffId: input.setByStaffId } });
-      await tx.auditEvent.create({ data: { type: "hospital.workforce.availabilityChanged", userId: input.byUserId, detail: { staffId: input.staffId, availability: input.availability }, facilityId: input.facilityId } });
-      return created;
-    }
-    if (existing.facilityId !== input.facilityId) throw new NotFoundError("Staff availability not found in this facility.");
-    const r = await tx.staffAvailability.updateMany({ where: { id: existing.id, version: existing.version }, data: { availability: input.availability, reason: input.reason, effectiveFrom: new Date(), effectiveTo: input.effectiveTo, setByStaffId: input.setByStaffId, version: { increment: 1 } } });
-    if (r.count !== 1) throw new WorkforceConcurrencyError();
-    await tx.auditEvent.create({ data: { type: "hospital.workforce.availabilityChanged", userId: input.byUserId, detail: { staffId: input.staffId, from: existing.availability, to: input.availability }, facilityId: input.facilityId } });
-    return tx.staffAvailability.findUniqueOrThrow({ where: { id: existing.id } });
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"staff-availability:" + input.staffId}))`;
+    // Whatever was in effect ends now; the new state (if not AVAILABLE) starts now.
+    await tx.staffAbsence.updateMany({
+      where: { staffId: input.staffId, facilityId: input.facilityId, cancelledAt: null, startAt: { lte: now }, OR: [{ endAt: null }, { endAt: { gt: now } }] },
+      data: { endAt: now },
+    });
+    const kind = kinds[input.availability];
+    const absence = kind
+      ? await tx.staffAbsence.create({
+          data: { facilityId: input.facilityId, staffId: input.staffId, kind, startAt: now, endAt: input.effectiveTo, reason: input.reason, recordedByStaffId: input.setByStaffId },
+        })
+      : null;
+    await tx.auditEvent.create({ data: { type: "hospital.workforce.availabilityChanged", userId: input.byUserId, detail: { staffId: input.staffId, availability: input.availability }, facilityId: input.facilityId } });
+    return { staffId: input.staffId, availability: input.availability, absence };
   });
 }
 
@@ -182,7 +196,7 @@ async function guardedCredentialStatus(input: { facilityId: string; credentialId
     const cred = await tx.credential.findUnique({ where: { id: input.credentialId } });
     if (!cred || cred.facilityId !== input.facilityId) throw new NotFoundError("Credential not found.");
     if (!input.from.includes(cred.status)) throw new BadRequestError(`Credential is ${cred.status}; cannot move to ${input.to}.`);
-    const r = await tx.credential.updateMany({ where: { id: cred.id, version: cred.version }, data: { status: input.to, version: { increment: 1 }, ...(input.extra ?? {}) } });
+    const r = await tx.credential.updateMany({ where: { id: cred.id, version: cred.version }, data: { status: parseEnum($Enums.CredentialStatus, input.to, "status"), version: { increment: 1 }, ...(input.extra ?? {}) } });
     if (r.count !== 1) throw new WorkforceConcurrencyError();
     await tx.auditEvent.create({ data: { type: input.audit, userId: input.byUserId, detail: { credentialId: cred.id, from: cred.status, to: input.to }, facilityId: cred.facilityId } });
     return tx.credential.findUniqueOrThrow({ where: { id: cred.id } });
@@ -244,7 +258,7 @@ async function guardedPrivilegeStatus(input: { facilityId: string; privilegeId: 
     const priv = await tx.staffPrivilege.findUnique({ where: { id: input.privilegeId } });
     if (!priv || priv.facilityId !== input.facilityId) throw new NotFoundError("Privilege not found.");
     if (!input.from.includes(priv.status)) throw new BadRequestError(`Privilege is ${priv.status}; cannot move to ${input.to}.`);
-    const r = await tx.staffPrivilege.updateMany({ where: { id: priv.id, version: priv.version }, data: { status: input.to, version: { increment: 1 }, ...(input.extra ?? {}) } });
+    const r = await tx.staffPrivilege.updateMany({ where: { id: priv.id, version: priv.version }, data: { status: parseEnum($Enums.StaffPrivilegeStatus, input.to, "status"), version: { increment: 1 }, ...(input.extra ?? {}) } });
     if (r.count !== 1) throw new WorkforceConcurrencyError();
     await tx.auditEvent.create({ data: { type: input.audit, userId: input.byUserId, detail: { privilegeId: priv.id, from: priv.status, to: input.to }, facilityId: priv.facilityId } });
     return tx.staffPrivilege.findUniqueOrThrow({ where: { id: priv.id } });

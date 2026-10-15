@@ -24,6 +24,7 @@ import { grantPatientConsent } from "../src/lib/patient/experience/consent";
 import { inviteDelegate, acceptDelegation, revokeDelegation, listGrantedDelegations } from "../src/lib/patient/experience/family";
 import { updateProfile } from "../src/lib/patient/experience/profile";
 import { getAbhaStatus } from "../src/lib/patient/experience/abha";
+import { ensurePrimaryMembership } from "../prisma/seedData/staffMembership";
 
 let pass = 0, fail = 0; const failures: string[] = [];
 const ok = (l: string) => { pass++; console.log(`  ✓ ${l}`); };
@@ -67,7 +68,8 @@ async function cleanup() {
   await prisma.payerPlan.deleteMany({ where: { payerId: ID.payer } });
   await prisma.payer.deleteMany({ where: { id: ID.payer } });
   await prisma.encounter.deleteMany({ where: { facilityId: { in: [ID.fac, ID.facOther] } } });
-  await prisma.hospitalStaffProfile.deleteMany({ where: { facilityId: { in: [ID.fac, ID.facOther] } } });
+  await prisma.hospitalStaffProfile.deleteMany({ where: { user: { facilityMemberships: { some: { facilityId: { in: [ID.fac, ID.facOther] } } } } } });
+  await prisma.facilityMembership.deleteMany({ where: { facilityId: { in: [ID.fac, ID.facOther] } } });
   await prisma.patient.deleteMany({ where: { facilityId: { in: [ID.fac, ID.facOther] } } });
   await prisma.facility.deleteMany({ where: { id: { in: [ID.fac, ID.facOther] } } });
   await prisma.organization.deleteMany({ where: { id: ID.org } });
@@ -88,10 +90,11 @@ async function seed() {
   await prisma.patient.create({ data: { id: ID.patB, uhid: "D11-B", facilityId: ID.fac, fullName: "Patient B", sex: "male", userId: ID.uB } });
   await prisma.patient.create({ data: { id: ID.patDel, uhid: "D11-D", facilityId: ID.fac, fullName: "Delegate D", sex: "male", userId: ID.uDel } });
 
-  await prisma.hospitalStaffProfile.create({ data: { id: ID.staff, userId: ID.uStaff, facilityId: ID.fac, displayRole: "Physician", status: "ACTIVE" } });
+  await prisma.hospitalStaffProfile.create({ data: { id: ID.staff, userId: ID.uStaff, displayRole: "Physician", status: "ACTIVE" } });
+  await ensurePrimaryMembership(prisma, ID.uStaff, ID.fac);
   // Clinic session tomorrow-agnostic: a recurring session every day, 09:00-17:00, 30-min slots.
   for (let d = 0; d < 7; d++) {
-    await prisma.doctorScheduleBlock.create({ data: { staffId: ID.staff, facilityId: ID.fac, type: "CLINIC_SESSION", dayOfWeek: d, startMinute: 540, endMinute: 1020, slotDurationMinutes: 30, maxConcurrentAppointments: 1 } });
+    await prisma.doctorScheduleBlock.create({ data: { staffId: ID.staff, facilityId: ID.fac, dayOfWeek: d, startMinute: 540, endMinute: 1020, slotDurationMinutes: 30, maxConcurrentAppointments: 1 } });
   }
 
   // Encounters + invoices for A and B.

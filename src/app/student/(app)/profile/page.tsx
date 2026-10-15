@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth/getCurrentUser";
 import { Card, CardLabel } from "@/components/ui/Card";
 import { StatusPill } from "@/components/ui/StatusPill";
+import { studentNames } from "@/lib/student/name";
 
 export default async function StudentProfilePage() {
   const user = await getCurrentUser();
@@ -15,10 +16,10 @@ export default async function StudentProfilePage() {
       <Card className="mt-5 rounded-[20px]">
         <div className="flex items-center gap-3">
           <div className="flex h-14 w-14 items-center justify-center rounded-full bg-cyan/10 text-[18px] font-semibold text-cyan">
-            {p.fullLegalName.split(" ").map((n) => n[0]).slice(0, 2).join("")}
+            {studentNames(user).fullLegalName.split(" ").map((n) => n[0]).slice(0, 2).join("")}
           </div>
           <div>
-            <p className="text-[15px] font-semibold">{p.fullLegalName}</p>
+            <p className="text-[15px] font-semibold">{studentNames(user).fullLegalName}</p>
             <p className="text-[12px] text-text-tertiary">{user.email}</p>
           </div>
           <StatusPill label={p.verificationStatus} tone="emerald" className="ml-auto rounded-md" />
@@ -32,7 +33,7 @@ export default async function StudentProfilePage() {
           <Field label="Enrollment year" value={String(p.enrollmentYear)} />
           <Field label="Expected graduation" value={String(p.expectedGraduation)} />
           <Field label="Current rotation" value={p.currentRotation ?? "—"} />
-          <Field label="Clinical interests" value={JSON.parse(p.clinicalInterests || "[]").join(", ") || "—"} />
+          <Field label="Clinical interests" value={p.clinicalInterests.join(", ") || "—"} />
         </div>
       </Card>
 

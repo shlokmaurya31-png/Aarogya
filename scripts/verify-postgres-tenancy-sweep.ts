@@ -35,9 +35,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-tenancy-sweep.ts [--no-build]
  */
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import net from "node:net";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { ItemCategory, Prisma, Role, UnitOfMeasure } from "@prisma/client";
 import { prisma } from "../src/lib/db";
@@ -48,9 +46,10 @@ import { ABDM_CALLBACK_PATHS } from "../src/lib/hospital/interoperability/abdm/c
 import { WORKFLOW_TEMPLATES } from "../src/lib/workflow-builder/templates";
 import { listRegistry } from "../src/lib/config/registry";
 import { ensureFixture, ownershipWhere, type Tenant } from "../prisma/seedData/tenancyFixtures";
+import { startServer, loginAs } from "./lib/appServer";
+import { ensurePrimaryMembership } from "../prisma/seedData/staffMembership";
 
 const ROOT = path.resolve(__dirname, "..");
-const NEXT = path.join(ROOT, "node_modules", ".bin", "next");
 const API_ROOT = path.join(ROOT, "src", "app", "api", "hospital");
 const FACILITIES = { pune: "fac-amc-pune", noida: "fac-amc-noida" } as const;
 type Site = keyof typeof FACILITIES;
@@ -93,13 +92,10 @@ async function seedLinkActors(password: string) {
   // The org admin works at Pune (a staff profile gives facility routes a home
   // facility) and administers the whole organization.
   await prisma.hospitalStaffProfile.upsert({
-    where: { userId: orgAdmin.id }, update: { facilityId: FACILITIES.pune, status: "ACTIVE" },
-    create: { userId: orgAdmin.id, facilityId: FACILITIES.pune, displayRole: "Tenancy sweep org admin", status: "ACTIVE" },
+    where: { userId: orgAdmin.id }, update: { status: "ACTIVE" },
+    create: { userId: orgAdmin.id, displayRole: "Tenancy sweep org admin", status: "ACTIVE" },
   });
-  await prisma.facilityMembership.upsert({
-    where: { userId_facilityId: { userId: orgAdmin.id, facilityId: FACILITIES.pune } },
-    update: { isAdmin: true }, create: { userId: orgAdmin.id, facilityId: FACILITIES.pune, isAdmin: true },
-  });
+  await ensurePrimaryMembership(prisma, orgAdmin.id, FACILITIES.pune, { isAdmin: true });
   // The third tenant: a facility in a separate organization.
   await prisma.facility.upsert({
     where: { id: OTHER_FACILITY_ID }, update: {},
@@ -132,14 +128,10 @@ async function seedSweepData() {
     });
     await prisma.hospitalStaffProfile.upsert({
       where: { userId: user.id },
-      update: { facilityId, status: "ACTIVE" },
-      create: { userId: user.id, facilityId, displayRole: `Tenancy sweep ${role}`, status: "ACTIVE" },
+      update: { status: "ACTIVE" },
+      create: { userId: user.id, displayRole: `Tenancy sweep ${role}`, status: "ACTIVE" },
     });
-    await prisma.facilityMembership.upsert({
-      where: { userId_facilityId: { userId: user.id, facilityId } },
-      update: { isAdmin: role === Role.HOSPITAL_ADMIN },
-      create: { userId: user.id, facilityId, isAdmin: role === Role.HOSPITAL_ADMIN },
-    });
+    await ensurePrimaryMembership(prisma, user.id, facilityId, { isAdmin: role === Role.HOSPITAL_ADMIN });
     // A plain (non-admin) org member: org admins legitimately see every facility.
     await prisma.organizationMembership.upsert({
       where: { userId_organizationId: { userId: user.id, organizationId: facility.organizationId } },
@@ -311,6 +303,7 @@ const SEGMENT_MODELS: Record<string, string> = {
   "devices/[id]": "IcuDevice",
   "infusions/[id]": "IcuInfusion",
   "encounters/[id]": "Encounter",
+  "diagnoses/[id]": "Diagnosis",
   "patients/[id]": "Patient",
   "admissions/[id]": "Admission",
   "items/[id]": "Item",
@@ -328,7 +321,8 @@ const SEGMENT_MODELS: Record<string, string> = {
   "stocktakes/[id]": "StockTake",
   "tariffs/[id]": "Tariff",
   "beds/[id]": "Bed",
-  "consents/[id]": "Consent",
+  "consents/[id]": "InteropConsent",
+  "patient-link-requests/[id]": "PatientLinkRequest",
 };
 
 type SegmentTarget = { kind: "record"; model: string } | { kind: "static"; values: string[] } | { kind: "unmapped" };
@@ -385,55 +379,7 @@ function enumValues(route: Route, param: string): string[] {
 
 // ── server ──────────────────────────────────────────────────────────────
 
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = net.createServer();
-    srv.listen(0, () => {
-      const { port } = srv.address() as net.AddressInfo;
-      srv.close(() => resolve(port));
-    });
-    srv.on("error", reject);
-  });
-}
-
-async function startServer(): Promise<{ base: string; child: ChildProcess }> {
-  if (!process.argv.includes("--no-build") || !existsSync(path.join(ROOT, ".next", "BUILD_ID"))) {
-    console.log("Building the app (next build)…");
-    const b = spawnSync(NEXT, ["build"], { cwd: ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" });
-    if (b.status !== 0) throw new Error(`next build failed:\n${(b.stdout + b.stderr).slice(-3000)}`);
-  }
-  const port = await freePort();
-  const child = spawn(NEXT, ["start", "-p", String(port)], { cwd: ROOT, env: { ...process.env, NODE_ENV: "production" }, stdio: ["ignore", "pipe", "pipe"] });
-  let log = "";
-  child.stdout!.on("data", (d) => (log += d));
-  child.stderr!.on("data", (d) => (log += d));
-  const base = `http://127.0.0.1:${port}`;
-  for (let i = 0; i < 120; i++) {
-    if (child.exitCode !== null) throw new Error(`next start exited early:\n${log.slice(-2000)}`);
-    try {
-      await fetch(base + "/api/hospital/patients");
-      return { base, child };
-    } catch {
-      await new Promise((r) => setTimeout(r, 500));
-    }
-  }
-  child.kill("SIGTERM");
-  throw new Error(`next start did not become ready:\n${log.slice(-2000)}`);
-}
-
-let loginCount = 0;
-async function loginEmail(base: string, email: string): Promise<string> {
-  loginCount++;
-  const res = await fetch(base + "/api/scholar-auth/login", {
-    method: "POST",
-    // A distinct client address per login keeps the per-IP login limit out of the way.
-    headers: { "content-type": "application/json", "x-forwarded-for": `10.77.${Math.floor(loginCount / 250)}.${loginCount % 250}` },
-    body: JSON.stringify({ email, password: PASSWORD }),
-  });
-  const cookies = res.headers.getSetCookie().map((c) => c.split(";")[0]);
-  if (res.status !== 200 || cookies.length === 0) throw new Error(`login as ${email} failed: HTTP ${res.status} ${await res.text()}`);
-  return cookies.join("; ");
-}
+const loginEmail = (base: string, email: string) => loginAs(base, email, PASSWORD);
 const login = (base: string, site: Site, role: Role) => loginEmail(base, sweepEmail(site, role));
 
 /** Runs `tasks` with at most `limit` in flight. */
@@ -536,7 +482,7 @@ async function medicationLinkSection(base: string) {
 
 /** Idempotency keys are client-supplied and globally unique; replay must stay in-facility. */
 async function idempotencySection(base: string, owned: Record<Site, Map<string, string>>) {
-  console.log("\nIdempotency keys across facilities:");
+  console.log("\nIdempotency keys across facilities (unique per facility, §8.4):");
   const cookies = { pune: await login(base, "pune", Role.HOSPITAL_ADMIN), noida: await login(base, "noida", Role.HOSPITAL_ADMIN) };
   const post = async (site: Site, url: string, body: unknown) => {
     const res = await fetch(base + url, { method: "POST", headers: { cookie: cookies[site], "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -551,9 +497,14 @@ async function idempotencySection(base: string, owned: Record<Site, Map<string, 
   if (punePay.status !== 200) bad(`pune payment setup → HTTP ${punePay.status} ${punePay.text.slice(0, 200)}`);
   const punePaymentId = JSON.parse(punePay.text).payment?.id as string | undefined;
   const replay = await post("noida", "/api/hospital/payments", { encounterId: await encounter("noida"), amountMinor: 1000, method: "CASH", idempotencyKey: payKey });
+  // §8.4: keys are unique per facility, so noida's use of the same key is its
+  // own payment — never pune's row, and pune's row is untouched.
   const payLeak = punePaymentId && replay.text.includes(punePaymentId);
-  if (replay.status === 409 && !payLeak) { ok(); console.log("  ✓ payment: pune's key from noida → 409, no pune data"); }
-  else bad(`payment: pune's idempotency key reused by noida → HTTP ${replay.status}${payLeak ? " and returned pune's payment" : ""}`);
+  const noidaOwn = replay.status === 200 ? (JSON.parse(replay.text).payment as { id: string; facilityId: string } | undefined) : undefined;
+  const pairCount = await prisma.payment.count({ where: { idempotencyKey: payKey } });
+  if (!payLeak && noidaOwn && noidaOwn.id !== punePaymentId && noidaOwn.facilityId === FACILITIES.noida && pairCount === 2) {
+    ok(); console.log("  ✓ payment: pune's key from noida → noida's own payment (keys are per facility), no pune data");
+  } else bad(`payment: pune's idempotency key reused by noida → HTTP ${replay.status}${payLeak ? " and returned pune's payment" : ""} (rows with the key: ${pairCount})`);
 
   const refundKey = `sweep-refund-${run}`;
   let puneRefundId: string | undefined;
@@ -569,8 +520,10 @@ async function idempotencySection(base: string, owned: Record<Site, Map<string, 
     const r = await post("noida", `/api/hospital/payments/${noidaPaymentId}/refund`, { amountMinor: 100, reason: "tenancy sweep", idempotencyKey: refundKey });
     const leaked = leaks(r.text, owned.pune);
     if (puneRefundId && r.text.includes(puneRefundId)) leaked.push(`Refund:${puneRefundId}`);
-    if (r.status === 409 && leaked.length === 0) { ok(); console.log("  ✓ refund: pune's key from noida → 409, no pune data"); }
-    else bad(`refund: pune's idempotency key reused by noida → HTTP ${r.status}${leaked.length ? ` and returned pune rows ${leaked.join(", ")}` : ""}`);
+    const noidaRefund = r.status === 200 ? (JSON.parse(r.text).refund as { id: string; facilityId: string } | undefined) : undefined;
+    if (leaked.length === 0 && noidaRefund && noidaRefund.id !== puneRefundId && noidaRefund.facilityId === FACILITIES.noida) {
+      ok(); console.log("  ✓ refund: pune's key from noida → noida's own refund (keys are per facility), no pune data");
+    } else bad(`refund: pune's idempotency key reused by noida → HTTP ${r.status}${leaked.length ? ` and returned pune rows ${leaked.join(", ")}` : ""}`);
   }
 }
 

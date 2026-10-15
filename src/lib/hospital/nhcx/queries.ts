@@ -4,6 +4,8 @@ import { recordAuditEvent } from "@/lib/auth/audit";
 import { authorizeAccess } from "@/lib/auth/authorize/engine";
 import type { AuthorizationActor } from "@/lib/auth/authorize/types";
 import { QUERY_TRANSITIONS, isTransitionAllowed, type QueryStatus } from "./stateMachines";
+import { $Enums } from "@prisma/client";
+import { parseEnum } from "@/lib/enumValue";
 
 /**
  * Phase C5 — claim query / clarification lifecycle.
@@ -183,7 +185,7 @@ export async function listQueries(args: { facilityId: string; status?: string; c
   return prisma.claimQuery.findMany({
     where: {
       facilityId: args.facilityId,
-      ...(args.status ? { status: args.status } : {}),
+      ...(args.status ? { status: parseEnum($Enums.ClaimQueryStatus, args.status, "status") } : {}),
       ...(args.claimId ? { claimId: args.claimId } : {}),
     },
     orderBy: { receivedAt: "desc" },

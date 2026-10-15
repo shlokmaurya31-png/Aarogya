@@ -3,6 +3,7 @@ import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { bookAppointment, cancelAppointment } from "@/lib/hospital/appointment";
 import { patientLanguage as L } from "./language";
 import { assertClass, type PatientAccessScope } from "../context";
+import { isStaffInFacility } from "@/lib/auth/staffFacility";
 
 /**
  * Phase D11 — patient-facing appointments. A projection over the canonical
@@ -81,7 +82,7 @@ export async function nextAppointment(scope: PatientAccessScope): Promise<Appoin
 /** Doctors a patient may request an appointment with (those running clinic sessions in their facility). */
 export async function listBookableDoctors(scope: PatientAccessScope) {
   const blocks = await prisma.doctorScheduleBlock.findMany({
-    where: { facilityId: scope.facilityId, type: "CLINIC_SESSION" },
+    where: { facilityId: scope.facilityId },
     include: { staff: { include: { user: { select: { displayName: true } }, department: { select: { name: true } } } } },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
@@ -120,10 +121,10 @@ export async function requestAppointment(
 
   const staff = await prisma.hospitalStaffProfile.findUnique({
     where: { id: input.doctorStaffId },
-    include: { scheduleBlocks: { where: { type: "CLINIC_SESSION" }, take: 1 } },
+    include: { scheduleBlocks: { take: 1, orderBy: [{ createdAt: "asc" }, { id: "asc" }] } },
   });
   // 404-shaped: don't reveal whether the id exists in another facility.
-  if (!staff || staff.facilityId !== scope.facilityId || staff.status !== "ACTIVE") throw new NotFoundError();
+  if (!staff || staff.status !== "ACTIVE" || !(await isStaffInFacility(prisma, staff.id, scope.facilityId))) throw new NotFoundError();
 
   const slotMinutes = staff.scheduleBlocks[0]?.slotDurationMinutes ?? DEFAULT_SLOT_MINUTES;
   const end = new Date(start.getTime() + slotMinutes * 60_000);

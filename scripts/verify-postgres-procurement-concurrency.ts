@@ -11,6 +11,7 @@ import { createRequisitionDraft, addRequisitionLine, submitRequisition, approveR
 import { createPurchaseOrderDraft, addPurchaseOrderLine, submitForApproval, approvePurchaseOrder, PurchaseOrderConcurrencyError } from "../src/lib/hospital/procurement/purchaseOrders";
 import { recordGoodsReceipt, approveGoodsReceipt, OverReceiptError } from "../src/lib/hospital/procurement/goodsReceipts";
 import { createStockLocation } from "../src/lib/hospital/inventory/locations";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
 const runId = Date.now();
@@ -26,8 +27,8 @@ function report(name: string, ok: boolean, detail?: string) {
 async function main() {
   const facility = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
   const department = await prisma.department.findFirstOrThrow({ where: { facilityId: facility.id } });
-  const admin1 = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facility.id, user: { role: "HOSPITAL_ADMIN" } } });
-  const admin2 = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facility.id, user: { role: "PHARMACIST" } } });
+  const admin1 = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "HOSPITAL_ADMIN" } } });
+  const admin2 = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "PHARMACIST" } } });
   const item = await prisma.item.findFirstOrThrow({ where: { facilityId: facility.id, category: "MEDICATION" } });
   const supplier = await prisma.supplier.findFirstOrThrow({ where: { facilityId: facility.id } });
   const location = await prisma.$transaction((tx) => createStockLocation(tx, { facilityId: facility.id, name: `Verify-Procurement-Store-${runId}`, type: "WAREHOUSE" }));

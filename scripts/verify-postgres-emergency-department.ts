@@ -17,6 +17,7 @@ import {
 } from "../src/lib/hospital/emergency";
 import { recordTriage } from "../src/lib/hospital/triage";
 import { createHandoff, acknowledgeHandoff } from "../src/lib/hospital/handoff";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
 const runId = Date.now();
@@ -30,7 +31,7 @@ function report(name: string, ok: boolean, detail?: string) {
 
 async function main() {
   const facility = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
-  const staff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facility.id, user: { role: "DOCTOR" } } });
+  const staff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "DOCTOR" } } });
   const patient = await prisma.patient.findFirstOrThrow({ where: { facilityId: facility.id } });
 
   const ward = await prisma.ward.create({ data: { facilityId: facility.id, name: `ED-WARD-${runId}`, wardType: "GENERAL" } });

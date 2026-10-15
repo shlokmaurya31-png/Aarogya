@@ -111,10 +111,12 @@ export function mapPatientToFhir(
     gender: SEX_TO_FHIR[patient.sex] ?? "unknown",
   };
 
-  // An APPROXIMATE or UNKNOWN date of birth is deliberately NOT emitted as a
-  // precise birthDate — that would present a guess as a fact.
-  if (patient.dob && (!patient.dobPrecision || patient.dobPrecision === "EXACT")) {
-    resource.birthDate = isoDate(patient.dob);
+  // birthDate carries only the precision we have (FHIR allows YYYY, YYYY-MM,
+  // YYYY-MM-DD). A dob estimated from an age is NOT emitted — that would
+  // present a guess as a fact.
+  if (patient.dob && patient.dobPrecision !== "ESTIMATED_FROM_AGE") {
+    const full = isoDate(patient.dob)!;
+    resource.birthDate = patient.dobPrecision === "YEAR" ? full.slice(0, 4) : patient.dobPrecision === "MONTH" ? full.slice(0, 7) : full;
   }
   if (patient.deceasedAt) resource.deceasedDateTime = iso(patient.deceasedAt);
   if (patient.phone) resource.telecom = [{ system: "phone", value: patient.phone, use: "mobile" }];

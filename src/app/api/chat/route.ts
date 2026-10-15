@@ -1,239 +1,53 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest, NextResponse } from "next/server";
-import { requireSession, UnauthorizedError } from "@/lib/auth/rbac";
+import { requireSession, UnauthorizedError, NotFoundError, ForbiddenError } from "@/lib/auth/rbac";
 import { rateLimit } from "@/lib/auth/rateLimit";
-import {
-  patient,
-  doctorProfile,
-  vitals,
-  bodySystems,
-  timeline,
-  labResults,
-  prescriptions,
-  appointments,
-  insuranceClaims,
-  hospitalBeds,
-} from "@/lib/mock-data";
-import type {
-  Appointment,
-  BodySystem,
-  InsuranceClaim,
-  PatientProfile,
-  Prescription,
-  ReportDoc,
-  TimelineEvent,
-  VitalSeries,
-} from "@/types";
+import { recordAuditEvent } from "@/lib/auth/audit";
+import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
+import { prisma } from "@/lib/db";
+import { getAIProvider } from "@/lib/ai/getAIProvider";
+import { patientAssistantContext, clinicianAssistantContext } from "@/lib/ai/assistantContext";
+import { requirePatientContext, resolveReadScope } from "@/lib/patient/context";
 
-interface PatientDataPayload {
-  profile: PatientProfile | null;
-  vitals: VitalSeries[];
-  bodySystems: BodySystem[];
-  timeline: TimelineEvent[];
-  appointments: Appointment[];
-  reports: ReportDoc[];
-  prescriptions: Prescription[];
-  insuranceClaims: InsuranceClaim[];
-}
+/**
+ * The portal assistant ("Aarogya AI"). The record it answers from is built on
+ * the server from what the caller is authorized to read. Nothing about the
+ * patient comes from the client, and the audience comes from the account's
+ * role, not from the request.
+ *
+ *   PATIENT accounts  their own record, or a delegated one (patientId), via
+ *                     the patient portal's scope and data classes.
+ *   Hospital staff    a general clinical assistant; with a patientId, that
+ *                     one chart, only if the caller may read charts in the
+ *                     patient's facility. The read is audited.
+ *   Everyone else     (e.g. Scholar) a general assistant with no patient
+ *                     record.
+ *
+ * The model is reached only through the AI provider boundary (src/lib/ai):
+ * with no ANTHROPIC_API_KEY the mock provider answers honestly instead of
+ * failing.
+ */
 
-function buildHospitalBlock() {
-  return hospitalBeds
-    .map(
-      (h) =>
-        `- ${h.name} (${h.city}, ${h.distanceKm} km): ${h.emergencyBeds} emergency, ${h.icuBeds} ICU, ${h.generalBeds} general beds free, ~${h.avgWaitMinutes} min ER wait without booking`
-    )
-    .join("\n");
-}
-
-const HOSPITAL_BLOCK = buildHospitalBlock();
-
-function buildDoctorRecordContext() {
-  const vitalsBlock = vitals
-    .map((v) => `- ${v.label}: ${v.current} ${v.unit} (${v.risk}, ${v.delta >= 0 ? "+" : ""}${v.delta} recent trend)`)
-    .join("\n");
-
-  const systemsBlock = bodySystems
-    .map((s) => `- ${s.name} [${s.status}]: ${s.summary} Last checked ${s.lastChecked}.`)
-    .join("\n");
-
-  const labsBlock = labResults
-    .map((l) => `- ${l.test} (${l.panel}): ${l.value} ${l.unit}, reference ${l.refLow}-${l.refHigh}, flag: ${l.risk}, ${l.date}`)
-    .join("\n");
-
-  const rxBlock = prescriptions
-    .map((p) => `- ${p.drug} ${p.dose}, ${p.frequency}, prescribed by ${p.prescribedBy}, status: ${p.status}, adherence ${p.adherence}%`)
-    .join("\n");
-
-  const timelineBlock = timeline
-    .slice(0, 5)
-    .map((e) => `- ${e.date} · ${e.title} (${e.facility}): ${e.description}`)
-    .join("\n");
-
-  const apptBlock = appointments
-    .filter((a) => a.status === "upcoming")
-    .map((a) => `- ${a.date} ${a.time} · ${a.doctor} (${a.specialty}) · ${a.mode} · ${a.facility}`)
-    .join("\n");
-
-  const claimsBlock = insuranceClaims
-    .map((c) => `- ${c.claimNo}: ${c.reason}, ₹${c.amount}, ${c.status} (${c.date})`)
-    .join("\n");
-
-  return `PATIENT RECORD: ${patient.name} (${patient.patientId})
-Age ${patient.age}, ${patient.gender}, ${patient.bloodGroup}, ${patient.height}, ${patient.weight}
-Allergies: ${patient.allergies.join(", ")}
-Insurance: ${patient.insurance} · Ayushman Bharat: ${patient.ayushmanBharat}
-TPA: ${patient.tpa.name} · Health Card ID: ${patient.tpa.healthCardId} · Policy: ${patient.tpa.policyNumber} · Helpline: ${patient.tpa.helpline}
-
-VITALS
-${vitalsBlock}
-
-BODY SYSTEMS
-${systemsBlock}
-
-RECENT LAB RESULTS
-${labsBlock}
-
-ACTIVE PRESCRIPTIONS
-${rxBlock}
-
-RECENT TIMELINE
-${timelineBlock}
-
-UPCOMING APPOINTMENTS
-${apptBlock}
-
-INSURANCE CLAIMS
-${claimsBlock}
-
-NEARBY HOSPITAL BED AVAILABILITY (live counts shown on the Emergency page's Instant Bed Booking panel)
-${HOSPITAL_BLOCK}
-
-TREATING DOCTOR
-${doctorProfile.name}, ${doctorProfile.specialty}, ${doctorProfile.facility} (${doctorProfile.registrationId})`;
-}
-
-const DOCTOR_RECORD_CONTEXT = buildDoctorRecordContext();
-
-function buildPatientRecordContext(data: PatientDataPayload | null | undefined) {
-  const profile = data?.profile;
-  if (!profile) {
-    return `PATIENT RECORD: not yet completed. This person hasn't finished their Aarogya profile, so there is no age, blood group, allergy, or history data to draw on. If they ask something that depends on that, gently point them to finishing their profile setup, and otherwise just answer generally.
-
-NEARBY HOSPITAL BED AVAILABILITY (live counts shown on the Emergency page's Instant Bed Booking panel)
-${HOSPITAL_BLOCK}`;
-  }
-
-  const vitalsBlock = data.vitals.length
-    ? data.vitals.map((v) => `- ${v.label}: ${v.current} ${v.unit} (${v.risk})`).join("\n")
-    : "No vitals tracked yet.";
-
-  const systemsBlock = data.bodySystems.length
-    ? data.bodySystems.map((s) => `- ${s.name} [${s.status}]: ${s.summary}`).join("\n")
-    : "No body system checkups on file yet.";
-
-  const rxBlock = data.prescriptions.length
-    ? data.prescriptions
-        .map((p) => `- ${p.drug} ${p.dose}, ${p.frequency}, prescribed by ${p.prescribedBy}, status: ${p.status}`)
-        .join("\n")
-    : "No active prescriptions.";
-
-  const timelineBlock = data.timeline.length
-    ? data.timeline
-        .slice(0, 5)
-        .map((e) => `- ${e.date} · ${e.title} (${e.facility}): ${e.description}`)
-        .join("\n")
-    : "No history recorded yet.";
-
-  const apptBlock = data.appointments.filter((a) => a.status === "upcoming").length
-    ? data.appointments
-        .filter((a) => a.status === "upcoming")
-        .map((a) => `- ${a.date} ${a.time} · ${a.doctor} (${a.specialty}) · ${a.mode} · ${a.facility}`)
-        .join("\n")
-    : "No upcoming appointments booked.";
-
-  const reportsBlock = data.reports.length
-    ? data.reports.map((r) => `- ${r.title} (${r.kind}), ${r.facility}, ${r.date}`).join("\n")
-    : "No reports uploaded yet.";
-
-  const claimsBlock = data.insuranceClaims.length
-    ? data.insuranceClaims.map((c) => `- ${c.claimNo}: ${c.reason}, ₹${c.amount}, ${c.status} (${c.date})`).join("\n")
-    : "No claims filed.";
-
-  return `PATIENT RECORD: ${profile.name} (${profile.patientId})
-Age ${profile.age}, ${profile.gender}, ${profile.bloodGroup}, ${profile.height}, ${profile.weight}
-Allergies: ${profile.allergies.join(", ")}
-Insurance: ${profile.insurance}
-TPA: ${profile.tpa.name} · Health Card ID: ${profile.tpa.healthCardId} · Policy: ${profile.tpa.policyNumber} · Helpline: ${profile.tpa.helpline}
-
-VITALS
-${vitalsBlock}
-
-BODY SYSTEMS
-${systemsBlock}
-
-ACTIVE PRESCRIPTIONS
-${rxBlock}
-
-RECENT TIMELINE
-${timelineBlock}
-
-UPCOMING APPOINTMENTS
-${apptBlock}
-
-REPORTS
-${reportsBlock}
-
-INSURANCE CLAIMS
-${claimsBlock}
-
-NEARBY HOSPITAL BED AVAILABILITY (live counts shown on the Emergency page's Instant Bed Booking panel)
-${HOSPITAL_BLOCK}`;
-}
-
-function buildPatientSystemPrompt(data: PatientDataPayload | null | undefined) {
-  const name = data?.profile?.name ?? "this patient";
-  const hasProfile = Boolean(data?.profile);
-  return `You are Aarogya, ${name}'s personal AI health assistant inside their Aarogya health record dashboard. You have access to their record below (it may be sparse or empty if they're new). Treat it as ground truth, only reference facts actually listed there, and don't invent history that isn't present. Speak warmly, plainly, and briefly (2-4 sentences unless asked for more detail).
-
-Stay in character at all times. Do not say you are an AI language model or a demo. ${
-    hasProfile
-      ? "You have their real record, use it."
-      : "They haven't finished onboarding yet, so be upfront that you don't have their details rather than guessing or inventing any."
-  }
-
-Clinical judgment: don't hand out definitive diagnoses or replace a doctor's decision. Ground specific findings in the record and suggest confirming plans with a doctor when it matters, but do this naturally as part of good care, not as a disclaimer. If they describe something that sounds like a medical emergency (chest pain, trouble breathing, stroke symptoms, severe bleeding, etc.), tell them clearly to seek immediate/emergency care, and recommend the nearest hospital with a free bed and the shortest wait from the list below.
-
-If asked to book a hospital bed, you can't complete the booking yourself in chat. Point them to the "Instant Bed Booking" panel on the Emergency page, tell them which hospital currently looks best (shortest wait, beds free in the category they need), and remind them the confirmation code from that panel gets them past the ER queue at the admission desk.
-
-${buildPatientRecordContext(data)}`;
-}
-
-const DOCTOR_SYSTEM_PROMPT = `You are Aarogya Clinical Intelligence, an AI assistant inside the clinician dashboard, currently briefing ${doctorProfile.name} on the chart open below. Respond concisely and clinically, using standard medical terminology, as if briefing a physician between patients. Treat the record as ground truth and cite specific values, trends, and dates from it.
-
-Stay in character at all times. Do not say you are an AI language model, a prototype, or a demo, and do not claim you lack access to the chart. You have it, use it.
-
-If asked about admitting the patient or booking a bed, you can't complete the booking yourself in chat. Point to the "Instant Bed Booking" panel on the Emergency page and recommend the best option from the list below (shortest wait, beds free in the needed category).
-
-${DOCTOR_RECORD_CONTEXT}`;
-
-// Every call spends Anthropic credits, so the route is signed-in only and
-// capped per user. Clients already fall back to canned replies on any non-200.
+// Every call can spend model credits, so the route is signed-in only and
+// capped per user. Clients fall back to canned replies on any non-200.
 const PER_MINUTE = 10;
 const PER_DAY = 200;
 const MAX_MESSAGE_CHARS = 2000;
 const MAX_PAGE_CHARS = 100;
 const MAX_BODY_BYTES = 64 * 1024;
 
+const HOSPITAL_ROLES = new Set(["DOCTOR", "NURSE", "LAB_TECHNICIAN", "RADIOLOGY_TECH", "PHARMACIST", "BILLING_STAFF", "FRONT_DESK", "HOSPITAL_ADMIN"]);
+
 export async function POST(req: NextRequest) {
-  let userId: string;
+  let session: Awaited<ReturnType<typeof requireSession>>;
   try {
-    userId = (await requireSession()).userId;
+    session = await requireSession();
   } catch (err) {
     if (err instanceof UnauthorizedError) {
       return NextResponse.json({ error: "Sign in to use the assistant." }, { status: 401 });
     }
     throw err;
   }
+  const userId = session.userId;
 
   for (const [scope, limit, windowMs] of [
     ["min", PER_MINUTE, 60_000],
@@ -248,25 +62,17 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json(
-      { error: "ANTHROPIC_API_KEY is not configured on the server." },
-      { status: 500 }
-    );
-  }
-
   const raw = await req.text();
   if (raw.length > MAX_BODY_BYTES) {
     return NextResponse.json({ error: "Request too large." }, { status: 413 });
   }
-  let body: { message?: unknown; mode?: unknown; page?: unknown; patientData?: PatientDataPayload | null };
+  let body: { message?: unknown; page?: unknown; patientId?: unknown };
   try {
     body = JSON.parse(raw);
   } catch {
     return NextResponse.json({ error: "Invalid JSON." }, { status: 400 });
   }
-  const { message, mode, patientData } = body;
+  const { message } = body;
   if (!message || typeof message !== "string") {
     return NextResponse.json({ error: "Missing 'message' string." }, { status: 400 });
   }
@@ -274,30 +80,43 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Message exceeds ${MAX_MESSAGE_CHARS} characters.` }, { status: 400 });
   }
   const page = typeof body.page === "string" ? body.page.slice(0, MAX_PAGE_CHARS) : undefined;
+  const patientId = typeof body.patientId === "string" && body.patientId ? body.patientId : null;
 
-  const basePrompt = mode === "doctor" ? DOCTOR_SYSTEM_PROMPT : buildPatientSystemPrompt(patientData);
-  const system =
-    typeof page === "string" && page.trim()
-      ? `${basePrompt}\n\nThe user is currently viewing the "${page}" section of the dashboard. When their question is general or open-ended, lean your default focus toward what's most useful on that section, but always answer whatever they actually ask, even if it's about something else.`
-      : basePrompt;
+  let audience: "patient" | "clinician";
+  let context: string;
+  try {
+    if (session.role === "PATIENT") {
+      audience = "patient";
+      const scope = await resolveReadScope(await requirePatientContext(), patientId);
+      context = await patientAssistantContext(scope);
+    } else if (HOSPITAL_ROLES.has(session.role) && patientId) {
+      audience = "clinician";
+      const { facilityId } = await requireFacilityStaff("clinical:chart:read");
+      const patient = await prisma.patient.findUnique({ where: { id: patientId }, select: { facilityId: true } });
+      if (!patient || patient.facilityId !== facilityId) throw new NotFoundError("Patient not found.");
+      context = await clinicianAssistantContext(patientId);
+      await recordAuditEvent("hospital.patient.viewed", userId, { patientId, view: "ai-assistant" }, { facilityId, patientId });
+    } else {
+      // Scholar and staff without an open chart: no patient record at all.
+      audience = "clinician";
+      context = "No patient chart is open.";
+    }
+  } catch (err) {
+    if (err instanceof NotFoundError) return NextResponse.json({ error: "Not found." }, { status: 404 });
+    if (err instanceof ForbiddenError) return NextResponse.json({ error: err.message }, { status: 403 });
+    // Other 4xx domain errors (e.g. a suspended tenant's 403) keep their status.
+    const status = (err as { status?: unknown })?.status;
+    if (typeof status === "number" && status >= 400 && status < 500) {
+      return NextResponse.json({ error: err instanceof Error ? err.message : "Request failed." }, { status });
+    }
+    throw err;
+  }
 
   try {
-    const anthropic = new Anthropic({ apiKey });
-    const response = await anthropic.messages.create({
-      model: "claude-sonnet-5",
-      max_tokens: 512,
-      system,
-      messages: [{ role: "user", content: message }],
-    });
-
-    const text = response.content
-      .filter((block): block is Anthropic.TextBlock => block.type === "text")
-      .map((block) => block.text)
-      .join("\n");
-
+    const text = await getAIProvider().assistantReply({ audience, context, page, message });
     return NextResponse.json({ text });
   } catch (err) {
-    console.error("Anthropic API error:", err);
+    console.error("AI provider error:", err);
     return NextResponse.json({ error: "AI request failed." }, { status: 502 });
   }
 }

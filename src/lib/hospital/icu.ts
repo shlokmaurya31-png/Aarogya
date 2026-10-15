@@ -1,7 +1,9 @@
+import { $Enums } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
-import { admitPatient, transferPatient } from "./admission";
+import { admitPatient, transferPatient, TRANSFER_WITH_LOCATIONS, transferRouteLabel } from "./admission";
+import { parseEnum } from "@/lib/enumValue";
 
 /**
  * ICU Foundation service (Phase B1). Builds on the existing ADT
@@ -174,7 +176,7 @@ export async function recordDevice(input: {
   recordedByStaffId: string;
   byUserId: string;
 }) {
-  const status = input.status ?? "PLANNED";
+  const status = parseEnum($Enums.IcuDeviceStatus, input.status ?? "PLANNED", "status");
   if (!DEVICE_STATUSES.includes(status)) throw new BadRequestError(`status must be one of ${DEVICE_STATUSES.join(", ")}.`);
   const encounter = await prisma.encounter.findUnique({ where: { id: input.encounterId } });
   if (!encounter || encounter.facilityId !== input.facilityId) throw new NotFoundError("Encounter not found.");
@@ -228,7 +230,7 @@ export async function updateDeviceStatus(input: {
     const result = await tx.icuDevice.updateMany({
       where: { id: input.deviceId, status: { notIn: ["REMOVED", "DISCONTINUED"] } },
       data: {
-        status: input.status,
+        status: parseEnum($Enums.IcuDeviceStatus, input.status, "status"),
         ...(input.status === "ACTIVE" && !device.insertedAt ? { insertedAt: new Date() } : {}),
         ...(isTerminal ? { removedAt: input.removedAt ?? new Date() } : {}),
         ...(input.notes !== undefined ? { notes: input.notes } : {}),
@@ -312,7 +314,7 @@ export async function updateInfusionStatus(input: {
     const result = await tx.icuInfusion.updateMany({
       where: { id: input.infusionId, status: { not: "STOPPED" } },
       data: {
-        status: input.status,
+        status: parseEnum($Enums.IcuInfusionStatus, input.status, "status"),
         ...(input.rate !== undefined ? { rate: input.rate } : {}),
         ...(input.status === "STOPPED" ? { stoppedAt: new Date() } : {}),
       },
@@ -353,12 +355,12 @@ export async function buildIcuRounding(encounterId: string) {
     prisma.task.findMany({ where: { encounterId, status: { notIn: ["COMPLETED", "CANCELLED"] } }, orderBy: { createdAt: "desc" }, take: 30 }),
     prisma.clinicalNote.findMany({ where: { encounterId }, orderBy: { createdAt: "desc" }, take: 5, include: { author: { include: { user: true } } } }),
     prisma.clinicalHandoff.findMany({ where: { encounterId }, orderBy: { createdAt: "desc" }, take: 5, include: { fromStaff: { include: { user: true } }, toStaff: { include: { user: true } } } }),
-    prisma.problem.findMany({ where: { patientId: encounter.patientId, status: "active" }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] }),
+    prisma.problem.findMany({ where: { patientId: encounter.patientId, status: "ACTIVE" }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] }),
     prisma.carePlan.findMany({ where: { encounterId, status: "ACTIVE" }, include: { interventions: true }, orderBy: { createdAt: "desc" } }),
     prisma.nursingAssessment.findFirst({ where: { encounterId, isCurrent: true }, orderBy: { createdAt: "desc" } }),
     prisma.labOrder.findMany({ where: { encounterId }, include: { results: { where: { isCurrent: true } } }, orderBy: { orderedAt: "desc" }, take: 10 }),
     prisma.imagingOrder.findMany({ where: { encounterId }, include: { reports: { where: { isCurrent: true } } }, orderBy: { orderedAt: "desc" }, take: 10 }),
-    prisma.transfer.findMany({ where: { admission: { encounterId } }, include: { fromBed: true, toBed: true }, orderBy: { transferredAt: "desc" } }),
+    prisma.transfer.findMany({ where: { admission: { encounterId } }, include: TRANSFER_WITH_LOCATIONS, orderBy: { toLocation: { assignedAt: "desc" } } }),
   ]);
 
   // Transparent I/O totals over the returned window (§13) — never mixes
@@ -402,7 +404,7 @@ export interface IcuTimelineEntry {
 export async function buildIcuTimeline(encounterId: string): Promise<IcuTimelineEntry[]> {
   const [admission, transfers, vitals, observations, infusions, devices, io, notes, tasks, handoffs, assessments, labResults, imagingReports, carePlans] = await Promise.all([
     prisma.admission.findUnique({ where: { encounterId }, include: { bed: true } }),
-    prisma.transfer.findMany({ where: { admission: { encounterId } }, include: { fromBed: true, toBed: true } }),
+    prisma.transfer.findMany({ where: { admission: { encounterId } }, include: TRANSFER_WITH_LOCATIONS }),
     prisma.vital.findMany({ where: { encounterId }, orderBy: { recordedAt: "desc" }, take: 100 }),
     prisma.icuObservation.findMany({ where: { encounterId }, orderBy: { recordedAt: "desc" }, take: 100 }),
     prisma.icuInfusion.findMany({ where: { encounterId }, orderBy: { startedAt: "desc" }, take: 100 }),
@@ -419,7 +421,7 @@ export async function buildIcuTimeline(encounterId: string): Promise<IcuTimeline
 
   const e: IcuTimelineEntry[] = [];
   if (admission) e.push({ id: `adm-${admission.id}`, timestamp: admission.admittedAt.toISOString(), type: "Admission", summary: `Admitted — bed ${admission.bed.label}${admission.admissionType ? ` (${admission.admissionType})` : ""}`, sourceType: "Admission", sourceId: admission.id });
-  for (const t of transfers) e.push({ id: `xfer-${t.id}`, timestamp: t.transferredAt.toISOString(), type: "Transfer", summary: `Transfer ${t.fromBed.label} → ${t.toBed.label}`, sourceType: "Transfer", sourceId: t.id });
+  for (const t of transfers) e.push({ id: `xfer-${t.id}`, timestamp: t.toLocation.assignedAt.toISOString(), type: "Transfer", summary: `Transfer ${transferRouteLabel(t)}`, sourceType: "Transfer", sourceId: t.id });
   for (const v of vitals) e.push({ id: `vit-${v.id}`, timestamp: v.recordedAt.toISOString(), type: "Vital", summary: `HR ${v.hr ?? "-"} · BP ${v.sbp ?? "-"}/${v.dbp ?? "-"} · SpO2 ${v.spo2 ?? "-"}%`, sourceType: "Vital", sourceId: v.id });
   for (const o of observations) e.push({ id: `obs-${o.id}`, timestamp: o.recordedAt.toISOString(), type: `Observation:${o.type}`, summary: Object.entries(o.values as Record<string, unknown>).map(([k, val]) => `${k}:${val}`).join(" "), sourceType: "IcuObservation", sourceId: o.id });
   for (const inf of infusions) e.push({ id: `inf-${inf.id}`, timestamp: inf.startedAt.toISOString(), type: "Infusion", summary: `${inf.drugName} ${inf.rate ?? "-"} ${inf.rateUnit ?? ""} (${inf.status})`, sourceType: "IcuInfusion", sourceId: inf.id });

@@ -1,14 +1,16 @@
+import { $Enums } from "@prisma/client";
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError } from "@/lib/auth/rbac";
 import { createInfectionIncident } from "@/lib/hospital/operations/service";
+import { parseOptionalEnum } from "@/lib/enumValue";
 
 export async function GET(req: NextRequest) {
   return withApiErrors(async () => {
     const { searchParams } = new URL(req.url);
     const { facilityId } = await requireFacilityStaff("operations:command:view", searchParams.get("facilityId") ?? undefined);
-    const status = searchParams.get("status");
+    const status = parseOptionalEnum($Enums.InfectionIncidentStatus, searchParams.get("status"), "status");
     const incidents = await prisma.infectionIncident.findMany({ where: { facilityId, ...(status ? { status } : {}) }, orderBy: { reportedAt: "desc" }, take: 200 });
     return { incidents };
   });

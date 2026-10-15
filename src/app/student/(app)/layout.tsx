@@ -14,7 +14,7 @@ export default async function StudentAppLayout({ children }: { children: React.R
 
   return (
     <ScholarShell
-      displayName={user.studentProfile.preferredName || user.studentProfile.fullLegalName}
+      displayName={user.displayName}
       institution={user.studentProfile.institution?.name ?? user.studentProfile.institutionNameFreeText ?? "Unaffiliated"}
       course={user.studentProfile.course}
       academicYear={user.studentProfile.academicYear}

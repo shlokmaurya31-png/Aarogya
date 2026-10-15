@@ -2,6 +2,8 @@ import { prisma } from "@/lib/db";
 import { NotFoundError } from "@/lib/auth/rbac";
 import { assertOrganizationAccess, type ActorMemberships } from "@/lib/auth/tenantContext";
 import { requirePlatformEvents } from "./authz";
+import { parseEnum } from "@/lib/enumValue";
+import { $Enums } from "@prisma/client";
 
 /**
  * Phase D6 — event operations & observability (read layer).
@@ -87,7 +89,7 @@ export async function listEvents(m: ActorMemberships, filter: EventFilter = {}) 
   requirePlatformEvents(m);
   return prisma.domainEventOutbox.findMany({
     where: {
-      ...(filter.status ? { status: filter.status } : {}),
+      ...(filter.status ? { status: parseEnum($Enums.DomainEventOutboxStatus, filter.status, "status") } : {}),
       ...(filter.eventType ? { eventType: filter.eventType } : {}),
       ...(filter.organizationId ? { organizationId: filter.organizationId } : {}),
       ...(filter.from || filter.to ? { occurredAt: { ...(filter.from ? { gte: filter.from } : {}), ...(filter.to ? { lte: filter.to } : {}) } } : {}),
@@ -133,7 +135,7 @@ export async function listOrganizationEvents(m: ActorMemberships, organizationId
     where: {
       organizationId,
       ...(seesAll ? {} : { OR: [{ facilityId: null }, { facilityId: { in: ownFacilities } }] }),
-      ...(filter.status ? { status: filter.status } : {}),
+      ...(filter.status ? { status: parseEnum($Enums.DomainEventOutboxStatus, filter.status, "status") } : {}),
       ...(filter.eventType ? { eventType: filter.eventType } : {}),
       ...(filter.from || filter.to ? { occurredAt: { ...(filter.from ? { gte: filter.from } : {}), ...(filter.to ? { lte: filter.to } : {}) } } : {}),
     },

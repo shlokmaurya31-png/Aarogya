@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
 import { BadRequestError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
-import { assertExchangeAuthorized } from "../consent";
+import { assertExchangeAuthorized } from "@/lib/consent";
 import { recordProvenance } from "../provenance";
 import { assertPatientInFacility, consentCoversScope } from "../shared";
 import {
@@ -11,6 +11,8 @@ import {
 } from "./mappers";
 import { buildDocumentBundle, hashBundle, countResources, type DocumentBundleType } from "./bundle";
 import type { FhirBundle, FhirResource } from "./types";
+import { isStaffInFacility, staffAtFacilityWhere } from "@/lib/auth/staffFacility";
+import { activePatientExternalIdentifiers } from "@/lib/patient/identifiers";
 
 /**
  * Phase C1 — controlled FHIR export.
@@ -84,11 +86,7 @@ export async function exportPatientToFhir(req: ExportRequest): Promise<ExportRes
 
   // External identifiers are scoped to this facility, so an export can never
   // leak a mapping another facility holds for the same person.
-  const externalIds = await prisma.externalIdentifier.findMany({
-    where: { facilityId: req.facilityId, entityType: "PATIENT", entityId: req.patientId, status: "ACTIVE" },
-    select: { system: true, value: true, use: true, status: true },
-    orderBy: [{ system: "asc" }, { id: "asc" }],
-  });
+  const externalIds = await activePatientExternalIdentifiers(prisma, req.facilityId, req.patientId);
   const facilityIds = await prisma.externalIdentifier.findMany({
     where: { facilityId: req.facilityId, entityType: "FACILITY", entityId: req.facilityId, status: "ACTIVE" },
     select: { system: true, value: true, use: true, status: true },
@@ -208,7 +206,7 @@ export async function exportPatientToFhir(req: ExportRequest): Promise<ExportRes
   let author: FhirResource = custodian;
   if (req.actorStaffId) {
     const staff = await prisma.hospitalStaffProfile.findUnique({ where: { id: req.actorStaffId } });
-    if (staff && staff.facilityId === req.facilityId) {
+    if (staff && (await isStaffInFacility(prisma, staff.id, req.facilityId))) {
       author = mapPractitionerToFhir({ ...staff, displayName: null });
       practitionerIds.delete(staff.id);
     }
@@ -216,7 +214,7 @@ export async function exportPatientToFhir(req: ExportRequest): Promise<ExportRes
 
   if (practitionerIds.size) {
     const staff = await prisma.hospitalStaffProfile.findMany({
-      where: { id: { in: [...practitionerIds] }, facilityId: req.facilityId },
+      where: { id: { in: [...practitionerIds] }, ...staffAtFacilityWhere(req.facilityId) },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     if (staff.length) {

@@ -13,6 +13,7 @@
 import { PrismaClient } from "@prisma/client";
 import { createOrderEnvelope } from "../src/lib/hospital/orderEnvelope";
 import { scheduleStudy, ScheduleConflictError } from "../src/lib/hospital/imagingStudyLifecycle";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
 
@@ -48,7 +49,7 @@ async function main() {
   const facility = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
   const patient = await prisma.patient.findFirstOrThrow({ where: { facilityId: facility.id } });
   const encounter = await prisma.encounter.findFirstOrThrow({ where: { facilityId: facility.id, patientId: patient.id } });
-  const doctor = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facility.id, user: { role: "DOCTOR" } } });
+  const doctor = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facility.id), user: { role: "DOCTOR" } } });
   // Dedicated resource for this script, isolated from seed data's own bookings.
   const resource = await prisma.imagingResource.create({ data: { facilityId: facility.id, name: "Verify-Script USG", modality: "USG" } });
   const otherResource = await prisma.imagingResource.create({ data: { facilityId: facility.id, name: "Verify-Script USG #2", modality: "USG" } });
@@ -106,7 +107,7 @@ async function main() {
     const facilityB = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Noida Hospital" } });
     const patientB = await prisma.patient.findFirstOrThrow({ where: { facilityId: facilityB.id } });
     const encounterB = await prisma.encounter.findFirstOrThrow({ where: { facilityId: facilityB.id, patientId: patientB.id } });
-    const doctorB = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { facilityId: facilityB.id, user: { role: "DOCTOR" } } });
+    const doctorB = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { ...staffAtFacilityWhere(facilityB.id), user: { role: "DOCTOR" } } });
     const resourceB = await prisma.imagingResource.create({ data: { facilityId: facilityB.id, name: "Verify-Script USG (Noida)", modality: "USG" } });
     const o1 = await freshOrder(facility.id, encounter.id, patient.id, doctor.id);
     const o2 = await freshOrder(facilityB.id, encounterB.id, patientB.id, doctorB.id);

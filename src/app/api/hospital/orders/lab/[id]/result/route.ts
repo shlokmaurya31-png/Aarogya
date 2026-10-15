@@ -6,6 +6,7 @@ import { withApiErrors, NotFoundError, BadRequestError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { isLabOrderTransitionAllowed, InvalidLabOrderTransitionError } from "@/lib/hospital/diagnosticsLifecycle";
 import { enterResult } from "@/lib/hospital/labResultLifecycle";
+import { ageInYears } from "@/lib/patient/age";
 
 const VALID_RESULT_TYPES = ["NUMERIC", "TEXT", "CATEGORICAL", "POSITIVE_NEGATIVE"];
 const MAX_TEXT_LENGTH = 10_000;
@@ -71,7 +72,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         isCritical: isCritical === true,
         releasedByStaffId: staff?.id,
         patientSex: order.patient.sex,
-        patientAgeYears: order.patient.ageYears,
+        patientAgeYears: ageInYears(order.patient.dob),
       })
     );
 

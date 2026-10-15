@@ -1,10 +1,11 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, $Enums } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError, ConflictError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { emitDomainEvent } from "@/lib/events/emit";
 import { assertOrganizationAccess, type ActorMemberships } from "@/lib/auth/tenantContext";
 import { requirePlatform } from "@/lib/billing/authz";
+import { parseEnum } from "@/lib/enumValue";
 
 /**
  * Phase D5 — reconciliation & leakage operational intelligence.
@@ -55,7 +56,7 @@ export async function listExceptions(m: ActorMemberships, opts?: { status?: stri
   requirePlatform(m);
   return prisma.billingReconciliationException.findMany({
     where: {
-      ...(opts?.status ? { status: opts.status } : {}),
+      ...(opts?.status ? { status: parseEnum($Enums.BillingReconciliationExceptionStatus, opts.status, "status") } : {}),
       ...(opts?.source ? { source: opts.source } : {}),
       ...(opts?.resolved !== undefined ? { resolved: opts.resolved } : {}),
     },

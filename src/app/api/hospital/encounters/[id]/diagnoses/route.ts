@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { normalizeCode } from "@/lib/hospital/problemList";
 
 const VALID_TYPES = ["PRIMARY", "SECONDARY", "PROVISIONAL", "RULE_OUT", "FINAL"];
 
@@ -17,10 +18,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const encounter = await prisma.encounter.findUnique({ where: { id } });
     if (!encounter || encounter.facilityId !== facilityId) throw new NotFoundError("Encounter not found.");
 
-    const { diagnosis, type, onsetDate, codeSystem, code } = body ?? {};
+    const { diagnosis, type, onsetDate, codeSystem, code, codeDisplay } = body ?? {};
     if (!diagnosis || !type || !VALID_TYPES.includes(type)) {
       throw new BadRequestError(`diagnosis is required and type must be one of ${VALID_TYPES.join(", ")}.`);
     }
+    const coded = normalizeCode({ codeSystem, code, codeDisplay });
 
     const created = await prisma.diagnosis.create({
       data: {
@@ -29,8 +31,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         diagnosis,
         type,
         onsetDate: onsetDate ? new Date(onsetDate) : undefined,
-        codeSystem,
-        code,
+        ...coded,
         diagnosedByStaffId: staff.id,
       },
     });
