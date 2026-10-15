@@ -1,365 +1,435 @@
 # Event triage: the "not yet catalogued" writes
 
-- **Date:** 2026-10-15 (Week 3, phase B batch 2)
-- **Status:** for review. **Nothing here is wired yet.** Counts first, wiring after approval.
-- **Scope:** every exported service function that the CI emit rule (`src/lib/events/emitCoverage.test.ts`) lists as `NOT_YET_CATALOGUED` in `src/lib/events/emitExemptions.ts`. That was 277 when the rule landed; step 3 turned two of them (self-registration) into emitters, so **275** remain.
+- **Date:** 2026-10-15 (Week 3; round 2, consolidated after review)
+- **Status:** for approval. **Nothing here is wired yet.** Batch 3a applies it to `emitExemptions.ts`.
+- **Scope:** every exported service function the CI emit rule lists as `NOT_YET_CATALOGUED`. Round 1 triaged 275. Since then three left the category: `completeTransferRequest` and `ingestWebhook` now reach registered emitting helpers (`transferPatientInTx`, `emitPaymentFailed`), and `addIntervention` moved to `OWED_EVENTS` (it emits TaskCreated but still owes `CarePlanUpdated`). **272** remain.
 
 ## Rules applied
 
-A function **becomes a planned event** if it:
+A function **becomes a planned event** if it (a) changes a patient's care or record, (b) moves money or stock, (c) changes access or permissions, or (d) is a safety or quality fact. Otherwise it gets a named exemption with a one-line reason.
 
-- **(a)** changes a patient's care or record;
-- **(b)** moves money or stock;
-- **(c)** changes access or permissions; or
-- **(d)** is a safety or quality fact (incident, quarantine, recall, calibration failure, equipment fault).
+Naming (round 2):
 
-Otherwise it gets a **named exemption category** with a one-line reason. New categories:
+- **One event per state-machine aggregate:** `<Aggregate>StatusChanged`, payload `from` / `to` (closed enums, `from` null on creation), unless a listed consumer (existing, planned, or `rag-indexer`) subscribes to that specific transition. Those exceptions are listed under *Kept specific*.
+- **One `<Thing>Recorded` per kind of repeated clinical documentation**, with a type code (e.g. `NursingAssessmentRecorded` with `assessmentType` and `stage` = COMPLETED | SIGNED | AMENDED, `supersedesAssessmentId?`).
+- **The 46 planned names are kept** as they are.
+- **`PROCESS_STEP` only when the process's outcome is emitted at its boundary event.** Each one names its boundary. Where an outcome (usually a rejection) had no boundary event, the function became an event.
 
-| Category | Meaning |
+| Exemption category | Meaning |
 |---|---|
-| `PROCESS_STEP` | An intermediate step (draft, request, pending approval). The outcome that matters is its own event. |
+| `PROCESS_STEP` | An intermediate step (draft, request, pending approval) whose outcome is emitted by the named boundary event. |
 | `OPERATIONAL_DETAIL` | Logistics or housekeeping with no effect on care, money, stock, access or safety. |
-| `INTEGRATION_PROTOCOL` | Inbound callback/webhook logs and protocol state of external exchanges. The changes they cause emit their own events. |
-| `CONSUMER_OUTPUT` | Written by an event consumer in reaction to another event (consumer writes don't emit). |
-
-New events follow the same rules as §1 of `docs/WORKFLOW_SPINE_DESIGN.md`: emitted in the producer's transaction, IDs and closed codes only, no free text. They don't need consumers.
+| `INTEGRATION_PROTOCOL` | Inbound callback logs and protocol state of external exchanges; the changes they cause emit their own events. |
+| `CONSUMER_OUTPUT` | Written by an event consumer in reaction to another event. |
 
 ## Counts
 
-| Decision | Functions |
+| | Count |
 |---|---|
-| **Becomes a planned event** | **182** (155 distinct event names) |
-| &nbsp;&nbsp;(a) care or record | 76 |
-| &nbsp;&nbsp;(b) money or stock | 51 |
+| **Functions triaged** | **272** |
+| Become planned events | 186 |
+| &nbsp;&nbsp;(a) care or record | 74 |
+| &nbsp;&nbsp;(b) money or stock | 57 |
 | &nbsp;&nbsp;(c) access or permissions | 16 |
 | &nbsp;&nbsp;(d) safety or quality | 39 |
-| **Named exemption** | **93** |
-| &nbsp;&nbsp;`PROCESS_STEP` | 47 |
-| &nbsp;&nbsp;`OPERATIONAL_DETAIL` | 35 |
-| &nbsp;&nbsp;`INTEGRATION_PROTOCOL` | 7 |
+| Named exemptions | 86 |
+| &nbsp;&nbsp;`OPERATIONAL_DETAIL` | 46 |
+| &nbsp;&nbsp;`PROCESS_STEP` | 30 |
+| &nbsp;&nbsp;`INTEGRATION_PROTOCOL` | 6 |
 | &nbsp;&nbsp;`CONSUMER_OUTPUT` | 2 |
-| &nbsp;&nbsp;`BOOKKEEPING` | 1 |
 | &nbsp;&nbsp;`REFERENCE_DATA` | 1 |
-| **Total** | **275** |
+| &nbsp;&nbsp;`BOOKKEEPING` | 1 |
+| **Distinct event names these functions emit** | **79** |
+| &nbsp;&nbsp;already in the catalogue or among the 46 planned | 3 (`ClaimSubmitted`, `ReconciliationExceptionResolved`, `SpecimenCollected`) |
+| &nbsp;&nbsp;**new event names** | **76** (round 1: 155) |
 
-Planned events by wiring step:
-
-| Step | Module | Functions | Distinct events |
+| Step | Module | Functions | Event names (new) |
 |---|---|---|---|
-| 4 | ADT, scheduling and ED | 19 | 13 |
-| 5 | Nursing and tasks | 8 | 7 |
-| 6 | Orders, results, medication, pharmacy, ICU, care plans | 34 | 32 |
-| 7 | Patient access, consent and record | 10 | 10 |
-| 8 | Operating theatre and blood bank | 22 | 22 |
-| 9 | Billing, claims and NHCX | 25 | 25 |
-| 9a | Inventory and procurement | 23 | 11 |
-| 9b | Quality, safety and operations | 27 | 25 |
-| 9c | Access, identity, interoperability and workforce | 14 | 13 |
+| 4 | ADT, scheduling and ED | 18 | 7 (7) |
+| 5 | Nursing and tasks (step 5b) | 8 | 4 (4) |
+| 6 | Orders, results, medication, pharmacy, ICU, care plans | 33 | 16 (16) |
+| 7 | Patient access, consent and record | 10 | 5 (5) |
+| 8 | Operating theatre and blood bank | 22 | 10 (9) |
+| 9 | Billing, claims and NHCX | 27 | 15 (13) |
+| 9a | Inventory and procurement | 27 | 7 (7) |
+| 9b | Quality, safety and operations | 27 | 11 (11) |
+| 9c | Access, identity, interoperability and workforce | 14 | 7 (7) |
 
-Steps 9a, 9b and 9c are new: those modules had no §9 step. They slot in after step 9 (billing) and before step 10 (the core-journey replay test).
+## The new event names
 
-## Design notes
+Each name with the functions that emit it. *StatusChanged* events carry `from` / `to`; *Recorded* events carry a type code.
 
-- **One stock event.** Every stock movement goes through `postLedgerEntry` (`src/lib/hospital/inventory/ledger.ts`). It emits one `StockMoved` event (ledgerEntryId, itemId, lotId?, locationId, movementType, quantity, sourceType, sourceId) instead of a separate event per inventory function. 13 of the triaged functions are covered by it. Some reach the ledger two calls deep (through `issueStock`/`reserveStock`), so when 9a is wired the CI rule's "emits through a helper" resolution becomes transitive (it is one level deep today).
-- **Shared events.** Several functions emit one event type where they record the same kind of fact: `ObservationRecorded` (ICU and transfusion observations, with an observation-kind code), `AdmissionRequestDecided` (cancel/defer/reject, with the decision), `TransferRequestStatusChanged`, `StaffAssignmentChanged`, `CarePlanUpdated`, `ImagingStudyScheduled` (schedule/reschedule), `StockLotQuarantined`/`StockLotReleased` (inventory and pharmacy lots).
-- **Existing events reused:** `ReconciliationExceptionResolved` (a second producer), `ClaimSubmitted` (the non-NHCX path), `PatientTransferred` (`completeTransferRequest` is covered once `transferPatientInTx` emits in step 4).
-- **Static-analysis limit.** `decideLinkRequest` counts as emitting because its CREATE_NEW branch calls `createRegisteredPatient`; its LINK branch links an account without an event. `PatientAccountLinked` (from `verifyLinkOtp`, step 7) should also be emitted on that branch.
+| # | Event | Step | Functions |
+|---|---|---|---|
+| 1 | `AdmissionRequestStatusChanged` | 4 | `cancelRequest`, `deferRequest`, `rejectRequest`, `releaseReservation` |
+| 2 | `AppointmentStatusChanged` | 4 | `confirmAppointment`, `markNoShow` |
+| 3 | `PatientLocationChanged` | 4 | `assignEdLocation`, `releaseEdLocation` |
+| 4 | `PatientMergeStatusChanged` | 4 | `mergePatients`, `unmergePatients` |
+| 5 | `ResuscitationStatusChanged` | 4 | `activateResuscitation`, `updateResuscitation` |
+| 6 | `TransferRequestStatusChanged` | 4 | `acceptTransferRequest`, `cancelTransferRequest`, `createTransferRequest`, `markPatientInTransit`, `reserveBedForTransfer` |
+| 7 | `ClinicalHandoffStatusChanged` | 5 | `acknowledgeHandoff`, `createHandoff` |
+| 8 | `NurseAssignmentStatusChanged` | 5 | `assignNurse`, `endAssignment` |
+| 9 | `NursingAssessmentRecorded` | 5 | `amendAssessment`, `completeAssessment`, `signAssessment` |
+| 10 | `TaskUpdated` | 5 | `updateTask` |
+| 11 | `CarePlanUpdated` | 6 | `closeCarePlan`, `completeIntervention`, `createCarePlan` |
+| 12 | `DiagnosticReportAmended` | 6 | `amendReport`, `amendResult` |
+| 13 | `ExternalLabReferralStatusChanged` | 6 | `createExternalReferral`, `transitionExternalReferral` |
+| 14 | `IcuDeviceStatusChanged` | 6 | `recordDevice`, `updateDeviceStatus` |
+| 15 | `IcuInfusionStatusChanged` | 6 | `recordInfusion`, `updateInfusionStatus` |
+| 16 | `ImagingStudyStatusChanged` | 6 | `cancelStudy`, `rescheduleStudy`, `scheduleStudy` |
+| 17 | `MedicationOrderStatusChanged` | 6 | `cancelMedicationOrder`, `discontinueMedicationOrder`, `holdMedicationOrder`, `rejectMedicationOrder`, `requestClarification`, `resubmitMedicationOrder` |
+| 18 | `MedicationRecallStatusChanged` | 6 | `closeRecall`, `createRecall` |
+| 19 | `MedicationReconciliationRecorded` | 6 | `recordReconciliation` |
+| 20 | `MedicationSafetyWarningOverridden` | 6 | `acknowledgeSafetyWarning` |
+| 21 | `MedicationSubstituted` | 6 | `recordSubstitution` |
+| 22 | `PharmacyComplianceRecorded` | 6 | `recordControlledWastage`, `recordStorageCheck` |
+| 23 | `ProblemListUpdated` | 6 | `addDiagnosisToProblemList` |
+| 24 | `SpecimenStatusChanged` | 6 | `recollectSpecimen`, `rejectSpecimen` |
+| 25 | `ConsentExpired` | 7 | `expireLapsedConsents` |
+| 26 | `ConsentRequestStatusChanged` | 7 | `closeConsentRequest`, `requestConsent` |
+| 27 | `PatientAccessSessionStatusChanged` | 7 | `endAccessSession`, `extendAccessSession`, `issueAccessCode`, `redeemAccessCode` |
+| 28 | `PatientAccountLinked` | 7 | `verifyLinkOtp` |
+| 29 | `PatientDemographicsUpdated` | 7 | `addPatientIdentifier`, `updateProfile` |
+| 30 | `BloodCompatibilityRecorded` | 8 | `recordPatientTyping`, `verifyCompatibility` |
+| 31 | `BloodRequestStatusChanged` | 8 | `requestBlood`, `transitionRequest` |
+| 32 | `BloodUnitStatusChanged` | 8 | `quarantineUnit`, `recallUnit`, `registerBloodUnit`, `releaseReservation`, `releaseUnit`, `reserveUnits`, `returnUnit`, `wasteUnit` |
+| 33 | `EmergencyBloodReleaseAuthorized` | 8 | `authorizeEmergencyRelease` |
+| 34 | `ObservationRecorded` | 8 | `recordObservation`, `recordReassessment`, `recordTransfusionObservation` |
+| 35 | `PerioperativeRecordRecorded` | 8 | `recordAnesthesia`, `updateChecklistItem` |
+| 36 | `SurgeryStatusChanged` | 8 | `cancelSchedule`, `transitionSurgery`, `updateRecovery` |
+| 37 | `TransfusionReactionStatusChanged` | 8 | `transitionReaction` |
+| 38 | `TransfusionStatusChanged` | 8 | `transitionTransfusion` |
+| 39 | `BillingAdjustmentStatusChanged` | 9 | `approveAdjustment`, `rejectAdjustment` |
+| 40 | `ChargeVoided` | 9 | `voidCharge` |
+| 41 | `ClaimQueryStatusChanged` | 9 | `recordQuery`, `respondToQuery`, `transitionQuery` |
+| 42 | `ClaimReconciliationStatusChanged` | 9 | `raiseException`, `reconcileSettlement`, `recordSettlement`, `resolveException` |
+| 43 | `ClaimStatusChanged` | 9 | `closeClaim`, `recordClaimDecision` |
+| 44 | `CoverageStatusChanged` | 9 | `addPatientCoverage`, `deactivateCoverage` |
+| 45 | `CreditStatusChanged` | 9 | `applyCreditToInvoice`, `issueCredit` |
+| 46 | `HospitalInvoiceVoided` | 9 | `voidInvoice` |
+| 47 | `HospitalPaymentStatusChanged` | 9 | `allocatePayment`, `voidPayment` |
+| 48 | `HospitalRefundStatusChanged` | 9 | `completeRefund`, `rejectRefund` |
+| 49 | `InvoiceVoided` | 9 | `voidInvoice` |
+| 50 | `PreauthStatusChanged` | 9 | `expirePreAuth`, `requestPreAuth` |
+| 51 | `SubscriptionStatusChanged` | 9 | `transitionSubscription` |
+| 52 | `PurchaseOrderStatusChanged` | 9a | `approvePurchaseOrder`, `cancelPurchaseOrder`, `closePurchaseOrder` |
+| 53 | `SerialUnitStatusChanged` | 9a | `registerSerial`, `transitionSerial` |
+| 54 | `StockDocumentStatusChanged` | 9a | `approveAdjustment`, `approveWaste`, `completeStockTake`, `rejectAdjustment`, `rejectGoodsReceipt`, `rejectWaste` |
+| 55 | `StockLotStatusChanged` | 9a | `quarantineLot`, `quarantinePharmacyLot`, `releaseLotFromQuarantine`, `releasePharmacyQuarantine` |
+| 56 | `StockMoved` | 9a | `cancelTransfer`, `classifyMedicationReturn`, `consumeReservation`, `createAdjustment`, `createPharmacyTransfer`, `initiateTransfer`, `receiveTransfer`, `recordWaste`, `releaseReservation`, `reserveStock` |
+| 57 | `SupplierInvoiceStatusChanged` | 9a | `recordSupplierInvoice`, `reviewSupplierInvoice` |
+| 58 | `SupplyRequestStatusChanged` | 9a | `transitionDepartmentRequest`, `transitionPharmacyRequest` |
+| 59 | `CapaStatusChanged` | 9b | `createCapa`, `transitionCapa` |
+| 60 | `DietOrderStatusChanged` | 9b | `createDietOrder`, `setDietOrderStatus` |
+| 61 | `EquipmentServiceRecorded` | 9b | `completePreventiveMaintenance`, `recordEquipmentCalibration`, `recordEquipmentMaintenance` |
+| 62 | `EquipmentStatusChanged` | 9b | `endDowntime`, `setEquipmentStatus`, `startDowntime` |
+| 63 | `InfectionExposureRecorded` | 9b | `recordExposure` |
+| 64 | `InfectionIncidentStatusChanged` | 9b | `createInfectionIncident`, `createInfectionInvestigation`, `transitionInfectionIncident` |
+| 65 | `LabQualityControlRecorded` | 9b | `recordCalibration`, `recordQc`, `reviewCalibration`, `reviewQc` |
+| 66 | `MaintenanceRequestStatusChanged` | 9b | `createMaintenanceRequest`, `transitionMaintenance` |
+| 67 | `QualityFindingStatusChanged` | 9b | `closeFinding`, `createFinding` |
+| 68 | `QualityIncidentStatusChanged` | 9b | `createQualityIncident`, `reopenIncident`, `reviewRca`, `transitionIncident` |
+| 69 | `QualityMeasureStatusChanged` | 9b | `setMeasureStatus` |
+| 70 | `BreakGlassStatusChanged` | 9c | `activateBreakGlass`, `expireLapsedBreakGlass` |
+| 71 | `ExternalIdentifierStatusChanged` | 9c | `linkExternalIdentifier`, `unlinkExternalIdentifier`, `verifyExternalIdentifier` |
+| 72 | `HealthInformationExchangeRequested` | 9c | `createExchange` |
+| 73 | `ImportedResourceReviewed` | 9c | `reviewImportedResource` |
+| 74 | `LegalHoldSet` | 9c | `setLegalHold` |
+| 75 | `PrivacyRequestStatusChanged` | 9c | `createPrivacyRequest`, `transitionPrivacyRequest` |
+| 76 | `StaffAuthorizationChanged` | 9c | `createAssignment`, `createCredential`, `endAssignment`, `grantPrivilege` |
+
+### Second-pass merges
+
+Beyond the one-per-aggregate rule, to reach the 60–80 target. Each is a judgement; any can be split back out.
+
+| Was (round 1 / first pass) | Now | Why |
+|---|---|---|
+| `PatientBloodTypeRecorded` | `BloodCompatibilityRecorded` | one Recorded event for blood-compatibility documentation, kind PATIENT_TYPING \| CROSSMATCH_VERIFIED |
+| `CrossmatchVerified` | `BloodCompatibilityRecorded` | same |
+| `AnesthesiaRecorded` | `PerioperativeRecordRecorded` | one Recorded event for perioperative documentation, kind ANESTHESIA \| SAFETY_CHECKLIST |
+| `SurgicalSafetyChecklistRecorded` | `PerioperativeRecordRecorded` | same |
+| `RecoveryStatusChanged` | `SurgeryStatusChanged` | recovery is a phase of the surgical case (to = RECOVERY_*) |
+| `SurgicalSpecimenCollected` | `SpecimenCollected` | the planned event, with specimenSource = SURGICAL |
+| `StorageCheckRecorded` | `PharmacyComplianceRecorded` | one Recorded event for pharmacy compliance documentation, kind STORAGE_CHECK \| CONTROLLED_WASTAGE |
+| `ControlledDrugWasted` | `PharmacyComplianceRecorded` | same; the stock movement itself is StockMoved |
+| `PatientProfileUpdated` | `PatientDemographicsUpdated` | profile and identifier changes to the same record, with a change kind |
+| `PatientIdentifierAdded` | `PatientDemographicsUpdated` | same |
+| `ClaimSettlementStatusChanged` | `ClaimReconciliationStatusChanged` | a settlement and its reconciliation exceptions are one NHCX reconciliation |
+| `ClaimReconciliationExceptionStatusChanged` | `ClaimReconciliationStatusChanged` | same |
+| `StockAdjustmentStatusChanged` | `StockDocumentStatusChanged` | one decision event for approval-gated inventory documents, documentType ADJUSTMENT \| WASTE \| GOODS_RECEIPT \| STOCK_TAKE |
+| `WasteRecordStatusChanged` | `StockDocumentStatusChanged` | same |
+| `GoodsReceiptRejected` | `StockDocumentStatusChanged` | same; approval stays GoodsReceived |
+| `StockTakeCompleted` | `StockDocumentStatusChanged` | same; variances post as StockMoved |
+| `InfectionInvestigationOpened` | `InfectionIncidentStatusChanged` | opening an investigation moves the incident (to = INVESTIGATING) |
+| `RootCauseAnalysisReviewed` | `QualityIncidentStatusChanged` | the RCA review is a stage of the incident |
+| `StaffAssignmentChanged` | `StaffAuthorizationChanged` | department assignment, credentials and privileges all decide what a staff member may do; kind code |
+| `StaffCredentialRecorded` | `StaffAuthorizationChanged` | same |
+| `LabResultAmended` | `DiagnosticReportAmended` | rag-indexer re-indexes either way; reportKind LAB \| IMAGING |
+| `ImagingReportAmended` | `DiagnosticReportAmended` | same |
+| `PatientsMerged` | `PatientMergeStatusChanged` | rag-indexer re-keys the patient index either way; action MERGED \| UNMERGED |
+| `PatientsUnmerged` | `PatientMergeStatusChanged` | same |
+
+### Kept specific (a listed consumer subscribes to the transition)
+
+- `ConsentExpired`: rag-indexer: stop serving the record exactly as on ConsentRevoked.
+- `DiagnosticReportAmended`: rag-indexer: re-index the amended result or report (it subscribes to the releases).
+- `PatientMergeStatusChanged`: rag-indexer: the per-patient index is re-keyed on merge and split on unmerge.
+- `HospitalInvoiceVoided`: discharge-readiness: billing readiness is recomputed (it subscribes to HospitalInvoiceIssued).
+- `StockMoved` stays one event for every ledger movement (`postLedgerEntry`, registered as an emitting helper at 9a); `StockBelowReorder` stays on the cut list.
+
+### Other notes
+
+- **`GoodsReceived` leaves the cut list** and moves to 9a: it is the boundary event that makes recording a goods receipt a process step. A rejection is `StockDocumentStatusChanged` (documentType GOODS_RECEIPT).
+- **`SpecimenCollected` (planned) gains a producer:** `surgery.ts#collectSpecimen`, with `specimenSource` = LAB_ORDER | SURGICAL.
+- **Waste rejection does not reverse stock.** `recordWaste` posts the movement immediately; `rejectWaste` only marks the record REJECTED. The event records that fact as it is; whether a rejection should reverse the movement is a product question, not changed here.
+- **Requisitions and RFQs are `OPERATIONAL_DETAIL`, not process steps:** they never commit money or stock, so they have no outcome to emit; money is committed by the purchase order (`PurchaseOrderStatusChanged`). Round 1 had them as process steps.
+- **`decideLinkRequest`** counts as emitting through its CREATE_NEW branch; its LINK branch should also emit `PatientAccountLinked` (step 7).
 
 ## Borderline calls to review
 
-These went to an exemption, but a reasonable reading of the rules could make them events:
+- **Meal delivery** (`transitionMeal`): a REFUSED or MISSED meal is arguably a care fact. Exempted as kitchen logistics; the diet order is an event.
+- **Patient transport and ambulance trips:** exempted as logistics; location changes are their own events.
+- **Staff shifts and availability:** exempted; they don't change access.
+- **Queue tokens:** exempted, consistent with "QueueTokenCalled is not an event".
+- **Theatre team roster** (`setTeamMember`): exempted; becomes (c) if team membership should gate access to the case record.
+- **Delegate invitations** (`inviteDelegate`): a process step with boundary `FamilyAccessGranted`; a lapsed or declined invitation changes no access, so it emits nothing.
 
-- **Meal delivery** (`transitionMeal`): a REFUSED or MISSED meal is arguably a care fact (nutrition intake). Exempted as kitchen logistics; the diet order itself is an event.
-- **Patient transport and ambulance trips:** exempted as logistics; the patient's location changes are their own events.
-- **Staff shifts and availability:** exempted; bookability reads them directly and they don't change access.
-- **Queue tokens:** exempted, consistent with the approved "QueueTokenCalled is not an event".
-- **Theatre team roster** (`setTeamMember`): exempted as a roster; if team membership should gate access to the case record, it becomes (c).
-- **Refund approval** and **adjustment requests**: exempted as process steps; money moves only on completion/approval respectively.
+## Mapping: functions that become events
 
-## New events by module
+### Step 4: ADT, scheduling and ED (18 functions)
 
-### Step 4: ADT, scheduling and ED (19 functions)
-
-| Function | File | Decision | Proposed event | Step |
+| Function | File | Decision | Event | Note |
 |---|---|---|---|---|
-| `cancelRequest` | `src/lib/hospital/admissionRequest.ts` | event (a) | `AdmissionRequestDecided` | 4 |
-| `deferRequest` | `src/lib/hospital/admissionRequest.ts` | event (a) | `AdmissionRequestDecided` | 4 |
-| `rejectRequest` | `src/lib/hospital/admissionRequest.ts` | event (a) | `AdmissionRequestDecided` | 4 |
-| `releaseReservation` | `src/lib/hospital/admissionRequest.ts` | event (a) | `BedReservationReleased` | 4 |
-| `confirmAppointment` | `src/lib/hospital/appointment.ts` | event (a) | `AppointmentConfirmed` | 4 |
-| `markNoShow` | `src/lib/hospital/appointment.ts` | event (a) | `AppointmentNoShow` | 4 |
-| `activateResuscitation` | `src/lib/hospital/emergency.ts` | event (a) | `ResuscitationActivated` | 4 |
-| `assignEdLocation` | `src/lib/hospital/emergency.ts` | event (a) — EncounterLocation is the location history (D5) | `PatientLocationChanged` | 4 |
-| `recordReassessment` | `src/lib/hospital/emergency.ts` | event (a) | `EdReassessmentRecorded` | 4 |
-| `releaseEdLocation` | `src/lib/hospital/emergency.ts` | event (a) | `PatientLocationChanged` | 4 |
-| `updateResuscitation` | `src/lib/hospital/emergency.ts` | event (a) | `ResuscitationStatusChanged` | 4 |
-| `acceptTransferRequest` | `src/lib/hospital/transferRequest.ts` | event (a) | `TransferRequestStatusChanged` | 4 |
-| `cancelTransferRequest` | `src/lib/hospital/transferRequest.ts` | event (a) | `TransferRequestStatusChanged` | 4 |
-| `completeTransferRequest` | `src/lib/hospital/transferRequest.ts` | event (a) — covered once transferPatientInTx emits | `PatientTransferred (via transferPatientInTx)` | 4 |
-| `createTransferRequest` | `src/lib/hospital/transferRequest.ts` | event (a) | `TransferRequested` | 4 |
-| `markPatientInTransit` | `src/lib/hospital/transferRequest.ts` | event (a) | `TransferRequestStatusChanged` | 4 |
-| `reserveBedForTransfer` | `src/lib/hospital/transferRequest.ts` | event (a) | `TransferRequestStatusChanged` | 4 |
-| `mergePatients` | `src/lib/patient/merge.ts` | event (a) | `PatientsMerged` | 4 |
-| `unmergePatients` | `src/lib/patient/merge.ts` | event (a) | `PatientsUnmerged` | 4 |
+| `cancelRequest` | `src/lib/hospital/admissionRequest.ts` | (a) | `AdmissionRequestStatusChanged` |  |
+| `deferRequest` | `src/lib/hospital/admissionRequest.ts` | (a) | `AdmissionRequestStatusChanged` |  |
+| `rejectRequest` | `src/lib/hospital/admissionRequest.ts` | (a) | `AdmissionRequestStatusChanged` |  |
+| `releaseReservation` | `src/lib/hospital/admissionRequest.ts` | (a) | `AdmissionRequestStatusChanged` |  |
+| `confirmAppointment` | `src/lib/hospital/appointment.ts` | (a) | `AppointmentStatusChanged` |  |
+| `markNoShow` | `src/lib/hospital/appointment.ts` | (a) | `AppointmentStatusChanged` |  |
+| `recordReassessment` | `src/lib/hospital/emergency.ts` | (a) | `ObservationRecorded` |  |
+| `assignEdLocation` | `src/lib/hospital/emergency.ts` | (a) | `PatientLocationChanged` | EncounterLocation is the location history (D5) |
+| `releaseEdLocation` | `src/lib/hospital/emergency.ts` | (a) | `PatientLocationChanged` |  |
+| `mergePatients` | `src/lib/patient/merge.ts` | (a) | `PatientMergeStatusChanged` |  |
+| `unmergePatients` | `src/lib/patient/merge.ts` | (a) | `PatientMergeStatusChanged` |  |
+| `activateResuscitation` | `src/lib/hospital/emergency.ts` | (a) | `ResuscitationStatusChanged` |  |
+| `updateResuscitation` | `src/lib/hospital/emergency.ts` | (a) | `ResuscitationStatusChanged` |  |
+| `acceptTransferRequest` | `src/lib/hospital/transferRequest.ts` | (a) | `TransferRequestStatusChanged` |  |
+| `cancelTransferRequest` | `src/lib/hospital/transferRequest.ts` | (a) | `TransferRequestStatusChanged` |  |
+| `createTransferRequest` | `src/lib/hospital/transferRequest.ts` | (a) | `TransferRequestStatusChanged` |  |
+| `markPatientInTransit` | `src/lib/hospital/transferRequest.ts` | (a) | `TransferRequestStatusChanged` |  |
+| `reserveBedForTransfer` | `src/lib/hospital/transferRequest.ts` | (a) | `TransferRequestStatusChanged` |  |
 
-### Step 5: Nursing and tasks (8 functions)
+### Step 5: Nursing and tasks (step 5b) (8 functions)
 
-| Function | File | Decision | Proposed event | Step |
+| Function | File | Decision | Event | Note |
 |---|---|---|---|---|
-| `acknowledgeHandoff` | `src/lib/hospital/handoff.ts` | event (a) | `ClinicalHandoffAcknowledged` | 5 |
-| `createHandoff` | `src/lib/hospital/handoff.ts` | event (a) — transfers responsibility for the patient | `ClinicalHandoffCreated` | 5 |
-| `amendAssessment` | `src/lib/hospital/nursingAssessment.ts` | event (a) — amendment carries supersedesAssessmentId, like notes | `NursingAssessmentSigned` | 5 |
-| `completeAssessment` | `src/lib/hospital/nursingAssessment.ts` | event (a) | `NursingAssessmentCompleted` | 5 |
-| `signAssessment` | `src/lib/hospital/nursingAssessment.ts` | event (a) | `NursingAssessmentSigned` | 5 |
-| `assignNurse` | `src/lib/hospital/nursingAssignment.ts` | event (a) | `NurseAssigned` | 5 |
-| `endAssignment` | `src/lib/hospital/nursingAssignment.ts` | event (a) | `NurseAssignmentEnded` | 5 |
-| `updateTask` | `src/lib/hospital/task.ts` | event (a) | `TaskUpdated` | 5 |
+| `acknowledgeHandoff` | `src/lib/hospital/handoff.ts` | (a) | `ClinicalHandoffStatusChanged` |  |
+| `createHandoff` | `src/lib/hospital/handoff.ts` | (a) | `ClinicalHandoffStatusChanged` | transfers responsibility for the patient |
+| `assignNurse` | `src/lib/hospital/nursingAssignment.ts` | (a) | `NurseAssignmentStatusChanged` |  |
+| `endAssignment` | `src/lib/hospital/nursingAssignment.ts` | (a) | `NurseAssignmentStatusChanged` |  |
+| `amendAssessment` | `src/lib/hospital/nursingAssessment.ts` | (a) | `NursingAssessmentRecorded` | amendment carries supersedesAssessmentId, like notes |
+| `completeAssessment` | `src/lib/hospital/nursingAssessment.ts` | (a) | `NursingAssessmentRecorded` |  |
+| `signAssessment` | `src/lib/hospital/nursingAssessment.ts` | (a) | `NursingAssessmentRecorded` |  |
+| `updateTask` | `src/lib/hospital/task.ts` | (a) | `TaskUpdated` |  |
 
-### Step 6: Orders, results, medication, pharmacy, ICU, care plans (34 functions)
+### Step 6: Orders, results, medication, pharmacy, ICU, care plans (33 functions)
 
-| Function | File | Decision | Proposed event | Step |
+| Function | File | Decision | Event | Note |
 |---|---|---|---|---|
-| `addIntervention` | `src/lib/hospital/carePlan.ts` | event (a) | `CarePlanUpdated` | 6 |
-| `closeCarePlan` | `src/lib/hospital/carePlan.ts` | event (a) | `CarePlanClosed` | 6 |
-| `completeIntervention` | `src/lib/hospital/carePlan.ts` | event (a) | `CarePlanUpdated` | 6 |
-| `createCarePlan` | `src/lib/hospital/carePlan.ts` | event (a) | `CarePlanCreated` | 6 |
-| `createExternalReferral` | `src/lib/hospital/diagnosticsAdvanced.ts` | event (a) | `ExternalLabReferralCreated` | 6 |
-| `transitionExternalReferral` | `src/lib/hospital/diagnosticsAdvanced.ts` | event (a) | `ExternalLabReferralStatusChanged` | 6 |
-| `recordDevice` | `src/lib/hospital/icu.ts` | event (a) | `IcuDeviceRecorded` | 6 |
-| `recordInfusion` | `src/lib/hospital/icu.ts` | event (a) | `IcuInfusionStarted` | 6 |
-| `recordObservation` | `src/lib/hospital/icu.ts` | event (a) — one event type for point-of-care observations, with an observation-kind code | `ObservationRecorded` | 6 |
-| `updateDeviceStatus` | `src/lib/hospital/icu.ts` | event (a) | `IcuDeviceStatusChanged` | 6 |
-| `updateInfusionStatus` | `src/lib/hospital/icu.ts` | event (a) | `IcuInfusionStatusChanged` | 6 |
-| `amendReport` | `src/lib/hospital/imagingReportLifecycle.ts` | event (a) | `ImagingReportAmended` | 6 |
-| `cancelStudy` | `src/lib/hospital/imagingStudyLifecycle.ts` | event (a) | `ImagingStudyCancelled` | 6 |
-| `rescheduleStudy` | `src/lib/hospital/imagingStudyLifecycle.ts` | event (a) | `ImagingStudyScheduled` | 6 |
-| `scheduleStudy` | `src/lib/hospital/imagingStudyLifecycle.ts` | event (a) | `ImagingStudyScheduled` | 6 |
-| `amendResult` | `src/lib/hospital/labResultLifecycle.ts` | event (a) | `LabResultAmended` | 6 |
-| `acknowledgeSafetyWarning` | `src/lib/hospital/medicationLifecycle.ts` | event (d) | `MedicationSafetyWarningOverridden` | 6 |
-| `cancelMedicationOrder` | `src/lib/hospital/medicationLifecycle.ts` | event (a) | `MedicationOrderCancelled` | 6 |
-| `discontinueMedicationOrder` | `src/lib/hospital/medicationLifecycle.ts` | event (a) | `MedicationDiscontinued` | 6 |
-| `holdMedicationOrder` | `src/lib/hospital/medicationLifecycle.ts` | event (a) | `MedicationOrderHeld` | 6 |
-| `rejectMedicationOrder` | `src/lib/hospital/medicationLifecycle.ts` | event (a) | `MedicationOrderRejected` | 6 |
-| `requestClarification` | `src/lib/hospital/medicationLifecycle.ts` | event (a) | `MedicationClarificationRequested` | 6 |
-| `resubmitMedicationOrder` | `src/lib/hospital/medicationLifecycle.ts` | event (a) | `MedicationOrderResubmitted` | 6 |
-| `closeRecall` | `src/lib/hospital/pharmacy.ts` | event (d) | `MedicationRecallClosed` | 6 |
-| `createRecall` | `src/lib/hospital/pharmacy.ts` | event (d) | `MedicationRecallIssued` | 6 |
-| `quarantinePharmacyLot` | `src/lib/hospital/pharmacy.ts` | event (d) | `StockLotQuarantined` | 6 |
-| `recordControlledWastage` | `src/lib/hospital/pharmacy.ts` | event (d) — regulatory fact; the stock movement is StockMoved | `ControlledDrugWasted` | 6 |
-| `recordStorageCheck` | `src/lib/hospital/pharmacy.ts` | event (d) — an EXCURSION is the safety fact | `StorageCheckRecorded` | 6 |
-| `recordSubstitution` | `src/lib/hospital/pharmacy.ts` | event (a) | `MedicationSubstituted` | 6 |
-| `releasePharmacyQuarantine` | `src/lib/hospital/pharmacy.ts` | event (d) | `StockLotReleased` | 6 |
-| `addDiagnosisToProblemList` | `src/lib/hospital/problemList.ts` | event (a) | `ProblemListUpdated` | 6 |
-| `recordReconciliation` | `src/lib/hospital/reconciliation.ts` | event (a) | `MedicationReconciliationRecorded` | 6 |
-| `recollectSpecimen` | `src/lib/hospital/specimenLifecycle.ts` | event (a) | `SpecimenRecollectionRequested` | 6 |
-| `rejectSpecimen` | `src/lib/hospital/specimenLifecycle.ts` | event (a) — the patient must be re-sampled | `SpecimenRejected` | 6 |
+| `closeCarePlan` | `src/lib/hospital/carePlan.ts` | (a) | `CarePlanUpdated` |  |
+| `completeIntervention` | `src/lib/hospital/carePlan.ts` | (a) | `CarePlanUpdated` |  |
+| `createCarePlan` | `src/lib/hospital/carePlan.ts` | (a) | `CarePlanUpdated` |  |
+| `amendReport` | `src/lib/hospital/imagingReportLifecycle.ts` | (a) | `DiagnosticReportAmended` |  |
+| `amendResult` | `src/lib/hospital/labResultLifecycle.ts` | (a) | `DiagnosticReportAmended` |  |
+| `createExternalReferral` | `src/lib/hospital/diagnosticsAdvanced.ts` | (a) | `ExternalLabReferralStatusChanged` |  |
+| `transitionExternalReferral` | `src/lib/hospital/diagnosticsAdvanced.ts` | (a) | `ExternalLabReferralStatusChanged` |  |
+| `recordDevice` | `src/lib/hospital/icu.ts` | (a) | `IcuDeviceStatusChanged` |  |
+| `updateDeviceStatus` | `src/lib/hospital/icu.ts` | (a) | `IcuDeviceStatusChanged` |  |
+| `recordInfusion` | `src/lib/hospital/icu.ts` | (a) | `IcuInfusionStatusChanged` |  |
+| `updateInfusionStatus` | `src/lib/hospital/icu.ts` | (a) | `IcuInfusionStatusChanged` |  |
+| `cancelStudy` | `src/lib/hospital/imagingStudyLifecycle.ts` | (a) | `ImagingStudyStatusChanged` |  |
+| `rescheduleStudy` | `src/lib/hospital/imagingStudyLifecycle.ts` | (a) | `ImagingStudyStatusChanged` |  |
+| `scheduleStudy` | `src/lib/hospital/imagingStudyLifecycle.ts` | (a) | `ImagingStudyStatusChanged` |  |
+| `cancelMedicationOrder` | `src/lib/hospital/medicationLifecycle.ts` | (a) | `MedicationOrderStatusChanged` |  |
+| `discontinueMedicationOrder` | `src/lib/hospital/medicationLifecycle.ts` | (a) | `MedicationOrderStatusChanged` |  |
+| `holdMedicationOrder` | `src/lib/hospital/medicationLifecycle.ts` | (a) | `MedicationOrderStatusChanged` |  |
+| `rejectMedicationOrder` | `src/lib/hospital/medicationLifecycle.ts` | (a) | `MedicationOrderStatusChanged` |  |
+| `requestClarification` | `src/lib/hospital/medicationLifecycle.ts` | (a) | `MedicationOrderStatusChanged` |  |
+| `resubmitMedicationOrder` | `src/lib/hospital/medicationLifecycle.ts` | (a) | `MedicationOrderStatusChanged` |  |
+| `closeRecall` | `src/lib/hospital/pharmacy.ts` | (d) | `MedicationRecallStatusChanged` |  |
+| `createRecall` | `src/lib/hospital/pharmacy.ts` | (d) | `MedicationRecallStatusChanged` |  |
+| `recordReconciliation` | `src/lib/hospital/reconciliation.ts` | (a) | `MedicationReconciliationRecorded` |  |
+| `acknowledgeSafetyWarning` | `src/lib/hospital/medicationLifecycle.ts` | (d) | `MedicationSafetyWarningOverridden` |  |
+| `recordSubstitution` | `src/lib/hospital/pharmacy.ts` | (a) | `MedicationSubstituted` |  |
+| `recordObservation` | `src/lib/hospital/icu.ts` | (a) | `ObservationRecorded` | one event type for point-of-care observations, with an observation-kind code |
+| `recordControlledWastage` | `src/lib/hospital/pharmacy.ts` | (d) | `PharmacyComplianceRecorded` | regulatory fact; the stock movement is StockMoved |
+| `recordStorageCheck` | `src/lib/hospital/pharmacy.ts` | (d) | `PharmacyComplianceRecorded` | an EXCURSION is the safety fact |
+| `addDiagnosisToProblemList` | `src/lib/hospital/problemList.ts` | (a) | `ProblemListUpdated` |  |
+| `recollectSpecimen` | `src/lib/hospital/specimenLifecycle.ts` | (a) | `SpecimenStatusChanged` |  |
+| `rejectSpecimen` | `src/lib/hospital/specimenLifecycle.ts` | (a) | `SpecimenStatusChanged` | the patient must be re-sampled |
+| `quarantinePharmacyLot` | `src/lib/hospital/pharmacy.ts` | (d) | `StockLotStatusChanged` |  |
+| `releasePharmacyQuarantine` | `src/lib/hospital/pharmacy.ts` | (d) | `StockLotStatusChanged` |  |
 
 ### Step 7: Patient access, consent and record (10 functions)
 
-| Function | File | Decision | Proposed event | Step |
+| Function | File | Decision | Event | Note |
 |---|---|---|---|---|
-| `closeConsentRequest` | `src/lib/consent/lifecycle.ts` | event (c) | `ConsentRequestClosed` | 7 |
-| `expireLapsedConsents` | `src/lib/consent/lifecycle.ts` | event (c) | `ConsentExpired` | 7 |
-| `requestConsent` | `src/lib/consent/lifecycle.ts` | event (c) | `ConsentRequested` | 7 |
-| `endAccessSession` | `src/lib/patient/accessSession.ts` | event (c) | `PatientAccessEnded` | 7 |
-| `extendAccessSession` | `src/lib/patient/accessSession.ts` | event (c) | `PatientAccessExtended` | 7 |
-| `issueAccessCode` | `src/lib/patient/accessSession.ts` | event (c) | `PatientAccessCodeIssued` | 7 |
-| `redeemAccessCode` | `src/lib/patient/accessSession.ts` | event (c) | `PatientAccessGranted` | 7 |
-| `updateProfile` | `src/lib/patient/experience/profile.ts` | event (a) | `PatientProfileUpdated` | 7 |
-| `addPatientIdentifier` | `src/lib/patient/identifiers.ts` | event (a) | `PatientIdentifierAdded` | 7 |
-| `verifyLinkOtp` | `src/lib/patient/selfRegistration.ts` | event (c) — links a portal account to a record | `PatientAccountLinked` | 7 |
+| `expireLapsedConsents` | `src/lib/consent/lifecycle.ts` | (c) | `ConsentExpired` |  |
+| `closeConsentRequest` | `src/lib/consent/lifecycle.ts` | (c) | `ConsentRequestStatusChanged` |  |
+| `requestConsent` | `src/lib/consent/lifecycle.ts` | (c) | `ConsentRequestStatusChanged` |  |
+| `endAccessSession` | `src/lib/patient/accessSession.ts` | (c) | `PatientAccessSessionStatusChanged` |  |
+| `extendAccessSession` | `src/lib/patient/accessSession.ts` | (c) | `PatientAccessSessionStatusChanged` |  |
+| `issueAccessCode` | `src/lib/patient/accessSession.ts` | (c) | `PatientAccessSessionStatusChanged` |  |
+| `redeemAccessCode` | `src/lib/patient/accessSession.ts` | (c) | `PatientAccessSessionStatusChanged` |  |
+| `verifyLinkOtp` | `src/lib/patient/selfRegistration.ts` | (c) | `PatientAccountLinked` | links a portal account to a record |
+| `updateProfile` | `src/lib/patient/experience/profile.ts` | (a) | `PatientDemographicsUpdated` |  |
+| `addPatientIdentifier` | `src/lib/patient/identifiers.ts` | (a) | `PatientDemographicsUpdated` |  |
 
 ### Step 8: Operating theatre and blood bank (22 functions)
 
-| Function | File | Decision | Proposed event | Step |
+| Function | File | Decision | Event | Note |
 |---|---|---|---|---|
-| `authorizeEmergencyRelease` | `src/lib/hospital/blood.ts` | event (d) | `EmergencyBloodReleaseAuthorized` | 8 |
-| `quarantineUnit` | `src/lib/hospital/blood.ts` | event (d) | `BloodUnitQuarantined` | 8 |
-| `recallUnit` | `src/lib/hospital/blood.ts` | event (d) | `BloodUnitRecalled` | 8 |
-| `recordPatientTyping` | `src/lib/hospital/blood.ts` | event (a) | `PatientBloodTypeRecorded` | 8 |
-| `recordTransfusionObservation` | `src/lib/hospital/blood.ts` | event (a) | `ObservationRecorded` | 8 |
-| `registerBloodUnit` | `src/lib/hospital/blood.ts` | event (b) | `BloodUnitRegistered` | 8 |
-| `releaseReservation` | `src/lib/hospital/blood.ts` | event (b) | `BloodReservationReleased` | 8 |
-| `releaseUnit` | `src/lib/hospital/blood.ts` | event (b) | `BloodUnitReleased` | 8 |
-| `requestBlood` | `src/lib/hospital/blood.ts` | event (a) | `BloodRequested` | 8 |
-| `reserveUnits` | `src/lib/hospital/blood.ts` | event (b) | `BloodUnitsReserved` | 8 |
-| `returnUnit` | `src/lib/hospital/blood.ts` | event (b) | `BloodUnitReturned` | 8 |
-| `transitionReaction` | `src/lib/hospital/blood.ts` | event (d) | `TransfusionReactionStatusChanged` | 8 |
-| `transitionRequest` | `src/lib/hospital/blood.ts` | event (a) | `BloodRequestStatusChanged` | 8 |
-| `transitionTransfusion` | `src/lib/hospital/blood.ts` | event (a) | `TransfusionStatusChanged` | 8 |
-| `verifyCompatibility` | `src/lib/hospital/blood.ts` | event (a) | `CrossmatchVerified` | 8 |
-| `wasteUnit` | `src/lib/hospital/blood.ts` | event (b) | `BloodUnitWasted` | 8 |
-| `cancelSchedule` | `src/lib/hospital/surgery.ts` | event (a) | `SurgeryScheduleCancelled` | 8 |
-| `collectSpecimen` | `src/lib/hospital/surgery.ts` | event (a) | `SurgicalSpecimenCollected` | 8 |
-| `recordAnesthesia` | `src/lib/hospital/surgery.ts` | event (a) | `AnesthesiaRecorded` | 8 |
-| `transitionSurgery` | `src/lib/hospital/surgery.ts` | event (a) | `SurgeryStatusChanged` | 8 |
-| `updateChecklistItem` | `src/lib/hospital/surgery.ts` | event (d) | `SurgicalSafetyChecklistUpdated` | 8 |
-| `updateRecovery` | `src/lib/hospital/surgery.ts` | event (a) | `RecoveryStatusChanged` | 8 |
+| `recordPatientTyping` | `src/lib/hospital/blood.ts` | (a) | `BloodCompatibilityRecorded` |  |
+| `verifyCompatibility` | `src/lib/hospital/blood.ts` | (a) | `BloodCompatibilityRecorded` |  |
+| `requestBlood` | `src/lib/hospital/blood.ts` | (a) | `BloodRequestStatusChanged` |  |
+| `transitionRequest` | `src/lib/hospital/blood.ts` | (a) | `BloodRequestStatusChanged` |  |
+| `quarantineUnit` | `src/lib/hospital/blood.ts` | (d) | `BloodUnitStatusChanged` |  |
+| `recallUnit` | `src/lib/hospital/blood.ts` | (d) | `BloodUnitStatusChanged` |  |
+| `registerBloodUnit` | `src/lib/hospital/blood.ts` | (b) | `BloodUnitStatusChanged` |  |
+| `releaseReservation` | `src/lib/hospital/blood.ts` | (b) | `BloodUnitStatusChanged` |  |
+| `releaseUnit` | `src/lib/hospital/blood.ts` | (b) | `BloodUnitStatusChanged` |  |
+| `reserveUnits` | `src/lib/hospital/blood.ts` | (b) | `BloodUnitStatusChanged` |  |
+| `returnUnit` | `src/lib/hospital/blood.ts` | (b) | `BloodUnitStatusChanged` |  |
+| `wasteUnit` | `src/lib/hospital/blood.ts` | (b) | `BloodUnitStatusChanged` |  |
+| `authorizeEmergencyRelease` | `src/lib/hospital/blood.ts` | (d) | `EmergencyBloodReleaseAuthorized` |  |
+| `recordTransfusionObservation` | `src/lib/hospital/blood.ts` | (a) | `ObservationRecorded` |  |
+| `recordAnesthesia` | `src/lib/hospital/surgery.ts` | (a) | `PerioperativeRecordRecorded` |  |
+| `updateChecklistItem` | `src/lib/hospital/surgery.ts` | (d) | `PerioperativeRecordRecorded` |  |
+| `collectSpecimen` | `src/lib/hospital/surgery.ts` | (a) | `SpecimenCollected` |  |
+| `cancelSchedule` | `src/lib/hospital/surgery.ts` | (a) | `SurgeryStatusChanged` |  |
+| `transitionSurgery` | `src/lib/hospital/surgery.ts` | (a) | `SurgeryStatusChanged` |  |
+| `updateRecovery` | `src/lib/hospital/surgery.ts` | (a) | `SurgeryStatusChanged` |  |
+| `transitionReaction` | `src/lib/hospital/blood.ts` | (d) | `TransfusionReactionStatusChanged` |  |
+| `transitionTransfusion` | `src/lib/hospital/blood.ts` | (a) | `TransfusionStatusChanged` |  |
 
-### Step 9: Billing, claims and NHCX (25 functions)
+### Step 9: Billing, claims and NHCX (27 functions)
 
-| Function | File | Decision | Proposed event | Step |
+| Function | File | Decision | Event | Note |
 |---|---|---|---|---|
-| `applyCreditToInvoice` | `src/lib/billing/credits.ts` | event (b) | `CreditApplied` | 9 |
-| `issueCredit` | `src/lib/billing/credits.ts` | event (b) | `CreditIssued` | 9 |
-| `voidInvoice` | `src/lib/billing/invoices.ts` | event (b) | `InvoiceVoided` | 9 |
-| `resolveException` | `src/lib/billing/reconciliation.ts` | event (b) — the existing event, from this second path | `ReconciliationExceptionResolved` | 9 |
-| `transitionSubscription` | `src/lib/commercial/subscriptions.ts` | event (c) — entitlements follow the subscription | `SubscriptionStatusChanged` | 9 |
-| `approveAdjustment` | `src/lib/hospital/billing/adjustments.ts` | event (b) | `BillingAdjustmentApproved` | 9 |
-| `voidCharge` | `src/lib/hospital/billing/chargeCapture.ts` | event (b) | `ChargeVoided` | 9 |
-| `closeClaim` | `src/lib/hospital/billing/claims.ts` | event (b) | `ClaimClosed` | 9 |
-| `recordClaimDecision` | `src/lib/hospital/billing/claims.ts` | event (b) | `ClaimDecisionRecorded` | 9 |
-| `submitClaim` | `src/lib/hospital/billing/claims.ts` | event (b) — the non-NHCX submission path | `ClaimSubmitted` | 9 |
-| `addPatientCoverage` | `src/lib/hospital/billing/coverage.ts` | event (b) | `CoverageAdded` | 9 |
-| `deactivateCoverage` | `src/lib/hospital/billing/coverage.ts` | event (b) | `CoverageDeactivated` | 9 |
-| `voidInvoice` | `src/lib/hospital/billing/invoices.ts` | event (b) | `HospitalInvoiceVoided` | 9 |
-| `allocatePayment` | `src/lib/hospital/billing/payments.ts` | event (b) | `PaymentAllocated` | 9 |
-| `voidPayment` | `src/lib/hospital/billing/payments.ts` | event (b) | `HospitalPaymentVoided` | 9 |
-| `expirePreAuth` | `src/lib/hospital/billing/preauth.ts` | event (b) | `PreauthExpired` | 9 |
-| `requestPreAuth` | `src/lib/hospital/billing/preauth.ts` | event (b) | `PreauthRequested` | 9 |
-| `completeRefund` | `src/lib/hospital/billing/refunds.ts` | event (b) | `HospitalRefundCompleted` | 9 |
-| `recordQuery` | `src/lib/hospital/nhcx/queries.ts` | event (b) | `ClaimQueryReceived` | 9 |
-| `respondToQuery` | `src/lib/hospital/nhcx/queries.ts` | event (b) | `ClaimQueryResponded` | 9 |
-| `transitionQuery` | `src/lib/hospital/nhcx/queries.ts` | event (b) | `ClaimQueryStatusChanged` | 9 |
-| `raiseException` | `src/lib/hospital/nhcx/reconciliation.ts` | event (b) | `ClaimReconciliationExceptionRaised` | 9 |
-| `reconcileSettlement` | `src/lib/hospital/nhcx/reconciliation.ts` | event (b) | `ClaimSettlementReconciled` | 9 |
-| `recordSettlement` | `src/lib/hospital/nhcx/reconciliation.ts` | event (b) | `ClaimSettlementNotified` | 9 |
-| `resolveException` | `src/lib/hospital/nhcx/reconciliation.ts` | event (b) | `ClaimReconciliationExceptionResolved` | 9 |
+| `approveAdjustment` | `src/lib/hospital/billing/adjustments.ts` | (b) | `BillingAdjustmentStatusChanged` |  |
+| `rejectAdjustment` | `src/lib/hospital/billing/adjustments.ts` | (b) | `BillingAdjustmentStatusChanged` | a rejection is the process outcome |
+| `voidCharge` | `src/lib/hospital/billing/chargeCapture.ts` | (b) | `ChargeVoided` |  |
+| `recordQuery` | `src/lib/hospital/nhcx/queries.ts` | (b) | `ClaimQueryStatusChanged` |  |
+| `respondToQuery` | `src/lib/hospital/nhcx/queries.ts` | (b) | `ClaimQueryStatusChanged` |  |
+| `transitionQuery` | `src/lib/hospital/nhcx/queries.ts` | (b) | `ClaimQueryStatusChanged` |  |
+| `raiseException` | `src/lib/hospital/nhcx/reconciliation.ts` | (b) | `ClaimReconciliationStatusChanged` |  |
+| `reconcileSettlement` | `src/lib/hospital/nhcx/reconciliation.ts` | (b) | `ClaimReconciliationStatusChanged` |  |
+| `recordSettlement` | `src/lib/hospital/nhcx/reconciliation.ts` | (b) | `ClaimReconciliationStatusChanged` |  |
+| `resolveException` | `src/lib/hospital/nhcx/reconciliation.ts` | (b) | `ClaimReconciliationStatusChanged` |  |
+| `closeClaim` | `src/lib/hospital/billing/claims.ts` | (b) | `ClaimStatusChanged` |  |
+| `recordClaimDecision` | `src/lib/hospital/billing/claims.ts` | (b) | `ClaimStatusChanged` |  |
+| `submitClaim` | `src/lib/hospital/billing/claims.ts` | (b) | `ClaimSubmitted` | the non-NHCX submission path |
+| `addPatientCoverage` | `src/lib/hospital/billing/coverage.ts` | (b) | `CoverageStatusChanged` |  |
+| `deactivateCoverage` | `src/lib/hospital/billing/coverage.ts` | (b) | `CoverageStatusChanged` |  |
+| `applyCreditToInvoice` | `src/lib/billing/credits.ts` | (b) | `CreditStatusChanged` |  |
+| `issueCredit` | `src/lib/billing/credits.ts` | (b) | `CreditStatusChanged` |  |
+| `voidInvoice` | `src/lib/hospital/billing/invoices.ts` | (b) | `HospitalInvoiceVoided` |  |
+| `allocatePayment` | `src/lib/hospital/billing/payments.ts` | (b) | `HospitalPaymentStatusChanged` |  |
+| `voidPayment` | `src/lib/hospital/billing/payments.ts` | (b) | `HospitalPaymentStatusChanged` |  |
+| `completeRefund` | `src/lib/hospital/billing/refunds.ts` | (b) | `HospitalRefundStatusChanged` |  |
+| `rejectRefund` | `src/lib/hospital/billing/refunds.ts` | (b) | `HospitalRefundStatusChanged` | a rejection is the process outcome |
+| `voidInvoice` | `src/lib/billing/invoices.ts` | (b) | `InvoiceVoided` |  |
+| `expirePreAuth` | `src/lib/hospital/billing/preauth.ts` | (b) | `PreauthStatusChanged` |  |
+| `requestPreAuth` | `src/lib/hospital/billing/preauth.ts` | (b) | `PreauthStatusChanged` |  |
+| `resolveException` | `src/lib/billing/reconciliation.ts` | (b) | `ReconciliationExceptionResolved` | the existing event, from this second path |
+| `transitionSubscription` | `src/lib/commercial/subscriptions.ts` | (c) | `SubscriptionStatusChanged` | entitlements follow the subscription |
 
-### Step 9a: Inventory and procurement (23 functions)
+### Step 9a: Inventory and procurement (27 functions)
 
-| Function | File | Decision | Proposed event | Step |
+| Function | File | Decision | Event | Note |
 |---|---|---|---|---|
-| `approveAdjustment` | `src/lib/hospital/inventory/adjustment.ts` | event (b) | `StockMoved (via postLedgerEntry)` | 9a |
-| `createAdjustment` | `src/lib/hospital/inventory/adjustment.ts` | event (b) | `StockMoved (via postLedgerEntry)` | 9a |
-| `registerSerial` | `src/lib/hospital/inventory/inventoryAdvanced.ts` | event (b) | `SerialUnitRegistered` | 9a |
-| `transitionDepartmentRequest` | `src/lib/hospital/inventory/inventoryAdvanced.ts` | event (b) | `StockMoved (via issueStock / reserveStock)` | 9a |
-| `transitionSerial` | `src/lib/hospital/inventory/inventoryAdvanced.ts` | event (b) | `SerialUnitStatusChanged` | 9a |
-| `quarantineLot` | `src/lib/hospital/inventory/lots.ts` | event (d) | `StockLotQuarantined` | 9a |
-| `releaseLotFromQuarantine` | `src/lib/hospital/inventory/lots.ts` | event (d) | `StockLotReleased` | 9a |
-| `consumeReservation` | `src/lib/hospital/inventory/reservation.ts` | event (b) | `StockMoved (via postLedgerEntry)` | 9a |
-| `releaseReservation` | `src/lib/hospital/inventory/reservation.ts` | event (b) | `StockMoved (via postLedgerEntry)` | 9a |
-| `reserveStock` | `src/lib/hospital/inventory/reservation.ts` | event (b) | `StockMoved (via postLedgerEntry)` | 9a |
-| `completeStockTake` | `src/lib/hospital/inventory/stocktake.ts` | event (b) — variances are posted as StockMoved | `StockTakeCompleted` | 9a |
-| `cancelTransfer` | `src/lib/hospital/inventory/transfer.ts` | event (b) | `StockMoved (via postLedgerEntry)` | 9a |
-| `initiateTransfer` | `src/lib/hospital/inventory/transfer.ts` | event (b) | `StockMoved (via postLedgerEntry)` | 9a |
-| `receiveTransfer` | `src/lib/hospital/inventory/transfer.ts` | event (b) | `StockMoved (via postLedgerEntry)` | 9a |
-| `recordWaste` | `src/lib/hospital/inventory/waste.ts` | event (b) | `StockMoved (via postLedgerEntry)` | 9a |
-| `classifyMedicationReturn` | `src/lib/hospital/pharmacy.ts` | event (b) | `StockMoved (via postLedgerEntry)` | 9a |
-| `createPharmacyTransfer` | `src/lib/hospital/pharmacy.ts` | event (b) | `StockMoved (via initiateTransfer)` | 9a |
-| `transitionPharmacyRequest` | `src/lib/hospital/pharmacy.ts` | event (b) | `StockMoved (via reserveStock / issueStock)` | 9a |
-| `recordSupplierInvoice` | `src/lib/hospital/procurement/procurementAdvanced.ts` | event (b) | `SupplierInvoiceRecorded` | 9a |
-| `reviewSupplierInvoice` | `src/lib/hospital/procurement/procurementAdvanced.ts` | event (b) | `SupplierInvoiceReviewed` | 9a |
-| `approvePurchaseOrder` | `src/lib/hospital/procurement/purchaseOrders.ts` | event (b) — commits money to a supplier | `PurchaseOrderApproved` | 9a |
-| `cancelPurchaseOrder` | `src/lib/hospital/procurement/purchaseOrders.ts` | event (b) | `PurchaseOrderCancelled` | 9a |
-| `closePurchaseOrder` | `src/lib/hospital/procurement/purchaseOrders.ts` | event (b) | `PurchaseOrderClosed` | 9a |
+| `approvePurchaseOrder` | `src/lib/hospital/procurement/purchaseOrders.ts` | (b) | `PurchaseOrderStatusChanged` | commits money to a supplier |
+| `cancelPurchaseOrder` | `src/lib/hospital/procurement/purchaseOrders.ts` | (b) | `PurchaseOrderStatusChanged` |  |
+| `closePurchaseOrder` | `src/lib/hospital/procurement/purchaseOrders.ts` | (b) | `PurchaseOrderStatusChanged` |  |
+| `registerSerial` | `src/lib/hospital/inventory/inventoryAdvanced.ts` | (b) | `SerialUnitStatusChanged` |  |
+| `transitionSerial` | `src/lib/hospital/inventory/inventoryAdvanced.ts` | (b) | `SerialUnitStatusChanged` |  |
+| `approveAdjustment` | `src/lib/hospital/inventory/adjustment.ts` | (b) | `StockDocumentStatusChanged` | plus StockMoved from postLedgerEntry |
+| `rejectAdjustment` | `src/lib/hospital/inventory/adjustment.ts` | (b) | `StockDocumentStatusChanged` | a rejection is the process outcome |
+| `completeStockTake` | `src/lib/hospital/inventory/stocktake.ts` | (b) | `StockDocumentStatusChanged` | variances post as StockMoved |
+| `approveWaste` | `src/lib/hospital/inventory/waste.ts` | (b) | `StockDocumentStatusChanged` | the waste already moved stock when recorded |
+| `rejectWaste` | `src/lib/hospital/inventory/waste.ts` | (b) | `StockDocumentStatusChanged` | rejecting does not reverse the movement today: see note |
+| `rejectGoodsReceipt` | `src/lib/hospital/procurement/goodsReceipts.ts` | (b) | `StockDocumentStatusChanged` | approval is GoodsReceived (planned) |
+| `quarantineLot` | `src/lib/hospital/inventory/lots.ts` | (d) | `StockLotStatusChanged` |  |
+| `releaseLotFromQuarantine` | `src/lib/hospital/inventory/lots.ts` | (d) | `StockLotStatusChanged` |  |
+| `createAdjustment` | `src/lib/hospital/inventory/adjustment.ts` | (b) | `StockMoved` | via postLedgerEntry |
+| `consumeReservation` | `src/lib/hospital/inventory/reservation.ts` | (b) | `StockMoved` | via postLedgerEntry |
+| `releaseReservation` | `src/lib/hospital/inventory/reservation.ts` | (b) | `StockMoved` | via postLedgerEntry |
+| `reserveStock` | `src/lib/hospital/inventory/reservation.ts` | (b) | `StockMoved` | via postLedgerEntry |
+| `cancelTransfer` | `src/lib/hospital/inventory/transfer.ts` | (b) | `StockMoved` | via postLedgerEntry |
+| `initiateTransfer` | `src/lib/hospital/inventory/transfer.ts` | (b) | `StockMoved` | via postLedgerEntry |
+| `receiveTransfer` | `src/lib/hospital/inventory/transfer.ts` | (b) | `StockMoved` | via postLedgerEntry |
+| `recordWaste` | `src/lib/hospital/inventory/waste.ts` | (b) | `StockMoved` | via postLedgerEntry |
+| `classifyMedicationReturn` | `src/lib/hospital/pharmacy.ts` | (b) | `StockMoved` | via postLedgerEntry |
+| `createPharmacyTransfer` | `src/lib/hospital/pharmacy.ts` | (b) | `StockMoved` | via initiateTransfer |
+| `recordSupplierInvoice` | `src/lib/hospital/procurement/procurementAdvanced.ts` | (b) | `SupplierInvoiceStatusChanged` |  |
+| `reviewSupplierInvoice` | `src/lib/hospital/procurement/procurementAdvanced.ts` | (b) | `SupplierInvoiceStatusChanged` |  |
+| `transitionDepartmentRequest` | `src/lib/hospital/inventory/inventoryAdvanced.ts` | (b) | `SupplyRequestStatusChanged` | plus StockMoved via issueStock / reserveStock when stock moves |
+| `transitionPharmacyRequest` | `src/lib/hospital/pharmacy.ts` | (b) | `SupplyRequestStatusChanged` | plus StockMoved via reserveStock / issueStock when stock moves |
 
 ### Step 9b: Quality, safety and operations (27 functions)
 
-| Function | File | Decision | Proposed event | Step |
+| Function | File | Decision | Event | Note |
 |---|---|---|---|---|
-| `recordCalibration` | `src/lib/hospital/diagnosticsAdvanced.ts` | event (d) | `LabCalibrationRecorded` | 9b |
-| `recordQc` | `src/lib/hospital/diagnosticsAdvanced.ts` | event (d) — payload carries the outcome; a failure is the quality fact | `LabQcRecorded` | 9b |
-| `reviewCalibration` | `src/lib/hospital/diagnosticsAdvanced.ts` | event (d) | `LabCalibrationReviewed` | 9b |
-| `reviewQc` | `src/lib/hospital/diagnosticsAdvanced.ts` | event (d) | `LabQcReviewed` | 9b |
-| `completePreventiveMaintenance` | `src/lib/hospital/operations/service.ts` | event (d) | `EquipmentMaintenanceRecorded` | 9b |
-| `createDietOrder` | `src/lib/hospital/operations/service.ts` | event (a) | `DietOrderPlaced` | 9b |
-| `createInfectionIncident` | `src/lib/hospital/operations/service.ts` | event (d) | `InfectionIncidentReported` | 9b |
-| `createInfectionInvestigation` | `src/lib/hospital/operations/service.ts` | event (d) | `InfectionInvestigationOpened` | 9b |
-| `createMaintenanceRequest` | `src/lib/hospital/operations/service.ts` | event (d) — an equipment or facility fault | `MaintenanceRequestRaised` | 9b |
-| `endDowntime` | `src/lib/hospital/operations/service.ts` | event (d) | `EquipmentDowntimeEnded` | 9b |
-| `recordEquipmentCalibration` | `src/lib/hospital/operations/service.ts` | event (d) | `EquipmentCalibrationRecorded` | 9b |
-| `recordEquipmentMaintenance` | `src/lib/hospital/operations/service.ts` | event (d) | `EquipmentMaintenanceRecorded` | 9b |
-| `recordExposure` | `src/lib/hospital/operations/service.ts` | event (d) | `InfectionExposureRecorded` | 9b |
-| `setDietOrderStatus` | `src/lib/hospital/operations/service.ts` | event (a) | `DietOrderStatusChanged` | 9b |
-| `setEquipmentStatus` | `src/lib/hospital/operations/service.ts` | event (d) | `EquipmentStatusChanged` | 9b |
-| `startDowntime` | `src/lib/hospital/operations/service.ts` | event (d) | `EquipmentDowntimeStarted` | 9b |
-| `transitionInfectionIncident` | `src/lib/hospital/operations/service.ts` | event (d) | `InfectionIncidentStatusChanged` | 9b |
-| `transitionMaintenance` | `src/lib/hospital/operations/service.ts` | event (d) | `MaintenanceRequestStatusChanged` | 9b |
-| `closeFinding` | `src/lib/hospital/quality/service.ts` | event (d) | `QualityFindingClosed` | 9b |
-| `createCapa` | `src/lib/hospital/quality/service.ts` | event (d) | `CapaRaised` | 9b |
-| `createFinding` | `src/lib/hospital/quality/service.ts` | event (d) | `QualityFindingRaised` | 9b |
-| `createQualityIncident` | `src/lib/hospital/quality/service.ts` | event (d) | `QualityIncidentReported` | 9b |
-| `reopenIncident` | `src/lib/hospital/quality/service.ts` | event (d) | `QualityIncidentStatusChanged` | 9b |
-| `reviewRca` | `src/lib/hospital/quality/service.ts` | event (d) | `RootCauseAnalysisReviewed` | 9b |
-| `setMeasureStatus` | `src/lib/hospital/quality/service.ts` | event (d) | `QualityMeasureStatusChanged` | 9b |
-| `transitionCapa` | `src/lib/hospital/quality/service.ts` | event (d) | `CapaStatusChanged` | 9b |
-| `transitionIncident` | `src/lib/hospital/quality/service.ts` | event (d) | `QualityIncidentStatusChanged` | 9b |
+| `createCapa` | `src/lib/hospital/quality/service.ts` | (d) | `CapaStatusChanged` |  |
+| `transitionCapa` | `src/lib/hospital/quality/service.ts` | (d) | `CapaStatusChanged` |  |
+| `createDietOrder` | `src/lib/hospital/operations/service.ts` | (a) | `DietOrderStatusChanged` |  |
+| `setDietOrderStatus` | `src/lib/hospital/operations/service.ts` | (a) | `DietOrderStatusChanged` |  |
+| `completePreventiveMaintenance` | `src/lib/hospital/operations/service.ts` | (d) | `EquipmentServiceRecorded` |  |
+| `recordEquipmentCalibration` | `src/lib/hospital/operations/service.ts` | (d) | `EquipmentServiceRecorded` |  |
+| `recordEquipmentMaintenance` | `src/lib/hospital/operations/service.ts` | (d) | `EquipmentServiceRecorded` |  |
+| `endDowntime` | `src/lib/hospital/operations/service.ts` | (d) | `EquipmentStatusChanged` |  |
+| `setEquipmentStatus` | `src/lib/hospital/operations/service.ts` | (d) | `EquipmentStatusChanged` |  |
+| `startDowntime` | `src/lib/hospital/operations/service.ts` | (d) | `EquipmentStatusChanged` |  |
+| `recordExposure` | `src/lib/hospital/operations/service.ts` | (d) | `InfectionExposureRecorded` |  |
+| `createInfectionIncident` | `src/lib/hospital/operations/service.ts` | (d) | `InfectionIncidentStatusChanged` |  |
+| `createInfectionInvestigation` | `src/lib/hospital/operations/service.ts` | (d) | `InfectionIncidentStatusChanged` |  |
+| `transitionInfectionIncident` | `src/lib/hospital/operations/service.ts` | (d) | `InfectionIncidentStatusChanged` |  |
+| `recordCalibration` | `src/lib/hospital/diagnosticsAdvanced.ts` | (d) | `LabQualityControlRecorded` |  |
+| `recordQc` | `src/lib/hospital/diagnosticsAdvanced.ts` | (d) | `LabQualityControlRecorded` | payload carries the outcome; a failure is the quality fact |
+| `reviewCalibration` | `src/lib/hospital/diagnosticsAdvanced.ts` | (d) | `LabQualityControlRecorded` |  |
+| `reviewQc` | `src/lib/hospital/diagnosticsAdvanced.ts` | (d) | `LabQualityControlRecorded` |  |
+| `createMaintenanceRequest` | `src/lib/hospital/operations/service.ts` | (d) | `MaintenanceRequestStatusChanged` | an equipment or facility fault |
+| `transitionMaintenance` | `src/lib/hospital/operations/service.ts` | (d) | `MaintenanceRequestStatusChanged` |  |
+| `closeFinding` | `src/lib/hospital/quality/service.ts` | (d) | `QualityFindingStatusChanged` |  |
+| `createFinding` | `src/lib/hospital/quality/service.ts` | (d) | `QualityFindingStatusChanged` |  |
+| `createQualityIncident` | `src/lib/hospital/quality/service.ts` | (d) | `QualityIncidentStatusChanged` |  |
+| `reopenIncident` | `src/lib/hospital/quality/service.ts` | (d) | `QualityIncidentStatusChanged` |  |
+| `reviewRca` | `src/lib/hospital/quality/service.ts` | (d) | `QualityIncidentStatusChanged` |  |
+| `transitionIncident` | `src/lib/hospital/quality/service.ts` | (d) | `QualityIncidentStatusChanged` |  |
+| `setMeasureStatus` | `src/lib/hospital/quality/service.ts` | (d) | `QualityMeasureStatusChanged` |  |
 
 ### Step 9c: Access, identity, interoperability and workforce (14 functions)
 
-| Function | File | Decision | Proposed event | Step |
+| Function | File | Decision | Event | Note |
 |---|---|---|---|---|
-| `activateBreakGlass` | `src/lib/auth/authorize/breakGlass.ts` | event (c) | `BreakGlassActivated` | 9c |
-| `expireLapsedBreakGlass` | `src/lib/auth/authorize/breakGlass.ts` | event (c) | `BreakGlassExpired` | 9c |
-| `createPrivacyRequest` | `src/lib/auth/authorize/privacy.ts` | event (a) — a DPDP data-subject request about the patient's record | `PrivacyRequestSubmitted` | 9c |
-| `setLegalHold` | `src/lib/auth/authorize/privacy.ts` | event (a) — changes how the record may be erased | `LegalHoldSet` | 9c |
-| `transitionPrivacyRequest` | `src/lib/auth/authorize/privacy.ts` | event (a) | `PrivacyRequestStatusChanged` | 9c |
-| `createExchange` | `src/lib/hospital/interoperability/exchange.ts` | event (c) — a disclosure of the record to another party | `HealthInformationExchangeRequested` | 9c |
-| `linkExternalIdentifier` | `src/lib/hospital/interoperability/externalIdentity.ts` | event (a) | `ExternalIdentifierLinked` | 9c |
-| `unlinkExternalIdentifier` | `src/lib/hospital/interoperability/externalIdentity.ts` | event (a) | `ExternalIdentifierUnlinked` | 9c |
-| `verifyExternalIdentifier` | `src/lib/hospital/interoperability/externalIdentity.ts` | event (a) | `ExternalIdentifierVerified` | 9c |
-| `reviewImportedResource` | `src/lib/hospital/interoperability/fhir/import.ts` | event (a) — accepted imports enter the record | `ImportedResourceReviewed` | 9c |
-| `createAssignment` | `src/lib/hospital/workforce/service.ts` | event (c) — department assignment scopes what staff can act on | `StaffAssignmentChanged` | 9c |
-| `createCredential` | `src/lib/hospital/workforce/service.ts` | event (c) — credentials gate prescribing and sign-off | `StaffCredentialRecorded` | 9c |
-| `endAssignment` | `src/lib/hospital/workforce/service.ts` | event (c) | `StaffAssignmentChanged` | 9c |
-| `grantPrivilege` | `src/lib/hospital/workforce/service.ts` | event (c) | `StaffPrivilegeGranted` | 9c |
+| `activateBreakGlass` | `src/lib/auth/authorize/breakGlass.ts` | (c) | `BreakGlassStatusChanged` |  |
+| `expireLapsedBreakGlass` | `src/lib/auth/authorize/breakGlass.ts` | (c) | `BreakGlassStatusChanged` |  |
+| `linkExternalIdentifier` | `src/lib/hospital/interoperability/externalIdentity.ts` | (a) | `ExternalIdentifierStatusChanged` |  |
+| `unlinkExternalIdentifier` | `src/lib/hospital/interoperability/externalIdentity.ts` | (a) | `ExternalIdentifierStatusChanged` |  |
+| `verifyExternalIdentifier` | `src/lib/hospital/interoperability/externalIdentity.ts` | (a) | `ExternalIdentifierStatusChanged` |  |
+| `createExchange` | `src/lib/hospital/interoperability/exchange.ts` | (c) | `HealthInformationExchangeRequested` | a disclosure of the record to another party |
+| `reviewImportedResource` | `src/lib/hospital/interoperability/fhir/import.ts` | (a) | `ImportedResourceReviewed` | accepted imports enter the record |
+| `setLegalHold` | `src/lib/auth/authorize/privacy.ts` | (a) | `LegalHoldSet` | changes how the record may be erased |
+| `createPrivacyRequest` | `src/lib/auth/authorize/privacy.ts` | (a) | `PrivacyRequestStatusChanged` | a DPDP data-subject request about the patient's record |
+| `transitionPrivacyRequest` | `src/lib/auth/authorize/privacy.ts` | (a) | `PrivacyRequestStatusChanged` |  |
+| `createAssignment` | `src/lib/hospital/workforce/service.ts` | (c) | `StaffAuthorizationChanged` | department assignment scopes what staff can act on |
+| `createCredential` | `src/lib/hospital/workforce/service.ts` | (c) | `StaffAuthorizationChanged` | credentials gate prescribing and sign-off |
+| `endAssignment` | `src/lib/hospital/workforce/service.ts` | (c) | `StaffAuthorizationChanged` |  |
+| `grantPrivilege` | `src/lib/hospital/workforce/service.ts` | (c) | `StaffAuthorizationChanged` |  |
 
-## Named exemptions
+## Mapping: named exemptions
 
-### `PROCESS_STEP` (47)
-
-| Function | File | Reason |
-|---|---|---|
-| `addInvoiceLine` | `src/lib/billing/invoices.ts` | edit to a draft invoice; money moves on InvoiceFinalized |
-| `createPaymentAttempt` | `src/lib/billing/payments.ts` | an attempt; its outcome is PaymentReceived / PaymentFailed |
-| `createAdjustment` | `src/lib/hospital/billing/adjustments.ts` | adjustment request awaiting approval |
-| `rejectAdjustment` | `src/lib/hospital/billing/adjustments.ts` | rejected request; nothing moves |
-| `addChargeToInvoice` | `src/lib/hospital/billing/invoices.ts` | edit to a draft invoice |
-| `draftInvoiceForAccount` | `src/lib/hospital/billing/invoices.ts` | draft invoice; money moves on HospitalInvoiceIssued |
-| `approveRefund` | `src/lib/hospital/billing/refunds.ts` | approval step; money moves on completion |
-| `rejectRefund` | `src/lib/hospital/billing/refunds.ts` | rejected request; nothing moves |
-| `requestRefund` | `src/lib/hospital/billing/refunds.ts` | refund request; money moves on completion |
-| `recordCompatibility` | `src/lib/hospital/blood.ts` | crossmatch entry; verification is the event |
-| `recordUnitTyping` | `src/lib/hospital/blood.ts` | lab check on a unit; releasing the unit is the event |
-| `recordStudyAcquisition` | `src/lib/hospital/diagnosticsAdvanced.ts` | acquisition metadata; ImagingStudyCompleted is the event |
-| `setSpecimenIdentity` | `src/lib/hospital/diagnosticsAdvanced.ts` | labelling check inside collection; SpecimenCollected is the event |
-| `enterReport` | `src/lib/hospital/imagingReportLifecycle.ts` | unverified report; ImagingReportReleased is the event |
-| `importFhirPayload` | `src/lib/hospital/interoperability/fhir/import.ts` | stages inbound resources for review; the record changes only when one is accepted (ImportedResourceReviewed) |
-| `rejectAdjustment` | `src/lib/hospital/inventory/adjustment.ts` | rejected adjustment; nothing moves |
-| `createDepartmentRequest` | `src/lib/hospital/inventory/inventoryAdvanced.ts` | department request; stock moves when it is fulfilled |
-| `addStockTakeLine` | `src/lib/hospital/inventory/stocktake.ts` | count in progress |
-| `startStockTake` | `src/lib/hospital/inventory/stocktake.ts` | count in progress; variances move stock on completion |
-| `approveWaste` | `src/lib/hospital/inventory/waste.ts` | approval of an already-recorded waste movement |
-| `rejectWaste` | `src/lib/hospital/inventory/waste.ts` | rejected waste |
-| `enterResult` | `src/lib/hospital/labResultLifecycle.ts` | unverified entry; LabResultReleased is the event |
-| `buildSubmission` | `src/lib/hospital/nhcx/submission.ts` | builds the package; ClaimSubmitted is the event |
-| `createAssessment` | `src/lib/hospital/nursingAssessment.ts` | draft; the record changes when it is completed or signed |
-| `createMedicationReturn` | `src/lib/hospital/pharmacy.ts` | a return awaiting classification; stock moves on classification |
-| `createPharmacyRequest` | `src/lib/hospital/pharmacy.ts` | ward request; stock moves when it is fulfilled |
-| `recordGoodsReceipt` | `src/lib/hospital/procurement/goodsReceipts.ts` | receipt awaiting approval; GoodsReceived on approval |
-| `rejectGoodsReceipt` | `src/lib/hospital/procurement/goodsReceipts.ts` | rejected receipt; nothing moves |
-| `createRfq` | `src/lib/hospital/procurement/procurementAdvanced.ts` | sourcing; no money or stock moves |
-| `recordQuotation` | `src/lib/hospital/procurement/procurementAdvanced.ts` | sourcing; no money or stock moves |
-| `selectQuotation` | `src/lib/hospital/procurement/procurementAdvanced.ts` | sourcing; the PO commits money |
-| `transitionRfq` | `src/lib/hospital/procurement/procurementAdvanced.ts` | sourcing; no money or stock moves |
-| `addPurchaseOrderLine` | `src/lib/hospital/procurement/purchaseOrders.ts` | draft PO |
-| `createPurchaseOrderDraft` | `src/lib/hospital/procurement/purchaseOrders.ts` | draft PO |
-| `markSent` | `src/lib/hospital/procurement/purchaseOrders.ts` | PO dispatch step |
-| `submitForApproval` | `src/lib/hospital/procurement/purchaseOrders.ts` | PO approval step |
-| `addRequisitionLine` | `src/lib/hospital/procurement/requisitions.ts` | internal requisition |
-| `approveRequisition` | `src/lib/hospital/procurement/requisitions.ts` | internal requisition; the PO commits money |
-| `cancelRequisition` | `src/lib/hospital/procurement/requisitions.ts` | internal requisition |
-| `createRequisitionDraft` | `src/lib/hospital/procurement/requisitions.ts` | internal requisition; no money moves |
-| `rejectRequisition` | `src/lib/hospital/procurement/requisitions.ts` | internal requisition |
-| `reviseApprovedRequisition` | `src/lib/hospital/procurement/requisitions.ts` | internal requisition |
-| `submitRequisition` | `src/lib/hospital/procurement/requisitions.ts` | internal requisition |
-| `createRca` | `src/lib/hospital/quality/service.ts` | root-cause analysis draft |
-| `updateRca` | `src/lib/hospital/quality/service.ts` | root-cause analysis draft |
-| `acceptSpecimen` | `src/lib/hospital/specimenLifecycle.ts` | lab receipt step between collection and result |
-| `inviteDelegate` | `src/lib/patient/experience/family.ts` | an invitation grants nothing; access starts on acceptance (FamilyAccessGranted) |
-
-### `OPERATIONAL_DETAIL` (35)
+### `OPERATIONAL_DETAIL` (46)
 
 | Function | File | Reason |
 |---|---|---|
@@ -385,6 +455,17 @@ These went to an exemption, but a reasonable reading of the rules could make the
 | `transitionHousekeeping` | `src/lib/hospital/operations/service.ts` | housekeeping logistics |
 | `transitionMeal` | `src/lib/hospital/operations/service.ts` | meal delivery logistics |
 | `transitionTransport` | `src/lib/hospital/operations/service.ts` | porter/transport logistics |
+| `createRfq` | `src/lib/hospital/procurement/procurementAdvanced.ts` | sourcing; money is committed by the purchase order (PurchaseOrderStatusChanged) |
+| `recordQuotation` | `src/lib/hospital/procurement/procurementAdvanced.ts` | sourcing; money is committed by the purchase order |
+| `selectQuotation` | `src/lib/hospital/procurement/procurementAdvanced.ts` | sourcing; money is committed by the purchase order |
+| `transitionRfq` | `src/lib/hospital/procurement/procurementAdvanced.ts` | sourcing; money is committed by the purchase order |
+| `addRequisitionLine` | `src/lib/hospital/procurement/requisitions.ts` | internal requisition |
+| `approveRequisition` | `src/lib/hospital/procurement/requisitions.ts` | internal requisition; it becomes a purchase order |
+| `cancelRequisition` | `src/lib/hospital/procurement/requisitions.ts` | internal requisition; no money, stock or care changes |
+| `createRequisitionDraft` | `src/lib/hospital/procurement/requisitions.ts` | internal requisition; money is committed by the purchase order |
+| `rejectRequisition` | `src/lib/hospital/procurement/requisitions.ts` | internal requisition; no money, stock or care changes |
+| `reviseApprovedRequisition` | `src/lib/hospital/procurement/requisitions.ts` | internal requisition |
+| `submitRequisition` | `src/lib/hospital/procurement/requisitions.ts` | internal requisition |
 | `attachEvidence` | `src/lib/hospital/quality/service.ts` | compliance evidence attachment |
 | `createAudit` | `src/lib/hospital/quality/service.ts` | audit scheduling |
 | `transitionAudit` | `src/lib/hospital/quality/service.ts` | audit progress; its findings are the events |
@@ -399,13 +480,47 @@ These went to an exemption, but a reasonable reading of the rules could make the
 | `createShift` | `src/lib/hospital/workforce/service.ts` | roster entry; bookability reads it directly |
 | `setAvailability` | `src/lib/hospital/workforce/service.ts` | staff availability (StaffAbsence); bookability reads it directly |
 
-### `INTEGRATION_PROTOCOL` (7)
+### `PROCESS_STEP` (30)
+
+| Function | File | Boundary event | Reason |
+|---|---|---|---|
+| `addInvoiceLine` | `src/lib/billing/invoices.ts` | `InvoiceFinalized / InvoiceVoided` | edit to a draft invoice; money moves on InvoiceFinalized |
+| `createPaymentAttempt` | `src/lib/billing/payments.ts` | `PaymentReceived / PaymentFailed` | an attempt; its outcome is PaymentReceived / PaymentFailed |
+| `createAdjustment` | `src/lib/hospital/billing/adjustments.ts` | `BillingAdjustmentStatusChanged` — approved or rejected | adjustment request awaiting approval |
+| `addChargeToInvoice` | `src/lib/hospital/billing/invoices.ts` | `HospitalInvoiceIssued / HospitalInvoiceVoided` | edit to a draft invoice |
+| `draftInvoiceForAccount` | `src/lib/hospital/billing/invoices.ts` | `HospitalInvoiceIssued / HospitalInvoiceVoided` | draft invoice; money moves on HospitalInvoiceIssued |
+| `approveRefund` | `src/lib/hospital/billing/refunds.ts` | `HospitalRefundStatusChanged` — completed or rejected | approval step; money moves on completion |
+| `requestRefund` | `src/lib/hospital/billing/refunds.ts` | `HospitalRefundStatusChanged` — completed or rejected | refund request; money moves on completion |
+| `recordCompatibility` | `src/lib/hospital/blood.ts` | `BloodCompatibilityRecorded` — compatible or not | crossmatch entry; verification is the event |
+| `recordUnitTyping` | `src/lib/hospital/blood.ts` | `BloodUnitStatusChanged` — released or quarantined | lab check on a unit; releasing the unit is the event |
+| `recordStudyAcquisition` | `src/lib/hospital/diagnosticsAdvanced.ts` | `ImagingStudyCompleted` | acquisition metadata; ImagingStudyCompleted is the event |
+| `setSpecimenIdentity` | `src/lib/hospital/diagnosticsAdvanced.ts` | `SpecimenCollected` | labelling check inside collection; SpecimenCollected is the event |
+| `enterReport` | `src/lib/hospital/imagingReportLifecycle.ts` | `ImagingReportReleased` | unverified report; ImagingReportReleased is the event |
+| `importFhirPayload` | `src/lib/hospital/interoperability/fhir/import.ts` | `ImportedResourceReviewed` — accept or reject is the outcome | stages inbound resources for review; the record changes only when one is accepted (ImportedResourceReviewed) |
+| `createDepartmentRequest` | `src/lib/hospital/inventory/inventoryAdvanced.ts` | `SupplyRequestStatusChanged` — fulfilled, rejected or cancelled | department request; stock moves when it is fulfilled |
+| `addStockTakeLine` | `src/lib/hospital/inventory/stocktake.ts` | `StockDocumentStatusChanged` | count in progress |
+| `startStockTake` | `src/lib/hospital/inventory/stocktake.ts` | `StockDocumentStatusChanged` — variances post as StockMoved | count in progress; variances move stock on completion |
+| `enterResult` | `src/lib/hospital/labResultLifecycle.ts` | `LabResultReleased` | unverified entry; LabResultReleased is the event |
+| `buildSubmission` | `src/lib/hospital/nhcx/submission.ts` | `ClaimSubmitted` | builds the package; ClaimSubmitted is the event |
+| `createAssessment` | `src/lib/hospital/nursingAssessment.ts` | `NursingAssessmentRecorded` — completion/sign-off is the outcome | draft; the record changes when it is completed or signed |
+| `createMedicationReturn` | `src/lib/hospital/pharmacy.ts` | `StockMoved` — classification posts the return or the discard | a return awaiting classification; stock moves on classification |
+| `createPharmacyRequest` | `src/lib/hospital/pharmacy.ts` | `SupplyRequestStatusChanged` — fulfilled, rejected or cancelled | ward request; stock moves when it is fulfilled |
+| `recordGoodsReceipt` | `src/lib/hospital/procurement/goodsReceipts.ts` | `GoodsReceived / StockDocumentStatusChanged` — GoodsReceived leaves the cut list for this | receipt awaiting approval; GoodsReceived on approval |
+| `addPurchaseOrderLine` | `src/lib/hospital/procurement/purchaseOrders.ts` | `PurchaseOrderStatusChanged` | draft PO |
+| `createPurchaseOrderDraft` | `src/lib/hospital/procurement/purchaseOrders.ts` | `PurchaseOrderStatusChanged` — approved, cancelled or closed | draft PO |
+| `markSent` | `src/lib/hospital/procurement/purchaseOrders.ts` | `PurchaseOrderStatusChanged` — closed or cancelled | PO dispatch step |
+| `submitForApproval` | `src/lib/hospital/procurement/purchaseOrders.ts` | `PurchaseOrderStatusChanged` — the approval decision | PO approval step |
+| `createRca` | `src/lib/hospital/quality/service.ts` | `QualityIncidentStatusChanged` | root-cause analysis draft |
+| `updateRca` | `src/lib/hospital/quality/service.ts` | `QualityIncidentStatusChanged` | root-cause analysis draft |
+| `acceptSpecimen` | `src/lib/hospital/specimenLifecycle.ts` | `LabResultReleased / SpecimenStatusChanged` — a received specimen ends in a result or a rejection | lab receipt step between collection and result |
+| `inviteDelegate` | `src/lib/patient/experience/family.ts` | `FamilyAccessGranted` — an invitation that lapses or is declined changes no access | an invitation grants nothing; access starts on acceptance (FamilyAccessGranted) |
+
+### `INTEGRATION_PROTOCOL` (6)
 
 | Function | File | Reason |
 |---|---|---|
 | `setProviderCustomerRef` | `src/lib/billing/billingAccount.ts` | payment-provider customer reference |
 | `syncProviderCustomer` | `src/lib/billing/billingAccount.ts` | payment-provider customer sync |
-| `ingestWebhook` | `src/lib/billing/webhooks.ts` | inbound webhook log; the changes it causes emit their own events |
 | `receiveCallback` | `src/lib/hospital/interoperability/abdm/callbacks.ts` | inbound ABDM callback log; the state changes it causes emit their own events |
 | `receiveCallback` | `src/lib/hospital/nhcx/callbacks.ts` | inbound NHCX callback log; the changes it causes emit their own events |
 | `retryExchange` | `src/lib/hospital/nhcx/submission.ts` | protocol retry of an exchange |
@@ -418,19 +533,19 @@ These went to an exemption, but a reasonable reading of the rules could make the
 | `updateDischargeReadiness` | `src/lib/hospital/admission.ts` | written by the discharge-readiness consumer; readiness is derived from events |
 | `generateAdministrationSchedule` | `src/lib/hospital/medicationSchedule.ts` | becomes the mar-scheduler consumer's write (reacting to MedicationVerified) |
 
-### `BOOKKEEPING` (1)
-
-| Function | File | Reason |
-|---|---|---|
-| `accessionSpecimen` | `src/lib/hospital/specimenLifecycle.ts` | runs inside placeLabOrder's transaction; LabOrderPlaced covers it |
-
 ### `REFERENCE_DATA` (1)
 
 | Function | File | Reason |
 |---|---|---|
 | `createEquipment` | `src/lib/hospital/operations/service.ts` | equipment register entry |
 
-## After approval
+### `BOOKKEEPING` (1)
 
-1. `emitExemptions.ts`: each function above moves from `NOT_YET_CATALOGUED` to `PLANNED` (event + step) or to its exemption category. `NOT_YET_CATALOGUED` is then empty and is removed from the allowed categories, so the CI rule rejects it.
-2. The new events are added to `catalogue.ts` and wired in their module's step; each step removes its `PLANNED` entries.
+| Function | File | Reason |
+|---|---|---|
+| `accessionSpecimen` | `src/lib/hospital/specimenLifecycle.ts` | runs inside placeLabOrder's transaction; LabOrderPlaced covers it |
+
+## Applying it (batch 3a)
+
+1. `emitExemptions.ts`: each event function becomes `PLANNED` with its `events` and step; each exemption gets its category (the four above join the allowed categories; `PROCESS_STEP` entries carry their boundary event). `NOT_YET_CATALOGUED` is then empty and removed from the allowed categories, so the CI rule rejects it.
+2. Each module's step adds its events to `catalogue.ts` and removes its `PLANNED` entries; the test accepts only the named event type.
