@@ -32,7 +32,7 @@ import { enterResult, verifyResult, acknowledgeResult } from "../src/lib/hospita
 import { createMedicationOrder, verifyMedicationOrder, dispenseMedication, administerMedication } from "../src/lib/hospital/medicationLifecycle";
 import { linkMedicationToItem, SYSTEM_ACTOR } from "../src/lib/hospital/inventory/itemMedicationLink";
 import { createAdjustment } from "../src/lib/hospital/inventory/adjustment";
-import { createProcedure, createOperatingTheatre, requestSurgery, transitionSurgery, scheduleSurgery, startProcedure, recordItemUsage, completeProcedure } from "../src/lib/hospital/surgery";
+import { createOperatingTheatre, requestSurgery, transitionSurgery, scheduleSurgery, startProcedure, recordItemUsage, completeProcedure } from "../src/lib/hospital/surgery";
 import { getEventContract } from "../src/lib/events/catalogue";
 import { assertNoSensitiveData } from "../src/lib/events/sensitiveGuard";
 import { replayEvent } from "../src/lib/events/replay";
@@ -42,12 +42,13 @@ import { PDFDocument } from "pdf-lib";
 import { uploadPatientDocument } from "../src/lib/patient/experience/documents";
 import type { PatientAccessScope } from "../src/lib/patient/context";
 import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
+import { implantSku } from "../prisma/seedData/clinicalCatalogue";
+import { registerBloodUnit, releaseUnit, recordPatientTyping, requestBlood, transitionRequest, recordCompatibility, verifyCompatibility, issueUnit } from "../src/lib/hospital/blood";
 import { createPayer, addPatientCoverage } from "../src/lib/hospital/billing/coverage";
 import { requestPreAuth, decidePreAuth } from "../src/lib/hospital/billing/preauth";
 import { initiateDischarge, updateDischargeReadiness, finalizeDischarge } from "../src/lib/hospital/admission";
 import { generateAndStoreDocument } from "../src/lib/documents/service";
 import { draftInvoiceForAccount, addChargeToInvoice, issueInvoice, draftSupplementaryInvoice } from "../src/lib/hospital/billing/invoices";
-import { priceCharge } from "../src/lib/hospital/billing/chargePricing";
 import { createCharge } from "../src/lib/hospital/billing/chargeCapture";
 
 let pass = 0;
@@ -161,24 +162,44 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
   }
   let surgeryId = "";
   let usageId = "";
+  let bloodIssueId = "";
   if (opts.full) {
-    // 9. OT: the case, a consumable from stock, completion (→ charge-capture, stock-movement).
+    // 9. OT (batch 6, fix 5: the seeded catalogue): PTCA, scheduled for its
+    // typical duration, a drug-eluting stent from stock, completion
+    // (→ charge-capture at the specific tariffs, stock-movement).
     const pharmacy = await prisma.stockLocation.findFirstOrThrow({ where: { facilityId, name: "Central Pharmacy" } });
-    const proc = await createProcedure({ facilityId, code: `CJ-PROC-${run}`, name: "Angioplasty", byUserId: by });
+    const proc = await prisma.procedure.findUniqueOrThrow({ where: { facilityId_code: { facilityId, code: "PTCA" } } });
     const ot = await createOperatingTheatre({ facilityId, name: `CJ OT ${run}`, byUserId: by });
-    const kit = await prisma.item.create({ data: { facilityId, sku: `CJ-KIT-${run}`, name: `Kit ${run}`, category: "CONSUMABLE", baseUnit: "PIECE" } });
-    const kitLot = await prisma.itemLot.create({ data: { itemId: kit.id, facilityId, lotNumber: `CJ-KIT-LOT-${run}`, status: "ACTIVE", expiresAt: new Date("2030-01-01") } });
-    await tx((t) => createAdjustment(t, { facilityId, itemId: kit.id, lotId: kitLot.id, locationId: pharmacy.id, quantityDelta: 1, reason: "FOUND", requestedByStaffId: doctor.id, actorUserId: by, idempotencyKey: `cj-kit-${run}` }));
+    const stent = await prisma.item.findUniqueOrThrow({ where: { sku: implantSku("DES", facilityId) } });
+    const stentLot = await prisma.itemLot.create({ data: { itemId: stent.id, facilityId, lotNumber: `CJ-DES-LOT-${run}`, status: "ACTIVE", expiresAt: new Date("2030-01-01") } });
+    await tx((t) => createAdjustment(t, { facilityId, itemId: stent.id, lotId: stentLot.id, locationId: pharmacy.id, quantityDelta: 1, reason: "FOUND", requestedByStaffId: doctor.id, actorUserId: by, idempotencyKey: `cj-des-${run}` }));
     await step("9 OT", ["SurgeryRequested", "SurgeryStatusChanged", "SurgeryStatusChanged", "SurgeryScheduled", "ProcedureStarted", "SurgeryItemUsed", "ProcedureCompleted", "ChargePosted", "ChargePosted"], async () => {
       const s = await requestSurgery({ facilityId, patientId: patient.id, encounterId: enc.id, procedureId: proc.id, urgency: "URGENT", requestedByStaffId: doctor.id, byUserId: by });
       surgeryId = s.id;
       await transitionSurgery({ surgeryId, facilityId, to: "REVIEWED", actorStaffId: doctor.id, byUserId: by });
       await transitionSurgery({ surgeryId, facilityId, to: "APPROVED", actorStaffId: doctor.id, byUserId: by });
       const at = new Date(Date.now() + 2 * 86_400_000 + Math.floor(Math.random() * 1000) * 60_000);
-      await scheduleSurgery({ surgeryId, facilityId, operatingTheatreId: ot.id, startAt: at, endAt: new Date(at.getTime() + 3_600_000), schedulerStaffId: doctor.id, byUserId: by });
+      await scheduleSurgery({ surgeryId, facilityId, operatingTheatreId: ot.id, startAt: at, endAt: new Date(at.getTime() + proc.typicalDurationMinutes! * 60_000), schedulerStaffId: doctor.id, byUserId: by });
       await startProcedure({ surgeryId, facilityId, surgeonStaffId: doctor.id, byUserId: by });
-      usageId = (await recordItemUsage({ surgeryId, facilityId, usageType: "CONSUMABLE", itemId: kit.id, itemLotId: kitLot.id, quantity: 1, locationId: pharmacy.id, recordedByStaffId: doctor.id, actorUserId: by, byUserId: by })).id;
+      usageId = (await recordItemUsage({ surgeryId, facilityId, usageType: "IMPLANT", itemId: stent.id, itemLotId: stentLot.id, quantity: 1, locationId: pharmacy.id, recordedByStaffId: doctor.id, actorUserId: by, byUserId: by })).id;
       await completeProcedure({ surgeryId, facilityId, byUserId: by });
+    });
+    // 9b. Blood (the seeded PRBC component): a unit, the patient's typing, the
+    // request, a verified crossmatch, the issue (→ charge-capture at BLOOD:PRBC).
+    const prbc = await prisma.bloodProduct.findUniqueOrThrow({ where: { facilityId_code: { facilityId, code: "PRBC" } } });
+    const unit = await registerBloodUnit({ facilityId, productId: prbc.id, unitNumber: `CJ-U-${run}`, expiresAt: new Date(Date.now() + 20 * 86_400_000), registeredByStaffId: doctor.id, byUserId: by });
+    await releaseUnit({ unitId: unit.id, facilityId, byUserId: by });
+    await drain();
+    mark = (await prisma.domainEventOutbox.findFirst({ where: { correlationId: enc.id }, orderBy: { seq: "desc" }, select: { seq: true } }))?.seq ?? mark;
+    // The verified crossmatch makes the request READY (its fourth status change).
+    await step("9b Blood", ["BloodCompatibilityRecorded", "BloodRequestStatusChanged", "BloodRequestStatusChanged", "BloodRequestStatusChanged", "BloodCompatibilityRecorded", "BloodRequestStatusChanged", "BloodIssued", "ChargePosted"], async () => {
+      await recordPatientTyping({ facilityId, patientId: patient.id, encounterId: enc.id, aboGroup: "O", rhStatus: "POSITIVE", performedByStaffId: doctor.id, byUserId: by });
+      const breq = await requestBlood({ facilityId, patientId: patient.id, encounterId: enc.id, productId: prbc.id, priority: "URGENT", requestedByStaffId: doctor.id, byUserId: by });
+      await transitionRequest({ requestId: breq.id, facilityId, to: "REVIEWED", actorStaffId: doctor.id, byUserId: by });
+      await transitionRequest({ requestId: breq.id, facilityId, to: "APPROVED", actorStaffId: doctor.id, byUserId: by });
+      const test = await recordCompatibility({ requestId: breq.id, facilityId, unitId: unit.id, status: "COMPATIBLE", testedByStaffId: doctor.id, byUserId: by });
+      await verifyCompatibility({ testId: test.id, facilityId, verifiedByStaffId: doctor.id, byUserId: by });
+      bloodIssueId = (await issueUnit({ requestId: breq.id, facilityId, unitId: unit.id, compatibilityTestId: test.id, issuedByStaffId: doctor.id, byUserId: by })).id;
     });
   }
   // 10–14 (batch 5 (d)): pre-authorization, discharge, invoice → claim draft,
@@ -204,11 +225,10 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
       await updateDischargeReadiness(billing.dischargeId, { clinicallyReady: true, billingReady: true, pharmacyReady: true, transportReady: true });
       await finalizeDischarge(billing.dischargeId, by, { summary: "core journey" });
     });
-    // 12–13. The final bill: price what charge-capture could not, draft every
-    // charge, issue (→ claim-drafting drafts the claim with the pre-authorization).
-    await step("12 Invoice → 13 claim draft", ["ChargeRepriced", "HospitalInvoiceIssued", "ClaimDrafted"], async () => {
+    // 12–13. The final bill (every charge priced from the catalogue): draft
+    // every charge, issue (→ claim-drafting drafts the claim with the pre-authorization).
+    await step("12 Invoice → 13 claim draft", ["HospitalInvoiceIssued", "ClaimDrafted"], async () => {
       const inv = await tx(async (t) => {
-        for (const c of await t.charge.findMany({ where: { encounterId: enc.id, pricingStatus: "NEEDS_PRICING", status: "POSTED" } })) await priceCharge(t, c.id, { unitPriceMinor: 75_000, byUserId: by });
         const draft = await draftInvoiceForAccount(t, { encounterId: enc.id, patientId: patient.id, facilityId, generatedByUserId: by });
         for (const c of await t.charge.findMany({ where: { encounterId: enc.id, status: "POSTED", invoiceLine: null }, select: { id: true } })) await addChargeToInvoice(t, draft.id, c.id);
         return issueInvoice(t, draft.id, { byUserId: by });
@@ -224,7 +244,7 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
       billing.supplementaryId = (await tx(async (t) => issueInvoice(t, (await draftSupplementaryInvoice(t, { originalInvoiceId: billing.invoiceId, generatedByUserId: by })).id, { byUserId: by }))).id;
     });
   }
-  return { facilityId, patientId: patient.id, encounterId: enc.id, orderId, resultId, surgeryId, usageId, uploadedDocumentId, steps, registered, openAfter8, critTask, billing };
+  return { facilityId, patientId: patient.id, encounterId: enc.id, orderId, resultId, surgeryId, usageId, bloodIssueId, uploadedDocumentId, steps, registered, openAfter8, critTask, billing };
 }
 
 async function main() {
@@ -242,9 +262,10 @@ async function main() {
   const expectedProducers = ["EdArrivalRegistered", "PatientTriaged", "AdmissionRequested", "BedReserved", "AdmissionCreated", "IcuAdmitted", "PatientTransferred", "ChargePosted",
     "ChargePosted", "LabOrderPlaced", "SpecimenCollected", "SpecimenStatusChanged", "LabResultReleased", "CriticalResultAcknowledged", "MedicationOrdered", "MedicationVerified", "MedicationDispensed", "ChargePosted", "MedicationAdministered",
     "SurgeryRequested", "SurgeryStatusChanged", "SurgeryStatusChanged", "SurgeryScheduled", "ProcedureStarted", "SurgeryItemUsed", "ProcedureCompleted", "ChargePosted", "ChargePosted",
-    // 10–14: pre-authorization, discharge (bed-days in finalize), the priced kit, invoice → claim, late charge → supplementary → its claim.
+    "BloodCompatibilityRecorded", "BloodRequestStatusChanged", "BloodRequestStatusChanged", "BloodRequestStatusChanged", "BloodCompatibilityRecorded", "BloodRequestStatusChanged", "BloodIssued", "ChargePosted",
+    // 9b: blood. 10–14: pre-authorization, discharge (bed-days in finalize), invoice → claim, late charge → supplementary → its claim.
     "PreauthStatusChanged", "PreauthDecided", "DischargeInitiated", "DocumentGenerated", "ChargePosted", "PatientDischarged", "EncounterClosed",
-    "ChargeRepriced", "HospitalInvoiceIssued", "ClaimDrafted", "ChargePosted", "HospitalInvoiceIssued", "ClaimDrafted"];
+    "HospitalInvoiceIssued", "ClaimDrafted", "ChargePosted", "HospitalInvoiceIssued", "ClaimDrafted"];
   report("The producers' events, in emission order", producers.join() === expectedProducers.join(), producers.join(" → "));
 
   const bad = all.flatMap((e) => {
@@ -275,7 +296,11 @@ async function main() {
   report("mar-scheduler scheduled the BD doses once", doses === 3, String(doses));
   const otCharges = await prisma.charge.count({ where: { OR: [{ sourceType: "Surgery", sourceId: a.surgeryId }, { sourceType: "SurgeryItemUsage", sourceId: a.usageId }, { sourceType: "IcuAdmission" }], encounterId: a.encounterId } });
   const kitIssued = await prisma.stockLedgerEntry.count({ where: { sourceType: "SurgeryItemUsage", sourceId: a.usageId } });
-  report("9 OT: charge-capture charged the procedure, the consumable and the ICU admission once each; stock-movement issued the kit once", otCharges === 3 && kitIssued === 1, `${otCharges} charges, ${kitIssued} ledger`);
+  report("9 OT: charge-capture charged the procedure, the implant and the ICU admission once each; stock-movement issued the stent once", otCharges === 3 && kitIssued === 1, `${otCharges} charges, ${kitIssued} ledger`);
+  const catalogueCharges = await prisma.charge.findMany({ where: { encounterId: a.encounterId, OR: [{ sourceType: "Surgery", sourceId: a.surgeryId }, { sourceType: "SurgeryItemUsage", sourceId: a.usageId }, { sourceType: "BloodIssue", sourceId: a.bloodIssueId }] } });
+  const codes = catalogueCharges.map((c) => `${c.chargeCode}:${c.pricingStatus}`).sort().join();
+  report("9/9b: the seeded catalogue's specific tariffs priced PTCA, the stent and the PRBC unit (no generic, nothing needing a price)",
+    codes === [`BLOOD:PRBC:PRICED`, `ITEM:${implantSku("DES", a.facilityId)}:PRICED`, "PROCEDURE:PTCA:PRICED"].sort().join(), codes);
 
   // 10–14: discharge, billing and claims.
   const bl = a.billing;

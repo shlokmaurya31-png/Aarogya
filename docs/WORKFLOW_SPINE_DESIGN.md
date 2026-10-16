@@ -1008,6 +1008,17 @@ create in a terminal status (SIGNED, CURRENT, ACTIVE, VERIFIED, …):
   diagnoses, allergies, referrals, emergency contacts and schedule blocks are
   still written by their routes (the route-write allowlist).
 
+**Batch 6, fix 5: a seeded clinical catalogue.** `prisma/seedData/clinicalCatalogue.ts`,
+per facility, each entry with its own cash tariff (illustrative demo INR prices,
+not a rate card): 10 common procedures with typical OT durations
+(`PROCEDURE:<code>`: laparoscopic cholecystectomy and appendicectomy, hernia
+mesh repair, PTCA, LSCS, TKR, THR, ORIF, phaco with IOL, TURP), the main blood
+components (`BLOOD:PRBC|FFP|PLT|CRYO`) and five implants (`ITEM:IMP-<key>-<facility>`:
+drug-eluting stent, knee, hip, IOL, plate set). The core journey now operates
+PTCA (scheduled for its typical duration) with a seeded stent and issues a
+seeded PRBC unit (step 9b), and asserts each is charged at its specific tariff
+with nothing needing a price; the needs-pricing gate checks the catalogue.
+
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b
 (quality, safety, operations) and 9c (access, identity, interoperability,

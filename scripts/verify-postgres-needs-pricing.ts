@@ -14,6 +14,8 @@
  *      WAIVED one without a reason.
  *   7. The seeded tariffs exist: PROCEDURE:GENERIC, BLOOD:GENERIC,
  *      ICU:ADMISSION and ITEM:<sku> for the seeded consumables.
+ *   8. The seeded clinical catalogue (procedures with OT durations, the main
+ *      blood components, implants), each with its own tariff.
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-needs-pricing.ts
  */
@@ -106,6 +108,17 @@ async function main() {
   const seededItem = await prisma.item.findFirst({ where: { facilityId, category: "CONSUMABLE", sku: { startsWith: "CONS-" } } });
   const itemTariff = seededItem ? await prisma.tariff.count({ where: { facilityId, chargeCode: `ITEM:${seededItem.sku}`, active: true } }) : 0;
   report("Seeded tariffs: PROCEDURE:GENERIC, BLOOD:GENERIC, ICU:ADMISSION and the seeded consumables", codes.join() === "BLOOD:GENERIC,ICU:ADMISSION,PROCEDURE:GENERIC" && itemTariff === 1, `${codes.join()} item=${itemTariff}`);
+
+  // 8. The seeded clinical catalogue (batch 6, fix 5): each entry with its own tariff.
+  const live = async (chargeCode: string) => (await prisma.tariff.count({ where: { facilityId, chargeCode, active: true } })) === 1;
+  const procedures = await prisma.procedure.findMany({ where: { facilityId, code: { in: ["LAP_CHOLE", "LAP_APPENDIX", "HERNIA_MESH", "PTCA", "LSCS", "TKR", "THR", "ORIF", "PHACO_IOL", "TURP"] } } });
+  const procOk = procedures.length === 10 && procedures.every((p) => (p.typicalDurationMinutes ?? 0) > 0) && (await Promise.all(procedures.map((p) => live(`PROCEDURE:${p.code}`)))).every(Boolean);
+  const blood = await prisma.bloodProduct.findMany({ where: { facilityId, code: { in: ["PRBC", "FFP", "PLT", "CRYO"] } } });
+  const bloodOk = blood.map((b) => b.componentType).sort().join() === "CRYOPRECIPITATE,FFP,PLATELETS,PRBC" && (await Promise.all(blood.map((b) => live(`BLOOD:${b.code}`)))).every(Boolean);
+  const implants = await prisma.item.findMany({ where: { facilityId, category: "IMPLANT", sku: { startsWith: "IMP-" } } });
+  const implantOk = implants.length >= 5 && (await Promise.all(implants.map((i) => live(`ITEM:${i.sku}`)))).every(Boolean);
+  report("Seeded catalogue: 10 procedures with OT durations, PRBC/FFP/platelets/cryo and 5 implants, each with its own live tariff",
+    procOk && bloodOk && implantOk, `procedures ${procedures.length}, blood ${blood.length}, implants ${implants.length}`);
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();
