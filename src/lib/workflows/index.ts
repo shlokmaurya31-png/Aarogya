@@ -17,7 +17,7 @@ export {
 export { startWorkflowsForEvent, runInstance, tickWorkflows, type TickResult } from "./engine";
 export { getInstance, listInstances, cancelInstance, retryInstance } from "./instances";
 export { completeWorkflowTask } from "./tasks";
-export { getWorkflowMetrics } from "./ops";
+export { getWorkflowMetrics, listWorkflowDeadLetters } from "./ops";
 export { workflowConsumer } from "./consumer";
 export {
   requireWorkflowPlatform, assertCanReadWorkflowScope,

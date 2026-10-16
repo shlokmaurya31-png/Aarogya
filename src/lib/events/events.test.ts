@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { emitDomainEvent } from "./emit";
 import { getEventContract, currentVersion, ALL_EVENT_TYPES, EVENT_CONTRACTS } from "./catalogue";
 import { assertNoSensitiveData } from "./sensitiveGuard";
-import { classifyEventError, PermanentEventError, RetryableEventError } from "./types";
+import { classifyEventError, PermanentEventError, RetryableEventError, isDataIntegrityCode, DATA_ERROR_ATTEMPTS } from "./types";
 import { $Enums } from "@prisma/client";
 
 /**
@@ -111,6 +111,15 @@ describe("error classification", () => {
     expect(classifyEventError(new RetryableEventError("later", "Y")).retryable).toBe(true);
     expect(classifyEventError({ status: 403 }).retryable).toBe(false);
     expect(classifyEventError(new Error("boom")).retryable).toBe(true);
+  });
+  it("gives data-integrity errors (missing parent, row gone) a short, bounded budget", () => {
+    for (const code of ["P2003", "P2014", "P2018", "P2025"]) {
+      const c = classifyEventError(Object.assign(new Error("fk"), { code }));
+      expect(c.code).toBe(`DATA_${code}`);
+      expect(isDataIntegrityCode(c.code)).toBe(true);
+    }
+    expect(isDataIntegrityCode(classifyEventError(Object.assign(new Error("dup"), { code: "P2002" })).code)).toBe(false);
+    expect(DATA_ERROR_ATTEMPTS).toBeLessThan(8);
   });
 });
 

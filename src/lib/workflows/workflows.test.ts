@@ -110,3 +110,17 @@ describe("ESCALATE step (escalate an existing task, never create one)", () => {
     expect(() => validateWorkflowConfig(cfg("event.aggregateId"))).toThrow();
   });
 });
+
+describe("workflow failure classification (batch 4, decision 5)", () => {
+  it("treats a missing parent or record as NOT_FOUND, which is terminal", () => {
+    for (const code of ["P2003", "P2025"]) {
+      const c = classifyWorkflowError(Object.assign(new Error("gone"), { code }));
+      expect(c.category).toBe("NOT_FOUND");
+      expect(isRetryable(c.category)).toBe(false);
+    }
+  });
+  it("bounds timers and instances", () => {
+    expect(LIMITS.MAX_TIMER_ATTEMPTS).toBeGreaterThan(0);
+    expect(LIMITS.MAX_INSTANCE_ATTEMPTS).toBeGreaterThan(0);
+  });
+});

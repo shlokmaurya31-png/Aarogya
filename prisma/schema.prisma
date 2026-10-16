@@ -751,7 +751,7 @@ model WorkflowTimer {
   workflowStepId     String?
   kind               String // DELAY | SLA
   availableAt        DateTime
-  status             WorkflowTimerStatus @default(PENDING) // PENDING | CLAIMED | COMPLETED | CANCELLED
+  status             WorkflowTimerStatus @default(PENDING) // PENDING | CLAIMED | COMPLETED | CANCELLED | FAILED
   claimToken         String?
   claimedAt          DateTime?
   completedAt        DateTime?
@@ -9858,6 +9858,7 @@ enum WorkflowTimerStatus {
   CLAIMED
   COMPLETED
   CANCELLED
+  FAILED
 }
 
 enum ConfigurationOverrideScope {

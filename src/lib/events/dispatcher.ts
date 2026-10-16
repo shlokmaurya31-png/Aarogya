@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { getEventContract } from "./catalogue";
 import { getConsumersFor, type DomainEventConsumer } from "./consumers";
-import { classifyEventError, safeMessage, type DomainEventEnvelope } from "./types";
+import { classifyEventError, safeMessage, isDataIntegrityCode, DATA_ERROR_ATTEMPTS, type DomainEventEnvelope } from "./types";
 
 /**
  * Phase D6 — the domain-event dispatcher.
@@ -192,7 +192,9 @@ async function deliverToConsumer(
   } catch (err) {
     const { retryable, code, message } = classifyEventError(err);
     const attempts = delivery.attemptCount + 1;
-    const terminal = !retryable || attempts >= maxAttempts;
+    // A data-integrity error (missing parent, row gone) has a short budget.
+    const budget = isDataIntegrityCode(code) ? Math.min(maxAttempts, DATA_ERROR_ATTEMPTS) : maxAttempts;
+    const terminal = !retryable || attempts >= budget;
     await prisma.domainEventDelivery.update({
       where: { id: delivery.id },
       data: { status: terminal ? "DEAD_LETTER" : "FAILED", attemptCount: attempts, lastError: safeMessage(message), lastErrorCode: code },

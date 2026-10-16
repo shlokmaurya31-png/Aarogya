@@ -116,6 +116,8 @@ const ORDER = [
   "verify-postgres-orders-results-medication",
   // §7: the core-journey replay test, extended at each spine step.
   "verify-postgres-core-journey",
+  // Batch 4: bounded retries; runs after the tenancy sweep (checks its fixtures)
+  "verify-postgres-bounded-retry",
   // Runs last among the gates: checks every row the earlier gates created.
   "verify-postgres-facility-consistency",
   // Runs late: its whole-database check covers every earlier gate's orders.

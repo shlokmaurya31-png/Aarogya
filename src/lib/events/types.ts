@@ -157,6 +157,17 @@ export class PermanentEventError extends Error {
 }
 
 /**
+ * Prisma errors that mean the data a consumer needs is missing or inconsistent:
+ * a foreign key with no parent (P2003), a required related record not found
+ * (P2018, P2025), a required relation violated (P2014). Rarely transient (a
+ * row not yet visible), so they get a short budget, DATA_ERROR_ATTEMPTS, and
+ * then dead-letter instead of using every attempt with backoff up to an hour.
+ */
+const DATA_INTEGRITY_CODES = new Set(["P2003", "P2014", "P2018", "P2025"]);
+export const DATA_ERROR_ATTEMPTS = 3;
+export const isDataIntegrityCode = (code: string) => code.startsWith("DATA_");
+
+/**
  * Classify an arbitrary thrown value. Explicit Permanent/Retryable markers win.
  * A validation/authorization/bad-request shaped error is permanent (retrying a
  * malformed or forbidden event never succeeds). Everything else is treated as a
@@ -165,6 +176,8 @@ export class PermanentEventError extends Error {
 export function classifyEventError(err: unknown): { retryable: boolean; code: string; message: string } {
   if (err instanceof PermanentEventError) return { retryable: false, code: err.code, message: err.message };
   if (err instanceof RetryableEventError) return { retryable: true, code: err.code, message: err.message };
+  const prismaCode = (err as { code?: unknown }).code;
+  if (typeof prismaCode === "string" && DATA_INTEGRITY_CODES.has(prismaCode)) return { retryable: true, code: `DATA_${prismaCode}`, message: safeMessage(err) };
   const status = (err as { status?: number }).status;
   if (status === 400 || status === 401 || status === 403 || status === 422) {
     return { retryable: false, code: `HTTP_${status}`, message: safeMessage(err) };

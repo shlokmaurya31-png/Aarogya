@@ -45,3 +45,25 @@ export async function getWorkflowMetrics(m: ActorMemberships, opts?: { now?: Dat
     health,
   };
 }
+
+/**
+ * The workflow side of the dead-letter list (batch 4, decision 5): instances
+ * that FAILED (a permanent step error, out of attempts, a failed timer) and
+ * instances whose SLA timer failed after they completed. Platform-only, IDs,
+ * codes and the bounded error message only.
+ */
+export async function listWorkflowDeadLetters(m: ActorMemberships, opts?: { limit?: number }) {
+  requireWorkflowPlatform(m);
+  const failedTimers = await prisma.workflowTimer.findMany({ where: { status: "FAILED" }, select: { workflowInstanceId: true, kind: true, attemptCount: true }, take: 500 });
+  const timerByInstance = new Map(failedTimers.map((t) => [t.workflowInstanceId, t]));
+  const rows = await prisma.workflowInstance.findMany({
+    where: { OR: [{ status: "FAILED" }, { id: { in: [...timerByInstance.keys()] } }] },
+    orderBy: { updatedAt: "desc" },
+    take: Math.min(opts?.limit ?? 100, 500),
+    select: {
+      id: true, status: true, workflowDefinitionId: true, triggerEventId: true, organizationId: true, facilityId: true,
+      attemptCount: true, failureCategory: true, failureMessage: true, failedAt: true, updatedAt: true,
+    },
+  });
+  return rows.map((r) => ({ ...r, failedTimer: timerByInstance.get(r.id) ?? null }));
+}

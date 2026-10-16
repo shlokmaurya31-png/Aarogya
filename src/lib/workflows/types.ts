@@ -16,7 +16,7 @@ export const INSTANCE_STATUS = ["RUNNABLE", "RUNNING", "WAITING", "COMPLETED", "
 export const STEP_STATUS = ["PENDING", "RUNNING", "WAITING", "COMPLETED", "SKIPPED", "FAILED"] as const;
 export const STEP_TYPE = ["CONDITION", "ACTION", "TASK", "TIMER", "ESCALATE"] as const;
 export const TASK_STATUS = ["OPEN", "IN_PROGRESS", "COMPLETED", "CANCELLED", "EXPIRED"] as const;
-export const TIMER_STATUS = ["PENDING", "CLAIMED", "COMPLETED", "CANCELLED"] as const;
+export const TIMER_STATUS = ["PENDING", "CLAIMED", "COMPLETED", "CANCELLED", "FAILED"] as const;
 
 export type StepType = (typeof STEP_TYPE)[number];
 
@@ -43,6 +43,11 @@ export const LIMITS = {
   MAX_TIMER_SECONDS: 30 * 24 * 3600, // 30 days
   MAX_RETRIES: 8,
   MAX_INSTANCE_DEPTH: 5, // event→workflow→event chain depth (loop prevention, §31)
+  /** A timer or an instance that keeps failing outside its steps is FAILED after this many attempts. */
+  MAX_TIMER_ATTEMPTS: 5,
+  MAX_INSTANCE_ATTEMPTS: 5,
+  /** A RUNNING instance whose claim is older than this is reaped (the worker died mid-run). */
+  STALE_CLAIM_MS: 5 * 60_000,
 } as const;
 
 /** Thrown by workflow actions/steps to control retry classification. */
@@ -63,6 +68,9 @@ export function classifyWorkflowError(err: unknown): { category: FailureCategory
   const retryable = (err as { retryable?: boolean }).retryable;
   if (retryable === false) return { category: "PERMANENT", message: safeMessage(err) };
   if (retryable === true) return { category: "TRANSIENT", message: safeMessage(err) };
+  // Prisma: a missing parent or record is NOT_FOUND (terminal), not UNKNOWN.
+  const code = (err as { code?: unknown }).code;
+  if (code === "P2003" || code === "P2014" || code === "P2018" || code === "P2025") return { category: "NOT_FOUND", message: safeMessage(err) };
   const status = (err as { status?: number }).status;
   if (status === 400 || status === 422) return { category: "VALIDATION", message: safeMessage(err) };
   if (status === 401 || status === 403) return { category: "AUTHORIZATION", message: safeMessage(err) };

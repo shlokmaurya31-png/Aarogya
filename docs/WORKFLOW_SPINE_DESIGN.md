@@ -779,6 +779,21 @@ one bookkeeping. The fixture that showed an unregistered helper counts one
 level only now uses exported helpers (a private chain is followed by design),
 and new fixtures prove private chains are followed for writes and emits.
 
+**Batch 4, decision 5 (bounded failure).** Event consumers: a Prisma
+data-integrity error (P2003, P2014, P2018, P2025: a missing parent or record)
+gets `DATA_ERROR_ATTEMPTS` (3) instead of the event's 8, then dead-letters with
+code `DATA_<code>`; tenant mismatches were already permanent. Workflows: such
+errors are NOT_FOUND (terminal); a timer that fails is FAILED (new
+`WorkflowTimerStatus` value) at once when permanent or after
+`MAX_TIMER_ATTEMPTS` (5), released with backoff in between (it used to be
+released to PENDING forever); a failure outside the step loop is bounded by
+`MAX_INSTANCE_ATTEMPTS` (5) instead of leaving the instance RUNNING; a RUNNING
+instance whose claim is older than 5 minutes is reaped. Failed instances and
+timers are listed by `listWorkflowDeadLetters`, returned with the event dead
+letters by `/api/hospital/enterprise/events/dead-letters`. The tenancy-sweep
+fixtures of the queue tables are created finished, so they never enter the
+queues. Gate: `verify-postgres-bounded-retry`.
+
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b
 (quality, safety, operations) and 9c (access, identity, interoperability,

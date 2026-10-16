@@ -107,7 +107,29 @@ export async function runInstance(instanceId: string, opts?: { now?: Date }): Pr
     data: { status: "RUNNING", claimToken: token, lastAttemptAt: now, attemptCount: { increment: 1 } },
   });
   if (claim.count !== 1) return; // not runnable, or another worker owns it
+  try {
+    await runClaimed(instanceId, token, now);
+  } catch (err) {
+    // A failure outside a step (its version or trigger gone, a broken row): bounded,
+    // never left RUNNING. Retryable errors go back to RUNNABLE until the budget.
+    await failOrRelease(instanceId, token, now, err);
+  }
+}
 
+/** Mark an instance FAILED (permanent, or out of attempts) or release it to RUNNABLE. */
+async function failOrRelease(instanceId: string, token: string | null, now: Date, err: unknown): Promise<void> {
+  const { category, message } = classifyWorkflowError(err);
+  const inst = await prisma.workflowInstance.findUnique({ where: { id: instanceId }, select: { attemptCount: true } });
+  const retry = isRetryable(category) && (inst?.attemptCount ?? 0) < LIMITS.MAX_INSTANCE_ATTEMPTS;
+  await prisma.workflowInstance.updateMany({
+    where: { id: instanceId, ...(token ? { claimToken: token } : {}), status: { notIn: ["COMPLETED", "FAILED", "CANCELLED"] } },
+    data: retry
+      ? { status: "RUNNABLE", claimToken: null, failureCategory: category, failureMessage: safeMessage(message) }
+      : { status: "FAILED", claimToken: null, failedAt: now, failureCategory: category, failureMessage: safeMessage(message) },
+  });
+}
+
+async function runClaimed(instanceId: string, token: string, now: Date): Promise<void> {
   const inst = await prisma.workflowInstance.findUnique({ where: { id: instanceId }, include: { steps: { orderBy: { stepIndex: "asc" } } } });
   if (!inst) return;
   const version = await prisma.workflowVersion.findUniqueOrThrow({ where: { id: inst.workflowVersionId } });
@@ -300,6 +322,7 @@ export interface TickResult { timersFired: number; escalated: number; instancesR
 export async function tickWorkflows(opts: TickOptions = {}): Promise<TickResult> {
   const now = opts.now ?? new Date();
   const batchSize = Math.min(Math.max(1, opts.batchSize ?? 100), 500);
+  await reapStaleInstances(now);
   const timers = await processDueWorkflowTimers(now, batchSize);
   const instancesRun = await runRunnableInstances(now, batchSize);
   return { ...timers, instancesRun };
@@ -337,9 +360,25 @@ async function processDueWorkflowTimers(now: Date, batchSize: number): Promise<{
         if (escalatedNow) escalated++;
         await prisma.workflowTimer.updateMany({ where: { id: t.id, claimToken: token }, data: { status: "COMPLETED", completedAt: now } });
       }
-    } catch {
-      // Release the claim so a later tick retries this timer (never lost).
-      await prisma.workflowTimer.updateMany({ where: { id: t.id, claimToken: token }, data: { status: "PENDING", claimToken: null } });
+    } catch (err) {
+      // Bounded: a permanent failure, or LIMITS.MAX_TIMER_ATTEMPTS failures,
+      // fails the timer and its instance (listed by listWorkflowDeadLetters);
+      // otherwise the claim is released with a backoff and a later tick retries.
+      const { category, message } = classifyWorkflowError(err);
+      if (!isRetryable(category) || timer.attemptCount >= LIMITS.MAX_TIMER_ATTEMPTS) {
+        await prisma.workflowTimer.updateMany({ where: { id: t.id, claimToken: token }, data: { status: "FAILED", claimToken: null } });
+        await prisma.workflowInstance.updateMany({
+          where: { id: timer.workflowInstanceId, status: { notIn: ["COMPLETED", "FAILED", "CANCELLED"] } },
+          data: { status: "FAILED", claimToken: null, failedAt: now, failureCategory: category, failureMessage: safeMessage(`timer ${timer.kind}: ${message}`) },
+        });
+        // An SLA timer's instance has usually completed already: record the failure on it anyway.
+        await prisma.workflowInstance.updateMany({
+          where: { id: timer.workflowInstanceId, status: "COMPLETED" },
+          data: { failureCategory: category, failureMessage: safeMessage(`timer ${timer.kind}: ${message}`) },
+        });
+      } else {
+        await prisma.workflowTimer.updateMany({ where: { id: t.id, claimToken: token }, data: { status: "PENDING", claimToken: null, availableAt: stepBackoff(now, timer.attemptCount) } });
+      }
     }
   }
   return { timersFired, escalated };
@@ -383,6 +422,15 @@ async function escalateSla(timer: { id: string; workflowInstanceId: string; work
     });
   });
   return true;
+}
+
+/** Return abandoned RUNNING instances (a worker died mid-run) to RUNNABLE, or FAILED once out of attempts. */
+async function reapStaleInstances(now: Date): Promise<void> {
+  const stale = await prisma.workflowInstance.findMany({
+    where: { status: "RUNNING", lastAttemptAt: { lt: new Date(now.getTime() - LIMITS.STALE_CLAIM_MS) } },
+    select: { id: true, claimToken: true }, take: 100,
+  });
+  for (const s of stale) await failOrRelease(s.id, s.claimToken, now, Object.assign(new Error("claim abandoned (stale RUNNING instance)"), { retryable: true }));
 }
 
 async function runRunnableInstances(now: Date, batchSize: number): Promise<number> {
