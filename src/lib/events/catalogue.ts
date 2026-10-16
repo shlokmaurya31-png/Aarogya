@@ -32,6 +32,8 @@ const externalLabStatus = z.enum(["DRAFT", "SENT", "RESULT_RECEIVED", "REVIEWED"
 const lotStatus = z.enum(["ACTIVE", "QUARANTINED", "EXPIRED", "RECALLED", "DEPLETED"]);
 const icuDeviceStatus = z.enum(["PLANNED", "ACTIVE", "REMOVED", "DISCONTINUED"]);
 const icuInfusionStatus = z.enum(["RUNNING", "PAUSED", "STOPPED"]);
+const delegationScope = z.enum(["APPOINTMENTS", "RECORDS", "REPORTS", "PRESCRIPTIONS", "MEDICATIONS", "BILLING", "INSURANCE", "CONSENT"]);
+const accessSessionStatus = z.enum(["PENDING", "ACTIVE", "ENDED", "EXPIRED", "CANCELLED"]);
 const resuscitationStatus = z.enum(["ACTIVATED", "ACTIVE", "STABILIZED", "HANDED_OVER", "DISPOSITION_PENDING", "CLOSED"]);
 const surgeryStatus = z.enum(["REQUESTED", "REVIEWED", "APPROVED", "SCHEDULED", "IN_PROGRESS", "COMPLETED", "CANCELLED"]);
 const recoveryStatus = z.enum(["PENDING", "IN_RECOVERY", "READY_FOR_TRANSFER", "TRANSFERRED"]);
@@ -603,6 +605,80 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({
       chargeId: id, encounterId: id, patientId: id,
       reasonCode: z.enum(["PACKAGE_INCLUDED", "GOODWILL", "CHARITY", "CLINICAL_ERROR", "NOT_BILLABLE", "OTHER"]),
+    }).strict(),
+  }),
+
+  // ── Documents, notes, patient access and consent (spine §9 step 7) ────────
+  contract({
+    type: "PatientDocumentUploaded", version: 1, aggregateType: "CLINICAL_DOCUMENT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "patient portal (uploadPatientDocument)",
+    payload: z.object({ documentId: id, patientId: id, documentType: z.enum(["REPORT", "REFERRAL_LETTER", "ID_PROOF", "OTHER"]), uploadedBy: z.enum(["PATIENT"]) }).strict(),
+  }),
+  contract({
+    type: "DocumentGenerated", version: 1, aggregateType: "CLINICAL_DOCUMENT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "documents (generateAndStoreDocument)",
+    payload: z.object({
+      documentId: id, generatedDocumentId: id, patientId: id, encounterId: optId, isDraft: z.boolean(),
+      documentType: z.enum(["prescription", "opd-summary", "discharge-summary", "lab-report", "radiology-report", "invoice", "refund-note", "claim-packet", "certificate", "referral-letter", "death-certificate", "birth-record"]),
+    }).strict(),
+  }),
+  contract({
+    type: "ClinicalNoteSigned", version: 1, aggregateType: "CLINICAL_NOTE", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "clinical notes (signNote, amendNote)",
+    payload: z.object({
+      /** The signed note (also the aggregate id). Keys avoid "note": the sensitive-key guard refuses them. */
+      entryId: id, encounterId: id, patientId: id,
+      /** The note type code (SOAP, PROGRESS, DISCHARGE_SUMMARY, …), never its content. */
+      entryType: z.string().regex(/^[A-Z][A-Z_]{1,39}$/),
+      /** Set on an amendment: the signed note this one replaces. */
+      supersedesEntryId: optId,
+    }).strict(),
+  }),
+  contract({
+    type: "FamilyAccessGranted", version: 1, aggregateType: "PATIENT_DELEGATION", scope: "FACILITY",
+    sensitivity: "SENSITIVE", producer: "patient portal (acceptDelegation: access starts on acceptance)",
+    payload: z.object({ delegationId: id, patientId: id, delegateUserId: id, scopes: z.array(delegationScope).min(1) }).strict(),
+  }),
+  contract({
+    type: "FamilyAccessRevoked", version: 1, aggregateType: "PATIENT_DELEGATION", scope: "FACILITY",
+    sensitivity: "SENSITIVE", producer: "patient portal (revokeDelegation), delegation expiry in the runner",
+    payload: z.object({ delegationId: id, patientId: id, delegateUserId: id, reason: z.enum(["REVOKED", "EXPIRED"]) }).strict(),
+  }),
+  contract({
+    type: "ConsentExpired", version: 1, aggregateType: "CONSENT", scope: "FACILITY",
+    sensitivity: "SENSITIVE", producer: "consent (expireLapsedConsents)",
+    payload: z.object({ consentId: id, patientId: id }).strict(),
+  }),
+  contract({
+    type: "ConsentRequestStatusChanged", version: 1, aggregateType: "CONSENT", scope: "FACILITY",
+    sensitivity: "SENSITIVE", producer: "consent (requestConsent, closeConsentRequest)",
+    payload: z.object({ consentId: id, patientId: id, from: z.enum(["REQUESTED"]).nullable(), to: z.enum(["REQUESTED", "DECLINED", "CANCELLED"]) }).strict(),
+  }),
+  contract({
+    type: "PatientAccessSessionStatusChanged", version: 1, aggregateType: "PATIENT_ACCESS_SESSION", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "patient access codes (issue, redeem, extend, end, expiry)",
+    payload: z.object({
+      /** The access session (also the aggregate id). Keys avoid "session": the sensitive-key guard refuses them. */
+      accessGrantId: id, patientId: id,
+      from: accessSessionStatus.nullable(), to: accessSessionStatus,
+      endedBy: z.enum(["DOCTOR", "PATIENT", "SYSTEM"]).optional(),
+      /** ACTIVE → ACTIVE: the doctor extended the session. */
+      extended: z.boolean(), doctorStaffId: optId,
+    }).strict(),
+  }),
+  contract({
+    type: "PatientAccountLinked", version: 1, aggregateType: "PATIENT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "self-registration (verifyLinkOtp, decideLinkRequest LINK)",
+    payload: z.object({ patientId: id, linkRequestId: id, portalUserId: id, via: z.enum(["OTP", "FRONT_DESK"]) }).strict(),
+  }),
+  contract({
+    type: "PatientDemographicsUpdated", version: 1, aggregateType: "PATIENT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "patient profile (updateProfile), identifiers (addPatientIdentifier, Aarogya types)",
+    payload: z.object({
+      patientId: id, changeKind: z.enum(["PROFILE", "IDENTIFIER_ADDED"]),
+      /** PROFILE: which fields changed, never their values. */
+      fields: z.array(z.enum(["PREFERRED_NAME", "PHONE", "ADDRESS", "LANGUAGE", "COMMUNICATION_PREFERENCE"])).optional(),
+      identifierType: z.enum(["UHID", "MRN"]).optional(),
     }).strict(),
   }),
 

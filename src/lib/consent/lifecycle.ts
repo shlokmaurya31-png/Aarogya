@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError, ConflictError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { emitDomainEvent } from "@/lib/events/emit";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 import { facilityOrganizationId } from "@/lib/events/tenant";
 import {
   CONSENT_PURPOSES, CONSENT_SCOPES, CONSENT_RECIPIENT_TYPES, CONSENT_TRANSITIONS,
@@ -66,22 +67,29 @@ export async function requestConsent(input: {
   await assertPatientInFacility(prisma, input.patientId, input.facilityId);
   if (input.createdByStaffId) await assertStaffInFacility(prisma, input.createdByStaffId, input.facilityId);
 
-  const consent = await prisma.interopConsent.create({
-    data: {
-      facilityId: input.facilityId,
-      patientId: input.patientId,
-      purpose: input.purpose,
-      recipientType: input.recipientType,
-      recipientIdentifier: input.recipientIdentifier.trim(),
-      recipientSystem: input.recipientSystem,
-      recipientName: input.recipientName,
-      description: input.description?.slice(0, 500),
-      expiresAt: input.expiresAt,
-      externalConsentRef: input.externalConsentRef,
-      createdByStaffId: input.createdByStaffId,
-      scopes: { create: scopes.map((scope) => ({ scope })) },
-    },
-    include: { scopes: true },
+  const consent = await prisma.$transaction(async (tx) => {
+    const created = await tx.interopConsent.create({
+      data: {
+        facilityId: input.facilityId,
+        patientId: input.patientId,
+        purpose: input.purpose,
+        recipientType: input.recipientType,
+        recipientIdentifier: input.recipientIdentifier.trim(),
+        recipientSystem: input.recipientSystem,
+        recipientName: input.recipientName,
+        description: input.description?.slice(0, 500),
+        expiresAt: input.expiresAt,
+        externalConsentRef: input.externalConsentRef,
+        createdByStaffId: input.createdByStaffId,
+        scopes: { create: scopes.map((scope) => ({ scope })) },
+      },
+      include: { scopes: true },
+    });
+    await emitFacilityEvent(tx, {
+      type: "ConsentRequestStatusChanged", aggregateId: created.id, facilityId: input.facilityId, actorUserId: input.byUserId,
+      payload: { consentId: created.id, patientId: input.patientId, from: null, to: "REQUESTED" },
+    });
+    return created;
   });
 
   await recordAuditEvent(
@@ -231,6 +239,10 @@ export async function closeConsentRequest(input: {
         patientId: consent.patientId,
       },
     });
+    await emitFacilityEvent(tx, {
+      type: "ConsentRequestStatusChanged", aggregateId: consent.id, facilityId: consent.facilityId, actorUserId: input.byUserId,
+      payload: { consentId: consent.id, patientId: consent.patientId, from: "REQUESTED", to: input.to },
+    });
     return tx.interopConsent.findUniqueOrThrow({ where: { id: consent.id }, include: { scopes: true } });
   });
 }
@@ -318,9 +330,21 @@ export async function assertExchangeAuthorized(req: ExchangeAuthorizationRequest
  */
 export async function expireLapsedConsents(facilityId: string) {
   const now = new Date();
-  const result = await prisma.interopConsent.updateMany({
+  // One consent at a time, each with its ConsentExpired (rag-indexer stops
+  // serving the record exactly as on ConsentRevoked), guarded on its status.
+  const lapsed = await prisma.interopConsent.findMany({
     where: { facilityId, status: { in: ["GRANTED", "ACTIVE"] }, expiresAt: { not: null, lte: now } },
-    data: { status: "EXPIRED" },
+    select: { id: true, status: true, patientId: true },
   });
-  return { expired: result.count };
+  let expired = 0;
+  for (const c of lapsed) {
+    const done = await prisma.$transaction(async (tx) => {
+      const r = await tx.interopConsent.updateMany({ where: { id: c.id, status: c.status }, data: { status: "EXPIRED" } });
+      if (r.count !== 1) return false;
+      await emitFacilityEvent(tx, { type: "ConsentExpired", aggregateId: c.id, facilityId, payload: { consentId: c.id, patientId: c.patientId } });
+      return true;
+    });
+    if (done) expired++;
+  }
+  return { expired };
 }

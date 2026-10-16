@@ -1,6 +1,27 @@
 import { createHash, randomInt } from "crypto";
 import { prisma } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+import type { PatientAccessSession, PatientAccessSessionStatus, Prisma } from "@prisma/client";
+
+/**
+ * PatientAccessSessionStatusChanged, in the writer's transaction. A session can
+ * span facilities (any clinician the patient shares with), so the tenant is the
+ * patient's facility.
+ */
+async function emitSessionStatus(
+  tx: Prisma.TransactionClient, s: PatientAccessSession, from: PatientAccessSessionStatus | null,
+  extra: { endedBy?: "DOCTOR" | "PATIENT" | "SYSTEM"; extended?: boolean; actorUserId?: string | null } = {},
+) {
+  const patient = await tx.patient.findUniqueOrThrow({ where: { id: s.patientId }, select: { facilityId: true } });
+  await emitFacilityEvent(tx, {
+    type: "PatientAccessSessionStatusChanged", aggregateId: s.id, facilityId: patient.facilityId, actorUserId: extra.actorUserId ?? null,
+    payload: {
+      accessGrantId: s.id, patientId: s.patientId, from, to: s.status, extended: extra.extended ?? false,
+      ...(extra.endedBy ? { endedBy: extra.endedBy } : {}), ...(s.doctorStaffId ? { doctorStaffId: s.doctorStaffId } : {}),
+    },
+  });
+}
 
 /**
  * Bedside patient-access sessions — the "give your code to the doctor" workflow.
@@ -48,11 +69,14 @@ export function prettyCode(code: string): string {
 export async function issueAccessCode(patientId: string, createdByUserId: string, purpose?: string) {
   const now = new Date();
 
-  // Auto-expire the patient's stale open sessions (single live grant).
-  await prisma.patientAccessSession.updateMany({
-    where: { patientId, status: { in: ["PENDING", "ACTIVE"] } },
-    data: { status: "EXPIRED", endedAt: now, endedBy: "SYSTEM" },
-  });
+  // Auto-expire the patient's stale open sessions (single live grant), each with its event.
+  const open = await prisma.patientAccessSession.findMany({ where: { patientId, status: { in: ["PENDING", "ACTIVE"] } } });
+  for (const o of open) {
+    await prisma.$transaction(async (tx) => {
+      const r = await tx.patientAccessSession.updateMany({ where: { id: o.id, status: o.status }, data: { status: "EXPIRED", endedAt: now, endedBy: "SYSTEM" } });
+      if (r.count === 1) await emitSessionStatus(tx, await tx.patientAccessSession.findUniqueOrThrow({ where: { id: o.id } }), o.status, { endedBy: "SYSTEM", actorUserId: createdByUserId });
+    });
+  }
 
   // Generate a code whose hash is unique (retry on the astronomically rare clash).
   let code = generateCode();
@@ -62,15 +86,19 @@ export async function issueAccessCode(patientId: string, createdByUserId: string
     code = generateCode();
   }
 
-  const session = await prisma.patientAccessSession.create({
-    data: {
-      patientId,
-      createdByUserId,
-      codeHash: hashCode(code),
-      status: "PENDING",
-      purpose: purpose?.slice(0, 200),
-      expiresAt: new Date(now.getTime() + CODE_TTL_MS),
-    },
+  const session = await prisma.$transaction(async (tx) => {
+    const created = await tx.patientAccessSession.create({
+      data: {
+        patientId,
+        createdByUserId,
+        codeHash: hashCode(code),
+        status: "PENDING",
+        purpose: purpose?.slice(0, 200),
+        expiresAt: new Date(now.getTime() + CODE_TTL_MS),
+      },
+    });
+    await emitSessionStatus(tx, created, null, { actorUserId: createdByUserId });
+    return created;
   });
 
   await recordAuditEvent("patient.access.codeIssued", createdByUserId, { sessionId: session.id }, { patientId });
@@ -93,30 +121,33 @@ export async function redeemAccessCode(opts: {
   // Uniform failure: bad code, already used, or expired are indistinguishable.
   if (!found || found.status !== "PENDING" || found.expiresAt < now) {
     if (found && found.status === "PENDING" && found.expiresAt < now) {
-      await prisma.patientAccessSession.update({
-        where: { id: found.id },
-        data: { status: "EXPIRED", endedAt: now, endedBy: "SYSTEM" },
+      await prisma.$transaction(async (tx) => {
+        const r = await tx.patientAccessSession.updateMany({ where: { id: found.id, status: "PENDING" }, data: { status: "EXPIRED", endedAt: now, endedBy: "SYSTEM" } });
+        if (r.count === 1) await emitSessionStatus(tx, await tx.patientAccessSession.findUniqueOrThrow({ where: { id: found.id } }), "PENDING", { endedBy: "SYSTEM" });
       });
     }
     return null;
   }
 
   // Guarded transition — only the row still PENDING flips to ACTIVE (race-safe).
-  const result = await prisma.patientAccessSession.updateMany({
-    where: { id: found.id, status: "PENDING" },
-    data: {
-      status: "ACTIVE",
-      doctorUserId: opts.doctorUserId,
-      doctorStaffId: opts.doctorStaffId ?? undefined,
-      doctorName: opts.doctorName ?? undefined,
-      facilityId: opts.facilityId ?? undefined,
-      redeemedAt: now,
-      activeExpiresAt: new Date(now.getTime() + ACTIVE_TTL_MS),
-    },
+  const session = await prisma.$transaction(async (tx) => {
+    const result = await tx.patientAccessSession.updateMany({
+      where: { id: found.id, status: "PENDING" },
+      data: {
+        status: "ACTIVE",
+        doctorUserId: opts.doctorUserId,
+        doctorStaffId: opts.doctorStaffId ?? undefined,
+        doctorName: opts.doctorName ?? undefined,
+        facilityId: opts.facilityId ?? undefined,
+        redeemedAt: now,
+        activeExpiresAt: new Date(now.getTime() + ACTIVE_TTL_MS),
+      },
+    });
+    if (result.count === 0) return null;
+    const active = await tx.patientAccessSession.findUniqueOrThrow({ where: { id: found.id } });
+    await emitSessionStatus(tx, active, "PENDING", { actorUserId: opts.doctorUserId });
+    return active;
   });
-  if (result.count === 0) return null;
-
-  const session = await prisma.patientAccessSession.findUnique({ where: { id: found.id } });
   if (!session) return null;
 
   // Log the doctor opening the record — mirrored for both parties.
@@ -142,11 +173,16 @@ export async function endAccessSession(sessionId: string, by: "DOCTOR" | "PATIEN
   const session = await prisma.patientAccessSession.findUnique({ where: { id: sessionId } });
   if (!session || session.status !== "ACTIVE") return session ?? null;
 
-  const result = await prisma.patientAccessSession.updateMany({
-    where: { id: sessionId, status: "ACTIVE" },
-    data: { status: "ENDED", endedAt: now, endedBy: by },
+  const ended = await prisma.$transaction(async (tx) => {
+    const result = await tx.patientAccessSession.updateMany({
+      where: { id: sessionId, status: "ACTIVE" },
+      data: { status: "ENDED", endedAt: now, endedBy: by },
+    });
+    if (result.count === 0) return false;
+    await emitSessionStatus(tx, await tx.patientAccessSession.findUniqueOrThrow({ where: { id: sessionId } }), "ACTIVE", { endedBy: by, actorUserId: actingUserId });
+    return true;
   });
-  if (result.count === 0) return prisma.patientAccessSession.findUnique({ where: { id: sessionId } });
+  if (!ended) return prisma.patientAccessSession.findUnique({ where: { id: sessionId } });
 
   const durationMin = session.redeemedAt
     ? Math.max(1, Math.round((now.getTime() - session.redeemedAt.getTime()) / 60000))
@@ -183,9 +219,13 @@ export async function enforceActiveExpiry(session: Session): Promise<Session> {
   if (session.activeExpiresAt && session.activeExpiresAt.getTime() > Date.now()) return session;
 
   const now = new Date();
-  const result = await prisma.patientAccessSession.updateMany({
-    where: { id: session.id, status: "ACTIVE" },
-    data: { status: "EXPIRED", endedAt: now, endedBy: "SYSTEM" },
+  const result = await prisma.$transaction(async (tx) => {
+    const r = await tx.patientAccessSession.updateMany({
+      where: { id: session.id, status: "ACTIVE" },
+      data: { status: "EXPIRED", endedAt: now, endedBy: "SYSTEM" },
+    });
+    if (r.count > 0) await emitSessionStatus(tx, await tx.patientAccessSession.findUniqueOrThrow({ where: { id: session.id } }), "ACTIVE", { endedBy: "SYSTEM" });
+    return r;
   });
   if (result.count > 0) {
     const detail = { sessionId: session.id, doctorName: session.doctorName, endedBy: "SYSTEM", reason: "timeout" };
@@ -213,11 +253,16 @@ export async function extendAccessSession(sessionId: string): Promise<Session | 
   const base = enforced.activeExpiresAt && enforced.activeExpiresAt.getTime() > Date.now()
     ? enforced.activeExpiresAt.getTime()
     : Date.now();
-  const updated = await prisma.patientAccessSession.update({
-    where: { id: sessionId },
-    data: { activeExpiresAt: new Date(base + GRACE_EXTEND_MS), extensionCount: { increment: 1 } },
+  return prisma.$transaction(async (tx) => {
+    const r = await tx.patientAccessSession.updateMany({
+      where: { id: sessionId, status: "ACTIVE" },
+      data: { activeExpiresAt: new Date(base + GRACE_EXTEND_MS), extensionCount: { increment: 1 } },
+    });
+    if (r.count !== 1) return null;
+    const updated = await tx.patientAccessSession.findUniqueOrThrow({ where: { id: sessionId } });
+    await emitSessionStatus(tx, updated, "ACTIVE", { extended: true, actorUserId: updated.doctorUserId });
+    return updated;
   });
-  return updated;
 }
 
 /**

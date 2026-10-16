@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { z } from "zod";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import type { PatientAccessScope } from "../context";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 /**
  * Phase D11 — patient profile & preferences (brief §6, §46).
@@ -65,15 +66,28 @@ export async function updateProfile(scope: PatientAccessScope, body: unknown): P
   if (!parsed.success) throw new BadRequestError("Only contact and communication preferences can be updated.");
   const data = parsed.data;
   // Explicit field-by-field mapping — never spread the request body.
-  await prisma.patient.update({
-    where: { id: scope.patientId },
-    data: {
-      preferredName: data.preferredName ?? undefined,
-      phone: data.phone ?? undefined,
-      address: data.address ?? undefined,
-      language: data.language ?? undefined,
-      communicationPreference: data.communicationPreference ?? undefined,
-    },
+  const FIELD_CODES = { preferredName: "PREFERRED_NAME", phone: "PHONE", address: "ADDRESS", language: "LANGUAGE", communicationPreference: "COMMUNICATION_PREFERENCE" } as const;
+  await prisma.$transaction(async (tx) => {
+    const before = await tx.patient.findUniqueOrThrow({ where: { id: scope.patientId }, select: { facilityId: true, preferredName: true, phone: true, address: true, language: true, communicationPreference: true } });
+    await tx.patient.update({
+      where: { id: scope.patientId },
+      data: {
+        preferredName: data.preferredName ?? undefined,
+        phone: data.phone ?? undefined,
+        address: data.address ?? undefined,
+        language: data.language ?? undefined,
+        communicationPreference: data.communicationPreference ?? undefined,
+      },
+    });
+    // Which fields changed (codes), never the values.
+    const fields = (Object.keys(FIELD_CODES) as (keyof typeof FIELD_CODES)[])
+      .filter((k) => data[k] != null && data[k] !== before[k]).map((k) => FIELD_CODES[k]);
+    if (fields.length) {
+      await emitFacilityEvent(tx, {
+        type: "PatientDemographicsUpdated", aggregateId: scope.patientId, facilityId: before.facilityId,
+        payload: { patientId: scope.patientId, changeKind: "PROFILE", fields },
+      });
+    }
   });
   return getProfile(scope);
 }

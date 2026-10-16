@@ -73,6 +73,8 @@ async function main() {
   const right = await verifyLinkOtp(b.userId, code ?? "");
   report("The right code links the account to the existing record", right.status === "LINKED" && (await prisma.patient.findUniqueOrThrow({ where: { id: rec.id } })).userId === b.userId);
   report("The registrant's status shows LINKED", (await linkStatusFor(b.userId))?.status === "LINKED");
+  const otpLinked = await prisma.domainEventOutbox.findMany({ where: { eventType: "PatientAccountLinked", aggregateId: rec.id } });
+  report("…and emits PatientAccountLinked once, via OTP", otpLinked.length === 1 && (otpLinked[0].payload as { via?: string; portalUserId?: string }).via === "OTP" && (otpLinked[0].payload as { portalUserId?: string }).portalUserId === b.userId);
 
   // 3. Too many wrong codes → front desk.
   const rec3 = await freshRecord("lockout", "9822233344");
@@ -97,6 +99,8 @@ async function main() {
   report("Front desk LINK links the account to the record", decided.status === "LINKED" && (await prisma.patient.findUniqueOrThrow({ where: { id: rec4.id } })).userId === d.userId);
   const audited = await prisma.auditEvent.count({ where: { type: "patient.account.linked", detail: { path: ["linkRequestId"], equals: req4.id } } });
   report("The front-desk link is audited", audited === 1);
+  const deskLinked = await prisma.domainEventOutbox.findMany({ where: { eventType: "PatientAccountLinked", aggregateId: rec4.id } });
+  report("…and emits PatientAccountLinked via FRONT_DESK (the LINK branch emits too)", deskLinked.length === 1 && (deskLinked[0].payload as { via?: string }).via === "FRONT_DESK");
 
   // 5. Matching an already-owned record → review, never linked to the new account.
   const e = await registerPatientAccount({ fullName: rec.fullName, email: email("owned"), passwordHash: "x", sex: "F", phone: "9811122334", dob: new Date("1990-05-17") });

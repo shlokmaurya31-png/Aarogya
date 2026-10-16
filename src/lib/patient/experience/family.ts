@@ -9,6 +9,17 @@ import {
   type PatientAccessScope,
   type PatientContext,
 } from "../context";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+import type { Prisma } from "@prisma/client";
+
+/** FamilyAccessRevoked, in the writer's transaction (also used by the runner's expiry sweep). */
+export async function emitFamilyAccessRevoked(tx: Prisma.TransactionClient, d: { id: string; patientId: string; delegateUserId: string }, reason: "REVOKED" | "EXPIRED", actorUserId?: string | null) {
+  const patient = await tx.patient.findUniqueOrThrow({ where: { id: d.patientId }, select: { facilityId: true } });
+  await emitFacilityEvent(tx, {
+    type: "FamilyAccessRevoked", aggregateId: d.id, facilityId: patient.facilityId, actorUserId,
+    payload: { delegationId: d.id, patientId: d.patientId, delegateUserId: d.delegateUserId, reason },
+  });
+}
 
 /**
  * Phase D11 — family / caregiver delegated access (brief §26, §27, §55).
@@ -129,18 +140,27 @@ export async function acceptDelegation(ctx: PatientContext, token: string) {
   // You cannot become a delegate over a record that is your own.
   if (delegation.patient.userId && delegation.patient.userId === ctx.userId) throw new BadRequestError("This is your own record.");
 
-  const result = await prisma.patientDelegation.updateMany({
-    where: { id: delegation.id, status: "INVITED", version: delegation.version },
-    data: {
-      delegateUserId: ctx.userId,
-      status: "ACTIVE",
-      acceptedAt: new Date(),
-      // Burn the token: it can never be replayed.
-      inviteTokenHash: null,
-      version: { increment: 1 },
-    },
+  await prisma.$transaction(async (tx) => {
+    const result = await tx.patientDelegation.updateMany({
+      where: { id: delegation.id, status: "INVITED", version: delegation.version },
+      data: {
+        delegateUserId: ctx.userId,
+        status: "ACTIVE",
+        acceptedAt: new Date(),
+        // Burn the token: it can never be replayed.
+        inviteTokenHash: null,
+        version: { increment: 1 },
+      },
+    });
+    if (result.count === 0) throw new ConflictError();
+    // Access starts on acceptance (not on invitation): the scope codes, never names.
+    const scopes = await tx.patientDelegationScope.findMany({ where: { delegationId: delegation.id }, select: { scope: true }, orderBy: { scope: "asc" } });
+    const patient = await tx.patient.findUniqueOrThrow({ where: { id: delegation.patientId }, select: { facilityId: true } });
+    await emitFacilityEvent(tx, {
+      type: "FamilyAccessGranted", aggregateId: delegation.id, facilityId: patient.facilityId, actorUserId: ctx.userId,
+      payload: { delegationId: delegation.id, patientId: delegation.patientId, delegateUserId: ctx.userId, scopes: scopes.map((s) => s.scope) },
+    });
   });
-  if (result.count === 0) throw new ConflictError();
   await recordAuditEvent("patient.delegation.accepted", ctx.userId, { delegationId: delegation.id, patientId: delegation.patientId }, { patientId: delegation.patientId });
   return { ok: true as const };
 }
@@ -148,16 +168,22 @@ export async function acceptDelegation(ctx: PatientContext, token: string) {
 /** Revoke a delegation. Only the grantor patient may revoke, and only their own. */
 export async function revokeDelegation(scope: PatientAccessScope, actorUserId: string, delegationId: string, reason?: string) {
   if (!scope.isSelf) throw new NotFoundError();
-  const delegation = await prisma.patientDelegation.findUnique({ where: { id: delegationId }, select: { patientId: true, status: true, version: true } });
+  const delegation = await prisma.patientDelegation.findUnique({ where: { id: delegationId }, select: { patientId: true, status: true, version: true, delegateUserId: true } });
   // Not ours / nonexistent => 404-shaped.
   if (!delegation || delegation.patientId !== scope.patientId) throw new NotFoundError();
   if (["REVOKED", "EXPIRED"].includes(delegation.status)) throw new BadRequestError("This access has already ended.");
 
-  const result = await prisma.patientDelegation.updateMany({
-    where: { id: delegationId, status: delegation.status, version: delegation.version },
-    data: { status: "REVOKED", revokedAt: new Date(), revokedReason: reason, delegateUserId: delegation.status === "INVITED" ? null : undefined, version: { increment: 1 } },
+  await prisma.$transaction(async (tx) => {
+    const result = await tx.patientDelegation.updateMany({
+      where: { id: delegationId, status: delegation.status, version: delegation.version },
+      data: { status: "REVOKED", revokedAt: new Date(), revokedReason: reason, delegateUserId: delegation.status === "INVITED" ? null : undefined, version: { increment: 1 } },
+    });
+    if (result.count === 0) throw new ConflictError();
+    // Only an accepted delegation gave access; revoking an invitation ends nothing.
+    if (delegation.status === "ACTIVE" && delegation.delegateUserId) {
+      await emitFamilyAccessRevoked(tx, { id: delegationId, patientId: delegation.patientId, delegateUserId: delegation.delegateUserId }, "REVOKED", actorUserId);
+    }
   });
-  if (result.count === 0) throw new ConflictError();
   await recordAuditEvent("patient.delegation.revoked", actorUserId, { delegationId, patientId: scope.patientId, reason: reason ?? null }, { patientId: scope.patientId, facilityId: scope.facilityId });
   return { ok: true as const };
 }

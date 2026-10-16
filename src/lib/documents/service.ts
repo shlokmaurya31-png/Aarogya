@@ -16,6 +16,7 @@ import { recordAuditEvent } from "@/lib/auth/audit";
 import { NotFoundError } from "@/lib/auth/rbac";
 import { buildDocumentSpec, documentTitle, type DocumentInput } from "./templates";
 import { renderDocument, type Letterhead } from "./pdf/layout";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 export function newVerifyToken(): string {
   return randomBytes(24).toString("base64url");
@@ -143,6 +144,14 @@ export async function generateAndStoreDocument(
         authorStaffId: author?.id,
         generatedDocumentId: row.id,
         ...clinicalDocumentFieldsFor(input.type, ctx.isDraft ?? false),
+      },
+    });
+    // D4: the GeneratedDocument and its ClinicalDocument commit with the event.
+    await emitFacilityEvent(tx, {
+      type: "DocumentGenerated", aggregateId: clinical.id, facilityId: ctx.facilityId, actorUserId: ctx.issuedByUserId, encounterId: ctx.encounterId,
+      payload: {
+        documentId: clinical.id, generatedDocumentId: row.id, patientId: ctx.patientId, documentType: input.type, isDraft: ctx.isDraft ?? false,
+        ...(ctx.encounterId ? { encounterId: ctx.encounterId } : {}),
       },
     });
     return { row, clinical };

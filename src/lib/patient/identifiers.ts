@@ -4,6 +4,7 @@ import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { IDENTIFIER_SYSTEMS } from "@/lib/hospital/interoperability/shared";
 import { linkExternalIdentifier } from "@/lib/hospital/interoperability/externalIdentity";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 /**
  * D1: one home per kind of patient identifier.
@@ -118,8 +119,16 @@ export async function addPatientIdentifier(input: {
   if (!patient || patient.facilityId !== input.facilityId) throw new NotFoundError("Patient not found.");
 
   if ((AAROGYA_IDENTIFIER_TYPES as readonly string[]).includes(input.type)) {
-    const identifier = await prisma.patientIdentifier.create({
-      data: { patientId: input.patientId, type: input.type, value, issuer: input.issuer },
+    const identifier = await prisma.$transaction(async (tx) => {
+      const created = await tx.patientIdentifier.create({
+        data: { patientId: input.patientId, type: input.type, value, issuer: input.issuer },
+      });
+      // The type only, never the value. (External identifiers emit their own event at 9c.)
+      await emitFacilityEvent(tx, {
+        type: "PatientDemographicsUpdated", aggregateId: input.patientId, facilityId: input.facilityId, actorUserId: input.byUserId,
+        payload: { patientId: input.patientId, changeKind: "IDENTIFIER_ADDED", identifierType: created.type as "UHID" | "MRN" },
+      });
+      return created;
     });
     await recordAuditEvent(
       "hospital.patient.identifierAdded",

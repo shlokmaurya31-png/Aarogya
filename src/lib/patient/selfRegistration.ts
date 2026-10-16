@@ -26,6 +26,7 @@ import { generateCandidateUhid } from "@/lib/hospital/uhid";
 import { sendSms, maskPhone } from "@/lib/messaging/sms";
 import { findDuplicateCandidates } from "./duplicateDetection";
 import { createRegisteredPatient } from "./registration";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 const OTP_TTL_MS = 10 * 60_000;
 const MAX_OTP_ATTEMPTS = 5;
@@ -174,6 +175,11 @@ async function linkRecord(r: PatientLinkRequest, userId: string, reviewerUserId:
       return false;
     }
     await tx.patientLinkRequest.update({ where: { id: r.id }, data: { status: "LINKED", otpHash: null, resolvedByUserId: reviewerUserId, resolvedAt: new Date() } });
+    // Both paths that link (the patient's OTP, the front desk's LINK decision) come through here.
+    await emitFacilityEvent(tx, {
+      type: "PatientAccountLinked", aggregateId: r.candidatePatientId!, facilityId: r.facilityId, actorUserId: reviewerUserId ?? userId,
+      payload: { patientId: r.candidatePatientId!, linkRequestId: r.id, portalUserId: userId, via: reviewerUserId ? "FRONT_DESK" : "OTP" },
+    });
     return true;
   });
   if (done) {

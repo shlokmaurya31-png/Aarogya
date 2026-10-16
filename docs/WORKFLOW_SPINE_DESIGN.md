@@ -844,6 +844,38 @@ from a per-facility sequence but were unique across facilities, so a second
 facility's first invoice of the year collided; they are unique per facility.
 Gate `verify-postgres-late-charges`.
 
+**As built: step 7 (batch 5).** Records, consent and patient-access events:
+`PatientDocumentUploaded`, `DocumentGenerated`, `ClinicalNoteSigned`,
+`FamilyAccessGranted` / `FamilyAccessRevoked`, `ConsentExpired`,
+`ConsentRequestStatusChanged`, `PatientAccessSessionStatusChanged`,
+`PatientAccountLinked`, `PatientDemographicsUpdated`. New aggregates
+CLINICAL_DOCUMENT, CLINICAL_NOTE, PATIENT_DELEGATION, PATIENT_ACCESS_SESSION.
+Gate `verify-postgres-records-access-events`; the core journey gains step 8b
+(portal upload). Departures:
+
+- **SENSITIVE.** Family access and every consent fact (ConsentRequestStatusChanged
+  joins ConsentGranted / ConsentRevoked).
+- **Payload keys avoid the guard's words.** The sensitive-key guard refuses any
+  key containing "note" or "session", so `ClinicalNoteSigned` carries
+  `entryId` / `entryType` / `supersedesEntryId` and the access-session event
+  `accessGrantId` (both also the aggregate id). A unit test now runs every
+  catalogued contract's keys through the guard, so a contract the guard would
+  refuse fails `npm test` instead of the first emission.
+- **Consent expiry is per consent.** `expireLapsedConsents` was one bulk update;
+  it now expires each lapsed consent compare-and-set with its `ConsentExpired`.
+- **Access sessions** (tenant: the patient's facility): every transition is
+  transactional with its event; `extendAccessSession` is compare-and-set on
+  ACTIVE. A stale code expired by a new issue emits PENDING → EXPIRED.
+- **Delegation expiry** moved into the runner (`sweepDelegationExpiry`): an
+  ACTIVE delegation past its date emits `FamilyAccessRevoked` (EXPIRED); a
+  lapsed invitation (INVITED) becomes EXPIRED with no event, as it never gave
+  access. Revoking an invitation emits nothing for the same reason.
+- **Uploads.** task-generator opens one DOCUMENT_REVIEW task per uploaded
+  document (keyed by the document).
+- **Not covered:** a note created already SIGNED through the note route (the
+  allowlisted types) emits nothing; external identifiers emit at 9c
+  (`ExternalIdentifierStatusChanged`), not as demographics.
+
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b
 (quality, safety, operations) and 9c (access, identity, interoperability,

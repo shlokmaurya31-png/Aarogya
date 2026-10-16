@@ -103,6 +103,19 @@ describe("sensitive-data guard", () => {
     expect(() => assertNoSensitiveData({ note: "x".repeat(600) })).toThrow();
     expect(() => assertNoSensitiveData({ patientId: "x".repeat(600) })).toThrow();
   });
+  it("accepts every key every catalogued contract declares (a contract the guard refuses can never be emitted)", () => {
+    /** A skeleton of the schema's keys at every depth, leaves "x". */
+    const skeleton = (schema: unknown): unknown => {
+      const s = schema as { shape?: Record<string, unknown>; unwrap?: () => unknown; element?: unknown };
+      if (s.shape) return Object.fromEntries(Object.entries(s.shape).map(([k, v]) => [k, skeleton(v)]));
+      if (s.element) return [skeleton(s.element)];
+      if (typeof s.unwrap === "function") return skeleton(s.unwrap());
+      return "x";
+    };
+    for (const c of EVENT_CONTRACTS) {
+      expect(() => assertNoSensitiveData(skeleton(c.payload)), `${c.type} v${c.version}`).not.toThrow();
+    }
+  });
 });
 
 describe("error classification", () => {
@@ -149,5 +162,29 @@ describe("payload codes mirror the Prisma enums they describe", () => {
     ["ClinicalHandoffStatusChanged", "urgency", $Enums.RequestPriority],
   ] as const)("%s.%s", (type, key, prismaEnum) => {
     expect(field(type, key)).toEqual(values(prismaEnum as Record<string, string>));
+  });
+});
+
+describe("step-7 payload codes mirror their sources", () => {
+  const options = (type: string, key: string) => {
+    const shape = (getEventContract(type, 1)!.payload as unknown as { shape: Record<string, { options?: string[]; unwrap?: () => unknown; element?: unknown }> }).shape;
+    let f = shape[key] as { options?: string[]; unwrap?: () => unknown; element?: unknown };
+    while (!f.options && (f.unwrap || f.element)) f = (f.element ?? f.unwrap!()) as typeof f;
+    return [...(f.options ?? [])].sort();
+  };
+  it("DocumentGenerated.documentType = DOCUMENT_TYPES", async () => {
+    const { DOCUMENT_TYPES } = await import("@/lib/documents/templates");
+    expect(options("DocumentGenerated", "documentType")).toEqual([...DOCUMENT_TYPES].sort());
+  });
+  it("PatientDocumentUploaded.documentType = PATIENT_DOCUMENT_TYPES", async () => {
+    const { PATIENT_DOCUMENT_TYPES } = await import("@/lib/patient/experience/documents");
+    expect(options("PatientDocumentUploaded", "documentType")).toEqual([...PATIENT_DOCUMENT_TYPES].sort());
+  });
+  it("FamilyAccessGranted.scopes = DELEGATION_SCOPES", async () => {
+    const { DELEGATION_SCOPES } = await import("@/lib/patient/context");
+    expect(options("FamilyAccessGranted", "scopes")).toEqual([...DELEGATION_SCOPES].sort());
+  });
+  it("PatientAccessSessionStatusChanged.to = PatientAccessSessionStatus", () => {
+    expect(options("PatientAccessSessionStatusChanged", "to")).toEqual(Object.values($Enums.PatientAccessSessionStatus).sort());
   });
 });

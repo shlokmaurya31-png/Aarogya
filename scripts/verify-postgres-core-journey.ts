@@ -37,6 +37,9 @@ import { assertNoSensitiveData } from "../src/lib/events/sensitiveGuard";
 import { replayEvent } from "../src/lib/events/replay";
 import { loadActorMemberships } from "../src/lib/auth/tenantContext";
 import { runTick } from "../src/lib/runner/tick";
+import { PDFDocument } from "pdf-lib";
+import { uploadPatientDocument } from "../src/lib/patient/experience/documents";
+import type { PatientAccessScope } from "../src/lib/patient/context";
 import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 let pass = 0;
@@ -115,6 +118,18 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
   const openAfter8 = (await critTask())?.status;
   await step("8a Critical acknowledgement", ["CriticalResultAcknowledged", "TaskCompleted"], () => tx((t) => acknowledgeResult(t, resultId, doctor.id, by)));
 
+  // 8b. Outside report through the patient portal (not encounter-scoped: checked directly below).
+  let uploadedDocumentId = "";
+  if (opts.full) {
+    const portalUser = await prisma.user.create({ data: { email: `cj-${run}@verify.aarogya`, passwordHash: "x", role: "PATIENT", displayName: "Journey patient" } });
+    await prisma.patient.update({ where: { id: patient.id }, data: { userId: portalUser.id } });
+    const pdf = await PDFDocument.create();
+    pdf.addPage([200, 100]).drawText(`outside ${run}`, { x: 10, y: 50, size: 8 });
+    const scope: PatientAccessScope = { patientId: patient.id, patientIds: [patient.id], facilityId, isSelf: true, allowedClasses: new Set(["RECORDS", "REPORTS"]) };
+    uploadedDocumentId = (await uploadPatientDocument(scope, portalUser.id, { bytes: Buffer.from(await pdf.save()), contentType: "application/pdf", originalName: "outside.pdf", title: "Outside echo", type: "REPORT" })).id;
+    await drain();
+  }
+
   let orderId = "";
   if (opts.full) {
     // 8c. A medication round: order, verify (→ mar-scheduler doses), dispense, administer.
@@ -158,7 +173,7 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
       await completeProcedure({ surgeryId, facilityId, byUserId: by });
     });
   }
-  return { facilityId, patientId: patient.id, encounterId: enc.id, orderId, resultId, surgeryId, usageId, steps, registered, openAfter8, critTask };
+  return { facilityId, patientId: patient.id, encounterId: enc.id, orderId, resultId, surgeryId, usageId, uploadedDocumentId, steps, registered, openAfter8, critTask };
 }
 
 async function main() {
@@ -196,6 +211,10 @@ async function main() {
   report("The critical-result task opened at 8 is completed by 8a", a.openAfter8 === "OPEN" && crit?.status === "COMPLETED");
   report("minutesToAcknowledge matches the stored timestamps",
     (ack.payload as { minutesToAcknowledge: number }).minutesToAcknowledge === Math.floor((result.acknowledgedAt!.getTime() - result.verifiedAt!.getTime()) / 60_000));
+  const uploadedEvents = await prisma.domainEventOutbox.count({ where: { eventType: "PatientDocumentUploaded", aggregateId: a.uploadedDocumentId } });
+  const listed = await prisma.clinicalDocument.count({ where: { id: a.uploadedDocumentId, facilityId: a.facilityId, patientId: a.patientId } });
+  const reviewTasks = await prisma.task.count({ where: { facilityId: a.facilityId, idempotencyKey: `DOCUMENT_REVIEW:${a.uploadedDocumentId}` } });
+  report("8b Outside report: PatientDocumentUploaded once, in the facility's document list, exactly one review task", uploadedEvents === 1 && listed === 1 && reviewTasks === 1, `${uploadedEvents}/${listed}/${reviewTasks}`);
   const doses = await prisma.medicationAdministration.count({ where: { medicationOrderId: a.orderId } });
   report("mar-scheduler scheduled the BD doses once", doses === 3, String(doses));
   const otCharges = await prisma.charge.count({ where: { OR: [{ sourceType: "Surgery", sourceId: a.surgeryId }, { sourceType: "SurgeryItemUsage", sourceId: a.usageId }, { sourceType: "IcuAdmission" }], encounterId: a.encounterId } });

@@ -51,6 +51,16 @@ async function openTask(event: DomainEventEnvelope, encounterId: string, spec: T
   }));
 }
 
+/** A task about a patient with no encounter (e.g. a document from the portal), checked against the event's tenant. */
+async function openPatientTask(event: DomainEventEnvelope, patientId: string, spec: TaskSpec) {
+  const patient = await prisma.patient.findUnique({ where: { id: patientId }, select: { id: true, facilityId: true } });
+  if (!patient || patient.facilityId !== event.facilityId) throw new PermanentEventError(`Patient ${patientId} is not in the event's facility.`, "TENANT_MISMATCH");
+  await prisma.$transaction((tx) => createTask(tx, {
+    facilityId: patient.facilityId, patientId: patient.id, type: spec.type, title: spec.title, priority: spec.priority ?? "ROUTINE",
+    source: "EVENT", idempotencyKey: keyOf(spec.type, spec.sourceId),
+  }));
+}
+
 async function closeTask(event: DomainEventEnvelope, type: string, sourceId: string, outcome: "COMPLETED" | "CANCELLED" = "COMPLETED") {
   await prisma.$transaction(async (tx) => {
     const task = await tx.task.findFirst({ where: { facilityId: event.facilityId!, idempotencyKey: keyOf(type, sourceId), source: "EVENT", status: { in: OPEN_STATUSES } }, select: { id: true } });
@@ -85,7 +95,7 @@ export const taskGenerator: DomainEventConsumer = {
   name: "task-generator",
   handles: [
     "AdmissionRequested", "BedReserved", "AdmissionRequestStatusChanged", "EdDispositionDecided", "DischargeInitiated", "PatientDischarged",
-    "LabResultReleased", "ImagingReportReleased", "CriticalResultAcknowledged", "MedicationDoseMissed",
+    "LabResultReleased", "ImagingReportReleased", "CriticalResultAcknowledged", "MedicationDoseMissed", "PatientDocumentUploaded",
   ],
   async handle(event) {
     const p = event.payload as Record<string, string>;
@@ -112,6 +122,8 @@ export const taskGenerator: DomainEventConsumer = {
         return openCriticalResultTask(event);
       case "CriticalResultAcknowledged":
         return closeTask(event, CRITICAL_RESULT, p.resultId ?? p.reportId);
+      case "PatientDocumentUploaded":
+        return openPatientTask(event, p.patientId, { type: "DOCUMENT_REVIEW", title: "Review a document the patient uploaded", priority: "ROUTINE", sourceId: p.documentId });
       case "MedicationDoseMissed":
         if (!p.encounterId) return;
         return openTask(event, p.encounterId, { type: "MISSED_DOSE_REVIEW", title: "Review a dose that was not recorded", priority: "URGENT", sourceId: p.administrationId });

@@ -201,7 +201,7 @@ Beyond the one-per-aggregate rule, to reach the 60–80 target. Each is a judgem
 - **`SpecimenCollected` (planned) gains a producer:** `surgery.ts#collectSpecimen`, with `specimenSource` = LAB_ORDER | SURGICAL.
 - **Waste flow changes at step 9a (approved change 4).** Today `recordWaste` posts the write-off immediately and `rejectWaste` only marks the record REJECTED, so a rejected waste stays written off. At 9a: `recordWaste` moves the quantity to a **HOLD** state (unavailable, not written off) with a ledger entry (`StockMoved`); `approveWaste` posts the write-off from HOLD; `rejectWaste` posts a return from HOLD to available stock (both `StockDocumentStatusChanged`, documentType WASTE, plus `StockMoved`). Ledger entries are never edited: every step is a new entry. Step 9a adds a gate covering record → reject (stock fully restored) and record → approve (stock written off exactly once).
 - **Requisitions and RFQs are `OPERATIONAL_DETAIL`, not process steps:** they never commit money or stock, so they have no outcome to emit; money is committed by the purchase order (`PurchaseOrderStatusChanged`). Round 1 had them as process steps.
-- **`decideLinkRequest`** counts as emitting through its CREATE_NEW branch; its LINK branch should also emit `PatientAccountLinked` (step 7).
+- **`decideLinkRequest`** counts as emitting through its CREATE_NEW branch; its LINK branch emits `PatientAccountLinked` (FRONT_DESK) since step 7.
 
 ## Borderline calls to review
 
@@ -600,6 +600,7 @@ names: 81 (77 new).
 
 | Step | State |
 |---|---|
+| 7 | **wired** (2026-10-16, batch 5) with the step-7 planned events: 10 triage functions, plus `decideLinkRequest` (LINK → `PatientAccountLinked` FRONT_DESK), the document, note and family producers. `addPatientIdentifier` emits only for MRN/UHID; external identifiers are 9c's. |
 | 8 | **wired** (2026-10-16, batch 4) with the 8 planned OT/blood events: 22 triage functions, 10 events. `BloodUnitStatusChanged` is emitted by the one unit transition every path uses, so `dispatchIssue` / `receiveIssue` (exempted as transport logistics) now emit it too (ISSUED ↔ IN_TRANSIT) and left the exemptions. `TransfusionReactionReported` has no `severity` (the model has none). |
 | 4 | **wired** (2026-10-16, batch 4): 18 functions, 7 events. The admission-request, appointment no-show and transfer-request transitions became compare-and-set (they read the status, then wrote without a guard). `completeTransferRequest` also emits `TransferRequestStatusChanged` (COMPLETED), so the request's stream is whole. The task-generator cancels a bed-allocation task whose request is cancelled or rejected (it stayed open). |
 | 5b | **wired** (2026-10-16): 8 functions, 4 events |
