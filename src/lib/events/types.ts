@@ -35,6 +35,24 @@ export const AGGREGATE_TYPES = [
   "CLINICAL_HANDOFF",
   "NURSING_ASSIGNMENT",
   "NURSING_ASSESSMENT",
+  "LAB_ORDER",
+  "IMAGING_ORDER",
+  "SPECIMEN",
+  "IMAGING_STUDY",
+  "DISPENSING_RECORD",
+  "MEDICATION_ADMINISTRATION",
+  "MEDICATION_SAFETY_WARNING",
+  "MEDICATION_RECALL",
+  "MEDICATION_RECONCILIATION",
+  "MEDICATION_SUBSTITUTION",
+  "PHARMACY_COMPLIANCE",
+  "OBSERVATION",
+  "ICU_DEVICE",
+  "ICU_INFUSION",
+  "CARE_PLAN",
+  "EXTERNAL_LAB_REFERRAL",
+  "PROBLEM",
+  "ITEM_LOT",
   "MEDICATION_ORDER",
   "LAB_RESULT",
   "IMAGING_REPORT",
@@ -68,6 +86,13 @@ export interface EventContract<P extends z.ZodTypeAny = z.ZodTypeAny> {
   type: string;
   version: number;
   aggregateType: AggregateType;
+  /**
+   * Other aggregates the event may be about, chosen per emit with
+   * `EmitEventInput.aggregateType` (e.g. a critical-result acknowledgement is
+   * about a LAB_RESULT or an IMAGING_REPORT, and must be ordered behind that
+   * aggregate's release). Omitted: always `aggregateType`.
+   */
+  alternateAggregateTypes?: readonly AggregateType[];
   scope: EventScope;
   sensitivity: EventSensitivity;
   /** Human label of the domain service that produces this event. */
@@ -81,6 +106,8 @@ export interface EmitEventInput {
   type: string;
   version?: number; // defaults to the catalogue's current version for `type`
   aggregateId: string;
+  /** Only for a contract with alternateAggregateTypes; defaults to its aggregateType. */
+  aggregateType?: AggregateType;
   organizationId?: string | null;
   facilityId?: string | null;
   actorUserId?: string | null;

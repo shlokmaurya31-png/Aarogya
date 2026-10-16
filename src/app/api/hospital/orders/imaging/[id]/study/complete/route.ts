@@ -19,7 +19,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!study) throw new NotFoundError("No in-progress study to complete for this order.");
 
     const { contrastGiven, notes } = body ?? {};
-    const updated = await prisma.$transaction((tx) => completeStudy(tx, study.id, { contrastGiven: Boolean(contrastGiven), notes }));
+    const updated = await prisma.$transaction((tx) => completeStudy(tx, study.id, { contrastGiven: Boolean(contrastGiven), notes }, session.userId));
 
     await recordAuditEvent(
       "hospital.imaging.studyCompleted",

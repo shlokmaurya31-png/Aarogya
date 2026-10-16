@@ -2,7 +2,20 @@ import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { getPacsAdapter } from "@/lib/hospital/pacsAdapter";
-import type { Prisma, LabQcReviewStatus, ExternalLabStatus } from "@prisma/client";
+import type { Prisma, LabQcReviewStatus, ExternalLabStatus, ExternalLabReferral } from "@prisma/client";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+
+/** ExternalLabReferralStatusChanged, in the writer's transaction. IDs and status codes only. */
+function emitReferralStatus(tx: Prisma.TransactionClient, r: ExternalLabReferral, from: ExternalLabStatus | null, byUserId: string) {
+  return emitFacilityEvent(tx, {
+    type: "ExternalLabReferralStatusChanged", aggregateId: r.id, facilityId: r.facilityId, actorUserId: byUserId, encounterId: r.encounterId,
+    payload: {
+      referralId: r.id, patientId: r.patientId, from, to: r.status,
+      ...(r.encounterId ? { encounterId: r.encounterId } : {}),
+      ...(r.labOrderId ? { labOrderId: r.labOrderId } : {}),
+    },
+  });
+}
 
 /**
  * Advanced Diagnostics service (Phase B7). Operational depth ON TOP of the
@@ -116,8 +129,16 @@ export async function createExternalReferral(input: { facilityId: string; patien
     const order = await prisma.labOrder.findUnique({ where: { id: input.labOrderId }, include: { encounter: true } });
     if (!order || order.encounter.facilityId !== input.facilityId || order.patientId !== input.patientId) throw new NotFoundError("Lab order not found for this patient/facility.");
   }
-  const referral = await prisma.externalLabReferral.create({
-    data: { facilityId: input.facilityId, patientId: input.patientId, labOrderId: input.labOrderId, encounterId: input.encounterId, externalLabName: input.externalLabName, externalAccession: input.externalAccession, testDescription: input.testDescription, sentByStaffId: input.sentByStaffId, notes: input.notes },
+  if (input.encounterId) {
+    const enc = await prisma.encounter.findUnique({ where: { id: input.encounterId }, select: { facilityId: true, patientId: true } });
+    if (!enc || enc.facilityId !== input.facilityId || enc.patientId !== input.patientId) throw new NotFoundError("Encounter not found for this patient/facility.");
+  }
+  const referral = await prisma.$transaction(async (tx) => {
+    const created = await tx.externalLabReferral.create({
+      data: { facilityId: input.facilityId, patientId: input.patientId, labOrderId: input.labOrderId, encounterId: input.encounterId, externalLabName: input.externalLabName, externalAccession: input.externalAccession, testDescription: input.testDescription, sentByStaffId: input.sentByStaffId, notes: input.notes },
+    });
+    await emitReferralStatus(tx, created, null, input.byUserId);
+    return created;
   });
   await recordAuditEvent("hospital.lab.externalReferralCreated", input.byUserId, { referralId: referral.id, externalLabName: input.externalLabName }, { facilityId: input.facilityId, patientId: input.patientId, encounterId: input.encounterId });
   return referral;
@@ -136,7 +157,9 @@ export async function transitionExternalReferral(input: { referralId: string; fa
     const r = await tx.externalLabReferral.updateMany({ where: { id: referral.id, status: referral.status }, data });
     if (r.count !== 1) throw new BadRequestError("External referral changed state concurrently — refresh and try again.");
     await tx.auditEvent.create({ data: { type: "hospital.lab.externalReferralUpdated", userId: input.byUserId, detail: { referralId: referral.id, from: referral.status, to: input.to }, facilityId: referral.facilityId, patientId: referral.patientId } });
-    return tx.externalLabReferral.findUniqueOrThrow({ where: { id: referral.id } });
+    const updated = await tx.externalLabReferral.findUniqueOrThrow({ where: { id: referral.id } });
+    await emitReferralStatus(tx, updated, referral.status, input.byUserId);
+    return updated;
   });
 }
 

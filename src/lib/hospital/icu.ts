@@ -4,6 +4,27 @@ import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { admitPatient, transferPatient, TRANSFER_WITH_LOCATIONS, transferRouteLabel } from "./admission";
 import { parseEnum } from "@/lib/enumValue";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+import type { IcuDevice, IcuDeviceStatus, IcuInfusion, IcuInfusionStatus, Prisma } from "@prisma/client";
+
+type Tx = Prisma.TransactionClient;
+
+function emitDeviceStatus(tx: Tx, d: IcuDevice, from: IcuDeviceStatus | null, byUserId: string) {
+  return emitFacilityEvent(tx, {
+    type: "IcuDeviceStatusChanged", aggregateId: d.id, facilityId: d.facilityId, actorUserId: byUserId, encounterId: d.encounterId,
+    payload: { deviceId: d.id, encounterId: d.encounterId, patientId: d.patientId, from, to: d.status },
+  });
+}
+
+function emitInfusionStatus(tx: Tx, i: IcuInfusion, from: IcuInfusionStatus | null, rateChanged: boolean, byUserId: string) {
+  return emitFacilityEvent(tx, {
+    type: "IcuInfusionStatusChanged", aggregateId: i.id, facilityId: i.facilityId, actorUserId: byUserId, encounterId: i.encounterId,
+    payload: {
+      infusionId: i.id, encounterId: i.encounterId, patientId: i.patientId, from, to: i.status, rateChanged,
+      ...(i.medicationOrderId ? { medicationOrderId: i.medicationOrderId } : {}),
+    },
+  });
+}
 
 /**
  * ICU Foundation service (Phase B1). Builds on the existing ADT
@@ -144,15 +165,23 @@ export async function recordObservation(input: {
   const encounter = await prisma.encounter.findUnique({ where: { id: input.encounterId } });
   if (!encounter || encounter.facilityId !== input.facilityId) throw new NotFoundError("Encounter not found.");
 
-  const observation = await prisma.icuObservation.create({
-    data: {
-      encounterId: input.encounterId,
-      facilityId: input.facilityId,
-      patientId: encounter.patientId,
-      type: input.type,
-      values: input.values as object,
-      recordedByStaffId: input.recordedByStaffId,
-    },
+  const observation = await prisma.$transaction(async (tx) => {
+    const created = await tx.icuObservation.create({
+      data: {
+        encounterId: input.encounterId,
+        facilityId: input.facilityId,
+        patientId: encounter.patientId,
+        type: input.type,
+        values: input.values as object,
+        recordedByStaffId: input.recordedByStaffId,
+      },
+    });
+    // The kind of observation only, never its values.
+    await emitFacilityEvent(tx, {
+      type: "ObservationRecorded", aggregateId: created.id, facilityId: input.facilityId, actorUserId: input.byUserId, encounterId: input.encounterId,
+      payload: { observationId: created.id, encounterId: input.encounterId, patientId: encounter.patientId, observationKind: `ICU_${input.type}` },
+    });
+    return created;
   });
   await recordAuditEvent(
     "hospital.icu.observationRecorded",
@@ -181,18 +210,22 @@ export async function recordDevice(input: {
   const encounter = await prisma.encounter.findUnique({ where: { id: input.encounterId } });
   if (!encounter || encounter.facilityId !== input.facilityId) throw new NotFoundError("Encounter not found.");
 
-  const device = await prisma.icuDevice.create({
-    data: {
-      encounterId: input.encounterId,
-      facilityId: input.facilityId,
-      patientId: encounter.patientId,
-      deviceType: input.deviceType,
-      site: input.site,
-      status,
-      insertedAt: status === "ACTIVE" ? input.insertedAt ?? new Date() : input.insertedAt,
-      notes: input.notes,
-      recordedByStaffId: input.recordedByStaffId,
-    },
+  const device = await prisma.$transaction(async (tx) => {
+    const created = await tx.icuDevice.create({
+      data: {
+        encounterId: input.encounterId,
+        facilityId: input.facilityId,
+        patientId: encounter.patientId,
+        deviceType: input.deviceType,
+        site: input.site,
+        status,
+        insertedAt: status === "ACTIVE" ? input.insertedAt ?? new Date() : input.insertedAt,
+        notes: input.notes,
+        recordedByStaffId: input.recordedByStaffId,
+      },
+    });
+    await emitDeviceStatus(tx, created, null, input.byUserId);
+    return created;
   });
   await recordAuditEvent(
     "hospital.icu.deviceRecorded",
@@ -248,7 +281,9 @@ export async function updateDeviceStatus(input: {
         encounterId: device.encounterId,
       },
     });
-    return tx.icuDevice.findUniqueOrThrow({ where: { id: input.deviceId } });
+    const updated = await tx.icuDevice.findUniqueOrThrow({ where: { id: input.deviceId } });
+    if (updated.status !== device.status) await emitDeviceStatus(tx, updated, device.status, input.byUserId);
+    return updated;
   });
 }
 
@@ -274,20 +309,24 @@ export async function recordInfusion(input: {
     if (!order || order.encounterId !== input.encounterId) throw new NotFoundError("Medication order not found for this encounter.");
   }
 
-  const infusion = await prisma.icuInfusion.create({
-    data: {
-      encounterId: input.encounterId,
-      facilityId: input.facilityId,
-      patientId: encounter.patientId,
-      medicationOrderId: input.medicationOrderId,
-      drugName: input.drugName,
-      route: input.route,
-      concentration: input.concentration,
-      rate: input.rate,
-      rateUnit: input.rateUnit,
-      prescriberStaffId: input.prescriberStaffId,
-      recordedByStaffId: input.recordedByStaffId,
-    },
+  const infusion = await prisma.$transaction(async (tx) => {
+    const created = await tx.icuInfusion.create({
+      data: {
+        encounterId: input.encounterId,
+        facilityId: input.facilityId,
+        patientId: encounter.patientId,
+        medicationOrderId: input.medicationOrderId,
+        drugName: input.drugName,
+        route: input.route,
+        concentration: input.concentration,
+        rate: input.rate,
+        rateUnit: input.rateUnit,
+        prescriberStaffId: input.prescriberStaffId,
+        recordedByStaffId: input.recordedByStaffId,
+      },
+    });
+    await emitInfusionStatus(tx, created, null, false, input.byUserId);
+    return created;
   });
   await recordAuditEvent(
     "hospital.icu.infusionRecorded",
@@ -331,7 +370,10 @@ export async function updateInfusionStatus(input: {
         encounterId: infusion.encounterId,
       },
     });
-    return tx.icuInfusion.findUniqueOrThrow({ where: { id: input.infusionId } });
+    const updated = await tx.icuInfusion.findUniqueOrThrow({ where: { id: input.infusionId } });
+    const rateChanged = input.rate !== undefined && input.rate !== infusion.rate;
+    if (updated.status !== infusion.status || rateChanged) await emitInfusionStatus(tx, updated, infusion.status, rateChanged, input.byUserId);
+    return updated;
   });
 }
 

@@ -3,8 +3,18 @@ import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { generateAccessionNumber } from "./accessionNumber";
 import { syncOrderStatus } from "./orderEnvelope";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 type Tx = Prisma.TransactionClient;
+type StudyRow = { id: string; imagingOrderId: string; facilityId: string; patientId: string; encounterId: string };
+
+/** ImagingStudyStatusChanged (scheduled, rescheduled, cancelled), in the caller's transaction. */
+function emitStudyStatus(tx: Tx, s: StudyRow, from: "SCHEDULED" | "ARRIVED" | null, to: "SCHEDULED" | "CANCELLED", rescheduled: boolean, byUserId?: string) {
+  return emitFacilityEvent(tx, {
+    type: "ImagingStudyStatusChanged", aggregateId: s.id, facilityId: s.facilityId, actorUserId: byUserId, encounterId: s.encounterId,
+    payload: { studyId: s.id, imagingOrderId: s.imagingOrderId, patientId: s.patientId, encounterId: s.encounterId, from, to, rescheduled },
+  });
+}
 
 /**
  * Imaging study state machine (brief §6-8). NO_SHOW is declared on the
@@ -100,7 +110,8 @@ export async function scheduleStudy(
     scheduledAt: Date;
     durationMinutes?: number;
     contrastRequired?: boolean;
-  }
+  },
+  byUserId?: string,
 ) {
   const durationMinutes = input.durationMinutes ?? DEFAULT_STUDY_DURATION_MINUTES;
   const scheduledEndAt = new Date(input.scheduledAt.getTime() + durationMinutes * 60_000);
@@ -143,11 +154,12 @@ export async function scheduleStudy(
 
   await tx.imagingOrder.updateMany({ where: { id: input.imagingOrderId, status: "ORDERED" }, data: { status: "SCHEDULED" } });
   await syncOrderStatus(tx, "IMAGING", input.imagingOrderId);
+  await emitStudyStatus(tx, study, null, "SCHEDULED", false, byUserId);
   return study;
 }
 
 /** Reschedule (brief §8) — only while still SCHEDULED; re-runs the interval-overlap conflict check against the new slot. */
-export async function rescheduleStudy(tx: Tx, studyId: string, resourceId: string | null, scheduledAt: Date, durationMinutes?: number) {
+export async function rescheduleStudy(tx: Tx, studyId: string, resourceId: string | null, scheduledAt: Date, durationMinutes?: number, byUserId?: string) {
   const study = await tx.imagingStudy.findUniqueOrThrow({ where: { id: studyId } });
   if (study.status !== "SCHEDULED") throw new InvalidStudyTransitionError(study.status, "SCHEDULED");
 
@@ -175,7 +187,9 @@ export async function rescheduleStudy(tx: Tx, studyId: string, resourceId: strin
     throw err;
   }
   if (result.count !== 1) throw new StudyConcurrencyError("rescheduled");
-  return tx.imagingStudy.findUniqueOrThrow({ where: { id: studyId } });
+  const rescheduled = await tx.imagingStudy.findUniqueOrThrow({ where: { id: studyId } });
+  await emitStudyStatus(tx, rescheduled, "SCHEDULED", "SCHEDULED", true, byUserId);
+  return rescheduled;
 }
 
 async function guardedTransition(tx: Tx, studyId: string, from: ImagingStudyStatus, to: ImagingStudyStatus, data: Record<string, unknown>, actionLabel: string) {
@@ -198,19 +212,25 @@ export async function startStudy(
   return guardedTransition(tx, studyId, "ARRIVED", "IN_PROGRESS", { startedAt: new Date(), performedByStaffId, ...screening }, "claimed");
 }
 
-export async function completeStudy(tx: Tx, studyId: string, input: { contrastGiven?: boolean; notes?: string } = {}) {
+export async function completeStudy(tx: Tx, studyId: string, input: { contrastGiven?: boolean; notes?: string } = {}, byUserId?: string) {
   const study = await guardedTransition(tx, studyId, "IN_PROGRESS", "COMPLETED", { performedAt: new Date(), contrastGiven: input.contrastGiven ?? false, notes: input.notes }, "completed");
   await tx.imagingOrder.updateMany({ where: { id: study.imagingOrderId, status: "SCHEDULED" }, data: { status: "ACQUIRED" } });
   await syncOrderStatus(tx, "IMAGING", study.imagingOrderId);
+  await emitFacilityEvent(tx, {
+    type: "ImagingStudyCompleted", aggregateId: study.id, facilityId: study.facilityId, actorUserId: byUserId, encounterId: study.encounterId,
+    payload: { studyId: study.id, imagingOrderId: study.imagingOrderId, patientId: study.patientId, encounterId: study.encounterId },
+  });
   return study;
 }
 
-export async function cancelStudy(tx: Tx, studyId: string, reason: string) {
+export async function cancelStudy(tx: Tx, studyId: string, reason: string, byUserId?: string) {
   const study = await tx.imagingStudy.findUniqueOrThrow({ where: { id: studyId } });
   if (!isStudyTransitionAllowed(study.status, "CANCELLED")) throw new InvalidStudyTransitionError(study.status, "CANCELLED");
   const result = await tx.imagingStudy.updateMany({ where: { id: studyId, status: study.status }, data: { status: "CANCELLED", cancelledReason: reason } });
   if (result.count !== 1) throw new StudyConcurrencyError("cancelled");
-  return tx.imagingStudy.findUniqueOrThrow({ where: { id: studyId } });
+  const cancelled = await tx.imagingStudy.findUniqueOrThrow({ where: { id: studyId } });
+  await emitStudyStatus(tx, cancelled, study.status === "ARRIVED" ? "ARRIVED" : "SCHEDULED", "CANCELLED", false, byUserId);
+  return cancelled;
 }
 
 /** Facility-scoped fetch, used by every study-action route before transitioning. */

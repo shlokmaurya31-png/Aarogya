@@ -9,12 +9,14 @@ import { mapDiagnosticPriorityToOrderPriority } from "./diagnosticsLifecycle";
 import { createPricedChargeIfNotExists } from "./billing/chargeCapture";
 import { PriceNotFoundError } from "./billing/pricing";
 import { markEncounterInvestigating } from "./labOrder";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 /**
  * Place an imaging order (POST /api/hospital/orders/imaging), in one
  * transaction: Order envelope + ImagingOrder + the priced charge (§5.2) + the
- * preparation task, and the encounter moves to INVESTIGATING. Same 15 s
- * resubmission dedupe as lab. ImagingOrderPlaced is wired here in §9 step 6.
+ * preparation task, the encounter moves to INVESTIGATING, and
+ * ImagingOrderPlaced is emitted. Same 15 s resubmission dedupe as lab (a
+ * duplicate emits nothing).
  */
 export async function placeImagingOrder(input: {
   facilityId: string;
@@ -79,6 +81,10 @@ export async function placeImagingOrder(input: {
       patientId, encounterId, orderId: envelope.id, createdByStaffId: staffId, priority: priority ?? "ROUTINE",
     }, input.byUserId);
     await markEncounterInvestigating(tx, encounterId);
+    await emitFacilityEvent(tx, {
+      type: "ImagingOrderPlaced", aggregateId: order.id, facilityId, actorUserId: input.byUserId, encounterId,
+      payload: { imagingOrderId: order.id, orderId: envelope.id, encounterId, patientId, priority: order.priority, modality: order.modality, ...(catalogStudyId ? { catalogStudyId } : {}) },
+    });
     return { order, duplicate: false as const, charge: charged.charge, task };
   });
 

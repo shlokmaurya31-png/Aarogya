@@ -3,6 +3,7 @@ import { emitDomainEvent } from "./emit";
 import { getEventContract, currentVersion, ALL_EVENT_TYPES, EVENT_CONTRACTS } from "./catalogue";
 import { assertNoSensitiveData } from "./sensitiveGuard";
 import { classifyEventError, PermanentEventError, RetryableEventError } from "./types";
+import { $Enums } from "@prisma/client";
 
 /**
  * Phase D6 — event CONTRACT tests (pure). DB-backed behaviour (transactional
@@ -110,5 +111,34 @@ describe("error classification", () => {
     expect(classifyEventError(new RetryableEventError("later", "Y")).retryable).toBe(true);
     expect(classifyEventError({ status: 403 }).retryable).toBe(false);
     expect(classifyEventError(new Error("boom")).retryable).toBe(true);
+  });
+});
+
+describe("payload codes mirror the Prisma enums they describe", () => {
+  // A contract's closed set must not drift from the column it reports: a new
+  // database value would otherwise be rejected at emit (and roll the write back).
+  const field = (type: string, key: string) => {
+    const shape = (getEventContract(type, 1)!.payload as unknown as { shape: Record<string, { unwrap?: () => unknown; options?: string[] }> }).shape;
+    let f = shape[key] as { options?: string[]; unwrap?: () => unknown };
+    while (!f.options && f.unwrap) f = f.unwrap() as typeof f;
+    return [...(f.options ?? [])].sort();
+  };
+  const values = (e: Record<string, string>) => Object.values(e).sort();
+  it.each([
+    ["MedicationOrderStatusChanged", "to", $Enums.MedicationOrderStatus],
+    ["ExternalLabReferralStatusChanged", "to", $Enums.ExternalLabStatus],
+    ["StockLotStatusChanged", "to", $Enums.LotStatus],
+    ["IcuDeviceStatusChanged", "to", $Enums.IcuDeviceStatus],
+    ["IcuInfusionStatusChanged", "to", $Enums.IcuInfusionStatus],
+    ["LabOrderPlaced", "priority", $Enums.Priority],
+    ["SpecimenStatusChanged", "rejectionReason", $Enums.SpecimenRejectionReason],
+    ["MedicationReconciliationRecorded", "source", $Enums.ReconciliationSource],
+    ["MedicationReconciliationRecorded", "decision", $Enums.ReconciliationDecision],
+    ["MedicationSafetyWarningOverridden", "severity", $Enums.SafetySeverity],
+    ["CarePlanUpdated", "status", $Enums.CarePlanStatus],
+    ["ClinicalHandoffStatusChanged", "handoffType", $Enums.HandoffType],
+    ["ClinicalHandoffStatusChanged", "urgency", $Enums.RequestPriority],
+  ] as const)("%s.%s", (type, key, prismaEnum) => {
+    expect(field(type, key)).toEqual(values(prismaEnum as Record<string, string>));
   });
 });

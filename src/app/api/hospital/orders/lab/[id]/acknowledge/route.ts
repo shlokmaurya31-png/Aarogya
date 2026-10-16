@@ -23,7 +23,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const currentCriticalResult = order?.results[0];
     if (!order || order.encounter.facilityId !== facilityId || !currentCriticalResult) throw new NotFoundError("No unacknowledged critical lab result found for this order.");
 
-    const updated = await prisma.$transaction((tx) => acknowledgeResult(tx, currentCriticalResult.id, staff.id));
+    const updated = await prisma.$transaction((tx) => acknowledgeResult(tx, currentCriticalResult.id, staff.id, session.userId));
 
     await recordAuditEvent(
       "hospital.lab.criticalResultAcknowledged",

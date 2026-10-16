@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { emitDomainEvent } from "./emit";
 import { facilityOrganizationId } from "./tenant";
+import type { AggregateType } from "./types";
 
 /**
  * Emit a FACILITY-scoped event in the caller's transaction, resolving the
@@ -13,6 +14,7 @@ export async function emitFacilityEvent(
   input: {
     type: string;
     aggregateId: string;
+    aggregateType?: AggregateType;
     facilityId: string;
     actorUserId?: string | null;
     encounterId?: string | null;
@@ -22,6 +24,7 @@ export async function emitFacilityEvent(
   return emitDomainEvent(tx, {
     type: input.type,
     aggregateId: input.aggregateId,
+    aggregateType: input.aggregateType,
     organizationId: await facilityOrganizationId(tx, input.facilityId),
     facilityId: input.facilityId,
     actorUserId: input.actorUserId ?? null,

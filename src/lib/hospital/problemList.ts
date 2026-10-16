@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 /**
  * D3: Problem (the longitudinal problem list) and Diagnosis (per encounter)
@@ -60,6 +61,10 @@ export async function addDiagnosisToProblemList(input: { facilityId: string; dia
     // Compare-and-set so two concurrent adds can't link twice.
     const cas = await tx.diagnosis.updateMany({ where: { id: dx.id, problemId: null }, data: { problemId: problem.id } });
     if (cas.count !== 1) throw new BadRequestError("This diagnosis was added to the problem list concurrently. Refresh and try again.");
+    await emitFacilityEvent(tx, {
+      type: "ProblemListUpdated", aggregateId: problem.id, facilityId: input.facilityId, actorUserId: input.byUserId, encounterId: dx.encounterId,
+      payload: { problemId: problem.id, patientId: dx.patientId, diagnosisId: dx.id, encounterId: dx.encounterId, created: !match },
+    });
     return { problem, created: !match, linked: true, patientId: dx.patientId, encounterId: dx.encounterId };
   });
 

@@ -25,6 +25,13 @@ const optId = z.string().min(1).optional();
 const minor = z.number().int();
 const currency = z.string().length(3);
 const iso = z.string().min(1); // ISO-8601 timestamp string
+// Closed sets mirrored from the Prisma enums they describe.
+const orderPriority = z.enum(["ROUTINE", "URGENT", "STAT"]);
+const medicationOrderStatus = z.enum(["DRAFT", "ORDERED", "PHARMACY_REVIEW", "HELD", "REJECTED", "VERIFIED", "DISPENSED", "ACTIVE", "COMPLETED", "CANCELLED", "DISCONTINUED"]);
+const externalLabStatus = z.enum(["DRAFT", "SENT", "RESULT_RECEIVED", "REVIEWED", "CANCELLED"]);
+const lotStatus = z.enum(["ACTIVE", "QUARANTINED", "EXPIRED", "RECALLED", "DEPLETED"]);
+const icuDeviceStatus = z.enum(["PLANNED", "ACTIVE", "REMOVED", "DISCONTINUED"]);
+const icuInfusionStatus = z.enum(["RUNNING", "PAUSED", "STOPPED"]);
 
 function contract<P extends z.ZodTypeAny>(c: EventContract<P>): EventContract<P> {
   return c;
@@ -185,6 +192,198 @@ export const EVENT_CONTRACTS: EventContract[] = [
     type: "ImagingReportReleased", version: 1, aggregateType: "IMAGING_REPORT", scope: "FACILITY",
     sensitivity: "INTERNAL", producer: "imaging report lifecycle (verifyReport)",
     payload: z.object({ reportId: id, studyId: optId, patientId: optId, critical: z.boolean().optional() }).strict(),
+  }),
+
+  // ── Orders, results, medication, pharmacy, ICU, care plans (spine §9 step 6) ─
+  contract({
+    type: "LabOrderPlaced", version: 1, aggregateType: "LAB_ORDER", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "lab orders (placeLabOrder)",
+    payload: z.object({ labOrderId: id, orderId: id, encounterId: id, patientId: id, priority: orderPriority, catalogTestId: optId }).strict(),
+  }),
+  contract({
+    type: "ImagingOrderPlaced", version: 1, aggregateType: "IMAGING_ORDER", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "imaging orders (placeImagingOrder)",
+    payload: z.object({
+      imagingOrderId: id, orderId: id, encounterId: id, patientId: id, priority: orderPriority,
+      /** Closed by ImagingOrder_modality_check (migration 20261015100000_s8_clinical_enums). */
+      modality: z.enum(["XRAY", "CT", "MRI", "USG", "MAMMOGRAPHY", "INTERVENTIONAL"]), catalogStudyId: optId,
+    }).strict(),
+  }),
+  contract({
+    type: "SpecimenCollected", version: 1, aggregateType: "SPECIMEN", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "specimens (collectSpecimen; surgical specimens at step 8)",
+    payload: z.object({
+      specimenId: id, patientId: id, encounterId: optId, specimenSource: z.enum(["LAB_ORDER", "SURGICAL"]),
+      labOrderId: optId, surgeryId: optId,
+    }).strict(),
+  }),
+  contract({
+    type: "SpecimenStatusChanged", version: 1, aggregateType: "SPECIMEN", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "specimens (rejectSpecimen, recollectSpecimen)",
+    payload: z.object({
+      specimenId: id, labOrderId: id, patientId: id, encounterId: optId,
+      from: z.enum(["COLLECTION_PENDING", "COLLECTED", "RECEIVED"]).nullable(), to: z.enum(["REJECTED", "COLLECTION_PENDING"]),
+      rejectionReason: z.enum(["INSUFFICIENT_SPECIMEN", "WRONG_CONTAINER", "HEMOLYZED", "MISLABELED", "LEAKED", "EXPIRED_TRANSPORT", "INCORRECT_SPECIMEN_TYPE", "OTHER"]).optional(),
+      /** A recollection: the rejected specimen this new one replaces. */
+      recollectionOfSpecimenId: optId,
+    }).strict(),
+  }),
+  contract({
+    type: "ImagingStudyStatusChanged", version: 1, aggregateType: "IMAGING_STUDY", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "imaging studies (scheduleStudy, rescheduleStudy, cancelStudy)",
+    payload: z.object({
+      studyId: id, imagingOrderId: id, patientId: id, encounterId: id,
+      from: z.enum(["SCHEDULED", "ARRIVED"]).nullable(), to: z.enum(["SCHEDULED", "CANCELLED"]), rescheduled: z.boolean(),
+    }).strict(),
+  }),
+  contract({
+    type: "ImagingStudyCompleted", version: 1, aggregateType: "IMAGING_STUDY", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "imaging studies (completeStudy)",
+    payload: z.object({ studyId: id, imagingOrderId: id, patientId: id, encounterId: id }).strict(),
+  }),
+  contract({
+    type: "CriticalResultAcknowledged", version: 1, aggregateType: "LAB_RESULT", alternateAggregateTypes: ["IMAGING_REPORT"], scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "lab results (acknowledgeResult), imaging reports (acknowledgeReport): critical only",
+    payload: z.object({
+      resultKind: z.enum(["LAB", "IMAGING"]), resultId: optId, reportId: optId, patientId: id,
+      acknowledgedByStaffId: id, minutesToAcknowledge: z.number().int().min(0),
+    }).strict(),
+  }),
+  contract({
+    type: "DiagnosticReportAmended", version: 1, aggregateType: "LAB_RESULT", alternateAggregateTypes: ["IMAGING_REPORT"], scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "lab results (amendResult), imaging reports (amendReport)",
+    payload: z.object({
+      reportKind: z.enum(["LAB", "IMAGING"]), amendedId: id, supersedesId: id, orderId: id, patientId: id,
+      version: z.number().int().min(2), critical: z.boolean(),
+    }).strict(),
+  }),
+  contract({
+    type: "ExternalLabReferralStatusChanged", version: 1, aggregateType: "EXTERNAL_LAB_REFERRAL", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "external lab referrals (createExternalReferral, transitionExternalReferral)",
+    payload: z.object({
+      referralId: id, patientId: id, encounterId: optId, labOrderId: optId,
+      from: externalLabStatus.nullable(), to: externalLabStatus,
+    }).strict(),
+  }),
+  contract({
+    type: "MedicationVerified", version: 1, aggregateType: "MEDICATION_ORDER", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "medication lifecycle (verifyMedicationOrder)",
+    payload: z.object({ orderId: id, patientId: id, encounterId: optId }).strict(),
+  }),
+  contract({
+    type: "MedicationOrderStatusChanged", version: 1, aggregateType: "MEDICATION_ORDER", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "medication lifecycle (cancel, discontinue, hold, reject, requestClarification, resubmit)",
+    payload: z.object({
+      orderId: id, patientId: id, encounterId: optId, from: medicationOrderStatus, to: medicationOrderStatus,
+      /** A hold that asks the prescriber for clarification. */
+      clarificationRequested: z.boolean(),
+      /** Future scheduled doses cancelled with a stop (discontinue, cancel). */
+      cancelledDoseCount: z.number().int().min(0),
+    }).strict(),
+  }),
+  contract({
+    type: "MedicationDispensed", version: 1, aggregateType: "DISPENSING_RECORD", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "medication lifecycle (dispenseMedication), pharmacy (dispenseFromPharmacy, one per record)",
+    payload: z.object({
+      dispensingRecordId: id, orderId: id, patientId: id, encounterId: optId, quantity: z.number().positive(),
+      partial: z.boolean(), dispenseGroupId: optId,
+    }).strict(),
+  }),
+  contract({
+    type: "MedicationAdministered", version: 1, aggregateType: "MEDICATION_ADMINISTRATION", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "medication lifecycle (administerMedication, status GIVEN)",
+    payload: z.object({
+      administrationId: id, orderId: id, patientId: id, encounterId: optId,
+      /** A late recording: the swept MISSED dose this one documents. */
+      lateForAdministrationId: optId,
+    }).strict(),
+  }),
+  contract({
+    type: "MedicationDoseMissed", version: 1, aggregateType: "MEDICATION_ADMINISTRATION", scope: "FACILITY",
+    sensitivity: "SENSITIVE", producer: "medication lifecycle (administerMedication, status MISSED), MAR sweep",
+    payload: z.object({
+      administrationId: id, orderId: id, patientId: id, encounterId: optId, scheduledAt: iso, missedBy: z.enum(["NURSE", "SWEEP"]),
+    }).strict(),
+  }),
+  contract({
+    type: "MedicationSafetyWarningOverridden", version: 1, aggregateType: "MEDICATION_SAFETY_WARNING", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "medication lifecycle (acknowledgeSafetyWarning)",
+    payload: z.object({
+      warningId: id, orderId: id, patientId: id, encounterId: optId, severity: z.enum(["INFO", "WARNING", "DANGER"]),
+      /** True when an override reason was given (required for DANGER); false is a plain acknowledgement. */
+      overridden: z.boolean(), acknowledgedByStaffId: id,
+    }).strict(),
+  }),
+  contract({
+    type: "MedicationSubstituted", version: 1, aggregateType: "MEDICATION_SUBSTITUTION", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "pharmacy (recordSubstitution, dispense-time substitution)",
+    payload: z.object({ substitutionId: id, orderId: id, patientId: id, encounterId: optId, replacementItemId: optId, authorizedByStaffId: id }).strict(),
+  }),
+  contract({
+    type: "MedicationReconciliationRecorded", version: 1, aggregateType: "MEDICATION_RECONCILIATION", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "medication reconciliation (recordReconciliation)",
+    payload: z.object({
+      reconciliationId: id, encounterId: id, patientId: id, source: z.enum(["ADMISSION", "TRANSFER", "DISCHARGE"]),
+      decision: z.enum(["CONTINUED", "MODIFIED", "STOPPED", "NEW"]), medicationOrderId: optId,
+    }).strict(),
+  }),
+  contract({
+    type: "MedicationRecallStatusChanged", version: 1, aggregateType: "MEDICATION_RECALL", scope: "FACILITY",
+    sensitivity: "LOW", producer: "pharmacy (createRecall, closeRecall)",
+    payload: z.object({
+      recallId: id, itemId: id, itemLotId: optId, from: z.enum(["OPEN"]).nullable(), to: z.enum(["OPEN", "CLOSED"]),
+      affectedLotCount: z.number().int().min(0),
+    }).strict(),
+  }),
+  contract({
+    type: "PharmacyComplianceRecorded", version: 1, aggregateType: "PHARMACY_COMPLIANCE", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "pharmacy (recordStorageCheck, recordControlledWastage)",
+    payload: z.object({
+      recordId: id, kind: z.enum(["STORAGE_CHECK", "CONTROLLED_WASTAGE"]), locationId: id,
+      /** STORAGE_CHECK only: an EXCURSION is the safety fact. */
+      storageStatus: z.enum(["OK", "EXCURSION"]).optional(),
+      itemId: optId, itemLotId: optId, patientId: optId, witnessStaffId: optId,
+    }).strict(),
+  }),
+  contract({
+    type: "StockLotStatusChanged", version: 1, aggregateType: "ITEM_LOT", scope: "FACILITY",
+    sensitivity: "LOW", producer: "inventory lots (quarantineLot, releaseLotFromQuarantine), pharmacy recalls",
+    payload: z.object({ lotId: id, itemId: id, from: lotStatus, to: lotStatus, cause: z.enum(["QUARANTINE", "RELEASE", "RECALL"]), recallId: optId }).strict(),
+  }),
+  contract({
+    type: "ObservationRecorded", version: 1, aggregateType: "OBSERVATION", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "ICU (recordObservation); ED reassessment and transfusion observations at steps 4/8",
+    payload: z.object({
+      observationId: id, encounterId: id, patientId: id,
+      observationKind: z.enum(["ICU_VENTILATOR", "ICU_NEURO", "ICU_ABG", "ED_REASSESSMENT", "TRANSFUSION"]),
+    }).strict(),
+  }),
+  contract({
+    type: "IcuDeviceStatusChanged", version: 1, aggregateType: "ICU_DEVICE", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "ICU (recordDevice, updateDeviceStatus)",
+    payload: z.object({ deviceId: id, encounterId: id, patientId: id, from: icuDeviceStatus.nullable(), to: icuDeviceStatus }).strict(),
+  }),
+  contract({
+    type: "IcuInfusionStatusChanged", version: 1, aggregateType: "ICU_INFUSION", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "ICU (recordInfusion, updateInfusionStatus)",
+    payload: z.object({
+      infusionId: id, encounterId: id, patientId: id, medicationOrderId: optId,
+      from: icuInfusionStatus.nullable(), to: icuInfusionStatus, rateChanged: z.boolean(),
+    }).strict(),
+  }),
+  contract({
+    type: "CarePlanUpdated", version: 1, aggregateType: "CARE_PLAN", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "care plans (createCarePlan, addIntervention, completeIntervention, closeCarePlan)",
+    payload: z.object({
+      carePlanId: id, patientId: id, encounterId: optId,
+      change: z.enum(["CREATED", "INTERVENTION_ADDED", "INTERVENTION_COMPLETED", "CLOSED"]),
+      status: z.enum(["ACTIVE", "COMPLETED", "CANCELLED"]), interventionId: optId, interventionCount: z.number().int().min(0),
+    }).strict(),
+  }),
+  contract({
+    type: "ProblemListUpdated", version: 1, aggregateType: "PROBLEM", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "problem list (addDiagnosisToProblemList)",
+    payload: z.object({ problemId: id, patientId: id, diagnosisId: id, encounterId: id, created: z.boolean() }).strict(),
   }),
 
   // ── Interoperability ─────────────────────────────────────────────────────────

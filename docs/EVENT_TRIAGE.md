@@ -562,6 +562,14 @@ Beyond the one-per-aggregate rule, to reach the 60–80 target. Each is a judgem
 |---|---|---|
 | `accessionSpecimen` | `src/lib/hospital/specimenLifecycle.ts` | runs inside placeLabOrder's transaction; LabOrderPlaced covers it |
 
+## Progress
+
+| Step | State |
+|---|---|
+| 5b | **wired** (2026-10-16): 8 functions, 4 events |
+| 6 | **wired** (2026-10-16): 33 functions, 16 events, plus the 9 planned step-6 events |
+| 9a | `quarantineLot` and `releaseLotFromQuarantine` were wired early with step 6: the pharmacy quarantine functions delegate to them, and emitting in the wrappers would have doubled the event at 9a. `StockLotStatusChanged` is also emitted for each lot a recall moves to RECALLED. |
+
 ## Applying it (batch 3a, done)
 
 1. `emitExemptions.ts`: each event function is `PLANNED` with its `events` and step (`"5b"`, `"9a"`, `"9b"`, `"9c"` for the sub-steps); each exemption has its category, and `PROCESS_STEP` entries carry their `boundary` event(s). `NOT_YET_CATALOGUED` is removed from the categories, so the CI rule rejects it; a boundary event must be catalogued or owed by a `PLANNED`/`OWED_EVENTS` entry.

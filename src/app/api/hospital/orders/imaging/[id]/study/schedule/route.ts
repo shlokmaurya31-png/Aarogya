@@ -44,7 +44,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         scheduledAt: parsedScheduledAt,
         durationMinutes,
         contrastRequired: Boolean(contrastRequired),
-      })
+      }, session.userId)
     );
 
     await recordAuditEvent(

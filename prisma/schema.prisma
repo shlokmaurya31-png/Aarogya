@@ -2623,22 +2623,29 @@ model MedicationOrder {
 }
 
 model MedicationAdministration {
-  id                    String                         @id @default(cuid())
-  medicationOrder       MedicationOrder                @relation(fields: [medicationOrderId], references: [id])
-  medicationOrderId     String
-  administeredBy        HospitalStaffProfile?          @relation("MedicationAdministrator", fields: [administeredByStaffId], references: [id])
-  administeredByStaffId String?
-  scheduledAt           DateTime
-  administeredAt        DateTime?
-  status                MedicationAdministrationStatus @default(DUE)
-  notes                 String?
+  id                      String                         @id @default(cuid())
+  medicationOrder         MedicationOrder                @relation(fields: [medicationOrderId], references: [id])
+  medicationOrderId       String
+  administeredBy          HospitalStaffProfile?          @relation("MedicationAdministrator", fields: [administeredByStaffId], references: [id])
+  administeredByStaffId   String?
+  scheduledAt             DateTime
+  administeredAt          DateTime?
+  status                  MedicationAdministrationStatus @default(DUE)
+  notes                   String?
   // Phase 3 additions — REFUSED/CANCELLED are new capability (brief §20); GIVEN kept
   // as-is rather than renamed to ADMINISTERED, matching the existing working
   // vocabulary every current route/seed/UI reads (docs/PHASE_3_ARCHITECTURE.md §5).
-  reasonCode            String? // category for HELD/REFUSED/MISSED, e.g. "patient-declined" | "npo" | "unavailable"
-  witnessStaffId        String? // controlled-medication co-sign (brief §25)
-  witness               HospitalStaffProfile?          @relation("AdministrationWitness", fields: [witnessStaffId], references: [id])
-  safetyChecksConfirmed Boolean                        @default(false)
+  reasonCode              String? // category for HELD/REFUSED/MISSED, e.g. "patient-declined" | "npo" | "unavailable"
+  witnessStaffId          String? // controlled-medication co-sign (brief §25)
+  witness                 HospitalStaffProfile?          @relation("AdministrationWitness", fields: [witnessStaffId], references: [id])
+  safetyChecksConfirmed   Boolean                        @default(false)
+  // A late recording of a dose the MAR sweep marked MISSED (reasonCode
+  // "not-recorded"): a new row linked to the missed one, which stays as it is.
+  // (medicationOrderId, scheduledAt) is unique for scheduled rows (those with
+  // no link) by a partial index in migration SQL.
+  lateForAdministrationId String?                        @unique
+  lateFor                 MedicationAdministration?      @relation("LateAdministration", fields: [lateForAdministrationId], references: [id], onDelete: Restrict)
+  lateRecording           MedicationAdministration?      @relation("LateAdministration")
 
   @@index([medicationOrderId])
   @@index([status])
@@ -9167,9 +9174,13 @@ model Notification {
   sourceId         String?
   // Who/what raised it. Nullable: system-generated notifications have no staff author.
   createdByStaffId String?
+  // The domain event a consumer created it from (notification-dispatch);
+  // unique per recipient so redelivery creates nothing.
+  sourceEventId    String?
   readAt           DateTime?
   createdAt        DateTime             @default(now())
 
+  @@unique([sourceEventId, recipientStaffId])
   @@index([recipientStaffId])
   @@index([facilityId])
   @@index([recipientStaffId, readAt])
@@ -9841,7 +9852,6 @@ enum WorkflowStepStatus {
   SKIPPED
   FAILED
 }
-
 
 enum WorkflowTimerStatus {
   PENDING

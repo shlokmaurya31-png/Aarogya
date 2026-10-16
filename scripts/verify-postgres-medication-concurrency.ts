@@ -67,7 +67,7 @@ async function main() {
   if (created.blocked) throw new Error("Unexpected safety block in fixture.");
   await verifyMedicationOrder(created.order.id, pharmacist.id, pharmacist.userId);
   await dispenseMedication({ medicationOrderId: created.order.id, pharmacistStaffId: pharmacist.id, quantity: 4, quantityUnit: "TABLET", dispensingLocationId: pharmacy.id, byUserId: pharmacist.userId });
-  // 6 extra DUE slots, on top of the 3 auto-generated at order creation — enough for every case below without cross-contamination.
+  // 6 DUE slots (the mar-scheduler consumer adds its own on MedicationVerified when the runner runs; this gate doesn't run it) — enough for every case below without cross-contamination.
   await generateAdministrationSchedule(created.order.id, "QID", 6);
   const dueRows = await prisma.medicationAdministration.findMany({ where: { medicationOrderId: created.order.id, status: "DUE" }, orderBy: { scheduledAt: "asc" } });
   if (dueRows.length < 6) throw new Error(`Expected at least 6 DUE rows, got ${dueRows.length}`);
@@ -125,7 +125,10 @@ async function main() {
       byUserId: doctor.userId,
     });
     if (otherOrder.blocked) throw new Error("Unexpected safety block in fixture.");
-    // Left in PHARMACY_REVIEW deliberately — never verified/dispensed.
+    // Left in PHARMACY_REVIEW deliberately — never verified/dispensed. Since
+    // spine step 6 an unverified order has no schedule of its own, so the
+    // fixture writes the dose row this case administers.
+    await generateAdministrationSchedule(otherOrder.order.id, "OD", 1);
     const dueRow = await prisma.medicationAdministration.findFirstOrThrow({ where: { medicationOrderId: otherOrder.order.id, status: "DUE" } });
     const attempt = await administerMedication({ administrationId: dueRow.id, status: "GIVEN", administeredByStaffId: nurse.id, safetyChecksConfirmed: true, byUserId: nurse.userId })
       .then(() => ({ ok: true as const }))

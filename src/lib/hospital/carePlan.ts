@@ -1,6 +1,23 @@
 import { prisma } from "@/lib/db";
-import { createTask } from "@/lib/hospital/task";
+import type { Prisma } from "@prisma/client";
+import { createTask, closeTask, OPEN_STATUSES } from "@/lib/hospital/task";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+
+type CarePlanChange = "CREATED" | "INTERVENTION_ADDED" | "INTERVENTION_COMPLETED" | "CLOSED";
+
+/** CarePlanUpdated (triage step 6), in the writer's transaction: what changed, never the clinician's text. */
+async function emitCarePlanUpdated(tx: Prisma.TransactionClient, carePlanId: string, change: CarePlanChange, byUserId?: string, interventionId?: string) {
+  const plan = await tx.carePlan.findUniqueOrThrow({ where: { id: carePlanId }, include: { _count: { select: { interventions: true } } } });
+  await emitFacilityEvent(tx, {
+    type: "CarePlanUpdated", aggregateId: plan.id, facilityId: plan.facilityId, actorUserId: byUserId, encounterId: plan.encounterId,
+    payload: {
+      carePlanId: plan.id, patientId: plan.patientId, change, status: plan.status, interventionCount: plan._count.interventions,
+      ...(plan.encounterId ? { encounterId: plan.encounterId } : {}),
+      ...(interventionId ? { interventionId } : {}),
+    },
+  });
+}
 
 /** Care plan (brief §6) — problem/goal/interventions. Never invents medical thresholds or protocols; goal/intervention text is entirely clinician-authored. */
 export async function createCarePlan(input: {
@@ -14,23 +31,28 @@ export async function createCarePlan(input: {
   createdByStaffId: string;
   notes?: string;
   interventions?: { description: string; responsibleRole: string }[];
+  byUserId?: string;
 }) {
-  return prisma.carePlan.create({
-    data: {
-      patientId: input.patientId,
-      encounterId: input.encounterId,
-      facilityId: input.facilityId,
-      problem: input.problem,
-      goal: input.goal,
-      priority: input.priority,
-      targetDate: input.targetDate,
-      createdByStaffId: input.createdByStaffId,
-      notes: input.notes,
-      interventions: input.interventions?.length
-        ? { create: input.interventions.map((i) => ({ description: i.description, responsibleRole: i.responsibleRole })) }
-        : undefined,
-    },
-    include: { interventions: true },
+  return prisma.$transaction(async (tx) => {
+    const plan = await tx.carePlan.create({
+      data: {
+        patientId: input.patientId,
+        encounterId: input.encounterId,
+        facilityId: input.facilityId,
+        problem: input.problem,
+        goal: input.goal,
+        priority: input.priority,
+        targetDate: input.targetDate,
+        createdByStaffId: input.createdByStaffId,
+        notes: input.notes,
+        interventions: input.interventions?.length
+          ? { create: input.interventions.map((i) => ({ description: i.description, responsibleRole: i.responsibleRole })) }
+          : undefined,
+      },
+      include: { interventions: true },
+    });
+    await emitCarePlanUpdated(tx, plan.id, "CREATED", input.byUserId);
+    return plan;
   });
 }
 
@@ -82,6 +104,7 @@ export async function addIntervention(input: {
         encounterId: carePlan.encounterId ?? undefined,
       },
     });
+    await emitCarePlanUpdated(tx, input.carePlanId, "INTERVENTION_ADDED", input.byUserId, intervention.id);
     return linked;
   });
 }
@@ -119,12 +142,11 @@ export async function completeIntervention(input: {
 
     if (intervention.taskId) {
       const task = await tx.task.findUnique({ where: { id: intervention.taskId } });
-      if (task && task.status !== "COMPLETED" && task.status !== "CANCELLED") {
-        const taskResult = await tx.task.updateMany({
-          where: { id: intervention.taskId, status: { notIn: ["COMPLETED", "CANCELLED"] } },
-          data: { status: "COMPLETED", completedByStaffId: input.completedByStaffId, completedAt: new Date() },
-        });
-        if (taskResult.count === 1) {
+      if (task && OPEN_STATUSES.includes(task.status)) {
+        // Through the task service (D6), so TaskCompleted is emitted; it used a
+        // raw update here, which closed the task without the event.
+        const closed = await closeTask(tx, intervention.taskId, "COMPLETED", { completedByStaffId: input.completedByStaffId, completedByUserId: input.byUserId, completedAt: new Date() }, input.byUserId);
+        if (closed) {
           await tx.auditEvent.create({
             data: {
               type: "hospital.task.completed",
@@ -151,10 +173,17 @@ export async function completeIntervention(input: {
         encounterId: carePlan.encounterId ?? undefined,
       },
     });
+    await emitCarePlanUpdated(tx, input.carePlanId, "INTERVENTION_COMPLETED", input.byUserId, input.interventionId);
     return updated;
   });
 }
 
-export async function closeCarePlan(carePlanId: string, status: "COMPLETED" | "CANCELLED") {
-  return prisma.carePlan.update({ where: { id: carePlanId }, data: { status, completedAt: status === "COMPLETED" ? new Date() : undefined } });
+/** Closes an ACTIVE care plan (guarded: a closed plan can't be closed again, nor a concurrent close applied twice). */
+export async function closeCarePlan(carePlanId: string, status: "COMPLETED" | "CANCELLED", byUserId?: string) {
+  return prisma.$transaction(async (tx) => {
+    const r = await tx.carePlan.updateMany({ where: { id: carePlanId, status: "ACTIVE" }, data: { status, completedAt: status === "COMPLETED" ? new Date() : undefined } });
+    if (r.count !== 1) throw new BadRequestError("This care plan is already closed.");
+    await emitCarePlanUpdated(tx, carePlanId, "CLOSED", byUserId);
+    return tx.carePlan.findUniqueOrThrow({ where: { id: carePlanId } });
+  });
 }

@@ -711,6 +711,48 @@ Each step is its own commit with its gate; verify:all stays green after each.
 
 The `rag-indexer` (§2) is Week 4.
 
+**As built: step 5b and step 6 (2026-10-16).** Gates
+`verify-postgres-nursing-events` (16), `verify-postgres-orders-results-medication`
+(45) and the first `verify-postgres-core-journey` (20: steps 1–8a of §7 plus a
+medication round, with the replay and tenancy assertions; it did not exist
+before step 6, so step 6 created it). Departures from the text above:
+
+- **MAR vocabulary.** Scheduled doses are `DUE` (the existing
+  `MedicationAdministrationStatus`), not `SCHEDULED`. `(medicationOrderId,
+  scheduledAt)` is unique by a partial index (rows that are not late
+  recordings), migration `20261016100000_mar_schedule_and_notification_keys`,
+  which refuses duplicates rather than merging them.
+- **Dose times come from the event.** mar-scheduler computes the schedule from
+  `MedicationVerified.occurredAt`, so a redelivery inserts nothing; it checks
+  the order's status under a row lock, so a concurrent stop either cancels the
+  new doses or prevents them. `createMedicationOrder` no longer schedules doses.
+- **Grace key.** `mar.missed_grace` (a duration in seconds, default 3600),
+  following the registry's snake_case/duration convention, not
+  `mar.missedGraceMinutes`.
+- **What the sweep skips.** PRN orders, and orders that are held, stopped or
+  completed: only orders being given (VERIFIED, DISPENSED, ACTIVE) can miss a
+  dose. Stopping a drug cancels its future DUE doses in the same transaction.
+- **Late recording** of a swept dose is a new row with
+  `lateForAdministrationId` (unique), emitting `MedicationAdministered` with that
+  link; the MISSED row is never rewritten.
+- **Two aggregates for one event.** `CriticalResultAcknowledged` and
+  `DiagnosticReportAmended` are about a LAB_RESULT or an IMAGING_REPORT; a
+  contract may now list `alternateAggregateTypes`, chosen per emit, so each is
+  ordered behind its own release. An amendment is emitted on the original's
+  aggregate.
+- **notification-dispatch** writes `Notification` rows for staff profiles
+  (the model's recipient), unique on `(sourceEventId, recipientStaffId)`.
+  Recipients: the ordering clinician; for a missed dose also the patient's
+  assigned nurse. Inactive staff are skipped.
+- **Payload details.** `ImagingOrderPlaced.modality` is a closed code (the
+  column has a CHECK); `MedicationDispensed.quantity` is a positive number (the
+  column is a float); `NursingAssessmentRecorded` has no `assessmentType` (the
+  model has no type column).
+- **Release events are correlated by the encounter** (`LabResultReleased`,
+  `ImagingReportReleased`, `MedicationOrdered` had their own correlation), and an
+  imaging report with no linked study is now released with an event (it emitted
+  nothing before).
+
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b
 (quality, safety, operations) and 9c (access, identity, interoperability,

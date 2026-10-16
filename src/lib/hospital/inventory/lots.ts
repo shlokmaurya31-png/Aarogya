@@ -1,8 +1,17 @@
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { BadRequestError } from "@/lib/auth/rbac";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 type Tx = Prisma.TransactionClient;
+
+/** StockLotStatusChanged (a safety fact: the lot can or can't be issued), in the caller's transaction. */
+function emitLotStatus(tx: Tx, lot: { id: string; itemId: string; facilityId: string }, from: string, to: string, cause: "QUARANTINE" | "RELEASE", byUserId: string) {
+  return emitFacilityEvent(tx, {
+    type: "StockLotStatusChanged", aggregateId: lot.id, facilityId: lot.facilityId, actorUserId: byUserId,
+    payload: { lotId: lot.id, itemId: lot.itemId, from, to, cause },
+  });
+}
 
 const NO_LOT_NUMBER = "NO-LOT";
 
@@ -55,7 +64,9 @@ export async function quarantineLot(tx: Tx, lotId: string, input: { reason: stri
     data: { status: "QUARANTINED", quarantineReason: input.reason, quarantinedAt: new Date(), quarantinedByUserId: input.byUserId },
   });
   if (result.count !== 1) throw new LotConcurrencyError(lotId);
-  return tx.itemLot.findUniqueOrThrow({ where: { id: lotId } });
+  const quarantined = await tx.itemLot.findUniqueOrThrow({ where: { id: lotId } });
+  if (lot.status !== "QUARANTINED") await emitLotStatus(tx, quarantined, lot.status, "QUARANTINED", "QUARANTINE", input.byUserId);
+  return quarantined;
 }
 
 export async function releaseLotFromQuarantine(tx: Tx, lotId: string, input: { byUserId: string }) {
@@ -64,5 +75,7 @@ export async function releaseLotFromQuarantine(tx: Tx, lotId: string, input: { b
     data: { status: "ACTIVE", releasedAt: new Date(), releasedByUserId: input.byUserId },
   });
   if (result.count !== 1) throw new LotConcurrencyError(lotId);
-  return tx.itemLot.findUniqueOrThrow({ where: { id: lotId } });
+  const released = await tx.itemLot.findUniqueOrThrow({ where: { id: lotId } });
+  await emitLotStatus(tx, released, "QUARANTINED", "ACTIVE", "RELEASE", input.byUserId);
+  return released;
 }

@@ -9,6 +9,7 @@ import { mapDiagnosticPriorityToOrderPriority } from "./diagnosticsLifecycle";
 import { accessionSpecimen } from "./specimenLifecycle";
 import { createPricedChargeIfNotExists } from "./billing/chargeCapture";
 import { PriceNotFoundError } from "./billing/pricing";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 type Tx = Prisma.TransactionClient;
 
@@ -21,9 +22,9 @@ export async function markEncounterInvestigating(tx: Tx, encounterId: string) {
  * Place a lab order (POST /api/hospital/orders/lab), in one transaction:
  * Order envelope + LabOrder + specimen accession + the priced charge (§5.2:
  * lab charges stay in-transaction) + the collection task, and the encounter
- * moves to INVESTIGATING. A resubmission of the same test by the same staff
- * member within 15 s returns the existing order (double-click / client
- * retry). LabOrderPlaced is wired here in §9 step 6.
+ * moves to INVESTIGATING, and LabOrderPlaced is emitted. A resubmission of
+ * the same test by the same staff member within 15 s returns the existing
+ * order (double-click / client retry) and emits nothing.
  */
 export async function placeLabOrder(input: {
   facilityId: string;
@@ -101,6 +102,10 @@ export async function placeLabOrder(input: {
       patientId, encounterId, orderId: envelope.id, createdByStaffId: staffId, priority: priority ?? "ROUTINE",
     }, input.byUserId);
     await markEncounterInvestigating(tx, encounterId);
+    await emitFacilityEvent(tx, {
+      type: "LabOrderPlaced", aggregateId: order.id, facilityId, actorUserId: input.byUserId, encounterId,
+      payload: { labOrderId: order.id, orderId: envelope.id, encounterId, patientId, priority: order.priority, ...(catalogTestId ? { catalogTestId } : {}) },
+    });
     return { order, specimen, duplicate: false as const, charge: charged.charge, task };
   });
 

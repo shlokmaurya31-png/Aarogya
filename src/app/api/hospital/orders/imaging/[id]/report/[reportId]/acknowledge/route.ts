@@ -16,7 +16,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const report = await prisma.imagingReport.findUnique({ where: { id: reportId }, include: { imagingOrder: { include: { encounter: true } } } });
     if (!report || report.imagingOrderId !== id || report.imagingOrder.encounter.facilityId !== facilityId) throw new NotFoundError("Imaging report not found.");
 
-    const updated = await prisma.$transaction((tx) => acknowledgeReport(tx, reportId, staff.id));
+    const updated = await prisma.$transaction((tx) => acknowledgeReport(tx, reportId, staff.id, session.userId));
 
     await recordAuditEvent(
       "hospital.imaging.criticalFindingAcknowledged",

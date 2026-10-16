@@ -40,6 +40,11 @@ export async function emitDomainEvent(client: EmitClient, input: EmitEventInput)
     throw new PermanentEventError(`Unknown event contract ${input.type}@${version}.`, "UNKNOWN_VERSION");
   }
 
+  const aggregateType = input.aggregateType ?? c.aggregateType;
+  if (aggregateType !== c.aggregateType && !c.alternateAggregateTypes?.includes(aggregateType)) {
+    throw new PermanentEventError(`Event ${input.type} is not about a ${aggregateType} aggregate.`, "AGGREGATE_MISMATCH");
+  }
+
   const parsed = c.payload.safeParse(input.payload);
   if (!parsed.success) {
     throw new PermanentEventError(`Invalid payload for ${input.type}@${version}: ${parsed.error.issues.map((i) => i.path.join(".") + " " + i.message).join("; ")}`, "SCHEMA_INVALID");
@@ -67,7 +72,7 @@ export async function emitDomainEvent(client: EmitClient, input: EmitEventInput)
       eventId,
       eventType: c.type,
       eventVersion: c.version,
-      aggregateType: c.aggregateType,
+      aggregateType,
       aggregateId: input.aggregateId,
       organizationId: c.scope === "PLATFORM" ? null : organizationId,
       facilityId: c.scope === "PLATFORM" ? null : facilityId,

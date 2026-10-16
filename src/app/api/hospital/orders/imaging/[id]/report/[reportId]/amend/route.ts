@@ -31,7 +31,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
 
     const { original, amended } = await prisma.$transaction((tx) =>
-      amendReport(tx, reportId, { findings, impression, recommendations, isCritical, reason, amendedByStaffId: staff.id })
+      amendReport(tx, reportId, { findings, impression, recommendations, isCritical, reason, amendedByStaffId: staff.id }, session.userId)
     );
 
     await recordAuditEvent(

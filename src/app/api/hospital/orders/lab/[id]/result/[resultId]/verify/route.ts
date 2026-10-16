@@ -16,7 +16,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const result = await prisma.labResult.findUnique({ where: { id: resultId }, include: { labOrder: { include: { encounter: true } } } });
     if (!result || result.labOrderId !== id || result.labOrder.encounter.facilityId !== facilityId) throw new NotFoundError("Lab result not found.");
 
-    const updated = await prisma.$transaction((tx) => verifyResult(tx, resultId, staff.id));
+    const updated = await prisma.$transaction((tx) => verifyResult(tx, resultId, staff.id, session.userId));
 
     await recordAuditEvent(
       "hospital.lab.resultVerified",
