@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isMedicationOrderTransitionAllowed } from "./medicationLifecycle";
+import { isMedicationOrderTransitionAllowed, doseNotGivenReason } from "./medicationLifecycle";
 
 describe("isMedicationOrderTransitionAllowed — medication order lifecycle (brief §16)", () => {
   it("allows the standard prescribe -> pharmacy -> dispense -> administer path", () => {
@@ -43,5 +43,21 @@ describe("isMedicationOrderTransitionAllowed — medication order lifecycle (bri
   it("never allows a REJECTED order straight back to ACTIVE without going through pharmacy review again", () => {
     expect(isMedicationOrderTransitionAllowed("REJECTED", "ACTIVE")).toBe(false);
     expect(isMedicationOrderTransitionAllowed("REJECTED", "VERIFIED")).toBe(false);
+  });
+});
+
+describe("doseNotGivenReason (MedicationDoseNotGiven's closed reason)", () => {
+  it("is REFUSED for any refusal", () => {
+    expect(doseNotGivenReason("REFUSED", "npo")).toBe("REFUSED");
+    expect(doseNotGivenReason("REFUSED")).toBe("REFUSED");
+  });
+  it("maps a hold's free-text code, never copying it", () => {
+    expect(doseNotGivenReason("HELD")).toBe("HELD");
+    expect(doseNotGivenReason("HELD", "NPO")).toBe("NPO");
+    expect(doseNotGivenReason("HELD", "nil by mouth")).toBe("NPO");
+    expect(doseNotGivenReason("HELD", "patient-away")).toBe("PATIENT_ABSENT");
+    expect(doseNotGivenReason("HELD", "patient_absent")).toBe("PATIENT_ABSENT");
+    expect(doseNotGivenReason("HELD", "patient-declined")).toBe("REFUSED");
+    expect(doseNotGivenReason("HELD", "unavailable")).toBe("OTHER");
   });
 });

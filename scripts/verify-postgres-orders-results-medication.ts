@@ -17,7 +17,8 @@
  *   4. Medication: no doses before verification; MedicationVerified →
  *      mar-scheduler writes 3 doses from the verification time, once
  *      (redelivery adds none); MedicationDispensed; MedicationAdministered;
- *      a nurse's MISSED → MedicationDoseMissed (NURSE).
+ *      a nurse's MISSED → MedicationDoseMissed (NURSE); REFUSED / HELD →
+ *      MedicationDoseNotGiven (SENSITIVE) with a closed reason, never DoseMissed.
  *   5. MAR sweep: a DUE dose past its grace → MISSED ("not-recorded") +
  *      MedicationDoseMissed (SWEEP) → a review task and notifications to the
  *      prescriber and the assigned nurse; a late recording is a new linked row
@@ -221,6 +222,24 @@ async function main() {
   await administerMedication({ administrationId: sched[1].id, status: "MISSED", reasonCode: "patient-away", byUserId: nurse.userId });
   const nurseMissed = await one("MedicationDoseMissed", sched[1].id);
   report("administerMedication (MISSED) emits MedicationDoseMissed missedBy NURSE (SENSITIVE)", nurseMissed?.p.missedBy === "NURSE");
+
+  // Batch 4, decision 2: REFUSED / HELD → MedicationDoseNotGiven, distinct from DoseMissed.
+  const base = Date.now() + 30 * 86_400_000;
+  for (let i = 0; i < 4; i++) await generateAdministrationSchedule(orderId, "OD", 1, { from: new Date(base + i * 60_000) });
+  const extra = (await doses()).filter((d) => d.scheduledAt.getTime() >= base);
+  const notGiven = [
+    { dose: extra[0], status: "REFUSED" as const, reasonCode: "patient-declined", expect: "REFUSED" },
+    { dose: extra[1], status: "HELD" as const, reasonCode: "npo", expect: "NPO" },
+    { dose: extra[2], status: "HELD" as const, reasonCode: "patient-away", expect: "PATIENT_ABSENT" },
+    { dose: extra[3], status: "HELD" as const, reasonCode: undefined, expect: "HELD" },
+  ];
+  for (const c of notGiven) await administerMedication({ administrationId: c.dose.id, status: c.status, reasonCode: c.reasonCode, byUserId: nurse.userId });
+  const ng = await Promise.all(notGiven.map((c) => one("MedicationDoseNotGiven", c.dose.id)));
+  report("REFUSED / HELD → MedicationDoseNotGiven with the closed reason (REFUSED, NPO, PATIENT_ABSENT, HELD)",
+    ng.every((e, i) => e?.p.reasonCode === notGiven[i].expect && e.p.status === notGiven[i].status), ng.map((e) => e?.p.reasonCode).join(","));
+  report("…SENSITIVE, never carrying the nurse's free-text code, and never a MedicationDoseMissed",
+    (await Promise.all(notGiven.map((c) => ofType("MedicationDoseMissed", c.dose.id)))).every((x) => x.length === 0)
+      && !ng.some((e) => JSON.stringify(e?.p).includes("patient-")));
 
   // ── 5. MAR sweep ──────────────────────────────────────────────────────────
   // A dose that fell due 2 h ago (beyond the 60 min grace) on this active order.

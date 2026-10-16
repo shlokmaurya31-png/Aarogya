@@ -318,6 +318,16 @@ export const EVENT_CONTRACTS: EventContract[] = [
     }).strict(),
   }),
   contract({
+    type: "MedicationDoseNotGiven", version: 1, aggregateType: "MEDICATION_ADMINISTRATION", scope: "FACILITY",
+    sensitivity: "SENSITIVE", producer: "medication lifecycle (administerMedication, status REFUSED or HELD)",
+    payload: z.object({
+      administrationId: id, orderId: id, patientId: id, encounterId: optId, scheduledAt: iso,
+      status: z.enum(["REFUSED", "HELD"]), reasonCode: z.enum(["REFUSED", "HELD", "PATIENT_ABSENT", "NPO", "OTHER"]),
+      /** A late recording of a swept MISSED dose. */
+      lateForAdministrationId: optId,
+    }).strict(),
+  }),
+  contract({
     type: "MedicationSafetyWarningOverridden", version: 1, aggregateType: "MEDICATION_SAFETY_WARNING", scope: "FACILITY",
     sensitivity: "INTERNAL", producer: "medication lifecycle (acknowledgeSafetyWarning)",
     payload: z.object({

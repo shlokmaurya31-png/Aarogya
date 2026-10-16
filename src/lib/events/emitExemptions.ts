@@ -64,7 +64,7 @@ export interface EmitExemption {
  */
 export const SENSITIVE_EVENTS: readonly string[] = [
   "ConsentGranted", "ConsentRevoked", "ConsentExpired",
-  "MedicationDoseMissed", "TransfusionReactionReported", "TransfusionReactionStatusChanged",
+  "MedicationDoseMissed", "MedicationDoseNotGiven", "TransfusionReactionReported", "TransfusionReactionStatusChanged",
   "FamilyAccessGranted", "FamilyAccessRevoked",
   "ResuscitationStatusChanged", "BreakGlassStatusChanged", "LegalHoldSet",
   "PrivacyRequestStatusChanged", "InfectionExposureRecorded",

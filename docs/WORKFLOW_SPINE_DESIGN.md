@@ -764,6 +764,12 @@ The SLA still resolves through `workflow.critical-lab-review.sla`. The seed
 publishes a new version where an older one is live, and migration
 `20261016200000_workflow_escalate_step` widens the step-type CHECK.
 
+**Batch 4, decision 2.** `MedicationDoseNotGiven` (SENSITIVE), distinct from
+`MedicationDoseMissed`: a nurse recorded the dose REFUSED or HELD.
+`reasonCode` is closed (REFUSED, HELD, PATIENT_ABSENT, NPO, OTHER), mapped from
+the MAR's free-text code by `doseNotGivenReason`, never copied. A CANCELLED dose
+emits nothing.
+
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b
 (quality, safety, operations) and 9c (access, identity, interoperability,

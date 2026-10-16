@@ -435,6 +435,25 @@ export async function discontinueMedicationOrder(orderId: string, reason: string
 /** reasonCode the MAR sweep sets on a dose nobody recorded (spine §3.4). */
 export const SWEPT_MISSED_REASON = "not-recorded";
 
+export type DoseNotGivenReason = "REFUSED" | "HELD" | "PATIENT_ABSENT" | "NPO" | "OTHER";
+
+/**
+ * The closed reason a REFUSED or HELD dose carries in MedicationDoseNotGiven.
+ * The stored reasonCode is free text from the MAR ("patient-declined", "npo",
+ * "unavailable"…), so it is mapped, never copied: a refusal is REFUSED; a hold
+ * names NPO or an absent patient when the nurse's code says so, HELD when no
+ * code was given, and OTHER for anything else.
+ */
+export function doseNotGivenReason(status: "REFUSED" | "HELD", reasonCode?: string | null): DoseNotGivenReason {
+  if (status === "REFUSED") return "REFUSED";
+  const code = (reasonCode ?? "").trim().toLowerCase().replace(/[\s_]+/g, "-");
+  if (!code || code === "held" || code === "hold") return "HELD";
+  if (code === "npo" || code === "nil-by-mouth") return "NPO";
+  if (/^patient-(absent|away|off-ward|unavailable)$/.test(code)) return "PATIENT_ABSENT";
+  if (code === "refused" || code === "patient-declined") return "REFUSED";
+  return "OTHER";
+}
+
 /**
  * Records a dose administration (brief §20-21). Concurrency-safe via a
  * guarded updateMany (status: "DUE" in the WHERE, count-checked after) —
@@ -450,8 +469,9 @@ export const SWEPT_MISSED_REASON = "not-recorded";
  * late: that writes a NEW row linked to the missed one (lateForAdministrationId,
  * unique, so it happens once), never rewriting the missed fact (spine §3.4).
  *
- * Emits MedicationAdministered (GIVEN) or MedicationDoseMissed (MISSED,
- * missedBy NURSE) in the same transaction.
+ * Emits MedicationAdministered (GIVEN), MedicationDoseMissed (MISSED, missedBy
+ * NURSE) or MedicationDoseNotGiven (REFUSED / HELD, with a closed reason) in
+ * the same transaction. A CANCELLED dose emits nothing.
  */
 export async function administerMedication(input: {
   administrationId: string;
@@ -513,6 +533,16 @@ export async function administerMedication(input: {
       "hospital.medication.administered";
     await tx.auditEvent.create({ data: { type: eventType, userId: input.byUserId, detail: { orderId: admin.medicationOrderId, administrationId: updated.id, status: input.status, ...(lateRecording ? { lateForAdministrationId: admin.id } : {}) } } });
 
+    if (input.status === "REFUSED" || input.status === "HELD") {
+      const { ids, ...ctx } = await orderEvent(tx, admin.medicationOrderId, input.byUserId);
+      await emitFacilityEvent(tx, {
+        type: "MedicationDoseNotGiven", aggregateId: updated.id, ...ctx,
+        payload: {
+          ...ids, administrationId: updated.id, scheduledAt: updated.scheduledAt.toISOString(), status: input.status,
+          reasonCode: doseNotGivenReason(input.status, input.reasonCode), ...(lateRecording ? { lateForAdministrationId: admin.id } : {}),
+        },
+      });
+    }
     if (input.status === "GIVEN" || input.status === "MISSED") {
       const { ids, ...ctx } = await orderEvent(tx, admin.medicationOrderId, input.byUserId);
       if (input.status === "GIVEN") {
