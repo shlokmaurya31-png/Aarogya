@@ -63,6 +63,7 @@ async function postCharge(event: DomainEventEnvelope, spec: ChargeSpec) {
     description: price ? spec.description : `${spec.description} (needs pricing)`, chargeCode: code,
     quantity: spec.quantity ?? 1, unitPriceMinor: price?.unitPriceMinor ?? 0, currency: price?.currency ?? "INR",
     sourceType: spec.sourceType, sourceId: spec.sourceId, postedByUserId: event.actorUserId,
+    pricingStatus: price ? "PRICED" : "NEEDS_PRICING",
   }));
 }
 

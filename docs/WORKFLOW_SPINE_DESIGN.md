@@ -818,6 +818,18 @@ step-8 events; consumers `charge-capture` and `stock-movement`. Gate
   "ignore if it already moved" calls ignore only that conflict (they swallowed
   every error). `verifyCompatibility` is now compare-and-set.
 
+**Batch 5, decision 1 (needs-pricing charges).** `Charge.pricingStatus`
+(PRICED, NEEDS_PRICING, WAIVED; migration `20261017100000`, which refuses a
+"(needs pricing)" charge that already carries an amount, with CHECKs that a
+NEEDS_PRICING charge is 0 and a WAIVED one has a reason). charge-capture posts
+NEEDS_PRICING when no tariff exists; `issueInvoice` refuses while any line needs
+pricing; billing resolves it with `priceCharge` (tariff code or amount;
+`ChargeRepriced`) or `waiveCharge` (reason code; `ChargeWaived`), both audited,
+through `POST …/charges/[chargeId]/pricing` (billing:adjustment:approve).
+Seeded tariffs: PROCEDURE:GENERIC, BLOOD:GENERIC, ICU:ADMISSION and ITEM:<sku>
+for the seeded consumables, surgical supplies and implants (no procedures or
+blood products are seeded, so those have generic codes only).
+
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b
 (quality, safety, operations) and 9c (access, identity, interoperability,

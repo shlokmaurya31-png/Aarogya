@@ -587,6 +587,25 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({ reactionId: id, transfusionId: id, encounterId: id, patientId: id, from: transfusionReactionStatus, to: transfusionReactionStatus }).strict(),
   }),
 
+  // ── Hospital billing: pricing of charges posted without a tariff (batch 5) ──
+  contract({
+    type: "ChargeRepriced", version: 1, aggregateType: "CHARGE", scope: "FACILITY",
+    sensitivity: "LOW", producer: "billing (priceCharge: a needs-pricing charge priced)",
+    payload: z.object({
+      chargeId: id, encounterId: id, patientId: id, unitPriceMinor: minor, netAmountMinor: minor, currency,
+      /** True when priced from a tariff code, false for an explicit amount. */
+      fromTariff: z.boolean(),
+    }).strict(),
+  }),
+  contract({
+    type: "ChargeWaived", version: 1, aggregateType: "CHARGE", scope: "FACILITY",
+    sensitivity: "LOW", producer: "billing (waiveCharge: a needs-pricing charge waived)",
+    payload: z.object({
+      chargeId: id, encounterId: id, patientId: id,
+      reasonCode: z.enum(["PACKAGE_INCLUDED", "GOODWILL", "CHARITY", "CLINICAL_ERROR", "NOT_BILLABLE", "OTHER"]),
+    }).strict(),
+  }),
+
   // ── Interoperability ─────────────────────────────────────────────────────────
   contract({
     type: "ConsentGranted", version: 1, aggregateType: "CONSENT", scope: "FACILITY",

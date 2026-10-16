@@ -3230,6 +3230,16 @@ model Charge {
   sourceId   String?
 
   postedByUserId String? // null = system/automatic (order-creation/dispense/discharge hooks)
+
+  // Batch 5: NEEDS_PRICING when posted with no tariff (amount 0); billing
+  // prices it or waives it (with a reason) before its invoice can be issued.
+  pricingStatus  ChargePricingStatus @default(PRICED)
+  waiverReason   ChargeWaiverReason?
+  pricedAt       DateTime?
+  pricedByUserId String?
+  waivedAt       DateTime?
+  waivedByUserId String?
+
   voidedAt       DateTime?
   voidedByUserId String?
   voidReason     String?
@@ -10049,4 +10059,19 @@ enum PregnancyStatus {
   PREGNANT
   UNKNOWN
   NOT_APPLICABLE
+}
+
+enum ChargePricingStatus {
+  PRICED
+  NEEDS_PRICING
+  WAIVED
+}
+
+enum ChargeWaiverReason {
+  PACKAGE_INCLUDED
+  GOODWILL
+  CHARITY
+  CLINICAL_ERROR
+  NOT_BILLABLE
+  OTHER
 }

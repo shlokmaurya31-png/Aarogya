@@ -67,6 +67,25 @@ async function recalculateDraftTotals(tx: Tx, invoiceId: string, invoiceLevelDis
   return { subtotalMinor, discountMinor, taxMinor, totalMinor };
 }
 
+/**
+ * Keep a DRAFT invoice line in step with its charge after the charge is priced
+ * or waived (an issued line is never edited: the charge can't change then).
+ */
+export async function syncDraftLineForCharge(tx: Tx, chargeId: string) {
+  const charge = await tx.charge.findUniqueOrThrow({ where: { id: chargeId }, include: { invoiceLine: { include: { invoice: { select: { id: true, status: true } } } } } });
+  const line = charge.invoiceLine;
+  if (!line) return;
+  if (line.invoice.status !== "DRAFT") throw new InvoiceNotDraftError();
+  await tx.invoiceLine.update({ where: { id: line.id }, data: { description: charge.description, unitPriceMinor: charge.unitPriceMinor, netAmountMinor: charge.netAmountMinor } });
+  await recalculateDraftTotals(tx, line.invoice.id, 0, 0);
+}
+
+export class InvoiceNeedsPricingError extends BadRequestError {
+  constructor(count: number) {
+    super(`${count} line(s) on this invoice still need pricing. Price or waive them before issuing.`);
+  }
+}
+
 /** Pulls an un-invoiced POSTED charge for the same encounter onto this DRAFT invoice as a new line. A charge can appear on at most one invoice ever (InvoiceLine.chargeId is unique). */
 export async function addChargeToInvoice(tx: Tx, invoiceId: string, chargeId: string) {
   const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
@@ -101,6 +120,9 @@ export async function issueInvoice(
   const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId }, include: { lines: true } });
   if (invoice.status !== "DRAFT") throw new InvoiceNotDraftError();
   if (invoice.lines.length === 0) throw new BadRequestError("Cannot issue an invoice with no lines.");
+  // Batch 5: never issue a zero line that was only waiting for a price.
+  const unpriced = await tx.charge.count({ where: { invoiceLine: { invoiceId }, pricingStatus: "NEEDS_PRICING" } });
+  if (unpriced > 0) throw new InvoiceNeedsPricingError(unpriced);
 
   const totals = await recalculateDraftTotals(tx, invoiceId, input.discountMinor ?? 0, input.taxRatePercent ?? 0);
 

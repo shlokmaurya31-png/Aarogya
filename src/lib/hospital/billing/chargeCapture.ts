@@ -27,6 +27,8 @@ interface CreateChargeInput {
   sourceType?: string;
   sourceId?: string;
   postedByUserId?: string | null;
+  /** NEEDS_PRICING: posted with no tariff (amount 0); billing prices or waives it before invoicing. */
+  pricingStatus?: "PRICED" | "NEEDS_PRICING";
 }
 
 /**
@@ -98,8 +100,8 @@ export async function createChargeIfNotExists(
   // returned row count tells us who won — verified against both engines
   // under genuine concurrent load (see scripts/verify-postgres-billing-concurrency.ts).
   const rowsInserted = await tx.$executeRaw`
-    INSERT INTO "Charge" (id, "encounterId", "patientId", "facilityId", description, category, "chargeCode", quantity, "unitPriceMinor", "discountMinor", "netAmountMinor", currency, "sourceType", "sourceId", "postedByUserId")
-    VALUES (${randomUUID()}, ${input.encounterId}, ${input.patientId}, ${input.facilityId}, ${input.description}, ${input.category}, ${input.chargeCode ?? null}, ${quantity}, ${input.unitPriceMinor}, ${discountMinor}, ${netAmountMinor}, ${input.currency ?? "INR"}, ${input.sourceType}, ${input.sourceId}, ${input.postedByUserId ?? null})
+    INSERT INTO "Charge" (id, "encounterId", "patientId", "facilityId", description, category, "chargeCode", quantity, "unitPriceMinor", "discountMinor", "netAmountMinor", currency, "sourceType", "sourceId", "postedByUserId", "pricingStatus")
+    VALUES (${randomUUID()}, ${input.encounterId}, ${input.patientId}, ${input.facilityId}, ${input.description}, ${input.category}, ${input.chargeCode ?? null}, ${quantity}, ${input.unitPriceMinor}, ${discountMinor}, ${netAmountMinor}, ${input.currency ?? "INR"}, ${input.sourceType}, ${input.sourceId}, ${input.postedByUserId ?? null}, ${input.pricingStatus ?? "PRICED"}::"ChargePricingStatus")
     ON CONFLICT ("sourceType", "sourceId") DO NOTHING
   `;
   const charge = await tx.charge.findFirstOrThrow({ where: { sourceType: input.sourceType, sourceId: input.sourceId } });

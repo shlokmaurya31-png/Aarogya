@@ -191,6 +191,7 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/hospital/billing/invoices.ts#draftInvoiceForAccount": { category: "PROCESS_STEP", reason: "draft invoice; money moves on HospitalInvoiceIssued", boundary: ["HospitalInvoiceIssued", "HospitalInvoiceVoided"] },
   "src/lib/hospital/billing/invoices.ts#issueInvoice": { category: "PLANNED", reason: "will emit HospitalInvoiceIssued", step: 9, events: ["HospitalInvoiceIssued"] },
   "src/lib/hospital/billing/invoices.ts#refreshInvoicePaymentStatus": { category: "BOOKKEEPING", reason: "derived status, decision log or provenance written as part of another operation" },
+  "src/lib/hospital/billing/invoices.ts#syncDraftLineForCharge": { category: "BOOKKEEPING", reason: "keeps a draft invoice line in step inside priceCharge/waiveCharge, whose events cover it" },
   "src/lib/hospital/billing/invoices.ts#voidInvoice": { category: "PLANNED", reason: "(b) money or stock: will emit HospitalInvoiceVoided", step: 9, events: ["HospitalInvoiceVoided"] },
   "src/lib/hospital/billing/packages.ts#createPackageDefinition": { category: "REFERENCE_DATA", reason: "catalogue / master data; no runtime reaction depends on it" },
   "src/lib/hospital/billing/payments.ts#allocatePayment": { category: "PLANNED", reason: "(b) money or stock: will emit HospitalPaymentStatusChanged", step: 9, events: ["HospitalPaymentStatusChanged"] },

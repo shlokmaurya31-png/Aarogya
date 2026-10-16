@@ -12,7 +12,7 @@ import { seedHospital } from "./seedData/hospital";
 import { seedPhase1Extensions } from "./seedData/hospitalPhase1";
 import { seedPhase2PatientFlow } from "./seedData/hospitalPhase2";
 import { seedPhase3Clinical } from "./seedData/hospitalPhase3";
-import { seedPhase5Billing } from "./seedData/hospitalPhase5";
+import { seedPhase5Billing, seedChargeCaptureTariffs } from "./seedData/hospitalPhase5";
 import { seedPhase6aInventory } from "./seedData/hospitalPhase6a";
 import { ensureCommercialBootstrap } from "../src/lib/commercial/bootstrap";
 import { ensureBillingBootstrap } from "../src/lib/billing/bootstrap";
@@ -208,6 +208,7 @@ async function main() {
   await seedPhase3Clinical(prisma);
   await seedPhase5Billing(prisma);
   await seedPhase6aInventory(prisma);
+  await seedChargeCaptureTariffs(prisma);
   await seedDemoLicensure(prisma);
   console.log(`Order statuses derived for ${await syncSeededOrderStatuses(prisma)} specific order(s).`);
   // Phase D2 — materialise the commercial registry (entitlement definitions,

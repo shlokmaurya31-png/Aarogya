@@ -119,8 +119,11 @@ async function main() {
 
   // ── 3. charge-capture ─────────────────────────────────────────────────────
   const procCharges = await chargesFor("Surgery", surgery.id);
-  report("The procedure is charged once, as 'needs pricing' at 0 when no tariff exists",
-    procCharges.length === 1 && procCharges[0].netAmountMinor === 0 && procCharges[0].description.includes("needs pricing") && procCharges[0].category === "PROCEDURE");
+  report("The procedure is charged once, at the seeded PROCEDURE:GENERIC tariff",
+    procCharges.length === 1 && procCharges[0].chargeCode === "PROCEDURE:GENERIC" && procCharges[0].netAmountMinor > 0 && procCharges[0].pricingStatus === "PRICED" && procCharges[0].category === "PROCEDURE");
+  const meshCharge = (await chargesFor("SurgeryItemUsage", u1.id))[0];
+  report("…an item with no tariff (not seeded) is charged as NEEDS_PRICING at 0",
+    meshCharge?.pricingStatus === "NEEDS_PRICING" && meshCharge.netAmountMinor === 0 && meshCharge.description.includes("needs pricing"));
   report("…each consumable usage is charged once (even the one stock could not cover: it was used)",
     (await chargesFor("SurgeryItemUsage", u1.id)).length === 1 && (await chargesFor("SurgeryItemUsage", u2.id)).length === 1);
   const icuWard = await prisma.ward.create({ data: { facilityId, name: `OTB ICU ${run}`, wardType: "ICU" } });
