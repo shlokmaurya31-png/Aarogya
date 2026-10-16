@@ -103,6 +103,11 @@ export async function assignEdLocation(input: { encounterId: string; facilityId:
     });
 
     await tx.auditEvent.create({ data: { type: "hospital.ed.locationAssigned", userId: input.byUserId, detail: { encounterId: input.encounterId, bedId: input.bedId, areaLabel: input.areaLabel }, facilityId: input.facilityId, patientId: enc.patientId, encounterId: input.encounterId } });
+    // The location, never its free-text area label (D5: EncounterLocation is the history).
+    await emitFacilityEvent(tx, {
+      type: "PatientLocationChanged", aggregateId: enc.id, facilityId: input.facilityId, actorUserId: input.byUserId, encounterId: enc.id,
+      payload: { encounterId: enc.id, patientId: enc.patientId, change: "ASSIGNED", locationId: location.id, ...(input.bedId ? { bedId: input.bedId } : {}), ...(prior ? { releasedLocationId: prior.id } : {}) },
+    });
     return location;
   });
 }
@@ -115,6 +120,10 @@ export async function releaseEdLocation(input: { encounterId: string; facilityId
     await tx.encounterLocation.updateMany({ where: { encounterId: input.encounterId, releasedAt: null }, data: { releasedAt: new Date() } });
     if (prior.bedId) await tx.bed.updateMany({ where: { id: prior.bedId, status: "OCCUPIED" }, data: { status: "CLEANING" } });
     await tx.auditEvent.create({ data: { type: "hospital.ed.locationReleased", userId: input.byUserId, detail: { encounterId: input.encounterId, bedId: prior.bedId }, facilityId: input.facilityId, patientId: enc.patientId, encounterId: input.encounterId } });
+    await emitFacilityEvent(tx, {
+      type: "PatientLocationChanged", aggregateId: enc.id, facilityId: input.facilityId, actorUserId: input.byUserId, encounterId: enc.id,
+      payload: { encounterId: enc.id, patientId: enc.patientId, change: "RELEASED", locationId: prior.id, ...(prior.bedId ? { bedId: prior.bedId } : {}) },
+    });
     return { released: true };
   });
 }
@@ -124,8 +133,16 @@ export async function recordReassessment(input: { encounterId: string; facilityI
   const enc = await prisma.encounter.findUnique({ where: { id: input.encounterId } });
   if (!enc || enc.facilityId !== input.facilityId) throw new NotFoundError("Encounter not found.");
   if (isTerminal(enc.status)) throw new BadRequestError("Cannot reassess a closed encounter.");
-  const rec = await prisma.edReassessment.create({
-    data: { encounterId: enc.id, facilityId: enc.facilityId, patientId: enc.patientId, reassessedByStaffId: input.reassessedByStaffId, findings: input.findings, vitalId: input.vitalId, taskId: input.taskId, escalationRequired: input.escalationRequired ?? false },
+  const rec = await prisma.$transaction(async (tx) => {
+    const created = await tx.edReassessment.create({
+      data: { encounterId: enc.id, facilityId: enc.facilityId, patientId: enc.patientId, reassessedByStaffId: input.reassessedByStaffId, findings: input.findings, vitalId: input.vitalId, taskId: input.taskId, escalationRequired: input.escalationRequired ?? false },
+    });
+    // The kind only, never the findings.
+    await emitFacilityEvent(tx, {
+      type: "ObservationRecorded", aggregateId: created.id, facilityId: enc.facilityId, actorUserId: input.byUserId, encounterId: enc.id,
+      payload: { observationId: created.id, encounterId: enc.id, patientId: enc.patientId, observationKind: "ED_REASSESSMENT" },
+    });
+    return created;
   });
   await recordAuditEvent("hospital.ed.reassessment", input.byUserId, { encounterId: enc.id, reassessmentId: rec.id, escalationRequired: rec.escalationRequired }, { facilityId: enc.facilityId, patientId: enc.patientId, encounterId: enc.id });
   return rec;
@@ -140,8 +157,15 @@ export async function activateResuscitation(input: { encounterId: string; facili
   const enc = await prisma.encounter.findUnique({ where: { id: input.encounterId } });
   if (!enc || enc.facilityId !== input.facilityId) throw new NotFoundError("Encounter not found.");
   if (isTerminal(enc.status)) throw new BadRequestError("Cannot activate resuscitation on a closed encounter.");
-  const resus = await prisma.edResuscitation.create({
-    data: { encounterId: enc.id, facilityId: enc.facilityId, patientId: enc.patientId, activatedByStaffId: input.activatedByStaffId, reason: input.reason, status: "ACTIVATED" },
+  const resus = await prisma.$transaction(async (tx) => {
+    const created = await tx.edResuscitation.create({
+      data: { encounterId: enc.id, facilityId: enc.facilityId, patientId: enc.patientId, activatedByStaffId: input.activatedByStaffId, reason: input.reason, status: "ACTIVATED" },
+    });
+    await emitFacilityEvent(tx, {
+      type: "ResuscitationStatusChanged", aggregateId: created.id, facilityId: enc.facilityId, actorUserId: input.byUserId, encounterId: enc.id,
+      payload: { resuscitationId: created.id, encounterId: enc.id, patientId: enc.patientId, from: null, to: "ACTIVATED" },
+    });
+    return created;
   }).catch((e: unknown) => {
     // partial unique index (one open per encounter) → concurrent activation single-winner
     if (e instanceof Error && /unique/i.test(e.message)) throw new EdResuscitationConflictError();
@@ -170,6 +194,10 @@ export async function updateResuscitation(input: { resuscitationId: string; faci
     const result = await tx.edResuscitation.updateMany({ where: { id: resus.id, status: resus.status }, data });
     if (result.count !== 1) throw new BadRequestError("Resuscitation state changed concurrently — refresh and try again.");
     await tx.auditEvent.create({ data: { type: "hospital.ed.resuscitationUpdated", userId: input.byUserId, detail: { resuscitationId: resus.id, from: resus.status, to: input.to }, facilityId: resus.facilityId, patientId: resus.patientId, encounterId: resus.encounterId } });
+    await emitFacilityEvent(tx, {
+      type: "ResuscitationStatusChanged", aggregateId: resus.id, facilityId: resus.facilityId, actorUserId: input.byUserId, encounterId: resus.encounterId,
+      payload: { resuscitationId: resus.id, encounterId: resus.encounterId, patientId: resus.patientId, from: resus.status, to: input.to },
+    });
     return tx.edResuscitation.findUniqueOrThrow({ where: { id: resus.id } });
   });
 }

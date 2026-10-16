@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import type { AppointmentType, AccessSource, RequestPriority } from "@prisma/client";
+import type { AppointmentType, AccessSource, RequestPriority, Prisma } from "@prisma/client";
 import { emitDomainEvent } from "@/lib/events/emit";
 import { facilityOrganizationId } from "@/lib/events/tenant";
 import { assertBookable } from "./bookability";
@@ -151,6 +151,14 @@ export class AppointmentNotConfirmableError extends Error {
  * 5.5: previously the API route bypassed this service layer entirely with
  * a bare, non-transactional, non-audited `prisma.appointment.update()`.
  */
+/** AppointmentStatusChanged (confirm, no-show), in the writer's transaction. */
+function emitAppointmentStatus(tx: Prisma.TransactionClient, appt: { id: string; facilityId: string; patientId: string; doctorStaffId: string; status: string; encounterId: string | null }, to: "CONFIRMED" | "NO_SHOW", byUserId: string) {
+  return emitFacilityEvent(tx, {
+    type: "AppointmentStatusChanged", aggregateId: appt.id, facilityId: appt.facilityId, actorUserId: byUserId, encounterId: appt.encounterId,
+    payload: { appointmentId: appt.id, patientId: appt.patientId, doctorStaffId: appt.doctorStaffId, from: appt.status, to },
+  });
+}
+
 export async function confirmAppointment(appointmentId: string, byUserId: string) {
   return prisma.$transaction(async (tx) => {
     const appt = await tx.appointment.findUniqueOrThrow({ where: { id: appointmentId } });
@@ -158,6 +166,7 @@ export async function confirmAppointment(appointmentId: string, byUserId: string
     const result = await tx.appointment.updateMany({ where: { id: appointmentId, status: appt.status }, data: { status: "CONFIRMED" } });
     if (result.count !== 1) throw new AppointmentNotConfirmableError(appt.status);
     await tx.auditEvent.create({ data: { type: "hospital.appointment.confirmed", userId: byUserId, detail: { appointmentId } } });
+    await emitAppointmentStatus(tx, appt, "CONFIRMED", byUserId);
     return { ...appt, status: "CONFIRMED" };
   });
 }
@@ -196,8 +205,11 @@ export async function markNoShow(appointmentId: string, markedByStaffId: string,
   return prisma.$transaction(async (tx) => {
     const appt = await tx.appointment.findUniqueOrThrow({ where: { id: appointmentId } });
     if (!["REQUESTED", "CONFIRMED", "RESCHEDULED"].includes(appt.status)) throw new AppointmentAlreadyResolvedError();
-    const updated = await tx.appointment.update({ where: { id: appointmentId }, data: { status: "NO_SHOW", noShowAt: new Date() } });
+    const r = await tx.appointment.updateMany({ where: { id: appointmentId, status: appt.status }, data: { status: "NO_SHOW", noShowAt: new Date() } });
+    if (r.count !== 1) throw new AppointmentAlreadyResolvedError();
+    const updated = await tx.appointment.findUniqueOrThrow({ where: { id: appointmentId } });
     await tx.auditEvent.create({ data: { type: "hospital.appointment.noShow", userId: byUserId, detail: { appointmentId, markedByStaffId } } });
+    await emitAppointmentStatus(tx, appt, "NO_SHOW", byUserId);
     return updated;
   });
 }

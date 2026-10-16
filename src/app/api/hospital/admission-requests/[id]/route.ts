@@ -41,7 +41,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         return { request: await allocateBed(id, bedId, staff.id, session.userId) };
       }
       if (action === "releaseReservation") return { request: await releaseReservation(id, session.userId) };
-      if (action === "defer") return { request: await deferRequest(id) };
+      if (action === "defer") return { request: await deferRequest(id, session.userId) };
       if (action === "reject") {
         const reason = body?.reason as string | undefined;
         if (!reason) throw new BadRequestError("reason is required to reject.");

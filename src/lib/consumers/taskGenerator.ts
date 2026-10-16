@@ -51,10 +51,10 @@ async function openTask(event: DomainEventEnvelope, encounterId: string, spec: T
   }));
 }
 
-async function closeTask(event: DomainEventEnvelope, type: string, sourceId: string) {
+async function closeTask(event: DomainEventEnvelope, type: string, sourceId: string, outcome: "COMPLETED" | "CANCELLED" = "COMPLETED") {
   await prisma.$transaction(async (tx) => {
     const task = await tx.task.findFirst({ where: { facilityId: event.facilityId!, idempotencyKey: keyOf(type, sourceId), source: "EVENT", status: { in: OPEN_STATUSES } }, select: { id: true } });
-    if (task) await closeTaskTx(tx, task.id, "COMPLETED", { completedAt: event.occurredAt });
+    if (task) await closeTaskTx(tx, task.id, outcome, outcome === "COMPLETED" ? { completedAt: event.occurredAt } : { cancelledAt: event.occurredAt });
   });
 }
 
@@ -84,7 +84,7 @@ async function openCriticalResultTask(event: DomainEventEnvelope) {
 export const taskGenerator: DomainEventConsumer = {
   name: "task-generator",
   handles: [
-    "AdmissionRequested", "BedReserved", "EdDispositionDecided", "DischargeInitiated", "PatientDischarged",
+    "AdmissionRequested", "BedReserved", "AdmissionRequestStatusChanged", "EdDispositionDecided", "DischargeInitiated", "PatientDischarged",
     "LabResultReleased", "ImagingReportReleased", "CriticalResultAcknowledged", "MedicationDoseMissed",
   ],
   async handle(event) {
@@ -94,6 +94,10 @@ export const taskGenerator: DomainEventConsumer = {
         return openTask(event, p.encounterId, { type: "BED_ALLOCATION", title: "Allocate a bed for the admission request", priority: ADMISSION_PRIORITY[p.priority] ?? "ROUTINE", sourceId: p.admissionRequestId });
       case "BedReserved":
         return closeTask(event, "BED_ALLOCATION", p.admissionRequestId);
+      case "AdmissionRequestStatusChanged":
+        // A cancelled or rejected request needs no bed: its allocation task is cancelled.
+        if (p.to === "CANCELLED" || p.to === "REJECTED") return closeTask(event, "BED_ALLOCATION", p.admissionRequestId, "CANCELLED");
+        return;
       case "EdDispositionDecided": {
         const spec = DISPOSITION_TASKS[p.dispositionType];
         if (!spec) return;

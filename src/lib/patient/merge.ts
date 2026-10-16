@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 export class AlreadyMergedError extends Error {
   constructor() {
@@ -83,6 +84,11 @@ export async function mergePatients(input: {
         detail: { sourcePatientId: input.sourcePatientId, targetPatientId: input.targetPatientId, mergeRecordId: created.id },
       },
     });
+    // On the source patient's aggregate: the record that stops being a survivor.
+    await emitFacilityEvent(tx, {
+      type: "PatientMergeStatusChanged", aggregateId: input.sourcePatientId, facilityId: source.facilityId, actorUserId: input.actorUserId,
+      payload: { sourcePatientId: input.sourcePatientId, targetPatientId: input.targetPatientId, action: "MERGED", mergeRecordId: created.id },
+    });
     return created;
   });
 
@@ -122,6 +128,10 @@ export async function unmergePatients(input: {
         facilityId: patient.facilityId,
         patientId: input.patientId,
       },
+    });
+    await emitFacilityEvent(tx, {
+      type: "PatientMergeStatusChanged", aggregateId: input.patientId, facilityId: patient.facilityId, actorUserId: input.actorUserId,
+      payload: { sourcePatientId: input.patientId, targetPatientId: patient.mergedIntoId!, action: "UNMERGED" },
     });
     return tx.patient.findUniqueOrThrow({ where: { id: input.patientId } });
   });

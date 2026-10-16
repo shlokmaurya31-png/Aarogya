@@ -15,6 +15,12 @@
  *      closes on BedReserved; discharge prep opens and closes; ED dispositions
  *      create their follow-up/handover tasks. Redelivering every event creates
  *      nothing new. Each task emits TaskCreated / TaskCompleted once (D6).
+ *   5. Triage step 4: AdmissionRequestStatusChanged (defer, reject, release,
+ *      cancel; a cancelled / rejected request cancels its bed-allocation task),
+ *      AppointmentStatusChanged, PatientLocationChanged (never the area
+ *      label), ObservationRecorded (ED reassessment, never the findings),
+ *      ResuscitationStatusChanged (SENSITIVE), TransferRequestStatusChanged
+ *      (the whole lifecycle), PatientMergeStatusChanged.
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-adt-events.ts
  */
@@ -22,7 +28,13 @@ import { prisma } from "../src/lib/db";
 import { registerPatient } from "../src/lib/patient/registration";
 import { registerEdArrival, dispositionEncounter } from "../src/lib/hospital/emergency";
 import { recordTriage } from "../src/lib/hospital/triage";
-import { createAdmissionRequest, allocateBed, confirmAdmissionRequest } from "../src/lib/hospital/admissionRequest";
+import { createAdmissionRequest, allocateBed, confirmAdmissionRequest, deferRequest, rejectRequest, releaseReservation, cancelRequest } from "../src/lib/hospital/admissionRequest";
+import { assignEdLocation, releaseEdLocation, recordReassessment, activateResuscitation, updateResuscitation } from "../src/lib/hospital/emergency";
+import { confirmAppointment, markNoShow } from "../src/lib/hospital/appointment";
+import { createTransferRequest, acceptTransferRequest, reserveBedForTransfer, markPatientInTransit, completeTransferRequest, cancelTransferRequest } from "../src/lib/hospital/transferRequest";
+import { admitPatient } from "../src/lib/hospital/admission";
+import { mergePatients, unmergePatients } from "../src/lib/patient/merge";
+import { getEventContract } from "../src/lib/events/catalogue";
 import { transferPatient, initiateDischarge, updateDischargeReadiness, finalizeDischarge } from "../src/lib/hospital/admission";
 import { transferWithinIcu } from "../src/lib/hospital/icu";
 import { openEncounter } from "../src/lib/hospital/encounter";
@@ -141,6 +153,76 @@ async function main() {
   report("…and so did the discharge-prep task", await taskEvents((await prepTask())!.id) === "TaskCompleted,TaskCreated");
   const dead = await prisma.domainEventOutbox.count({ where: { eventId: { in: ids }, status: "DEAD_LETTER" } });
   report("No journey event dead-lettered", dead === 0, String(dead));
+
+  // 5. Triage step 4.
+  const payloadsOf = async (aggregateId: string, type: string) =>
+    (await prisma.domainEventOutbox.findMany({ where: { aggregateId, eventType: type }, orderBy: { seq: "asc" }, select: { payload: true } })).map((e) => e.payload as Record<string, unknown>);
+  const moves = (ps: Record<string, unknown>[]) => ps.map((p) => `${p.from}>${p.to}`).join(",");
+  const enc5 = await registerEdArrival({ facilityId, patientId: patient.id, chiefComplaint: "Step 4", byUserId: by });
+  const r1 = await createAdmissionRequest({ facilityId, patientId: patient.id, encounterId: enc5.id, requestedByStaffId: doctor.id, reason: "obs", priority: "ROUTINE", byUserId: by });
+  await deferRequest(r1.id, by);
+  await rejectRequest(r1.id, "no beds", doctor.id, by);
+  report("AdmissionRequestStatusChanged: defer then reject", moves(await payloadsOf(r1.id, "AdmissionRequestStatusChanged")) === "PENDING>DEFERRED,DEFERRED>REJECTED");
+  const bed5 = await bed(ward, "W5");
+  const r2 = await createAdmissionRequest({ facilityId, patientId: patient.id, encounterId: enc5.id, requestedByStaffId: doctor.id, reason: "obs", priority: "ROUTINE", byUserId: by });
+  await allocateBed(r2.id, bed5.id, doctor.id, by);
+  await releaseReservation(r2.id, by);
+  await cancelRequest(r2.id, by);
+  const r2moves = await payloadsOf(r2.id, "AdmissionRequestStatusChanged");
+  report("…release (naming the released bed) then cancel", moves(r2moves) === "BED_RESERVED>PENDING,PENDING>CANCELLED" && r2moves[0].releasedBedId === bed5.id);
+  await runTick({ budgetMs: 20_000 });
+  const bedTaskOf = (id: string) => prisma.task.findUnique({ where: { facilityId_idempotencyKey: { facilityId, idempotencyKey: `BED_ALLOCATION:${id}` } } });
+  report("task-generator: a rejected request's bed-allocation task is CANCELLED (it stayed open before)", (await bedTaskOf(r1.id))?.status === "CANCELLED");
+
+  const a5 = await appt(60);
+  await confirmAppointment(a5.id, by);
+  const a6 = await appt(90);
+  await markNoShow(a6.id, doctor.id, by);
+  report("AppointmentStatusChanged: confirm, no-show",
+    moves(await payloadsOf(a5.id, "AppointmentStatusChanged")) === "REQUESTED>CONFIRMED" && moves(await payloadsOf(a6.id, "AppointmentStatusChanged")) === "REQUESTED>NO_SHOW");
+
+  const bay = await bed(ward, "B5");
+  const loc1 = await assignEdLocation({ encounterId: enc5.id, facilityId, areaLabel: `Corridor ${run}`, assignedByStaffId: doctor.id, byUserId: by });
+  const loc2 = await assignEdLocation({ encounterId: enc5.id, facilityId, bedId: bay.id, assignedByStaffId: doctor.id, byUserId: by });
+  await releaseEdLocation({ encounterId: enc5.id, facilityId, byUserId: by });
+  const locs = await payloadsOf(enc5.id, "PatientLocationChanged");
+  report("PatientLocationChanged: assigned, moved (naming the released location), released",
+    locs.map((l) => l.change).join() === "ASSIGNED,ASSIGNED,RELEASED" && locs[1].releasedLocationId === loc1.id && locs[1].bedId === bay.id && locs[2].locationId === loc2.id);
+  report("…and never the free-text area label", !JSON.stringify(locs).includes("Corridor"));
+  const ra = await recordReassessment({ encounterId: enc5.id, facilityId, reassessedByStaffId: doctor.id, findings: `pain worse ${run}`, byUserId: by });
+  const obs = await payloadsOf(ra.id, "ObservationRecorded");
+  report("ObservationRecorded: ED_REASSESSMENT, without the findings", obs.length === 1 && obs[0].observationKind === "ED_REASSESSMENT" && !JSON.stringify(obs).includes("pain"));
+  const resus = await activateResuscitation({ encounterId: enc5.id, facilityId, activatedByStaffId: doctor.id, byUserId: by });
+  await updateResuscitation({ resuscitationId: resus.id, facilityId, to: "STABILIZED", actorStaffId: doctor.id, byUserId: by });
+  await updateResuscitation({ resuscitationId: resus.id, facilityId, to: "CLOSED", actorStaffId: doctor.id, byUserId: by });
+  report("ResuscitationStatusChanged: null → ACTIVATED → STABILIZED → CLOSED", moves(await payloadsOf(resus.id, "ResuscitationStatusChanged")) === "null>ACTIVATED,ACTIVATED>STABILIZED,STABILIZED>CLOSED");
+
+  const ipd = await openEncounter({ facilityId, patientId: patient.id, type: "IPD", chiefComplaint: "Transfer", byUserId: by });
+  const [tb1, tb2] = [await bed(ward, "T1"), await bed(ward, "T2")];
+  const adm5 = await admitPatient({ encounterId: ipd.id, bedId: tb1.id, admittingStaffId: doctor.id, reason: "transfer gate", byUserId: by });
+  const tr = await createTransferRequest({ admissionId: adm5.id, facilityId, patientId: patient.id, requestedByStaffId: doctor.id, reason: "step-down", priority: "URGENT", byUserId: by });
+  await acceptTransferRequest(tr.id, doctor.id, by);
+  await reserveBedForTransfer(tr.id, tb2.id, by);
+  await markPatientInTransit(tr.id, by);
+  await completeTransferRequest(tr.id, by);
+  const trEvents = await payloadsOf(tr.id, "TransferRequestStatusChanged");
+  report("TransferRequestStatusChanged: the whole lifecycle, the completion naming its Transfer",
+    moves(trEvents) === "null>REQUESTED,REQUESTED>ACCEPTED,ACCEPTED>BED_RESERVED,BED_RESERVED>PATIENT_IN_TRANSIT,PATIENT_IN_TRANSIT>COMPLETED"
+      && typeof trEvents[4].transferId === "string" && trEvents[0].encounterId === ipd.id);
+  const tr2 = await createTransferRequest({ admissionId: adm5.id, facilityId, patientId: patient.id, requestedByStaffId: doctor.id, reason: "again", byUserId: by });
+  await cancelTransferRequest(tr2.id, by);
+  report("…and a cancellation", moves(await payloadsOf(tr2.id, "TransferRequestStatusChanged")) === "null>REQUESTED,REQUESTED>CANCELLED");
+
+  const dupe = await registerPatient({ facilityId, byUserId: by, fullName: `ADT Dupe ${run}`, sex: "M", ageYears: 61 });
+  await mergePatients({ sourcePatientId: dupe.id, targetPatientId: patient.id, actorStaffId: doctor.id, actorUserId: by, reason: "duplicate" });
+  await unmergePatients({ patientId: dupe.id, actorStaffId: doctor.id, actorUserId: by, reason: "not the same person" });
+  report("PatientMergeStatusChanged: MERGED then UNMERGED, on the source patient",
+    (await payloadsOf(dupe.id, "PatientMergeStatusChanged")).map((m) => `${m.action}:${m.targetPatientId === patient.id}`).join() === "MERGED:true,UNMERGED:true");
+  const resusEvent = await prisma.domainEventOutbox.findFirst({ where: { eventType: "ResuscitationStatusChanged", aggregateId: resus.id } });
+  await runTick({ budgetMs: 20_000 });
+  report("Step-4 events all delivered; ResuscitationStatusChanged is SENSITIVE",
+    (await prisma.domainEventOutbox.count({ where: { correlationId: { in: [enc5.id, ipd.id] }, status: { not: "PROCESSED" } } })) === 0
+      && !!resusEvent && getEventContract("ResuscitationStatusChanged", resusEvent.eventVersion)?.sensitivity === "SENSITIVE");
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();

@@ -600,6 +600,7 @@ names: 81 (77 new).
 
 | Step | State |
 |---|---|
+| 4 | **wired** (2026-10-16, batch 4): 18 functions, 7 events. The admission-request, appointment no-show and transfer-request transitions became compare-and-set (they read the status, then wrote without a guard). `completeTransferRequest` also emits `TransferRequestStatusChanged` (COMPLETED), so the request's stream is whole. The task-generator cancels a bed-allocation task whose request is cancelled or rejected (it stayed open). |
 | 5b | **wired** (2026-10-16): 8 functions, 4 events |
 | 6 | **wired** (2026-10-16): 33 functions, 16 events, plus the 9 planned step-6 events |
 | 9a | `quarantineLot` and `releaseLotFromQuarantine` were wired early with step 6: the pharmacy quarantine functions delegate to them, and emitting in the wrappers would have doubled the event at 9a. `StockLotStatusChanged` is also emitted for each lot a recall moves to RECALLED. |

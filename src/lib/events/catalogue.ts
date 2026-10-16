@@ -32,6 +32,8 @@ const externalLabStatus = z.enum(["DRAFT", "SENT", "RESULT_RECEIVED", "REVIEWED"
 const lotStatus = z.enum(["ACTIVE", "QUARANTINED", "EXPIRED", "RECALLED", "DEPLETED"]);
 const icuDeviceStatus = z.enum(["PLANNED", "ACTIVE", "REMOVED", "DISCONTINUED"]);
 const icuInfusionStatus = z.enum(["RUNNING", "PAUSED", "STOPPED"]);
+const resuscitationStatus = z.enum(["ACTIVATED", "ACTIVE", "STABILIZED", "HANDED_OVER", "DISPOSITION_PENDING", "CLOSED"]);
+const transferRequestStatus = z.enum(["REQUESTED", "ACCEPTED", "BED_RESERVED", "PATIENT_IN_TRANSIT", "COMPLETED", "CANCELLED", "REJECTED"]);
 
 function contract<P extends z.ZodTypeAny>(c: EventContract<P>): EventContract<P> {
   return c;
@@ -88,6 +90,55 @@ export const EVENT_CONTRACTS: EventContract[] = [
     type: "AdmissionRequested", version: 1, aggregateType: "ADMISSION_REQUEST", scope: "FACILITY",
     sensitivity: "INTERNAL", producer: "admission requests (createAdmissionRequest)",
     payload: z.object({ admissionRequestId: id, encounterId: id, patientId: id, priority: id }).strict(),
+  }),
+  // ── ADT triage events (EVENT_TRIAGE.md step 4) ──────────────────────────
+  contract({
+    type: "AdmissionRequestStatusChanged", version: 1, aggregateType: "ADMISSION_REQUEST", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "admission requests (deferRequest, rejectRequest, cancelRequest, releaseReservation)",
+    payload: z.object({
+      admissionRequestId: id, encounterId: id, patientId: id,
+      from: z.enum(["PENDING", "DEFERRED", "BED_RESERVED"]), to: z.enum(["PENDING", "DEFERRED", "REJECTED", "CANCELLED"]),
+      /** A reservation given up by this change (release, or cancelling a reserved request). */
+      releasedBedId: optId,
+    }).strict(),
+  }),
+  contract({
+    type: "AppointmentStatusChanged", version: 1, aggregateType: "APPOINTMENT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "scheduling (confirmAppointment, markNoShow)",
+    payload: z.object({
+      appointmentId: id, patientId: id, doctorStaffId: id,
+      from: z.enum(["REQUESTED", "CONFIRMED", "RESCHEDULED"]), to: z.enum(["CONFIRMED", "NO_SHOW"]),
+    }).strict(),
+  }),
+  contract({
+    type: "PatientLocationChanged", version: 1, aggregateType: "ENCOUNTER", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "emergency (assignEdLocation, releaseEdLocation)",
+    payload: z.object({
+      encounterId: id, patientId: id, change: z.enum(["ASSIGNED", "RELEASED"]),
+      locationId: id, bedId: optId, releasedLocationId: optId,
+    }).strict(),
+  }),
+  contract({
+    type: "PatientMergeStatusChanged", version: 1, aggregateType: "PATIENT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "patient merge (mergePatients, unmergePatients)",
+    payload: z.object({ sourcePatientId: id, targetPatientId: id, action: z.enum(["MERGED", "UNMERGED"]), mergeRecordId: optId }).strict(),
+  }),
+  contract({
+    type: "ResuscitationStatusChanged", version: 1, aggregateType: "ED_RESUSCITATION", scope: "FACILITY",
+    sensitivity: "SENSITIVE", producer: "emergency (activateResuscitation, updateResuscitation)",
+    payload: z.object({
+      resuscitationId: id, encounterId: id, patientId: id,
+      from: resuscitationStatus.nullable(), to: resuscitationStatus,
+    }).strict(),
+  }),
+  contract({
+    type: "TransferRequestStatusChanged", version: 1, aggregateType: "TRANSFER_REQUEST", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "transfer requests (create, accept, reserve bed, in transit, complete, cancel)",
+    payload: z.object({
+      transferRequestId: id, admissionId: id, patientId: id, encounterId: id,
+      from: transferRequestStatus.nullable(), to: transferRequestStatus,
+      priority: z.enum(["ROUTINE", "URGENT", "EMERGENCY"]), reservedBedId: optId, transferId: optId,
+    }).strict(),
   }),
   contract({
     type: "TaskCreated", version: 1, aggregateType: "TASK", scope: "ORGANIZATION",

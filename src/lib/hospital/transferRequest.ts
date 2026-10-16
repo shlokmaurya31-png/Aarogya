@@ -3,6 +3,33 @@ import { BedStatus } from "@prisma/client";
 import { transitionBed, InvalidBedTransitionError } from "./bed";
 import { transferPatientInTx } from "./admission";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+import type { Prisma, TransferRequest, TransferRequestStatus } from "@prisma/client";
+
+type Tx = Prisma.TransactionClient;
+
+/** TransferRequestStatusChanged, in the writer's transaction, correlated by the admission's encounter. */
+async function emitTransferStatus(tx: Tx, r: TransferRequest, from: TransferRequestStatus | null, byUserId?: string) {
+  const admission = await tx.admission.findUniqueOrThrow({ where: { id: r.admissionId }, select: { encounterId: true } });
+  await emitFacilityEvent(tx, {
+    type: "TransferRequestStatusChanged", aggregateId: r.id, facilityId: r.facilityId, actorUserId: byUserId, encounterId: admission.encounterId,
+    payload: {
+      transferRequestId: r.id, admissionId: r.admissionId, patientId: r.patientId, encounterId: admission.encounterId,
+      from, to: r.status, priority: r.priority,
+      ...(r.reservedBedId ? { reservedBedId: r.reservedBedId } : {}),
+      ...(r.transferId ? { transferId: r.transferId } : {}),
+    },
+  });
+}
+
+/** Compare-and-set the request from the status read to `to`, then emit. */
+async function moveTransferRequest(tx: Tx, r: TransferRequest, to: TransferRequestStatus, data: Prisma.TransferRequestUncheckedUpdateManyInput, byUserId?: string) {
+  const res = await tx.transferRequest.updateMany({ where: { id: r.id, status: r.status }, data: { ...data, status: to } });
+  if (res.count !== 1) throw new TransferRequestNotActionableError(r.status);
+  const updated = await tx.transferRequest.findUniqueOrThrow({ where: { id: r.id } });
+  await emitTransferStatus(tx, updated, r.status, byUserId);
+  return updated;
+}
 
 /**
  * Internal-transfer request layer (brief §34-36) — sits on top of the
@@ -60,6 +87,7 @@ export async function createTransferRequest(input: {
       },
     });
     await tx.auditEvent.create({ data: { type: "hospital.transferRequest.created", userId: input.byUserId, detail: { requestId: request.id, admissionId: input.admissionId } } });
+    await emitTransferStatus(tx, request, null, input.byUserId);
     return request;
   });
 }
@@ -68,7 +96,7 @@ export async function acceptTransferRequest(requestId: string, acceptedByStaffId
   return prisma.$transaction(async (tx) => {
     const request = await tx.transferRequest.findUniqueOrThrow({ where: { id: requestId } });
     if (request.status !== "REQUESTED") throw new TransferRequestNotActionableError(request.status);
-    const updated = await tx.transferRequest.update({ where: { id: requestId }, data: { status: "ACCEPTED", acceptedByStaffId } });
+    const updated = await moveTransferRequest(tx, request, "ACCEPTED", { acceptedByStaffId }, byUserId);
     await tx.auditEvent.create({ data: { type: "hospital.transferRequest.accepted", userId: byUserId, detail: { requestId } } });
     return updated;
   });
@@ -82,16 +110,18 @@ export async function reserveBedForTransfer(requestId: string, bedId: string, by
 
     await transitionBed(bedId, BedStatus.RESERVED, { reason: `Transfer request ${requestId}`, byUserId, patientId: request.patientId }, tx);
 
-    const updated = await tx.transferRequest.update({ where: { id: requestId }, data: { status: "BED_RESERVED", reservedBedId: bedId } });
+    const updated = await moveTransferRequest(tx, request, "BED_RESERVED", { reservedBedId: bedId }, byUserId);
     await tx.auditEvent.create({ data: { type: "hospital.transferRequest.bedReserved", userId: byUserId, detail: { requestId, bedId } } });
     return updated;
   });
 }
 
-export async function markPatientInTransit(requestId: string) {
-  const request = await prisma.transferRequest.findUniqueOrThrow({ where: { id: requestId } });
-  if (request.status !== "BED_RESERVED") throw new TransferRequestNotActionableError(request.status);
-  return prisma.transferRequest.update({ where: { id: requestId }, data: { status: "PATIENT_IN_TRANSIT" } });
+export async function markPatientInTransit(requestId: string, byUserId?: string) {
+  return prisma.$transaction(async (tx) => {
+    const request = await tx.transferRequest.findUniqueOrThrow({ where: { id: requestId } });
+    if (request.status !== "BED_RESERVED") throw new TransferRequestNotActionableError(request.status);
+    return moveTransferRequest(tx, request, "PATIENT_IN_TRANSIT", {}, byUserId);
+  });
 }
 
 /**
@@ -118,7 +148,9 @@ export async function completeTransferRequest(requestId: string, byUserId: strin
     });
     if (cas.count !== 1) throw new TransferRequestNotActionableError("COMPLETED");
     await tx.auditEvent.create({ data: { type: "hospital.transferRequest.completed", userId: byUserId, detail: { requestId, transferId: transfer.id } } });
-    return { updated: await tx.transferRequest.findUniqueOrThrow({ where: { id: requestId } }), transfer, auditContext };
+    const completed = await tx.transferRequest.findUniqueOrThrow({ where: { id: requestId } });
+    await emitTransferStatus(tx, completed, request.status, byUserId);
+    return { updated: completed, transfer, auditContext };
   });
   await recordAuditEvent("hospital.admission.transferred", byUserId, { admissionId: updated.admissionId, toBedId: updated.reservedBedId }, auditContext);
   return { request: updated, transfer };
@@ -135,6 +167,6 @@ export async function cancelTransferRequest(requestId: string, byUserId: string)
         if (!(err instanceof InvalidBedTransitionError)) throw err;
       }
     }
-    return tx.transferRequest.update({ where: { id: requestId }, data: { status: "CANCELLED" } });
+    return moveTransferRequest(tx, request, "CANCELLED", {}, byUserId);
   });
 }
