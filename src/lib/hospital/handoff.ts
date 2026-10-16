@@ -1,5 +1,21 @@
 import { prisma } from "@/lib/db";
 import { BadRequestError } from "@/lib/auth/rbac";
+import type { ClinicalHandoff, Prisma } from "@prisma/client";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+
+/** ClinicalHandoffStatusChanged (triage step 5b), in the writer's transaction. IDs and codes only, never the handoff text. */
+function emitHandoffStatus(tx: Prisma.TransactionClient, h: ClinicalHandoff, from: "PENDING" | null, byUserId: string) {
+  return emitFacilityEvent(tx, {
+    type: "ClinicalHandoffStatusChanged", aggregateId: h.id, facilityId: h.facilityId, actorUserId: byUserId, encounterId: h.encounterId,
+    payload: {
+      handoffId: h.id, patientId: h.patientId, handoffType: h.type, urgency: h.urgency, escalationRequired: h.escalationRequired,
+      from, to: h.status, fromStaffId: h.fromStaffId,
+      ...(h.encounterId ? { encounterId: h.encounterId } : {}),
+      ...(h.toStaffId ? { toStaffId: h.toStaffId } : {}),
+      ...(h.acknowledgedByStaffId ? { acknowledgedByStaffId: h.acknowledgedByStaffId } : {}),
+    },
+  });
+}
 
 /** Structured clinical handoff (brief §9/§26), shared by doctor and nurse handoffs (`type` + the actual role of the participants distinguishes them). Never silently disappears — status starts PENDING and only an explicit acknowledgement flips it. */
 export async function createHandoff(input: {
@@ -48,6 +64,7 @@ export async function createHandoff(input: {
         encounterId: input.encounterId,
       },
     });
+    await emitHandoffStatus(tx, handoff, null, input.byUserId);
     return handoff;
   });
 }
@@ -87,6 +104,7 @@ export async function acknowledgeHandoff(handoffId: string, acknowledgedByStaffI
         encounterId: handoff.encounterId ?? undefined,
       },
     });
+    await emitHandoffStatus(tx, updated, "PENDING", byUserId);
     return updated;
   });
 }

@@ -70,7 +70,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if (!encounter || encounter.facilityId !== facilityId) throw new NotFoundError("Encounter not found.");
       if (!body?.assessmentId) throw new BadRequestError("assessmentId is required.");
 
-      const assessment = await completeAssessment({ assessmentId: body.assessmentId, encounterId: id, findings: body.findings });
+      const assessment = await completeAssessment({ assessmentId: body.assessmentId, encounterId: id, findings: body.findings, byUserId: session.userId });
       await recordAuditEvent(
         "hospital.nursing.assessmentCompleted",
         session.userId,
@@ -87,7 +87,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if (!encounter || encounter.facilityId !== facilityId) throw new NotFoundError("Encounter not found.");
       if (!body?.assessmentId) throw new BadRequestError("assessmentId is required.");
 
-      const assessment = await signAssessment({ assessmentId: body.assessmentId, encounterId: id });
+      const assessment = await signAssessment({ assessmentId: body.assessmentId, encounterId: id, byUserId: session.userId });
       await recordAuditEvent(
         "hospital.nursing.assessmentSigned",
         session.userId,
@@ -112,6 +112,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         nurseStaffId: staff.id,
         findings: body.findings,
         amendmentReason: body.amendmentReason,
+        byUserId: session.userId,
       });
       await recordAuditEvent(
         "hospital.nursing.assessmentAmended",

@@ -31,6 +31,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         status: status && status !== "COMPLETED" ? status : undefined,
         ownerStaffId,
         startedAt: Boolean(startedAt),
+        byUserId: session.userId,
       });
     }
 

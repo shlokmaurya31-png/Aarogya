@@ -112,6 +112,7 @@ const ORDER = [
   "verify-postgres-adt-events",
   "verify-postgres-task-merge",
   "verify-postgres-problem-list",
+  "verify-postgres-nursing-events",
   // Runs last among the gates: checks every row the earlier gates created.
   "verify-postgres-facility-consistency",
   // Runs late: its whole-database check covers every earlier gate's orders.

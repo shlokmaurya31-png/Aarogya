@@ -96,6 +96,47 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({ taskId: id, source: z.enum(["MANUAL", "CARE_PLAN", "WORKFLOW", "EVENT", "ORDER"]), outcome: z.enum(["COMPLETED", "CANCELLED"]) }).strict(),
   }),
   contract({
+    type: "TaskUpdated", version: 1, aggregateType: "TASK", scope: "ORGANIZATION",
+    sensitivity: "INTERNAL", producer: "tasks (updateTask: status between open states, owner, started)",
+    payload: z.object({
+      taskId: id, source: z.enum(["MANUAL", "CARE_PLAN", "WORKFLOW", "EVENT", "ORDER"]),
+      changes: z.array(z.enum(["STATUS", "OWNER", "STARTED"])).min(1),
+      fromStatus: z.enum(["OPEN", "ASSIGNED", "IN_PROGRESS"]), toStatus: z.enum(["OPEN", "ASSIGNED", "IN_PROGRESS"]),
+      ownerStaffId: optId,
+    }).strict(),
+  }),
+  // ── Nursing (triage step 5b) ─────────────────────────────────────────────
+  contract({
+    type: "ClinicalHandoffStatusChanged", version: 1, aggregateType: "CLINICAL_HANDOFF", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "handoffs (createHandoff, acknowledgeHandoff)",
+    payload: z.object({
+      handoffId: id, patientId: id, encounterId: optId, handoffType: z.enum(["DOCTOR", "NURSE"]),
+      urgency: z.enum(["ROUTINE", "URGENT", "EMERGENCY"]), escalationRequired: z.boolean(),
+      from: z.enum(["PENDING"]).nullable(), to: z.enum(["PENDING", "ACKNOWLEDGED"]),
+      fromStaffId: id, toStaffId: optId, acknowledgedByStaffId: optId,
+    }).strict(),
+  }),
+  contract({
+    type: "NurseAssignmentStatusChanged", version: 1, aggregateType: "NURSING_ASSIGNMENT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "nurse assignment (assignNurse, endAssignment)",
+    payload: z.object({
+      assignmentId: id, patientId: id, encounterId: optId, nurseStaffId: id,
+      from: z.enum(["ACTIVE"]).nullable(), to: z.enum(["ACTIVE", "ENDED"]),
+      /** ENDED only: ended by hand, or by a reassignment of the patient. */
+      endedBy: z.enum(["ENDED", "REASSIGNED"]).optional(),
+    }).strict(),
+  }),
+  contract({
+    type: "NursingAssessmentRecorded", version: 1, aggregateType: "NURSING_ASSESSMENT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "nursing assessments (completeAssessment, signAssessment, amendAssessment)",
+    payload: z.object({
+      assessmentId: id, patientId: id, encounterId: id, nurseStaffId: id,
+      stage: z.enum(["COMPLETED", "SIGNED", "AMENDED"]), version: z.number().int().min(1),
+      /** AMENDED only: the signed assessment this one replaces. */
+      supersedesAssessmentId: optId,
+    }).strict(),
+  }),
+  contract({
     type: "BedReserved", version: 1, aggregateType: "ADMISSION_REQUEST", scope: "FACILITY",
     sensitivity: "INTERNAL", producer: "admission requests (allocateBed)",
     payload: z.object({ admissionRequestId: id, bedId: id, patientId: id }).strict(),

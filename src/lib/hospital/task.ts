@@ -17,7 +17,7 @@ const NOT_TERMINAL = { notIn: TERMINAL_STATUSES };
  * closed here, so TaskCreated / TaskCompleted are emitted exactly once, in the
  * writer's transaction.
  */
-async function taskEvent(tx: Tx, task: Task, type: "TaskCreated" | "TaskCompleted", payload: Record<string, unknown>, actorUserId?: string | null) {
+async function taskEvent(tx: Tx, task: Task, type: "TaskCreated" | "TaskCompleted" | "TaskUpdated", payload: Record<string, unknown>, actorUserId?: string | null) {
   const organizationId = task.facilityId ? await facilityOrganizationId(tx, task.facilityId) : task.organizationId;
   return {
     type, aggregateId: task.id, organizationId, facilityId: task.facilityId, actorUserId: actorUserId ?? null,
@@ -150,6 +150,7 @@ export async function updateTask(input: {
   status?: string;
   ownerStaffId?: string | null;
   startedAt?: boolean;
+  byUserId?: string;
 }) {
   return prisma.$transaction(async (tx) => {
     const task = await tx.task.findUniqueOrThrow({ where: { id: input.taskId } });
@@ -168,6 +169,21 @@ export async function updateTask(input: {
       },
     });
     if (result.count !== 1) throw new TaskConcurrencyError(task.status);
-    return tx.task.findUniqueOrThrow({ where: { id: input.taskId } });
+    const updated = await tx.task.findUniqueOrThrow({ where: { id: input.taskId } });
+
+    // TaskUpdated (triage step 5b): which fields changed, as closed codes. A
+    // call that changes nothing emits nothing.
+    const changes = [
+      ...(updated.status !== task.status ? ["STATUS"] : []),
+      ...(updated.ownerStaffId !== task.ownerStaffId ? ["OWNER"] : []),
+      ...(input.startedAt ? ["STARTED"] : []),
+    ];
+    if (changes.length) {
+      await emitDomainEvent(tx, await taskEvent(tx, updated, "TaskUpdated", {
+        taskId: updated.id, source: updated.source, changes, fromStatus: task.status, toStatus: updated.status,
+        ...(updated.ownerStaffId ? { ownerStaffId: updated.ownerStaffId } : {}),
+      }, input.byUserId));
+    }
+    return updated;
   });
 }
