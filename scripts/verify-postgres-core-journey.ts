@@ -1,9 +1,10 @@
 /**
  * Workflow spine §7: the core-journey replay test. Grows a step at a time
  * (§9); this version covers steps 1–8a of the §7 journey, the medication
- * round that step 6 wired, and step 9 (OT, with the charge-capture and
- * stock-movement consumers, spine step 8). Later steps (8b documents, 10–13
- * discharge, billing, claim) extend it.
+ * round that step 6 wired, step 9 (OT, with the charge-capture and
+ * stock-movement consumers, spine step 8), the portal upload (8b), and
+ * pre-authorization, discharge, invoice → claim draft, a late charge and its
+ * supplementary invoice (10–14, spine step 9).
  *
  * Drives the real service functions, drains the runner after each step and
  * asserts, by correlationId = the encounter:
@@ -41,6 +42,13 @@ import { PDFDocument } from "pdf-lib";
 import { uploadPatientDocument } from "../src/lib/patient/experience/documents";
 import type { PatientAccessScope } from "../src/lib/patient/context";
 import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
+import { createPayer, addPatientCoverage } from "../src/lib/hospital/billing/coverage";
+import { requestPreAuth, decidePreAuth } from "../src/lib/hospital/billing/preauth";
+import { initiateDischarge, updateDischargeReadiness, finalizeDischarge } from "../src/lib/hospital/admission";
+import { generateAndStoreDocument } from "../src/lib/documents/service";
+import { draftInvoiceForAccount, addChargeToInvoice, issueInvoice, draftSupplementaryInvoice } from "../src/lib/hospital/billing/invoices";
+import { priceCharge } from "../src/lib/hospital/billing/chargePricing";
+import { createCharge } from "../src/lib/hospital/billing/chargeCapture";
 
 let pass = 0;
 let fail = 0;
@@ -173,7 +181,50 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
       await completeProcedure({ surgeryId, facilityId, byUserId: by });
     });
   }
-  return { facilityId, patientId: patient.id, encounterId: enc.id, orderId, resultId, surgeryId, usageId, uploadedDocumentId, steps, registered, openAfter8, critTask };
+  // 10–14 (batch 5 (d)): pre-authorization, discharge, invoice → claim draft,
+  // a late charge and its supplementary invoice.
+  const billing = { preAuthId: "", dischargeId: "", invoiceId: "", supplementaryId: "", lateChargeId: "", readinessBeforeFinalize: "" };
+  if (opts.full) {
+    const payer = await tx((t) => createPayer(t, { name: `CJ Insurer ${run}`, type: "INSURANCE" }));
+    const coverage = await tx((t) => addPatientCoverage(t, { patientId: patient.id, payerId: payer.id, memberId: `CJ-${run}`, validFrom: new Date(Date.now() - 86_400_000), addedByUserId: by }));
+    await step("10 Pre-authorization", ["PreauthStatusChanged", "PreauthDecided"], async () => {
+      billing.preAuthId = (await tx((t) => requestPreAuth(t, { coverageId: coverage.id, encounterId: enc.id, requestedAmountMinor: 500_000, requestedByUserId: by }))).id;
+      await tx((t) => decidePreAuth(t, billing.preAuthId, { status: "APPROVED", approvedAmountMinor: 400_000, byUserId: by }));
+    });
+    // 11. Discharge: initiation (→ prep task), the summary (→ documentationReady,
+    // and insuranceReady from the approved pre-authorization), the human flags,
+    // finalize (bed-days charged in-transaction).
+    await step("11 Discharge", ["DischargeInitiated", "TaskCreated", "DocumentGenerated", "ChargePosted", "PatientDischarged", "EncounterClosed", "TaskCompleted"], async () => {
+      billing.dischargeId = (await initiateDischarge(admissionId, by, doctor.id)).id;
+      await generateAndStoreDocument({ type: "discharge-summary", patient: { name: patient.fullName }, diagnoses: ["NSTEMI"] },
+        { facilityId, letterhead: { facilityName: "Aarogya Medical Centre", authorName: "Dr Verify", authorRegistration: "MMC-0000" }, issuedByUserId: by, patientId: patient.id, encounterId: enc.id });
+      await drain();
+      const d = await prisma.discharge.findUniqueOrThrow({ where: { id: billing.dischargeId } });
+      billing.readinessBeforeFinalize = `${d.documentationReady}/${d.insuranceReady}/${d.billingReady}`;
+      await updateDischargeReadiness(billing.dischargeId, { clinicallyReady: true, billingReady: true, pharmacyReady: true, transportReady: true });
+      await finalizeDischarge(billing.dischargeId, by, { summary: "core journey" });
+    });
+    // 12–13. The final bill: price what charge-capture could not, draft every
+    // charge, issue (→ claim-drafting drafts the claim with the pre-authorization).
+    await step("12 Invoice → 13 claim draft", ["ChargeRepriced", "HospitalInvoiceIssued", "ClaimDrafted"], async () => {
+      const inv = await tx(async (t) => {
+        for (const c of await t.charge.findMany({ where: { encounterId: enc.id, pricingStatus: "NEEDS_PRICING", status: "POSTED" } })) await priceCharge(t, c.id, { unitPriceMinor: 75_000, byUserId: by });
+        const draft = await draftInvoiceForAccount(t, { encounterId: enc.id, patientId: patient.id, facilityId, generatedByUserId: by });
+        for (const c of await t.charge.findMany({ where: { encounterId: enc.id, status: "POSTED", invoiceLine: null }, select: { id: true } })) await addChargeToInvoice(t, draft.id, c.id);
+        return issueInvoice(t, draft.id, { byUserId: by });
+      });
+      billing.invoiceId = inv.id;
+    });
+    await step("14a Late charge", ["ChargePosted", "TaskCreated"], async () => {
+      billing.lateChargeId = (await tx((t) => createCharge(t, { encounterId: enc.id, patientId: patient.id, facilityId, description: "Discharge medication pack", category: "PHARMACY", unitPriceMinor: 12_000, postedByUserId: by }))).charge.id;
+    });
+    // The supplementary invoice closes the late-charge task and gets its own
+    // draft claim (the pre-authorization is on the first claim → blocker task).
+    await step("14b Supplementary invoice", ["HospitalInvoiceIssued", "TaskCompleted", "ClaimDrafted", "TaskCreated"], async () => {
+      billing.supplementaryId = (await tx(async (t) => issueInvoice(t, (await draftSupplementaryInvoice(t, { originalInvoiceId: billing.invoiceId, generatedByUserId: by })).id, { byUserId: by }))).id;
+    });
+  }
+  return { facilityId, patientId: patient.id, encounterId: enc.id, orderId, resultId, surgeryId, usageId, uploadedDocumentId, steps, registered, openAfter8, critTask, billing };
 }
 
 async function main() {
@@ -190,7 +241,10 @@ async function main() {
   // their event; the lab and dispensing charges are posted in their own transaction.
   const expectedProducers = ["EdArrivalRegistered", "PatientTriaged", "AdmissionRequested", "BedReserved", "AdmissionCreated", "IcuAdmitted", "PatientTransferred", "ChargePosted",
     "ChargePosted", "LabOrderPlaced", "SpecimenCollected", "SpecimenStatusChanged", "LabResultReleased", "CriticalResultAcknowledged", "MedicationOrdered", "MedicationVerified", "MedicationDispensed", "ChargePosted", "MedicationAdministered",
-    "SurgeryRequested", "SurgeryStatusChanged", "SurgeryStatusChanged", "SurgeryScheduled", "ProcedureStarted", "SurgeryItemUsed", "ProcedureCompleted", "ChargePosted", "ChargePosted"];
+    "SurgeryRequested", "SurgeryStatusChanged", "SurgeryStatusChanged", "SurgeryScheduled", "ProcedureStarted", "SurgeryItemUsed", "ProcedureCompleted", "ChargePosted", "ChargePosted",
+    // 10–14: pre-authorization, discharge (bed-days in finalize), the priced kit, invoice → claim, late charge → supplementary → its claim.
+    "PreauthStatusChanged", "PreauthDecided", "DischargeInitiated", "DocumentGenerated", "ChargePosted", "PatientDischarged", "EncounterClosed",
+    "ChargeRepriced", "HospitalInvoiceIssued", "ClaimDrafted", "ChargePosted", "HospitalInvoiceIssued", "ClaimDrafted"];
   report("The producers' events, in emission order", producers.join() === expectedProducers.join(), producers.join(" → "));
 
   const bad = all.flatMap((e) => {
@@ -223,6 +277,29 @@ async function main() {
   const kitIssued = await prisma.stockLedgerEntry.count({ where: { sourceType: "SurgeryItemUsage", sourceId: a.usageId } });
   report("9 OT: charge-capture charged the procedure, the consumable and the ICU admission once each; stock-movement issued the kit once", otCharges === 3 && kitIssued === 1, `${otCharges} charges, ${kitIssued} ledger`);
 
+  // 10–14: discharge, billing and claims.
+  const bl = a.billing;
+  report("11 Discharge: discharge-readiness raised documentation and insurance (approved pre-authorization), not billing (charges unbilled)",
+    bl.readinessBeforeFinalize === "true/true/false", bl.readinessBeforeFinalize);
+  const claim = await prisma.claim.findUnique({ where: { invoiceId: bl.invoiceId } });
+  report("13 Claim draft: claim-drafting drafted one DRAFT claim with the pre-authorization, never submitted",
+    claim?.status === "DRAFT" && claim.preAuthorizationId === bl.preAuthId && claim.submittedAt === null);
+  const late = await prisma.charge.findUniqueOrThrow({ where: { id: bl.lateChargeId }, include: { invoiceLine: true } });
+  const sup = await prisma.invoice.findUniqueOrThrow({ where: { id: bl.supplementaryId } });
+  const lateTask = await prisma.task.findUnique({ where: { facilityId_idempotencyKey: { facilityId: a.facilityId, idempotencyKey: `LATE_CHARGE:${late.id}` } } });
+  report("14 Late charge: marked late, collected on a SUPPLEMENTARY_INVOICE linked to the invoice, its task completed",
+    late.isLate && late.invoiceLine?.invoiceId === sup.id && sup.documentType === "SUPPLEMENTARY_INVOICE" && sup.supplementsInvoiceId === bl.invoiceId && lateTask?.status === "COMPLETED");
+  const supClaim = await prisma.claim.findUnique({ where: { invoiceId: sup.id } });
+  const blocker = supClaim ? await prisma.task.findUnique({ where: { facilityId_idempotencyKey: { facilityId: a.facilityId, idempotencyKey: `CLAIM_PREAUTH_MISSING:${supClaim.id}` } } }) : null;
+  report("…the supplementary invoice has its own draft claim, with a blocker task (its pre-authorization is on the first claim)",
+    supClaim?.status === "DRAFT" && supClaim.preAuthorizationId === null && blocker?.status === "OPEN");
+  const posted = await prisma.charge.findMany({ where: { encounterId: a.encounterId, status: "POSTED" }, include: { invoiceLine: true } });
+  const docs = await prisma.invoice.findMany({ where: { encounterId: a.encounterId, status: { not: "VOID" } } });
+  const charged = posted.reduce((n, c) => n + c.netAmountMinor, 0);
+  const billed = docs.reduce((n, d) => n + d.totalMinor, 0);
+  report("Every charge of the journey billed exactly once (each on one line; the invoice and the supplementary add up to the charges)",
+    posted.every((c) => c.invoiceLine) && docs.length === 2 && charged === billed && charged > 0, `charged ${charged}, billed ${billed}, ${posted.length} charges`);
+
   // Replay every event of journey A through replay.ts; nothing new may appear.
   const counts = async () => [
     await prisma.task.count({ where: { encounterId: a.encounterId } }),
@@ -230,6 +307,7 @@ async function main() {
     await prisma.medicationAdministration.count({ where: { medicationOrder: { encounterId: a.encounterId } } }),
     await prisma.charge.count({ where: { encounterId: a.encounterId } }),
     await prisma.stockLedgerEntry.count({ where: { encounterId: a.encounterId } }),
+    await prisma.claim.count({ where: { invoice: { encounterId: a.encounterId } } }),
   ].join("/");
   const before = await counts();
   const admin = await prisma.user.findFirstOrThrow({ where: { role: "AAROGYA_ADMIN" }, orderBy: { id: "asc" } });
@@ -237,7 +315,7 @@ async function main() {
   for (const id of ids) await replayEvent(platform, id, { reason: "core-journey replay gate" });
   await drain();
   const after = await counts();
-  report("Replay: re-running every event creates no task, notification, dose, charge or stock movement (tasks/notifications/doses/charges/ledger)", after === before, `${before} → ${after}`);
+  report("Replay: re-running every event creates no task, notification, dose, charge, stock movement or claim (tasks/notifications/doses/charges/ledger/claims)", after === before, `${before} → ${after}`);
   const replayDead = await prisma.domainEventOutbox.count({ where: { eventId: { in: ids }, status: { not: "PROCESSED" } } });
   report("…and every replayed event is PROCESSED again", replayDead === 0, String(replayDead));
 

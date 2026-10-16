@@ -962,6 +962,15 @@ list instead of blocking the bill forever. Issuing is guarded too, because a
 charge can be on its way between drafting and issuing. Gate
 `verify-postgres-invoice-drafting-guard`.
 
+**As built: the core journey through billing (batch 5 (d)).**
+`verify-postgres-core-journey` now runs the §7 journey to the end:
+pre-authorization (10), discharge (11: readiness raises documentation and
+insurance, not billing, before finalize), the final bill (12: the theatre kit
+with no tariff is priced, so `ChargeRepriced`) and claim-drafting's draft (13),
+then a late charge and its supplementary invoice with its own draft claim and
+blocker task (14). It asserts every charge is billed exactly once across the
+two documents, and the replay check now also counts claims.
+
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b
 (quality, safety, operations) and 9c (access, identity, interoperability,
