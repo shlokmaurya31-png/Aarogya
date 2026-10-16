@@ -951,6 +951,17 @@ journey expects `ChargePosted` at ICU, labs, medication and OT. Departures:
   `MedicationDispensed` or `TaskCompleted`: no derived flag depends on them
   (pending results are barriers computed on read).
 
+**As built: step 9, the invoice-drafting guard (design risk #2, batch 5).**
+`draftInvoiceForAccount`, `draftSupplementaryInvoice` and `issueInvoice`
+refuse with `ChargesPendingError` (409) while the encounter has a
+charge-capture trigger (`CHARGE_CAPTURE_TRIGGERS`, also the consumer's
+`handles`) that charge-capture has not yet processed or dead-lettered. Narrower
+than "the encounter's outbox drained": another consumer's backlog or retries
+never block billing, and a dead-lettered charge is visible in the dead-letter
+list instead of blocking the bill forever. Issuing is guarded too, because a
+charge can be on its way between drafting and issuing. Gate
+`verify-postgres-invoice-drafting-guard`.
+
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b
 (quality, safety, operations) and 9c (access, identity, interoperability,

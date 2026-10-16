@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
+import { BadRequestError, ConflictError, NotFoundError } from "@/lib/auth/rbac";
 import { sumMinor } from "./money";
 import { getOrCreateBillingAccount } from "./billingAccount";
 import { nextSequence, formatSequenceNumber } from "./sequence";
@@ -9,6 +9,7 @@ import { closeTask, OPEN_STATUSES } from "@/lib/hospital/task";
 import { facilityOrganizationId } from "@/lib/events/tenant";
 import { resolveEffectiveInternal } from "@/lib/config/resolver";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+import { CHARGE_CAPTURE_TRIGGERS } from "./chargeCapture";
 
 type Tx = Prisma.TransactionClient;
 
@@ -43,10 +44,34 @@ export function isInvoiceTransitionAllowed(from: string, to: string): boolean {
 }
 
 /** Creates a new DRAFT invoice anchored to the encounter's BillingAccount. Multiple DRAFT invoices per account are legal (e.g. billing an interim period vs. the final stay). */
+export class ChargesPendingError extends ConflictError {
+  constructor() {
+    super("Charges for this encounter are still being posted. Try again in a moment.");
+  }
+}
+
+/**
+ * Design risk #2 (workflow spine): charge-capture posts some charges a moment
+ * after their event. Drafting or issuing waits until charge-capture has
+ * finished every such event of the encounter (processed or dead-lettered), so
+ * an invoice never misses a charge that is on its way. Other consumers'
+ * backlog does not block billing.
+ */
+async function assertNoPendingCharges(tx: Tx, encounterId: string) {
+  const pending = await tx.domainEventOutbox.count({
+    where: {
+      correlationId: encounterId, eventType: { in: [...CHARGE_CAPTURE_TRIGGERS] }, status: { in: ["PENDING", "PROCESSING", "RETRY"] },
+      deliveries: { none: { consumerName: "charge-capture", status: { in: ["PROCESSED", "DEAD_LETTER"] } } },
+    },
+  });
+  if (pending > 0) throw new ChargesPendingError();
+}
+
 export async function draftInvoiceForAccount(
   tx: Tx,
   input: { encounterId: string; patientId: string; facilityId: string; payerId?: string | null; generatedByUserId: string }
 ) {
+  await assertNoPendingCharges(tx, input.encounterId);
   const account = await getOrCreateBillingAccount(tx, { encounterId: input.encounterId, patientId: input.patientId, facilityId: input.facilityId });
   return tx.invoice.create({
     data: {
@@ -132,6 +157,7 @@ export async function draftSupplementaryInvoice(tx: Tx, input: { originalInvoice
   const original = await tx.invoice.findUniqueOrThrow({ where: { id: input.originalInvoiceId } });
   if (original.documentType !== "INVOICE") throw new BadRequestError("Supplement the original invoice, not a supplementary document.");
   if (!["ISSUED", "PARTIALLY_PAID", "PAID"].includes(original.status)) throw new BadRequestError("Only an issued invoice can be supplemented; add the charges to the draft instead.");
+  await assertNoPendingCharges(tx, original.encounterId);
   const pending = await tx.charge.findMany({ where: { encounterId: original.encounterId, status: "POSTED", invoiceLine: null }, orderBy: [{ createdAt: "asc" }, { id: "asc" }], select: { id: true } });
   if (!pending.length) throw new BadRequestError("This encounter has no un-invoiced charges to collect.");
   const supplementary = await tx.invoice.create({
@@ -156,6 +182,7 @@ export async function issueInvoice(
   const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId }, include: { lines: true } });
   if (invoice.status !== "DRAFT") throw new InvoiceNotDraftError();
   if (invoice.lines.length === 0) throw new BadRequestError("Cannot issue an invoice with no lines.");
+  await assertNoPendingCharges(tx, invoice.encounterId);
   // Batch 5: never issue a zero line that was only waiting for a price.
   const unpriced = await tx.charge.count({ where: { invoiceLine: { invoiceId }, pricingStatus: "NEEDS_PRICING" } });
   if (unpriced > 0) throw new InvoiceNeedsPricingError(unpriced);

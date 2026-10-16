@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
 import type { DomainEventConsumer } from "@/lib/events/consumers";
 import { PermanentEventError, type DomainEventEnvelope } from "@/lib/events/types";
-import { createChargeIfNotExists } from "@/lib/hospital/billing/chargeCapture";
+import { createChargeIfNotExists, CHARGE_CAPTURE_TRIGGERS } from "@/lib/hospital/billing/chargeCapture";
 import { priceFor, PriceNotFoundError } from "@/lib/hospital/billing/pricing";
 
 /**
@@ -67,7 +67,7 @@ async function postCharge(event: DomainEventEnvelope, spec: ChargeSpec) {
 
 export const chargeCapture: DomainEventConsumer = {
   name: "charge-capture",
-  handles: ["ProcedureCompleted", "SurgeryItemUsed", "BloodIssued", "IcuAdmitted", "EncounterOpened", "PatientTriaged"],
+  handles: CHARGE_CAPTURE_TRIGGERS,
   async handle(event) {
     const p = event.payload as Record<string, string | number | boolean | undefined>;
     switch (event.eventType) {

@@ -17,6 +17,9 @@ function assertChargeCategory(category: string) {
   if (!(CHARGE_CATEGORIES as readonly string[]).includes(category)) throw new BadRequestError(`Unknown charge category: use one of ${CHARGE_CATEGORIES.join(", ")}.`);
 }
 
+/** The events charge-capture charges from (src/lib/consumers/chargeCapture.ts); invoice drafting waits for them. */
+export const CHARGE_CAPTURE_TRIGGERS = ["ProcedureCompleted", "SurgeryItemUsed", "BloodIssued", "IcuAdmitted", "EncounterOpened", "PatientTriaged"] as const;
+
 const ISSUED_INVOICE_STATUSES = ["ISSUED", "PARTIALLY_PAID", "PAID"] as const;
 
 async function encounterIsInvoiced(tx: Tx, encounterId: string): Promise<boolean> {
