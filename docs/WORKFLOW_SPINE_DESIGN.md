@@ -589,6 +589,14 @@ above, decided while building it:
   "should this be an event?" a visible product decision instead of an
   accident, without inventing 277 events nobody consumes.
 - The route allowlist started at 36 handlers.
+- **Batch 3a (2026-10-16): `NOT_YET_CATALOGUED` is gone.** The approved triage
+  (`docs/EVENT_TRIAGE.md`) turned its 272 entries into 186 `PLANNED` producers
+  (steps 4–9c) and 86 named exemptions in four new categories:
+  `PROCESS_STEP` (each names its boundary event, which must be catalogued or
+  owed), `OPERATIONAL_DETAIL`, `INTEGRATION_PROTOCOL` and `CONSUMER_OUTPUT`.
+  The category is no longer accepted, and a test keeps its count at 0.
+  `SENSITIVE_EVENTS` and `REQUIRED_PAYLOAD_FIELDS` hold the approved
+  sensitivity and type-code conditions, checked as each contract lands.
 
 A second, runtime check backs it up: the replay test (§7) asserts the exact
 event chain, so a producer that stops emitting fails CI even if the static
@@ -702,6 +710,16 @@ Each step is its own commit with its gate; verify:all stays green after each.
 - The `abdm-care-context` consumer (behind the ABDM environment switch).
 
 The `rag-indexer` (§2) is Week 4.
+
+**Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
+(nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b
+(quality, safety, operations) and 9c (access, identity, interoperability,
+workforce). Step 9a also changes the **waste flow**: `recordWaste` moves the
+quantity to a HOLD state (unavailable, not written off) with a ledger entry;
+`approveWaste` posts the write-off from HOLD; `rejectWaste` posts a return
+from HOLD to available stock. Ledger entries are never edited. Its gate
+covers record → reject (stock fully restored) and record → approve (written
+off exactly once). Today a rejected waste stays written off.
 
 The replay test is written early as a skeleton (step 1) and grows a step at a
 time, so each wiring step lengthens the asserted chain.

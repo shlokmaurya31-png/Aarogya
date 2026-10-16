@@ -1,8 +1,25 @@
 # Event triage: the "not yet catalogued" writes
 
 - **Date:** 2026-10-15 (Week 3; round 2, consolidated after review)
-- **Status:** for approval. **Nothing here is wired yet.** Batch 3a applies it to `emitExemptions.ts`.
+- **Status:** approved 2026-10-16 with the four changes below, which this document now reflects. Batch 3a applied it to `emitExemptions.ts` (`NOT_YET_CATALOGUED` is 0 and the CI rule rejects the category); each module's step wires its events.
 - **Scope:** every exported service function the CI emit rule lists as `NOT_YET_CATALOGUED`. Round 1 triaged 275. Since then three left the category: `completeTransferRequest` and `ingestWebhook` now reach registered emitting helpers (`transferPatientInTx`, `emitPaymentFailed`), and `addIntervention` moved to `OWED_EVENTS` (it emits TaskCreated but still owes `CarePlanUpdated`). **272** remain.
+
+## Approved changes (2026-10-16)
+
+1. **Settlements emit `ClaimSettled`** (planned #59), not `ClaimReconciliationStatusChanged`: `recordSettlement` (the NHCX settlement notification) and `reconcileSettlement` join `settleClaim` as its producers. `ClaimReconciliationStatusChanged` covers reconciliation exceptions only (`raiseException`, `resolveException`). Because three functions now emit `ClaimSettled`, step 9 gives its payload a closed `stage` code (SETTLED \| NOTIFIED \| RECONCILED) and an optional `settlementId`, so `discharge-readiness` can tell them apart.
+2. **Cross-aggregate merges carry a closed type code.** `StockDocumentStatusChanged.documentType` = ADJUSTMENT \| WASTE \| GOODS_RECEIPT \| STOCK_TAKE; `StaffAuthorizationChanged.changeType` = DEPARTMENT \| CREDENTIAL \| PRIVILEGE, plus `subjectStaffId`. The surgery-recovery fold and the RCA fold stand as written.
+3. **Sensitivity.** See *Sensitivity* below.
+4. **Waste flow** changes at step 9a (HOLD on record, write-off on approval, return on rejection). See *Other notes*.
+
+## Sensitivity
+
+`SENSITIVE` (the fact itself is sensitive: operator views show type and IDs only, and only clinical consumers receive it). Enforced by `SENSITIVE_EVENTS` in `emitExemptions.ts`: a catalogued contract with one of these names must be `SENSITIVE`.
+
+- Already marked in the design: `ConsentGranted`, `ConsentRevoked`, `MedicationDoseMissed`, `TransfusionReactionReported`, `FamilyAccessGranted`, `FamilyAccessRevoked`.
+- Approved change 3: `ResuscitationStatusChanged`, `BreakGlassStatusChanged`, `LegalHoldSet`, `PrivacyRequestStatusChanged`, `InfectionExposureRecorded`.
+- Added by the same rule, for confirmation: `ConsentExpired` (a consent fact, like `ConsentRevoked`) and `TransfusionReactionStatusChanged` (the lifecycle of a reported reaction).
+
+Every other event is `INTERNAL` (clinical/operational IDs about a patient) or `LOW` (commercial).
 
 ## Rules applied
 
@@ -39,8 +56,8 @@ Naming (round 2):
 | &nbsp;&nbsp;`CONSUMER_OUTPUT` | 2 |
 | &nbsp;&nbsp;`REFERENCE_DATA` | 1 |
 | &nbsp;&nbsp;`BOOKKEEPING` | 1 |
-| **Distinct event names these functions emit** | **79** |
-| &nbsp;&nbsp;already in the catalogue or among the 46 planned | 3 (`ClaimSubmitted`, `ReconciliationExceptionResolved`, `SpecimenCollected`) |
+| **Distinct event names these functions emit** | **80** |
+| &nbsp;&nbsp;already in the catalogue or among the 46 planned | 4 (`ClaimSettled`, `ClaimSubmitted`, `ReconciliationExceptionResolved`, `SpecimenCollected`) |
 | &nbsp;&nbsp;**new event names** | **76** (round 1: 155) |
 
 | Step | Module | Functions | Event names (new) |
@@ -50,7 +67,7 @@ Naming (round 2):
 | 6 | Orders, results, medication, pharmacy, ICU, care plans | 33 | 16 (16) |
 | 7 | Patient access, consent and record | 10 | 5 (5) |
 | 8 | Operating theatre and blood bank | 22 | 10 (9) |
-| 9 | Billing, claims and NHCX | 27 | 15 (13) |
+| 9 | Billing, claims and NHCX | 27 | 16 (13) |
 | 9a | Inventory and procurement | 27 | 7 (7) |
 | 9b | Quality, safety and operations | 27 | 11 (11) |
 | 9c | Access, identity, interoperability and workforce | 14 | 7 (7) |
@@ -102,7 +119,7 @@ Each name with the functions that emit it. *StatusChanged* events carry `from` /
 | 39 | `BillingAdjustmentStatusChanged` | 9 | `approveAdjustment`, `rejectAdjustment` |
 | 40 | `ChargeVoided` | 9 | `voidCharge` |
 | 41 | `ClaimQueryStatusChanged` | 9 | `recordQuery`, `respondToQuery`, `transitionQuery` |
-| 42 | `ClaimReconciliationStatusChanged` | 9 | `raiseException`, `reconcileSettlement`, `recordSettlement`, `resolveException` |
+| 42 | `ClaimReconciliationStatusChanged` | 9 | `raiseException`, `resolveException` (reconciliation exceptions only; settlements emit the planned `ClaimSettled`) |
 | 43 | `ClaimStatusChanged` | 9 | `closeClaim`, `recordClaimDecision` |
 | 44 | `CoverageStatusChanged` | 9 | `addPatientCoverage`, `deactivateCoverage` |
 | 45 | `CreditStatusChanged` | 9 | `applyCreditToInvoice`, `issueCredit` |
@@ -154,15 +171,15 @@ Beyond the one-per-aggregate rule, to reach the 60–80 target. Each is a judgem
 | `ControlledDrugWasted` | `PharmacyComplianceRecorded` | same; the stock movement itself is StockMoved |
 | `PatientProfileUpdated` | `PatientDemographicsUpdated` | profile and identifier changes to the same record, with a change kind |
 | `PatientIdentifierAdded` | `PatientDemographicsUpdated` | same |
-| `ClaimSettlementStatusChanged` | `ClaimReconciliationStatusChanged` | a settlement and its reconciliation exceptions are one NHCX reconciliation |
+| `ClaimSettlementStatusChanged` | `ClaimSettled` (planned #59) | approved change 1: settlements emit ClaimSettled; the reconciliation event covers only exceptions |
 | `ClaimReconciliationExceptionStatusChanged` | `ClaimReconciliationStatusChanged` | same |
-| `StockAdjustmentStatusChanged` | `StockDocumentStatusChanged` | one decision event for approval-gated inventory documents, documentType ADJUSTMENT \| WASTE \| GOODS_RECEIPT \| STOCK_TAKE |
+| `StockAdjustmentStatusChanged` | `StockDocumentStatusChanged` | one decision event for approval-gated inventory documents; approved on condition that the payload carries the closed code `documentType` = ADJUSTMENT \| WASTE \| GOODS_RECEIPT \| STOCK_TAKE |
 | `WasteRecordStatusChanged` | `StockDocumentStatusChanged` | same |
 | `GoodsReceiptRejected` | `StockDocumentStatusChanged` | same; approval stays GoodsReceived |
 | `StockTakeCompleted` | `StockDocumentStatusChanged` | same; variances post as StockMoved |
 | `InfectionInvestigationOpened` | `InfectionIncidentStatusChanged` | opening an investigation moves the incident (to = INVESTIGATING) |
 | `RootCauseAnalysisReviewed` | `QualityIncidentStatusChanged` | the RCA review is a stage of the incident |
-| `StaffAssignmentChanged` | `StaffAuthorizationChanged` | department assignment, credentials and privileges all decide what a staff member may do; kind code |
+| `StaffAssignmentChanged` | `StaffAuthorizationChanged` | department assignment, credentials and privileges all decide what a staff member may do; approved on condition that the payload carries `changeType` = DEPARTMENT \| CREDENTIAL \| PRIVILEGE and `subjectStaffId` |
 | `StaffCredentialRecorded` | `StaffAuthorizationChanged` | same |
 | `LabResultAmended` | `DiagnosticReportAmended` | rag-indexer re-indexes either way; reportKind LAB \| IMAGING |
 | `ImagingReportAmended` | `DiagnosticReportAmended` | same |
@@ -181,7 +198,7 @@ Beyond the one-per-aggregate rule, to reach the 60–80 target. Each is a judgem
 
 - **`GoodsReceived` leaves the cut list** and moves to 9a: it is the boundary event that makes recording a goods receipt a process step. A rejection is `StockDocumentStatusChanged` (documentType GOODS_RECEIPT).
 - **`SpecimenCollected` (planned) gains a producer:** `surgery.ts#collectSpecimen`, with `specimenSource` = LAB_ORDER | SURGICAL.
-- **Waste rejection does not reverse stock.** `recordWaste` posts the movement immediately; `rejectWaste` only marks the record REJECTED. The event records that fact as it is; whether a rejection should reverse the movement is a product question, not changed here.
+- **Waste flow changes at step 9a (approved change 4).** Today `recordWaste` posts the write-off immediately and `rejectWaste` only marks the record REJECTED, so a rejected waste stays written off. At 9a: `recordWaste` moves the quantity to a **HOLD** state (unavailable, not written off) with a ledger entry (`StockMoved`); `approveWaste` posts the write-off from HOLD; `rejectWaste` posts a return from HOLD to available stock (both `StockDocumentStatusChanged`, documentType WASTE, plus `StockMoved`). Ledger entries are never edited: every step is a new entry. Step 9a adds a gate covering record → reject (stock fully restored) and record → approve (stock written off exactly once).
 - **Requisitions and RFQs are `OPERATIONAL_DETAIL`, not process steps:** they never commit money or stock, so they have no outcome to emit; money is committed by the purchase order (`PurchaseOrderStatusChanged`). Round 1 had them as process steps.
 - **`decideLinkRequest`** counts as emitting through its CREATE_NEW branch; its LINK branch should also emit `PatientAccountLinked` (step 7).
 
@@ -323,8 +340,8 @@ Beyond the one-per-aggregate rule, to reach the 60–80 target. Each is a judgem
 | `respondToQuery` | `src/lib/hospital/nhcx/queries.ts` | (b) | `ClaimQueryStatusChanged` |  |
 | `transitionQuery` | `src/lib/hospital/nhcx/queries.ts` | (b) | `ClaimQueryStatusChanged` |  |
 | `raiseException` | `src/lib/hospital/nhcx/reconciliation.ts` | (b) | `ClaimReconciliationStatusChanged` |  |
-| `reconcileSettlement` | `src/lib/hospital/nhcx/reconciliation.ts` | (b) | `ClaimReconciliationStatusChanged` |  |
-| `recordSettlement` | `src/lib/hospital/nhcx/reconciliation.ts` | (b) | `ClaimReconciliationStatusChanged` |  |
+| `reconcileSettlement` | `src/lib/hospital/nhcx/reconciliation.ts` | (b) | `ClaimSettled` | approved change 1: a settlement emits ClaimSettled (stage RECONCILED) |
+| `recordSettlement` | `src/lib/hospital/nhcx/reconciliation.ts` | (b) | `ClaimSettled` | approved change 1: a settlement emits ClaimSettled (stage NOTIFIED) |
 | `resolveException` | `src/lib/hospital/nhcx/reconciliation.ts` | (b) | `ClaimReconciliationStatusChanged` |  |
 | `closeClaim` | `src/lib/hospital/billing/claims.ts` | (b) | `ClaimStatusChanged` |  |
 | `recordClaimDecision` | `src/lib/hospital/billing/claims.ts` | (b) | `ClaimStatusChanged` |  |
@@ -356,8 +373,8 @@ Beyond the one-per-aggregate rule, to reach the 60–80 target. Each is a judgem
 | `approveAdjustment` | `src/lib/hospital/inventory/adjustment.ts` | (b) | `StockDocumentStatusChanged` | plus StockMoved from postLedgerEntry |
 | `rejectAdjustment` | `src/lib/hospital/inventory/adjustment.ts` | (b) | `StockDocumentStatusChanged` | a rejection is the process outcome |
 | `completeStockTake` | `src/lib/hospital/inventory/stocktake.ts` | (b) | `StockDocumentStatusChanged` | variances post as StockMoved |
-| `approveWaste` | `src/lib/hospital/inventory/waste.ts` | (b) | `StockDocumentStatusChanged` | the waste already moved stock when recorded |
-| `rejectWaste` | `src/lib/hospital/inventory/waste.ts` | (b) | `StockDocumentStatusChanged` | rejecting does not reverse the movement today: see note |
+| `approveWaste` | `src/lib/hospital/inventory/waste.ts` | (b) | `StockDocumentStatusChanged` | at 9a: posts the write-off from HOLD (approved change 4) |
+| `rejectWaste` | `src/lib/hospital/inventory/waste.ts` | (b) | `StockDocumentStatusChanged` | at 9a: posts a return from HOLD to available stock (approved change 4) |
 | `rejectGoodsReceipt` | `src/lib/hospital/procurement/goodsReceipts.ts` | (b) | `StockDocumentStatusChanged` | approval is GoodsReceived (planned) |
 | `quarantineLot` | `src/lib/hospital/inventory/lots.ts` | (d) | `StockLotStatusChanged` |  |
 | `releaseLotFromQuarantine` | `src/lib/hospital/inventory/lots.ts` | (d) | `StockLotStatusChanged` |  |
@@ -368,7 +385,7 @@ Beyond the one-per-aggregate rule, to reach the 60–80 target. Each is a judgem
 | `cancelTransfer` | `src/lib/hospital/inventory/transfer.ts` | (b) | `StockMoved` | via postLedgerEntry |
 | `initiateTransfer` | `src/lib/hospital/inventory/transfer.ts` | (b) | `StockMoved` | via postLedgerEntry |
 | `receiveTransfer` | `src/lib/hospital/inventory/transfer.ts` | (b) | `StockMoved` | via postLedgerEntry |
-| `recordWaste` | `src/lib/hospital/inventory/waste.ts` | (b) | `StockMoved` | via postLedgerEntry |
+| `recordWaste` | `src/lib/hospital/inventory/waste.ts` | (b) | `StockMoved` | at 9a: moves the quantity to HOLD (unavailable, not written off) via postLedgerEntry |
 | `classifyMedicationReturn` | `src/lib/hospital/pharmacy.ts` | (b) | `StockMoved` | via postLedgerEntry |
 | `createPharmacyTransfer` | `src/lib/hospital/pharmacy.ts` | (b) | `StockMoved` | via initiateTransfer |
 | `recordSupplierInvoice` | `src/lib/hospital/procurement/procurementAdvanced.ts` | (b) | `SupplierInvoiceStatusChanged` |  |
@@ -506,8 +523,8 @@ Beyond the one-per-aggregate rule, to reach the 60–80 target. Each is a judgem
 | `createMedicationReturn` | `src/lib/hospital/pharmacy.ts` | `StockMoved` — classification posts the return or the discard | a return awaiting classification; stock moves on classification |
 | `createPharmacyRequest` | `src/lib/hospital/pharmacy.ts` | `SupplyRequestStatusChanged` — fulfilled, rejected or cancelled | ward request; stock moves when it is fulfilled |
 | `recordGoodsReceipt` | `src/lib/hospital/procurement/goodsReceipts.ts` | `GoodsReceived / StockDocumentStatusChanged` — GoodsReceived leaves the cut list for this | receipt awaiting approval; GoodsReceived on approval |
-| `addPurchaseOrderLine` | `src/lib/hospital/procurement/purchaseOrders.ts` | `PurchaseOrderStatusChanged` | draft PO |
-| `createPurchaseOrderDraft` | `src/lib/hospital/procurement/purchaseOrders.ts` | `PurchaseOrderStatusChanged` — approved, cancelled or closed | draft PO |
+| `addPurchaseOrderLine` | `src/lib/hospital/procurement/purchaseOrders.ts` | `PurchaseOrderStatusChanged` | line on a draft purchase order; money is committed on approval |
+| `createPurchaseOrderDraft` | `src/lib/hospital/procurement/purchaseOrders.ts` | `PurchaseOrderStatusChanged` — approved, cancelled or closed | draft purchase order; money is committed on approval |
 | `markSent` | `src/lib/hospital/procurement/purchaseOrders.ts` | `PurchaseOrderStatusChanged` — closed or cancelled | PO dispatch step |
 | `submitForApproval` | `src/lib/hospital/procurement/purchaseOrders.ts` | `PurchaseOrderStatusChanged` — the approval decision | PO approval step |
 | `createRca` | `src/lib/hospital/quality/service.ts` | `QualityIncidentStatusChanged` | root-cause analysis draft |
@@ -545,7 +562,7 @@ Beyond the one-per-aggregate rule, to reach the 60–80 target. Each is a judgem
 |---|---|---|
 | `accessionSpecimen` | `src/lib/hospital/specimenLifecycle.ts` | runs inside placeLabOrder's transaction; LabOrderPlaced covers it |
 
-## Applying it (batch 3a)
+## Applying it (batch 3a, done)
 
-1. `emitExemptions.ts`: each event function becomes `PLANNED` with its `events` and step; each exemption gets its category (the four above join the allowed categories; `PROCESS_STEP` entries carry their boundary event). `NOT_YET_CATALOGUED` is then empty and removed from the allowed categories, so the CI rule rejects it.
+1. `emitExemptions.ts`: each event function is `PLANNED` with its `events` and step (`"5b"`, `"9a"`, `"9b"`, `"9c"` for the sub-steps); each exemption has its category, and `PROCESS_STEP` entries carry their `boundary` event(s). `NOT_YET_CATALOGUED` is removed from the categories, so the CI rule rejects it; a boundary event must be catalogued or owed by a `PLANNED`/`OWED_EVENTS` entry.
 2. Each module's step adds its events to `catalogue.ts` and removes its `PLANNED` entries; the test accepts only the named event type.

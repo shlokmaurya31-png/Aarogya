@@ -3,8 +3,9 @@ import path from "node:path";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { analyze, libFiles, resolveEmitTypes, unemittingWriters, writingRoutes } from "./emitCoverage";
-import { EMIT_EXEMPTIONS, EMITTING_HELPERS, OWED_EVENTS, ROUTE_WRITE_ALLOWLIST } from "./emitExemptions";
-import { getEventContract } from "./catalogue";
+import { EMIT_EXEMPTIONS, EMIT_EXEMPTION_CATEGORIES, EMITTING_HELPERS, OWED_EVENTS, REQUIRED_PAYLOAD_FIELDS, ROUTE_WRITE_ALLOWLIST, SENSITIVE_EVENTS } from "./emitExemptions";
+import { EVENT_CONTRACTS, getEventContract } from "./catalogue";
+import type { z } from "zod";
 
 /**
  * Workflow spine §6 — a state-changing service function must emit a domain
@@ -12,7 +13,15 @@ import { getEventContract } from "./catalogue";
  * in emitExemptions.ts. Route handlers must not write domain tables directly.
  */
 const ROOT = path.resolve(__dirname, "..", "..", "..");
-const CATEGORIES = new Set(["PLANNED", "BOOKKEEPING", "REFERENCE_DATA", "CONFIGURATION", "NOT_YET_CATALOGUED"]);
+const CATEGORIES = new Set<string>(EMIT_EXEMPTION_CATEGORIES);
+const SUB_STEPS = new Set(["5b", "9a", "9b", "9c"]);
+const EVENT_NAME = /^[A-Z][A-Za-z0-9]+$/;
+/** Event types that are catalogued, or owed by a PLANNED / OWED_EVENTS entry. */
+const KNOWN_OR_OWED = new Set<string>([
+  ...EVENT_CONTRACTS.map((c) => c.type),
+  ...Object.values(EMIT_EXEMPTIONS).flatMap((e) => (e.category === "PLANNED" ? e.events ?? [] : [])),
+  ...Object.values(OWED_EVENTS).map((o) => o.event),
+]);
 
 describe("every state change emits a domain event (or is a listed exemption)", () => {
   const facts = analyze(libFiles(ROOT), ROOT);
@@ -51,10 +60,45 @@ describe("every state change emits a domain event (or is a listed exemption)", (
   });
 
   it("gives every exemption a known category, a reason, and PLANNED entries a step", () => {
+    const validStep = (s: unknown) => typeof s === "number" || (typeof s === "string" && SUB_STEPS.has(s));
     const bad = Object.entries(EMIT_EXEMPTIONS).filter(([, e]) =>
       !CATEGORIES.has(e.category) || e.reason.trim().length < 10
-      || (e.category === "PLANNED" && (typeof e.step !== "number" || !e.events?.length || !e.events.every((t) => /^[A-Z][A-Za-z0-9]+$/.test(t)))));
+      || (e.category === "PLANNED" && (!validStep(e.step) || !e.events?.length || !e.events.every((t) => EVENT_NAME.test(t))))
+      || (e.category !== "PLANNED" && (e.step !== undefined || e.events !== undefined)));
     expect(bad.map(([k]) => k)).toEqual([]);
+  });
+
+  it("has nothing left uncatalogued: every writer is an event or a named exemption", () => {
+    const left = Object.entries(EMIT_EXEMPTIONS).filter(([, e]) => (e.category as string) === "NOT_YET_CATALOGUED").map(([k]) => k);
+    expect(CATEGORIES.has("NOT_YET_CATALOGUED")).toBe(false);
+    expect(left).toEqual([]);
+  });
+
+  it("names, for every process step, a boundary event that is catalogued or owed", () => {
+    const bad = Object.entries(EMIT_EXEMPTIONS).flatMap(([k, e]) => {
+      if (e.category !== "PROCESS_STEP") return e.boundary ? [`${k}: only a PROCESS_STEP has a boundary`] : [];
+      if (!e.boundary?.length) return [`${k}: no boundary event`];
+      return e.boundary.filter((t) => !EVENT_NAME.test(t) || !KNOWN_OR_OWED.has(t)).map((t) => `${k}: boundary ${t} is neither catalogued nor owed`);
+    });
+    expect(bad).toEqual([]);
+  });
+
+  it("keeps sensitive facts SENSITIVE, and every listed one catalogued or owed", () => {
+    const bad = SENSITIVE_EVENTS.flatMap((t) => {
+      const c = EVENT_CONTRACTS.filter((x) => x.type === t);
+      if (!c.length) return KNOWN_OR_OWED.has(t) ? [] : [`${t} is neither catalogued nor owed`];
+      return c.filter((x) => x.sensitivity !== "SENSITIVE").map((x) => `${t}@${x.version} is ${x.sensitivity}, not SENSITIVE`);
+    });
+    expect(bad).toEqual([]);
+  });
+
+  it("gives the merged events the closed type codes their approval requires", () => {
+    const bad = Object.entries(REQUIRED_PAYLOAD_FIELDS).flatMap(([t, fields]) =>
+      EVENT_CONTRACTS.filter((c) => c.type === t).flatMap((c) => {
+        const shape = (c.payload as unknown as z.ZodObject<z.ZodRawShape>).shape ?? {};
+        return fields.filter((f) => !(f in shape)).map((f) => `${t}@${c.version} lacks ${f}`);
+      }));
+    expect(bad).toEqual([]);
   });
 
   it("tracks events still owed by functions that already emit something else", () => {
