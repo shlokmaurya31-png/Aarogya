@@ -94,6 +94,7 @@ jobs:
       DATABASE_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya"
       DIRECT_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya"
       SHADOW_DATABASE_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya_shadow"
+      VERIFY_DATABASE_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya_verify"
       AUTH_SECRET: "ci-dummy-secret-not-used-for-anything-real-000000"
       CLINICAL_DATA_MODE: synthetic
       AI_PROVIDER: mock
@@ -109,11 +110,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Create shadow database
-        run: PGPASSWORD=aarogya psql -h localhost -U aarogya -d aarogya -c "CREATE DATABASE aarogya_shadow"
+      - name: Create shadow and verify databases
+        run: |
+          PGPASSWORD=aarogya psql -h localhost -U aarogya -d aarogya -c "CREATE DATABASE aarogya_shadow"
+          PGPASSWORD=aarogya psql -h localhost -U aarogya -d aarogya -c "CREATE DATABASE aarogya_verify"
 
-      # Resets, migrates and seeds once, then runs every gate in order
-      # (scripts/verify-all.ts). Exits non-zero if any gate fails.
+      # Resets, migrates and seeds aarogya_verify (VERIFY_DATABASE_URL) once,
+      # then runs every gate in order against it (scripts/verify-all.ts); the
+      # job's DATABASE_URL is never reset. Exits non-zero if any gate fails.
       - name: verify:all
         run: npm run verify:all
 

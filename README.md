@@ -63,7 +63,17 @@ npm run db:fresh    # wipe the local database, apply all migrations, seed
 npm run db:migrate  # create/apply a new Prisma migration
 npm run db:seed     # re-seed demo data (idempotent)
 npm run db:studio   # browse the local database
+npm run verify:all  # integrity gates on their own database (see below)
 ```
+
+`npm run verify:all` resets, migrates and seeds **`aarogya_verify`**
+(`VERIFY_DATABASE_URL`), then runs every `scripts/verify-postgres-*.ts` gate
+against it. It **never resets the dev database** (`aarogya`, `DATABASE_URL`):
+each gate's `DATABASE_URL` and `DIRECT_URL` are set to the verify database.
+It refuses a non-local host, any Supabase host (staging) and a verify
+database with the same name as the dev one. The compose setup creates
+`aarogya_verify` (and `aarogya_shadow`) on a new volume; on an older volume,
+the first run's `prisma migrate reset` creates it.
 
 ### Aarogya Scholar demo accounts (dev only — password `Scholar@123` for all)
 

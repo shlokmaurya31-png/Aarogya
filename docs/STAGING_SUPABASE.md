@@ -12,10 +12,12 @@ logs. The staging scripts read nothing else for the database URLs, and they
 never print a password or a full URL.
 
 > [!CAUTION]
-> **`npm run verify:all` must never run against staging.** It resets the
-> database, which drops everything, before every run. `scripts/verify-all.ts`
-> refuses any `*.supabase.co` / `*.supabase.com` host, even with
-> `ALLOW_REMOTE_VERIFY=1`. Do not work around it.
+> **`npm run verify:all` must never run against staging.** It resets its
+> database, which drops everything, before every run. That database is
+> `VERIFY_DATABASE_URL` (locally `aarogya_verify`), never `DATABASE_URL`.
+> `scripts/verify-all.ts` refuses any `*.supabase.co` / `*.supabase.com` host,
+> even with `ALLOW_REMOTE_VERIFY=1`, and a verify database named like the dev
+> database. Do not work around it.
 
 > [!WARNING]
 > **Never enable `vector`, or any other extension `schema.prisma` declares,
@@ -239,7 +241,7 @@ with the same `Authorization: Bearer` header. Nothing in the app changes.
 ## 7. Rules
 
 1. **`verify:all` never targets staging.** The gates are destructive. Run
-   them locally or in CI.
+   them locally (they reset `aarogya_verify`, not the dev database) or in CI.
 2. **Migrations own every extension,** including `vector`. Never enable
    extensions from the dashboard.
 3. **Schema changes reach staging only through `staging:migrate`,** never
