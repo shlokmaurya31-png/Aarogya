@@ -113,11 +113,11 @@ export async function collectSpecimen(tx: Tx, specimenId: string, collectedBySta
   return specimen;
 }
 
-/** SpecimenStatusChanged (a rejection, or the new specimen of a recollection), in the caller's transaction. */
+/** SpecimenStatusChanged (lab receipt, a rejection, or the new specimen of a recollection), in the caller's transaction. */
 async function emitSpecimenStatus(
   tx: Tx,
   s: { id: string; labOrderId: string; facilityId: string; patientId: string; encounterId: string | null },
-  change: { from: SpecimenStatus | null; to: "REJECTED" | "COLLECTION_PENDING"; rejectionReason?: SpecimenRejectionReason; recollectionOfSpecimenId?: string },
+  change: { from: SpecimenStatus | null; to: "RECEIVED" | "REJECTED" | "COLLECTION_PENDING"; rejectionReason?: SpecimenRejectionReason; recollectionOfSpecimenId?: string },
   byUserId?: string,
 ) {
   await emitFacilityEvent(tx, {
@@ -131,8 +131,10 @@ async function emitSpecimenStatus(
   });
 }
 
-export async function receiveSpecimen(tx: Tx, specimenId: string, receivedByStaffId: string) {
-  return guardedTransition(tx, specimenId, "COLLECTED", "RECEIVED", { receivedByStaffId, receivedAt: new Date() }, "received");
+export async function receiveSpecimen(tx: Tx, specimenId: string, receivedByStaffId: string, byUserId?: string) {
+  const specimen = await guardedTransition(tx, specimenId, "COLLECTED", "RECEIVED", { receivedByStaffId, receivedAt: new Date() }, "received");
+  await emitSpecimenStatus(tx, specimen, { from: "COLLECTED", to: "RECEIVED" }, byUserId);
+  return specimen;
 }
 
 export async function acceptSpecimen(tx: Tx, specimenId: string, acceptedByStaffId: string) {

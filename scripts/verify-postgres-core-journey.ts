@@ -98,7 +98,8 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
   let resultId = "";
   // 8. Labs: the order (with its in-transaction collection task), collection,
   // and a critical result (→ critical-result task; notification, not an event).
-  await step("8 Labs", ["LabOrderPlaced", "TaskCreated", "SpecimenCollected", "LabResultReleased", "TaskCreated"], async () => {
+  // Receipt in the lab is SpecimenStatusChanged (batch 4: found by the extended emit rule).
+  await step("8 Labs", ["LabOrderPlaced", "TaskCreated", "SpecimenCollected", "SpecimenStatusChanged", "LabResultReleased", "TaskCreated"], async () => {
     const lab = await placeLabOrder({ facilityId, staffId: doctor.id, byUserId: by, encounterId: enc.id, patientId: patient.id, testName: `Troponin ${run}`, category: "Biochemistry", priority: "STAT" });
     const sp = lab.specimen!;
     await tx((t) => collectSpecimen(t, sp.id, nurse.id, undefined, nurse.userId));
@@ -147,7 +148,7 @@ async function main() {
   const producers = all.map((e) => e.eventType).filter((t) => !t.startsWith("Task"));
   // IcuAdmitted is emitted before PatientTransferred inside the transfer (as the ADT gate asserts).
   const expectedProducers = ["EdArrivalRegistered", "PatientTriaged", "AdmissionRequested", "BedReserved", "AdmissionCreated", "IcuAdmitted", "PatientTransferred",
-    "LabOrderPlaced", "SpecimenCollected", "LabResultReleased", "CriticalResultAcknowledged", "MedicationOrdered", "MedicationVerified", "MedicationDispensed", "MedicationAdministered"];
+    "LabOrderPlaced", "SpecimenCollected", "SpecimenStatusChanged", "LabResultReleased", "CriticalResultAcknowledged", "MedicationOrdered", "MedicationVerified", "MedicationDispensed", "MedicationAdministered"];
   report("The producers' events, in emission order", producers.join() === expectedProducers.join(), producers.join(" → "));
 
   const bad = all.flatMap((e) => {

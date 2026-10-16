@@ -241,11 +241,29 @@ export const EVENT_CONTRACTS: EventContract[] = [
     }).strict(),
   }),
   contract({
+    type: "SpecimenStatusChanged", version: 2, aggregateType: "SPECIMEN", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "specimens (receiveSpecimen, rejectSpecimen, recollectSpecimen)",
+    payload: z.object({
+      specimenId: id, labOrderId: id, patientId: id, encounterId: optId,
+      from: z.enum(["COLLECTION_PENDING", "COLLECTED", "RECEIVED"]).nullable(), to: z.enum(["RECEIVED", "REJECTED", "COLLECTION_PENDING"]),
+      rejectionReason: z.enum(["INSUFFICIENT_SPECIMEN", "WRONG_CONTAINER", "HEMOLYZED", "MISLABELED", "LEAKED", "EXPIRED_TRANSPORT", "INCORRECT_SPECIMEN_TYPE", "OTHER"]).optional(),
+      recollectionOfSpecimenId: optId,
+    }).strict(),
+  }),
+  contract({
     type: "ImagingStudyStatusChanged", version: 1, aggregateType: "IMAGING_STUDY", scope: "FACILITY",
     sensitivity: "INTERNAL", producer: "imaging studies (scheduleStudy, rescheduleStudy, cancelStudy)",
     payload: z.object({
       studyId: id, imagingOrderId: id, patientId: id, encounterId: id,
       from: z.enum(["SCHEDULED", "ARRIVED"]).nullable(), to: z.enum(["SCHEDULED", "CANCELLED"]), rescheduled: z.boolean(),
+    }).strict(),
+  }),
+  contract({
+    type: "ImagingStudyStatusChanged", version: 2, aggregateType: "IMAGING_STUDY", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "imaging studies (scheduleStudy, rescheduleStudy, checkInStudy, startStudy, cancelStudy)",
+    payload: z.object({
+      studyId: id, imagingOrderId: id, patientId: id, encounterId: id,
+      from: z.enum(["SCHEDULED", "ARRIVED", "IN_PROGRESS"]).nullable(), to: z.enum(["SCHEDULED", "ARRIVED", "IN_PROGRESS", "CANCELLED"]), rescheduled: z.boolean(),
     }).strict(),
   }),
   contract({

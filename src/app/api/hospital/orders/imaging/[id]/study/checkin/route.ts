@@ -18,7 +18,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const study = await prisma.imagingStudy.findFirst({ where: { imagingOrderId: id, status: "SCHEDULED" }, orderBy: { createdAt: "desc" } });
     if (!study) throw new NotFoundError("No scheduled study awaiting arrival for this order.");
 
-    const updated = await prisma.$transaction((tx) => checkInStudy(tx, study.id));
+    const updated = await prisma.$transaction((tx) => checkInStudy(tx, study.id, session.userId));
 
     await recordAuditEvent(
       "hospital.imaging.studyCheckedIn",

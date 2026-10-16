@@ -108,7 +108,10 @@ async function main() {
 
   // ── 2. Critical lab result ────────────────────────────────────────────────
   await tx((t) => collectSpecimen(t, recollected.id, nurse.id));
-  await tx((t) => receiveSpecimen(t, recollected.id, nurse.id));
+  await tx((t) => receiveSpecimen(t, recollected.id, nurse.id, nurse.userId));
+  const received = (await ofType("SpecimenStatusChanged", recollected.id)).at(-1);
+  report("receiveSpecimen → SpecimenStatusChanged v2 COLLECTED → RECEIVED (batch 4)",
+    received?.eventVersion === 2 && (received.payload as { from: string; to: string }).from === "COLLECTED" && (received.payload as { to: string }).to === "RECEIVED");
   await tx((t) => acceptSpecimen(t, recollected.id, nurse.id));
   const result = await tx((t) => enterResult(t, { labOrderId: lab.order.id, specimenId: recollected.id, value: "6.9", isCritical: true }));
   await tx((t) => verifyResult(t, result.id, doctor.id, by));
@@ -178,8 +181,11 @@ async function main() {
   const studyEvents = (await ofType("ImagingStudyStatusChanged", study.id)).map((e) => e.payload as Record<string, unknown>);
   report("scheduleStudy and rescheduleStudy → ImagingStudyStatusChanged (null → SCHEDULED, then rescheduled)",
     studyEvents.length === 2 && studyEvents[0].from === null && studyEvents[1].rescheduled === true);
-  await tx((t) => checkInStudy(t, study.id));
-  await tx((t) => startStudy(t, study.id, doctor.id));
+  await tx((t) => checkInStudy(t, study.id, by));
+  await tx((t) => startStudy(t, study.id, doctor.id, {}, by));
+  const moves = (await ofType("ImagingStudyStatusChanged", study.id)).slice(2);
+  report("checkInStudy and startStudy → ImagingStudyStatusChanged v2, SCHEDULED → ARRIVED → IN_PROGRESS (batch 4: found by the extended rule)",
+    moves.map((e) => `${e.eventVersion}:${(e.payload as { from: string }).from}>${(e.payload as { to: string }).to}`).join() === "2:SCHEDULED>ARRIVED,2:ARRIVED>IN_PROGRESS");
   await tx((t) => completeStudy(t, study.id, {}, by));
   report("completeStudy → ImagingStudyCompleted", (await one("ImagingStudyCompleted", study.id))?.p.imagingOrderId === img.order.id);
   const rpt = await tx((t) => enterReport(t, { imagingOrderId: img.order.id, studyId: study.id, findings: "bleed", impression: "bleed", isCritical: true, reportedByStaffId: doctor.id }));

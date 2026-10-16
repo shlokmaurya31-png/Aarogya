@@ -18,7 +18,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const specimen = await prisma.specimen.findFirst({ where: { labOrderId: id, status: "COLLECTED" }, orderBy: { createdAt: "desc" } });
     if (!specimen) throw new NotFoundError("No collected specimen awaiting receipt for this order.");
 
-    const updated = await prisma.$transaction((tx) => receiveSpecimen(tx, specimen.id, staff.id));
+    const updated = await prisma.$transaction((tx) => receiveSpecimen(tx, specimen.id, staff.id, session.userId));
 
     await recordAuditEvent(
       "hospital.lab.specimenReceived",

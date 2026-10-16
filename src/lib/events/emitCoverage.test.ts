@@ -144,9 +144,15 @@ describe("the rule catches violations (fixtures)", () => {
     export async function registeredHelper(tx: any) { await emitDomainEvent(tx, { type: "StockMoved" }); }
     function middle(tx: any) { return registeredHelper(tx); }
     export async function deepViaRegistered(tx: any) { await tx.item.update({}); await middle(tx); }
-    function unregisteredEmitter(tx: any) { return emitDomainEvent(tx, { type: "PatientRegistered" }); }
-    function middle2(tx: any) { return unregisteredEmitter(tx); }
+    export function unregisteredEmitter(tx: any) { return emitDomainEvent(tx, { type: "PatientRegistered" }); }
+    export function middle2(tx: any) { return unregisteredEmitter(tx); }
     export async function deepViaUnregistered(tx: any) { await tx.item.update({}); await middle2(tx); }
+    async function privateWrite(tx: any) { await tx.item.update({}); }
+    function privateMiddle(tx: any) { return privateWrite(tx); }
+    export async function writesViaPrivate(tx: any) { await privateMiddle(tx); }
+    function privateEmit(tx: any) { return emitFacilityEvent(tx, { type: "StockMoved" }); }
+    function privateEmitMiddle(tx: any) { return privateEmit(tx); }
+    export async function emitsViaPrivate(tx: any) { await privateWrite(tx); await privateEmitMiddle(tx); }
     export async function emitsOther(tx: any) { await tx.item.update({}); await emitFacilityEvent(tx, { type: "TaskCreated" }); }
   `);
   const facts = analyze([file], dir);
@@ -165,7 +171,13 @@ describe("the rule catches violations (fixtures)", () => {
   it("flags an emit through the global client from a function that writes", () => {
     expect(byName("emitsOutside").emitsOutsideTx).toBe(true);
   });
-  it("follows a registered emitting helper at any depth, an unregistered one only one level", () => {
+  it("follows private same-file helpers at any depth, for writes and for emits", () => {
+    expect(byName("writesViaPrivate").writes).toEqual(["item.update (via privateWrite)"]);
+    const t = resolveEmitTypes(facts);
+    expect([...t.get(byName("emitsViaPrivate").key)!]).toEqual(["StockMoved"]);
+    expect(byName("emitsViaPrivate").emits).toBe(false); // emitFacilityEvent is not emitDomainEvent; its type is what counts
+  });
+  it("follows a registered emitting helper at any depth, an exported unregistered one only one level", () => {
     const helpers = { [byName("registeredHelper").key]: ["StockMoved"] };
     const t = resolveEmitTypes(facts, helpers);
     expect([...t.get(byName("deepViaRegistered").key)!]).toEqual(["StockMoved"]);

@@ -562,6 +562,39 @@ Beyond the one-per-aggregate rule, to reach the 60–80 target. Each is a judgem
 |---|---|---|
 | `accessionSpecimen` | `src/lib/hospital/specimenLifecycle.ts` | runs inside placeLabOrder's transaction; LabOrderPlaced covers it |
 
+## Round 3 (batch 4): writers found by the extended rule
+
+The emit rule now follows private (non-exported) helpers in the same file, at
+any depth, for writes and emits (registered helpers across files, as before).
+It found 17 exported functions whose writes were inside a private helper. Same
+four rules:
+
+| Function | File | Decision | Event / category | Note |
+|---|---|---|---|---|
+| `checkInStudy` | `src/lib/hospital/imagingStudyLifecycle.ts` | (a) | `ImagingStudyStatusChanged` v2 | **wired** (SCHEDULED → ARRIVED) |
+| `startStudy` | `src/lib/hospital/imagingStudyLifecycle.ts` | (a) | `ImagingStudyStatusChanged` v2 | **wired** (ARRIVED → IN_PROGRESS) |
+| `receiveSpecimen` | `src/lib/hospital/specimenLifecycle.ts` | (a) | `SpecimenStatusChanged` v2 | **wired** (COLLECTED → RECEIVED) |
+| `completeBreakGlass` | `src/lib/auth/authorize/breakGlass.ts` | (c) | `BreakGlassStatusChanged` | 9c |
+| `revokeBreakGlass` | `src/lib/auth/authorize/breakGlass.ts` | (c) | `BreakGlassStatusChanged` | 9c |
+| `verifyCredential` | `src/lib/hospital/workforce/service.ts` | (c) | `StaffAuthorizationChanged` | 9c, changeType CREDENTIAL |
+| `suspendCredential` | `src/lib/hospital/workforce/service.ts` | (c) | `StaffAuthorizationChanged` | 9c, CREDENTIAL |
+| `revokeCredential` | `src/lib/hospital/workforce/service.ts` | (c) | `StaffAuthorizationChanged` | 9c, CREDENTIAL |
+| `suspendPrivilege` | `src/lib/hospital/workforce/service.ts` | (c) | `StaffAuthorizationChanged` | 9c, PRIVILEGE |
+| `reinstatePrivilege` | `src/lib/hospital/workforce/service.ts` | (c) | `StaffAuthorizationChanged` | 9c, PRIVILEGE |
+| `revokePrivilege` | `src/lib/hospital/workforce/service.ts` | (c) | `StaffAuthorizationChanged` | 9c, PRIVILEGE |
+| `authorizeExchange` | `src/lib/hospital/interoperability/exchange.ts` | (c) | `HealthInformationExchangeStatusChanged` (new name) | 9c; a disclosure of the record |
+| `rejectExchange` | `src/lib/hospital/interoperability/exchange.ts` | (c) | `HealthInformationExchangeStatusChanged` | 9c |
+| `cancelExchange` | `src/lib/hospital/interoperability/exchange.ts` | (c) | `HealthInformationExchangeStatusChanged` | 9c |
+| `dispatchExchange` | `src/lib/hospital/interoperability/exchange.ts` | (c) | `HealthInformationExchangeStatusChanged` | 9c; the record leaves the facility |
+| `runReconciliation` | `src/lib/billing/reconciliation.ts` | (b) | `ReconciliationExceptionCreated` (existing) | 9; it raises exceptions without the event |
+| `dispatchPendingDomainEvents` | `src/lib/events/dispatcher.ts` | — | `BOOKKEEPING` | event infrastructure |
+
+`ImagingStudyStatusChanged` and `SpecimenStatusChanged` gained statuses, so
+they are new contract versions (v2; v1 kept). One new event name:
+`HealthInformationExchangeStatusChanged` (transitions after the request;
+`createExchange` keeps `HealthInformationExchangeRequested`). Distinct planned
+names: 81 (77 new).
+
 ## Progress
 
 | Step | State |

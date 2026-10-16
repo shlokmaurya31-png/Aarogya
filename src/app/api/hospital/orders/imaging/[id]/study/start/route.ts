@@ -27,7 +27,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         mriSafetyScreened: Boolean(mriSafetyScreened),
         implantScreened: Boolean(implantScreened),
         preparationCompleted: Boolean(preparationCompleted),
-      })
+      }, session.userId)
     );
 
     await recordAuditEvent(

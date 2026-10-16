@@ -770,6 +770,15 @@ publishes a new version where an older one is live, and migration
 the MAR's free-text code by `doseNotGivenReason`, never copied. A CANCELLED dose
 emits nothing.
 
+**Batch 4, decision 3 (emit rule).** The rule follows private helpers in the
+same file at any depth, for writes and for emits; registered helpers across
+files as before. It found 17 writers (EVENT_TRIAGE.md, round 3): three wired
+here (`checkInStudy`, `startStudy`, `receiveSpecimen`, through the v2 contracts
+of `ImagingStudyStatusChanged` and `SpecimenStatusChanged`), thirteen planned,
+one bookkeeping. The fixture that showed an unregistered helper counts one
+level only now uses exported helpers (a private chain is followed by design),
+and new fixtures prove private chains are followed for writes and emits.
+
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b
 (quality, safety, operations) and 9c (access, identity, interoperability,

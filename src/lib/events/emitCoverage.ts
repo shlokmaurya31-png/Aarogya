@@ -5,8 +5,10 @@
  *
  * A service function "writes" if its body (including nested callbacks) calls a
  * Prisma write method on a delegate (`prisma.x.create(…)`, `tx.x.update(…)`,
- * …) or a raw INSERT/UPDATE/DELETE. It "emits" if it calls emitDomainEvent,
- * or calls (one level deep) a function anywhere in src/lib that does, or
+ * …) or a raw INSERT/UPDATE/DELETE, or reaches such a write through private
+ * (non-exported) helpers in the same file, at any depth. It "emits" if it, or
+ * a private helper it reaches in the same file, calls emitDomainEvent; or it
+ * calls (one level deep) a function anywhere in src/lib that does; or it
  * reaches a registered emitting helper (EMITTING_HELPERS) through any chain of
  * calls inside src/lib.
  *
@@ -73,6 +75,8 @@ export function analyze(files: string[], root: string): FunctionFacts[] {
         }
       }
     }
+    const fileFacts: FunctionFacts[] = [];
+    const privateNames = new Set(fns.filter((f) => !f.exported).map((f) => f.name));
     for (const fn of fns) {
       const writes = new Set<string>();
       const callees = new Set<string>();
@@ -109,12 +113,33 @@ export function analyze(files: string[], root: string): FunctionFacts[] {
         ts.forEachChild(n, visit);
       };
       visit(fn.node);
-      out.push({
+      fileFacts.push({
         key: `${rel}#${fn.name}`, file: rel, name: fn.name, line: src.getLineAndCharacterOfPosition(fn.node.getStart()).line + 1,
         writes: [...writes].sort(), emits, emitTypes: [...emitTypes].sort(), callees: [...callees], calls: [...calls],
         emitsOutsideTx: emitsGlobal && writes.size > 0,
       });
-      void fn.exported;
+    }
+    // Fold in what private same-file helpers do, at any depth: a write (or an
+    // emit) made through a non-exported helper is the caller's.
+    const byName = new Map(fileFacts.map((f) => [f.name, f]));
+    for (const f of fileFacts) {
+      const seen = new Set<string>([f.name]);
+      const queue = f.calls.filter((c) => privateNames.has(c));
+      const writes = new Set(f.writes);
+      const types = new Set(f.emitTypes);
+      let emits = f.emits;
+      while (queue.length) {
+        const name = queue.shift()!;
+        if (seen.has(name)) continue;
+        seen.add(name);
+        const h = byName.get(name);
+        if (!h) continue;
+        h.writes.forEach((w) => writes.add(`${w} (via ${name})`));
+        h.emitTypes.forEach((t) => types.add(t));
+        emits ||= h.emits;
+        queue.push(...h.calls.filter((c) => privateNames.has(c)));
+      }
+      out.push({ ...f, writes: [...writes].sort(), emitTypes: [...types].sort(), emits });
     }
   }
   return out;

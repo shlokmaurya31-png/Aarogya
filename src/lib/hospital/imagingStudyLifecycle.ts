@@ -9,7 +9,7 @@ type Tx = Prisma.TransactionClient;
 type StudyRow = { id: string; imagingOrderId: string; facilityId: string; patientId: string; encounterId: string };
 
 /** ImagingStudyStatusChanged (scheduled, rescheduled, cancelled), in the caller's transaction. */
-function emitStudyStatus(tx: Tx, s: StudyRow, from: "SCHEDULED" | "ARRIVED" | null, to: "SCHEDULED" | "CANCELLED", rescheduled: boolean, byUserId?: string) {
+function emitStudyStatus(tx: Tx, s: StudyRow, from: "SCHEDULED" | "ARRIVED" | "IN_PROGRESS" | null, to: "SCHEDULED" | "ARRIVED" | "IN_PROGRESS" | "CANCELLED", rescheduled: boolean, byUserId?: string) {
   return emitFacilityEvent(tx, {
     type: "ImagingStudyStatusChanged", aggregateId: s.id, facilityId: s.facilityId, actorUserId: byUserId, encounterId: s.encounterId,
     payload: { studyId: s.id, imagingOrderId: s.imagingOrderId, patientId: s.patientId, encounterId: s.encounterId, from, to, rescheduled },
@@ -198,8 +198,10 @@ async function guardedTransition(tx: Tx, studyId: string, from: ImagingStudyStat
   return tx.imagingStudy.findUniqueOrThrow({ where: { id: studyId } });
 }
 
-export async function checkInStudy(tx: Tx, studyId: string) {
-  return guardedTransition(tx, studyId, "SCHEDULED", "ARRIVED", { arrivedAt: new Date() }, "checked in");
+export async function checkInStudy(tx: Tx, studyId: string, byUserId?: string) {
+  const study = await guardedTransition(tx, studyId, "SCHEDULED", "ARRIVED", { arrivedAt: new Date() }, "checked in");
+  await emitStudyStatus(tx, study, "SCHEDULED", "ARRIVED", false, byUserId);
+  return study;
 }
 
 /** "Claim" a study for execution (brief §23 concurrency test #1) — the first technologist to call this wins. */
@@ -207,9 +209,12 @@ export async function startStudy(
   tx: Tx,
   studyId: string,
   performedByStaffId: string,
-  screening: { pregnancyScreened?: boolean; allergyScreened?: boolean; mriSafetyScreened?: boolean; implantScreened?: boolean; preparationCompleted?: boolean } = {}
+  screening: { pregnancyScreened?: boolean; allergyScreened?: boolean; mriSafetyScreened?: boolean; implantScreened?: boolean; preparationCompleted?: boolean } = {},
+  byUserId?: string,
 ) {
-  return guardedTransition(tx, studyId, "ARRIVED", "IN_PROGRESS", { startedAt: new Date(), performedByStaffId, ...screening }, "claimed");
+  const study = await guardedTransition(tx, studyId, "ARRIVED", "IN_PROGRESS", { startedAt: new Date(), performedByStaffId, ...screening }, "claimed");
+  await emitStudyStatus(tx, study, "ARRIVED", "IN_PROGRESS", false, byUserId);
+  return study;
 }
 
 export async function completeStudy(tx: Tx, studyId: string, input: { contrastGiven?: boolean; notes?: string } = {}, byUserId?: string) {
