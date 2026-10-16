@@ -5,17 +5,20 @@ import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 import type { PatientAccessSession, PatientAccessSessionStatus, Prisma } from "@prisma/client";
 
 /**
- * PatientAccessSessionStatusChanged, in the writer's transaction. A session can
- * span facilities (any clinician the patient shares with), so the tenant is the
- * patient's facility.
+ * PatientAccessSessionStatusChanged, in the writer's transaction. The tenant is
+ * the facility where the access occurs: the redeeming clinician's, stored on
+ * the session at redemption (batch 6, fix 3). Before redemption nothing has
+ * been accessed and there is no such facility, so issuing a code, and a code
+ * that lapses or is cancelled unredeemed, emit nothing (as an unaccepted
+ * family invitation emits nothing).
  */
 async function emitSessionStatus(
   tx: Prisma.TransactionClient, s: PatientAccessSession, from: PatientAccessSessionStatus | null,
   extra: { endedBy?: "DOCTOR" | "PATIENT" | "SYSTEM"; extended?: boolean; actorUserId?: string | null } = {},
 ) {
-  const patient = await tx.patient.findUniqueOrThrow({ where: { id: s.patientId }, select: { facilityId: true } });
+  if (!s.facilityId) return;
   await emitFacilityEvent(tx, {
-    type: "PatientAccessSessionStatusChanged", aggregateId: s.id, facilityId: patient.facilityId, actorUserId: extra.actorUserId ?? null,
+    type: "PatientAccessSessionStatusChanged", aggregateId: s.id, facilityId: s.facilityId, actorUserId: extra.actorUserId ?? null,
     payload: {
       accessGrantId: s.id, patientId: s.patientId, from, to: s.status, extended: extra.extended ?? false,
       ...(extra.endedBy ? { endedBy: extra.endedBy } : {}), ...(s.doctorStaffId ? { doctorStaffId: s.doctorStaffId } : {}),
@@ -113,7 +116,8 @@ export async function redeemAccessCode(opts: {
   doctorUserId: string;
   doctorStaffId?: string | null;
   doctorName?: string | null;
-  facilityId?: string | null;
+  /** The facility where the access occurs (the redeeming staff member's): the events' tenant. */
+  facilityId: string;
 }) {
   const now = new Date();
   const found = await prisma.patientAccessSession.findUnique({ where: { codeHash: hashCode(opts.code) } });
@@ -138,7 +142,7 @@ export async function redeemAccessCode(opts: {
         doctorUserId: opts.doctorUserId,
         doctorStaffId: opts.doctorStaffId ?? undefined,
         doctorName: opts.doctorName ?? undefined,
-        facilityId: opts.facilityId ?? undefined,
+        facilityId: opts.facilityId,
         redeemedAt: now,
         activeExpiresAt: new Date(now.getTime() + ACTIVE_TTL_MS),
       },

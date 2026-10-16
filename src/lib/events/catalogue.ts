@@ -835,7 +835,7 @@ export const EVENT_CONTRACTS: EventContract[] = [
   }),
   contract({
     type: "PatientAccessSessionStatusChanged", version: 1, aggregateType: "PATIENT_ACCESS_SESSION", scope: "FACILITY",
-    sensitivity: "INTERNAL", producer: "patient access codes (issue, redeem, extend, end, expiry)",
+    sensitivity: "INTERNAL", producer: "patient access codes (redeem, extend, end, expiry): tenant = the facility where the access occurs (the redeeming clinician's); an unredeemed code emits nothing",
     payload: z.object({
       /** The access session (also the aggregate id). Keys avoid "session": the sensitive-key guard refuses them. */
       accessGrantId: id, patientId: id,

@@ -10,8 +10,9 @@
  *      never the content.
  *   4. Consent: ConsentRequestStatusChanged (requested, declined) and
  *      ConsentExpired per lapsed consent, all SENSITIVE.
- *   5. Access codes: PatientAccessSessionStatusChanged for issue, redeem,
- *      extend, end, and the expiry of a stale code when a new one is issued.
+ *   5. Access codes: PatientAccessSessionStatusChanged for redeem, extend,
+ *      end, and a live session expired by a new code, in the facility where the
+ *      access occurred (batch 6, fix 3); an unredeemed code emits nothing.
  *   6. The runner expires an ACTIVE delegation past its date with
  *      FamilyAccessRevoked (EXPIRED); a lapsed invitation emits nothing.
  *   7. PatientDemographicsUpdated for an MRN added by staff (type, no value).
@@ -38,6 +39,7 @@ import { openEncounter } from "../src/lib/hospital/encounter";
 import { getEventContract } from "../src/lib/events/catalogue";
 import { runTick } from "../src/lib/runner/tick";
 import type { PatientAccessScope } from "../src/lib/patient/context";
+import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 let pass = 0;
 let fail = 0;
@@ -125,16 +127,28 @@ async function main() {
   report("expireLapsedConsents → ConsentExpired once per lapsed consent", swept.expired >= 1 && expired.length === 1 && expired[0].patientId === patient.id);
   report("…and a second sweep expires nothing more for it", (await expireLapsedConsents(facilityId)) && (await events("ConsentExpired", c2.id)).length === 1);
 
-  // 5. Access codes.
+  // 5. Access codes (batch 6, fix 3): the tenant is the facility where the access occurs.
+  const noida = "fac-amc-noida";
+  const nDoctor = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { AND: [staffAtFacilityWhere(noida), { user: { role: "DOCTOR" } }] }, orderBy: { id: "asc" } });
+  const sessionEvents = (id: string) => events("PatientAccessSessionStatusChanged", id);
   const first = await issueAccessCode(patient.id, user.id, "visit");
   const second = await issueAccessCode(patient.id, user.id, "visit");
-  const redeemed = await redeemAccessCode({ code: second.code, doctorUserId: doctor.id, doctorStaffId: staffId, facilityId });
+  report("Issuing a code, and the stale unredeemed code it expires, emit nothing (no access has occurred)",
+    (await sessionEvents(first.session.id)).length === 0 && (await prisma.patientAccessSession.findUniqueOrThrow({ where: { id: first.session.id } })).status === "EXPIRED");
+  const redeemed = await redeemAccessCode({ code: second.code, doctorUserId: nDoctor.userId, doctorStaffId: nDoctor.id, facilityId: noida });
   await extendAccessSession(second.session.id);
-  await endAccessSession(second.session.id, "DOCTOR", doctor.id);
-  const s1 = (await payloads("PatientAccessSessionStatusChanged", first.session.id)).map((p) => `${p.from}>${p.to}`).join();
-  const s2 = (await payloads("PatientAccessSessionStatusChanged", second.session.id)).map((p) => `${p.from}>${p.to}${p.extended ? "+" : ""}`).join();
-  report("A stale code expires when a new one is issued", s1 === "null>PENDING,PENDING>EXPIRED", s1);
-  report("issue, redeem, extend, end → PatientAccessSessionStatusChanged in order", !!redeemed && s2 === "null>PENDING,PENDING>ACTIVE,ACTIVE>ACTIVE+,ACTIVE>ENDED", s2);
+  await endAccessSession(second.session.id, "DOCTOR", nDoctor.userId);
+  const e2 = await sessionEvents(second.session.id);
+  const s2 = e2.map((e) => { const p = e.payload as { from: string; to: string; extended?: boolean }; return `${p.from}>${p.to}${p.extended ? "+" : ""}`; }).join();
+  report("redeem, extend, end → PatientAccessSessionStatusChanged in order", !!redeemed && s2 === "PENDING>ACTIVE,ACTIVE>ACTIVE+,ACTIVE>ENDED", s2);
+  report("…every one in the facility where the access occurred (Noida), not the patient's registration facility (Pune)",
+    e2.length === 3 && e2.every((e) => e.facilityId === noida), e2.map((e) => e.facilityId).join());
+  const third = await issueAccessCode(patient.id, user.id, "visit");
+  await redeemAccessCode({ code: third.code, doctorUserId: nDoctor.userId, doctorStaffId: nDoctor.id, facilityId: noida });
+  await issueAccessCode(patient.id, user.id, "visit"); // expires the live session
+  const e3 = await sessionEvents(third.session.id);
+  report("A live session expired by a new code: ACTIVE>EXPIRED, at the accessing facility",
+    e3.map((e) => `${(e.payload as { from: string }).from}>${(e.payload as { to: string }).to}`).join() === "PENDING>ACTIVE,ACTIVE>EXPIRED" && e3.every((e) => e.facilityId === noida));
 
   // 6. Delegation expiry in the runner.
   const delegate = await prisma.user.create({ data: { email: `delegate-${run}@verify.aarogya`, passwordHash: "x", role: "PATIENT", displayName: "Delegate" } });

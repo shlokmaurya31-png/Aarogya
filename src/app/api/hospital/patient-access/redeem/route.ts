@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
       doctorUserId: session.userId,
       doctorStaffId: staff?.id ?? null,
       doctorName: staff?.user?.displayName ?? null,
-      facilityId: facilityId ?? null,
+      facilityId,
     });
 
     // Uniform failure: invalid / expired / already-used are indistinguishable.

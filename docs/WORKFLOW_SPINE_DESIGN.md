@@ -863,9 +863,13 @@ Gate `verify-postgres-records-access-events`; the core journey gains step 8b
   refuse fails `npm test` instead of the first emission.
 - **Consent expiry is per consent.** `expireLapsedConsents` was one bulk update;
   it now expires each lapsed consent compare-and-set with its `ConsentExpired`.
-- **Access sessions** (tenant: the patient's facility): every transition is
-  transactional with its event; `extendAccessSession` is compare-and-set on
-  ACTIVE. A stale code expired by a new issue emits PENDING → EXPIRED.
+- **Access sessions:** every transition is transactional with its event;
+  `extendAccessSession` is compare-and-set on ACTIVE. Tenant (batch 6, fix 3):
+  the facility where the access occurs, the redeeming clinician's (stored on
+  the session at redemption; `redeemAccessCode` now requires it), not the
+  patient's registration facility. Before redemption nothing has been accessed,
+  so issuing a code and an unredeemed code lapsing or being cancelled emit
+  nothing; a live session expired by a new code emits ACTIVE → EXPIRED.
 - **Delegation expiry** moved into the runner (`sweepDelegationExpiry`): an
   ACTIVE delegation past its date emits `FamilyAccessRevoked` (EXPIRED); a
   lapsed invitation (INVITED) becomes EXPIRED with no event, as it never gave
