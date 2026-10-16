@@ -112,6 +112,18 @@ export const EVENT_CONTRACTS: EventContract[] = [
       ownerStaffId: optId,
     }).strict(),
   }),
+  contract({
+    type: "TaskUpdated", version: 2, aggregateType: "TASK", scope: "ORGANIZATION",
+    sensitivity: "INTERNAL", producer: "tasks (updateTask; escalateTask: workflow SLA escalation)",
+    payload: z.object({
+      taskId: id, source: z.enum(["MANUAL", "CARE_PLAN", "WORKFLOW", "EVENT", "ORDER"]),
+      changes: z.array(z.enum(["STATUS", "OWNER", "STARTED", "PRIORITY", "ASSIGNED_ROLE"])).min(1),
+      fromStatus: z.enum(["OPEN", "ASSIGNED", "IN_PROGRESS"]), toStatus: z.enum(["OPEN", "ASSIGNED", "IN_PROGRESS"]),
+      ownerStaffId: optId, priority: orderPriority,
+      /** True when a workflow SLA breach made the change. */
+      escalated: z.boolean(),
+    }).strict(),
+  }),
   // ── Nursing (triage step 5b) ─────────────────────────────────────────────
   contract({
     type: "ClinicalHandoffStatusChanged", version: 1, aggregateType: "CLINICAL_HANDOFF", scope: "FACILITY",

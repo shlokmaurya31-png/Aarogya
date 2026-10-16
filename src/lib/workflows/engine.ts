@@ -6,6 +6,7 @@ import type { DomainEventEnvelope } from "@/lib/events/types";
 import { evaluateCondition } from "./conditions";
 import type { WorkflowConfig, StepConfig } from "./definition";
 import { createWorkflowTask } from "./tasks";
+import { escalateTask } from "@/lib/hospital/task";
 import { createTimerTx } from "./timers";
 import { resolveEffectiveInternal, isKnownConfigKey } from "@/lib/config";
 import {
@@ -205,6 +206,31 @@ async function executeStep(
     return "CONTINUE";
   }
 
+  if (stepCfg.type === "ESCALATE") {
+    // Escalate-only SLA: a timer that, on breach, escalates the task another
+    // module owns (found by its idempotency key). No task is created here.
+    const sourceId = ctx.payload[stepCfg.target.sourceField.slice("payload.".length)];
+    if (typeof sourceId !== "string" || !inst.facilityId) {
+      await markCompleted(null); // nothing to watch (no source id / no facility): the step is a no-op
+      return "CONTINUE";
+    }
+    const slaSeconds = await effectiveSlaSeconds(inst, defKey, stepCfg.afterSeconds, now);
+    await prisma.$transaction(async (tx) => {
+      await createTimerTx(tx, {
+        workflowInstanceId: inst.id, workflowStepId: step.id, kind: "SLA",
+        availableAt: new Date(now.getTime() + slaSeconds.seconds * 1000),
+        payload: {
+          target: { facilityId: inst.facilityId, idempotencyKey: `${stepCfg.target.taskType}:${sourceId}` },
+          escalate: { ...(stepCfg.raisePriorityTo ? { raisePriorityTo: stepCfg.raisePriorityTo } : {}), ...(stepCfg.reassignToRole ? { reassignToRole: stepCfg.reassignToRole } : {}) },
+          slaSeconds: slaSeconds.seconds, slaSource: slaSeconds.source, slaVersion: slaSeconds.version,
+        } as unknown as Prisma.InputJsonValue,
+        idempotencyKey: `${step.id}:sla`,
+      });
+      await tx.workflowStep.updateMany({ where: { id: step.id, status: { in: ["PENDING", "RUNNING"] } }, data: { status: "COMPLETED", completedAt: now, startedAt: now, resultRef: null } });
+    });
+    return "CONTINUE";
+  }
+
   if (stepCfg.type === "TIMER") {
     await prisma.$transaction(async (tx) => {
       await createTimerTx(tx, { workflowInstanceId: inst.id, workflowStepId: step.id, kind: "DELAY", availableAt: new Date(now.getTime() + stepCfg.dueAfterSeconds * 1000), idempotencyKey: `${step.id}:timer` });
@@ -319,7 +345,28 @@ async function processDueWorkflowTimers(now: Date, batchSize: number): Promise<{
   return { timersFired, escalated };
 }
 
+/** The effective SLA for a workflow step: the D8 override for `workflow.<key>.sla`, else the version's own value (snapshotted on the timer). */
+async function effectiveSlaSeconds(inst: { organizationId: string | null; facilityId: string | null }, defKey: string, fallback: number, now: Date) {
+  const cfgKey = `workflow.${defKey}.sla`;
+  if (inst.organizationId && isKnownConfigKey(cfgKey)) {
+    const eff = await resolveEffectiveInternal({ key: cfgKey, organizationId: inst.organizationId, facilityId: inst.facilityId, atTime: now, fallbackRaw: String(fallback) });
+    if (typeof eff.value === "number" && eff.value > 0) return { seconds: eff.value, source: eff.source as string, version: eff.version };
+  }
+  return { seconds: fallback, source: "WORKFLOW_VERSION", version: null as number | null };
+}
+
 async function escalateSla(timer: { id: string; workflowInstanceId: string; workflowStepId: string | null; payload: unknown }): Promise<boolean> {
+  const target = (timer.payload as { target?: { facilityId: string; idempotencyKey: string }; escalate?: { raisePriorityTo?: "ROUTINE" | "URGENT" | "STAT"; reassignToRole?: string } } | null)?.target;
+  if (target) {
+    // ESCALATE step: escalate the existing task if it is still open. No task
+    // (the source was resolved before one was needed) or a closed one: nothing to do.
+    const esc = (timer.payload as { escalate?: { raisePriorityTo?: "ROUTINE" | "URGENT" | "STAT"; reassignToRole?: string } }).escalate ?? {};
+    return prisma.$transaction(async (tx) => {
+      const task = await tx.task.findFirst({ where: { facilityId: target.facilityId, idempotencyKey: target.idempotencyKey, source: { not: "WORKFLOW" } }, select: { id: true } });
+      if (!task) return false;
+      return (await escalateTask(tx, task.id, esc)) !== null;
+    });
+  }
   const payload = (timer.payload ?? {}) as { taskId?: string; escalation?: { taskType: string; title: string; description?: string; priority?: "ROUTINE" | "URGENT" | "STAT"; assignedRole?: string; emitEventType?: string } };
   if (!payload.escalation) return false;
   if (payload.taskId) {

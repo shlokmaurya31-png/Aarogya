@@ -181,9 +181,41 @@ export async function updateTask(input: {
     if (changes.length) {
       await emitDomainEvent(tx, await taskEvent(tx, updated, "TaskUpdated", {
         taskId: updated.id, source: updated.source, changes, fromStatus: task.status, toStatus: updated.status,
+        priority: updated.priority, escalated: false,
         ...(updated.ownerStaffId ? { ownerStaffId: updated.ownerStaffId } : {}),
       }, input.byUserId));
     }
     return updated;
   });
+}
+
+const PRIORITY_RANK: Record<Task["priority"], number> = { ROUTINE: 0, URGENT: 1, STAT: 2 };
+
+/**
+ * Escalate an open task (workflow SLA breach): raise its priority (never
+ * lowers it) and/or reassign it to a role, guarded on the task still being open.
+ * Emits TaskUpdated (escalated) when something changed; returns null when the
+ * task is closed or nothing would change. Used by the workflow engine's
+ * ESCALATE step, so an SLA never creates a second task for the same work.
+ */
+export async function escalateTask(
+  tx: Tx,
+  taskId: string,
+  input: { raisePriorityTo?: Task["priority"]; reassignToRole?: string },
+  actorUserId?: string | null,
+): Promise<Task | null> {
+  const task = await tx.task.findUnique({ where: { id: taskId } });
+  if (!task || !OPEN_STATUSES.includes(task.status)) return null;
+  const priority = input.raisePriorityTo && PRIORITY_RANK[input.raisePriorityTo] > PRIORITY_RANK[task.priority] ? input.raisePriorityTo : task.priority;
+  const assignedRole = input.reassignToRole ?? task.assignedRole;
+  const changes = [...(priority !== task.priority ? ["PRIORITY"] : []), ...(assignedRole !== task.assignedRole ? ["ASSIGNED_ROLE"] : [])];
+  if (!changes.length) return null;
+  const res = await tx.task.updateMany({ where: { id: taskId, status: { in: OPEN_STATUSES } }, data: { priority, assignedRole } });
+  if (res.count !== 1) return null;
+  const updated = await tx.task.findUniqueOrThrow({ where: { id: taskId } });
+  await emitDomainEvent(tx, await taskEvent(tx, updated, "TaskUpdated", {
+    taskId, source: updated.source, changes, fromStatus: task.status, toStatus: updated.status, priority: updated.priority, escalated: true,
+    ...(updated.ownerStaffId ? { ownerStaffId: updated.ownerStaffId } : {}),
+  }, actorUserId));
+  return updated;
 }

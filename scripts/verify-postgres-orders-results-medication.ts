@@ -5,7 +5,9 @@
  *   1. Lab: placeLabOrder → LabOrderPlaced (a 15 s resubmission emits nothing);
  *      SpecimenCollected; a rejection and recollection → SpecimenStatusChanged.
  *   2. Critical lab result: LabResultReleased (correlated by the encounter) →
- *      a STAT task and one notification to the orderer; acknowledgement →
+ *      a STAT task (exactly one: the seeded critical-lab-review workflow only
+ *      escalates it, at SLA breach, and never escalates a closed one) and one
+ *      notification to the orderer; acknowledgement →
  *      CriticalResultAcknowledged (minutesToAcknowledge from the stored
  *      timestamps) → the task completes. An amendment → DiagnosticReportAmended
  *      on the original's aggregate.
@@ -55,6 +57,7 @@ import { assignNurse } from "../src/lib/hospital/nursingAssignment";
 import { linkMedicationToItem, SYSTEM_ACTOR } from "../src/lib/hospital/inventory/itemMedicationLink";
 import { createAdjustment } from "../src/lib/hospital/inventory/adjustment";
 import { runTick } from "../src/lib/runner/tick";
+import { tickWorkflows } from "../src/lib/workflows/engine";
 import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 let pass = 0;
@@ -128,6 +131,41 @@ async function main() {
   const amend = await one("DiagnosticReportAmended", result.id);
   report("amendResult → DiagnosticReportAmended on the original's aggregate, naming the new version",
     amend?.aggregateType === "LAB_RESULT" && amend.p.amendedId === amended.amended.id && amend.p.supersedesId === result.id && amend.p.version === 2);
+
+  // Batch 4 decision 1: one critical result → exactly one task; the workflow escalates it.
+  const workflowTasksFor = async (releaseEventId: string) => {
+    const inst = await prisma.workflowInstance.findMany({ where: { triggerEventId: releaseEventId }, select: { id: true } });
+    return { instances: inst.length, tasks: await prisma.task.count({ where: { workflowInstanceId: { in: inst.map((i) => i.id) } } }) };
+  };
+  const fireSlaTimers = async (releaseEventId: string) => {
+    const inst = await prisma.workflowInstance.findMany({ where: { triggerEventId: releaseEventId }, select: { id: true } });
+    await prisma.workflowTimer.updateMany({ where: { workflowInstanceId: { in: inst.map((i) => i.id) }, kind: "SLA", status: "PENDING" }, data: { availableAt: new Date(Date.now() - 1000) } });
+    return tickWorkflows({});
+  };
+  const wf1 = await workflowTasksFor(released!.eventId);
+  report("critical-lab-review ran for the result but created no task of its own", wf1.instances === 1 && wf1.tasks === 0, JSON.stringify(wf1));
+  await fireSlaTimers(released!.eventId);
+  report("An SLA breach after acknowledgement escalates nothing (the task is closed)",
+    (await critTask())?.status === "COMPLETED" && (await ofType("TaskUpdated", (await critTask())!.id)).length === 0);
+  const lab2 = await placeLabOrder({ facilityId, staffId: doctor.id, byUserId: by, encounterId: enc.id, patientId: patient.id, testName: `Sodium ${run}`, category: "Biochemistry", priority: "STAT" });
+  await tx((t) => collectSpecimen(t, lab2.specimen!.id, nurse.id));
+  await tx((t) => receiveSpecimen(t, lab2.specimen!.id, nurse.id));
+  await tx((t) => acceptSpecimen(t, lab2.specimen!.id, nurse.id));
+  const result2 = await tx((t) => enterResult(t, { labOrderId: lab2.order.id, specimenId: lab2.specimen!.id, value: "118", isCritical: true }));
+  await tx((t) => verifyResult(t, result2.id, doctor.id, by));
+  const released2 = await one("LabResultReleased", result2.id);
+  await drain();
+  const critTask2 = () => prisma.task.findUniqueOrThrow({ where: { facilityId_idempotencyKey: { facilityId, idempotencyKey: `CRITICAL_RESULT_FOLLOW_UP:${result2.id}` } } });
+  const before2 = await critTask2();
+  const wf2 = await workflowTasksFor(released2!.eventId);
+  report("One critical lab result → exactly one task", wf2.instances === 1 && wf2.tasks === 0 && before2.status === "OPEN");
+  const fired = await fireSlaTimers(released2!.eventId);
+  const after2 = await critTask2();
+  const esc = await one("TaskUpdated", after2.id);
+  report("An SLA breach escalates that same task (reassigned to HOSPITAL_ADMIN, STAT) and creates none",
+    fired.escalated >= 1 && after2.id === before2.id && after2.assignedRole === "HOSPITAL_ADMIN" && after2.priority === "STAT"
+      && (await workflowTasksFor(released2!.eventId)).tasks === 0
+      && esc?.eventVersion === 2 && esc.p.escalated === true && (esc.p.changes as string[]).includes("ASSIGNED_ROLE"));
 
   // ── 3. Imaging ────────────────────────────────────────────────────────────
   const img = await placeImagingOrder({ facilityId, staffId: doctor.id, byUserId: by, encounterId: enc.id, patientId: patient.id, modality: "CT", studyDescription: `CT head ${run}`, priority: "URGENT" });

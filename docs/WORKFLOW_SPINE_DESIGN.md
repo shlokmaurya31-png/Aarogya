@@ -753,6 +753,17 @@ before step 6, so step 6 created it). Departures from the text above:
   imaging report with no linked study is now released with an event (it emitted
   nothing before).
 
+**Batch 4, decision 1 (critical-result tasks).** The task-generator owns the
+critical-result task. The seeded `critical-lab-review` workflow (and its
+builder template) is escalate-only: a new `ESCALATE` step type schedules an SLA
+timer against the existing task, found by its idempotency key
+(`CRITICAL_RESULT_FOLLOW_UP:<resultId>`); on breach, if the task is still open,
+the task service's `escalateTask` raises its priority and reassigns it to
+HOSPITAL_ADMIN (`TaskUpdated` v2, `escalated: true`). It never creates a task.
+The SLA still resolves through `workflow.critical-lab-review.sla`. The seed
+publishes a new version where an older one is live, and migration
+`20261016200000_workflow_escalate_step` widens the step-type CHECK.
+
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b
 (quality, safety, operations) and 9c (access, identity, interoperability,

@@ -52,10 +52,11 @@ export function buildValidationReport(doc: BuilderDocument): ValidationReport {
     const conditions = config.steps.filter((s) => s.type === "CONDITION").length;
     const tasks = config.steps.filter((s) => s.type === "TASK").length;
     const timers = config.steps.filter((s) => s.type === "TIMER").length;
+    const escalations = config.steps.filter((s) => s.type === "ESCALATE").length;
     const actions = config.steps.filter((s) => s.type === "ACTION").length;
     const slas = config.steps.filter((s) => s.type === "TASK" && (s as { sla?: unknown }).sla).length;
     sections.push({ label: "Steps", ok: true, detail: `${config.steps.length} step(s): ${tasks} task, ${timers} timer, ${actions} action, ${conditions} condition` });
-    sections.push({ label: "SLA", ok: true, detail: slas > 0 ? `${slas} task SLA(s)` : "none" });
+    sections.push({ label: "SLA", ok: true, detail: slas + escalations > 0 ? `${slas} task SLA(s), ${escalations} escalation(s) of an existing task` : "none" });
     sections.push({ label: "Security", ok: true, detail: "only allow-listed events/actions/operators; no code/SQL" });
   } else {
     sections.push({ label: "Definition", ok: false, detail: errors[0] ?? "invalid" });

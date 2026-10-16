@@ -64,7 +64,23 @@ const ActionStep = z.object({
   }).strict(),
 }).strict();
 
-export const StepSchema = z.discriminatedUnion("type", [ConditionStep, TaskStep, TimerStep, ActionStep]);
+// Escalate-only: on SLA breach, escalate an EXISTING open task (one the
+// task-generator created, found by its idempotency key "<taskType>:<id from the
+// payload>") through the task service. It never creates a task of its own.
+const EscalateStep = z.object({
+  type: z.literal("ESCALATE"),
+  key: nodeKey,
+  target: z.object({
+    taskType: z.string().min(1).max(80),
+    /** The trigger payload field holding the source id, e.g. "payload.resultId". */
+    sourceField: z.string().regex(/^payload\.[A-Za-z][A-Za-z0-9]{0,63}$/),
+  }).strict(),
+  afterSeconds: positiveDuration,
+  raisePriorityTo: z.enum(["ROUTINE", "URGENT", "STAT"]).optional(),
+  reassignToRole: z.string().min(1).max(80).optional(),
+}).strict();
+
+export const StepSchema = z.discriminatedUnion("type", [ConditionStep, TaskStep, TimerStep, ActionStep, EscalateStep]);
 export type StepConfig = z.infer<typeof StepSchema>;
 
 export const TriggerSchema = z.object({

@@ -222,7 +222,7 @@ async function main() {
   const admin = await prisma.user.findUnique({ where: { email: "admin@demo.aarogya" }, select: { id: true } });
   if (admin) {
     const wf = await ensureWorkflowSeed(admin.id);
-    console.log(`Workflow seed: ${wf.created} canonical workflow(s) published.`);
+    console.log(`Workflow seed: ${wf.created} canonical workflow(s) published, ${wf.updated} updated to a new version.`);
     // Phase D8 — a demo org-level configuration override (idempotent).
     const firstOrg = await prisma.organization.findFirst({ select: { id: true }, orderBy: { createdAt: "asc" } });
     if (firstOrg) {

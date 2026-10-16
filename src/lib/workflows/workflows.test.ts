@@ -94,3 +94,19 @@ describe("retry classification", () => {
     expect(isRetryable(classifyWorkflowError({ status: 409 }).category)).toBe(true); // CONFLICT
   });
 });
+
+describe("ESCALATE step (escalate an existing task, never create one)", () => {
+  const cfg = (sourceField: string) => ({
+    trigger: { eventType: "LabResultReleased", eventVersion: 1 },
+    steps: [{ type: "ESCALATE", key: "esc", target: { taskType: "CRITICAL_RESULT_FOLLOW_UP", sourceField }, afterSeconds: 900, reassignToRole: "HOSPITAL_ADMIN" }],
+  });
+  it("accepts a source field the trigger's contract declares", () => {
+    expect(() => validateWorkflowConfig(cfg("payload.resultId"))).not.toThrow();
+  });
+  it("rejects a source field the trigger does not carry", () => {
+    expect(() => validateWorkflowConfig(cfg("payload.reportId"))).toThrow(/not a field/);
+  });
+  it("rejects a source outside the payload", () => {
+    expect(() => validateWorkflowConfig(cfg("event.aggregateId"))).toThrow();
+  });
+});

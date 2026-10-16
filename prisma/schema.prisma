@@ -717,7 +717,7 @@ model WorkflowStep {
   instance           WorkflowInstance   @relation(fields: [workflowInstanceId], references: [id], onDelete: Cascade)
   nodeKey            String
   stepIndex          Int
-  stepType           String // CONDITION | ACTION | TASK | TIMER
+  stepType           String // CONDITION | ACTION | TASK | TIMER | ESCALATE
   status             WorkflowStepStatus @default(PENDING) // PENDING | RUNNING | WAITING | COMPLETED | SKIPPED | FAILED
   attemptCount       Int                @default(0)
   maxAttempts        Int                @default(5)

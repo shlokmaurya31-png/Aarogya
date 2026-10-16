@@ -14,7 +14,7 @@ export const DEFINITION_STATUS = ["ACTIVE", "INACTIVE"] as const;
 export const VERSION_STATUS = ["DRAFT", "PUBLISHED", "RETIRED"] as const;
 export const INSTANCE_STATUS = ["RUNNABLE", "RUNNING", "WAITING", "COMPLETED", "FAILED", "CANCELLED"] as const;
 export const STEP_STATUS = ["PENDING", "RUNNING", "WAITING", "COMPLETED", "SKIPPED", "FAILED"] as const;
-export const STEP_TYPE = ["CONDITION", "ACTION", "TASK", "TIMER"] as const;
+export const STEP_TYPE = ["CONDITION", "ACTION", "TASK", "TIMER", "ESCALATE"] as const;
 export const TASK_STATUS = ["OPEN", "IN_PROGRESS", "COMPLETED", "CANCELLED", "EXPIRED"] as const;
 export const TIMER_STATUS = ["PENDING", "CLAIMED", "COMPLETED", "CANCELLED"] as const;
 

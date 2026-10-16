@@ -29,7 +29,7 @@ export function builderMetadata() {
     })),
     // Actions a builder ACTION step may name (task/timer are first-class step types).
     actions: ACTION_NAMES.filter((n) => isInvokableFromDefinition(n)),
-    stepTypes: ["CONDITION", "TASK", "TIMER", "ACTION"] as const,
+    stepTypes: ["CONDITION", "TASK", "TIMER", "ACTION", "ESCALATE"] as const,
     operators: OPERATORS,
     conditionGroups: ["all", "any", "not"] as const,
     priorities: ["ROUTINE", "URGENT", "STAT"] as const,
