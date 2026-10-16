@@ -94,7 +94,9 @@ async function main() {
 
   const journey = (await types(enc.id)).filter((t) => !t.startsWith("Task")); // task events are checked below
   const expected = ["EdArrivalRegistered", "PatientTriaged", "AdmissionRequested", "BedReserved", "AdmissionCreated",
-    "IcuAdmitted", "PatientTransferred", "PatientTransferred", "PatientTransferred", "DischargeInitiated", "PatientDischarged", "EncounterClosed"];
+    "IcuAdmitted", "PatientTransferred", "PatientTransferred", "PatientTransferred", "DischargeInitiated",
+    // ChargePosted (step 9): the ICU fee (charge-capture, at the first drain after the ICU move) and the bed-days (in finalize).
+    "ChargePosted", "ChargePosted", "PatientDischarged", "EncounterClosed"];
   report("The journey's events, in order, correlated by the encounter", journey.join() === expected.join(), journey.join(" → "));
   const icuEvents = (await events(enc.id)).filter((e) => e.eventType === "IcuAdmitted");
   report("IcuAdmitted only on entering ICU (not ICU→ICU, not ICU→ward), marked viaTransfer",

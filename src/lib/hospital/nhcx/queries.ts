@@ -4,8 +4,9 @@ import { recordAuditEvent } from "@/lib/auth/audit";
 import { authorizeAccess } from "@/lib/auth/authorize/engine";
 import type { AuthorizationActor } from "@/lib/auth/authorize/types";
 import { QUERY_TRANSITIONS, isTransitionAllowed, type QueryStatus } from "./stateMachines";
-import { $Enums } from "@prisma/client";
+import { $Enums, type Prisma } from "@prisma/client";
 import { parseEnum } from "@/lib/enumValue";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 /**
  * Phase C5 — claim query / clarification lifecycle.
@@ -24,6 +25,15 @@ export class QueryConcurrencyError extends ConflictError {
   constructor(message = "This query changed concurrently. Refresh and try again.") {
     super(message);
   }
+}
+
+/** ClaimQueryStatusChanged (spine §9 step 9): IDs and status codes only, never the question or the answer. */
+async function emitQueryStatus(tx: Prisma.TransactionClient, q: { id: string; facilityId: string; claimId: string; submissionId: string; status: string }, from: string | null, byUserId: string | null) {
+  const submission = await tx.claimSubmission.findUniqueOrThrow({ where: { id: q.submissionId }, select: { patientId: true } });
+  await emitFacilityEvent(tx, {
+    type: "ClaimQueryStatusChanged", aggregateId: q.id, facilityId: q.facilityId, actorUserId: byUserId,
+    payload: { queryId: q.id, claimId: q.claimId, submissionId: q.submissionId, patientId: submission.patientId, from, to: q.status },
+  });
 }
 
 const MAX_QUESTION_LENGTH = 4000;
@@ -50,17 +60,21 @@ export async function recordQuery(input: {
   const text = (input.questionText ?? "").trim();
   if (!text) throw new BadRequestError("A query must carry a question.");
 
-  const query = await prisma.claimQuery.create({
-    data: {
-      facilityId: input.facilityId,
-      submissionId: submission.id,
-      claimId: submission.claimId,
-      externalQueryId: input.externalQueryId?.slice(0, 128) ?? null,
-      questionText: text.slice(0, MAX_QUESTION_LENGTH),
-      reasonCode: input.reasonCode?.slice(0, 64) ?? null,
-      dueAt: input.dueAt ?? null,
-      status: "RECEIVED",
-    },
+  const query = await prisma.$transaction(async (tx) => {
+    const created = await tx.claimQuery.create({
+      data: {
+        facilityId: input.facilityId,
+        submissionId: submission.id,
+        claimId: submission.claimId,
+        externalQueryId: input.externalQueryId?.slice(0, 128) ?? null,
+        questionText: text.slice(0, MAX_QUESTION_LENGTH),
+        reasonCode: input.reasonCode?.slice(0, 64) ?? null,
+        dueAt: input.dueAt ?? null,
+        status: "RECEIVED",
+      },
+    });
+    await emitQueryStatus(tx, created, null, input.byUserId ?? null);
+    return created;
   });
 
   await recordAuditEvent(
@@ -91,7 +105,9 @@ export async function transitionQuery(input: {
       },
     });
     if (r.count !== 1) throw new QueryConcurrencyError();
-    return tx.claimQuery.findUniqueOrThrow({ where: { id: q.id } });
+    const moved = await tx.claimQuery.findUniqueOrThrow({ where: { id: q.id } });
+    await emitQueryStatus(tx, moved, q.status, input.byUserId);
+    return moved;
   });
 }
 
@@ -165,7 +181,9 @@ export async function respondToQuery(input: {
       },
     });
     if (r.count !== 1) throw new QueryConcurrencyError();
-    return tx.claimQuery.findUniqueOrThrow({ where: { id: current.id } });
+    const answered = await tx.claimQuery.findUniqueOrThrow({ where: { id: current.id } });
+    await emitQueryStatus(tx, answered, current.status, input.actor.userId);
+    return answered;
   });
 
   await recordAuditEvent(

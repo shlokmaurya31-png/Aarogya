@@ -1,5 +1,6 @@
 import { Prisma, AdjustmentType } from "@prisma/client";
 import { BadRequestError } from "@/lib/auth/rbac";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 type Tx = Prisma.TransactionClient;
 
@@ -21,6 +22,19 @@ export class SameApproverError extends BadRequestError {
  * a VOID one needs no adjustment). Once APPROVED, immutable — a further
  * correction is a NEW, opposite-direction adjustment, never an edit.
  */
+/** BillingAdjustmentStatusChanged (spine §9 step 9), in the decision's transaction. */
+async function emitAdjustmentStatus(tx: Tx, adjustmentId: string, byUserId: string | null) {
+  const a = await tx.financialAdjustment.findUniqueOrThrow({ where: { id: adjustmentId }, include: { invoice: { select: { id: true, facilityId: true, encounterId: true, patientId: true, currency: true } } } });
+  await emitFacilityEvent(tx, {
+    type: "BillingAdjustmentStatusChanged", aggregateId: a.id, facilityId: a.invoice.facilityId, encounterId: a.invoice.encounterId, actorUserId: byUserId,
+    payload: {
+      adjustmentId: a.id, invoiceId: a.invoice.id, encounterId: a.invoice.encounterId, patientId: a.invoice.patientId,
+      adjustmentType: a.type, from: "PENDING", to: a.status, amountMinor: a.amountMinor, currency: a.invoice.currency,
+    },
+  });
+  return a;
+}
+
 export async function createAdjustment(
   tx: Tx,
   input: { invoiceId: string; type: AdjustmentType; amountMinor: number; reason: string; requestedByUserId: string }
@@ -45,11 +59,13 @@ export async function approveAdjustment(tx: Tx, adjustmentId: string, input: { a
     data: { status: "APPROVED", approvedByUserId: input.approvedByUserId },
   });
   if (result.count !== 1) throw new AdjustmentConcurrencyError("approved");
+  await emitAdjustmentStatus(tx, adjustmentId, input.approvedByUserId);
   return tx.financialAdjustment.findUniqueOrThrow({ where: { id: adjustmentId } });
 }
 
-export async function rejectAdjustment(tx: Tx, adjustmentId: string) {
+export async function rejectAdjustment(tx: Tx, adjustmentId: string, input: { byUserId?: string | null } = {}) {
   const result = await tx.financialAdjustment.updateMany({ where: { id: adjustmentId, status: "PENDING" }, data: { status: "REJECTED" } });
   if (result.count !== 1) throw new AdjustmentConcurrencyError("rejected");
+  await emitAdjustmentStatus(tx, adjustmentId, input.byUserId ?? null);
   return tx.financialAdjustment.findUniqueOrThrow({ where: { id: adjustmentId } });
 }

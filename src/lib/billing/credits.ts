@@ -2,6 +2,7 @@ import { Prisma, type BillingCreditType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { emitDomainEvent } from "@/lib/events/emit";
 import { assertOrganizationAccess, type ActorMemberships } from "@/lib/auth/tenantContext";
 import { requirePlatform } from "./authz";
 import { computeTotals } from "./invoices";
@@ -29,14 +30,20 @@ export async function issueCredit(m: ActorMemberships, input: IssueCreditInput) 
   if (input.amountMinor <= 0) throw new BadRequestError("Credit amount must be positive.");
   const org = await prisma.organization.findUnique({ where: { id: input.organizationId }, select: { id: true } });
   if (!org) throw new NotFoundError();
-  const credit = await prisma.billingCredit.create({
-    data: {
-      organizationId: input.organizationId, amountMinor: input.amountMinor, remainingMinor: input.amountMinor,
-      type: input.type, reason: input.reason, createdByUserId: m.userId,
-    },
+  return prisma.$transaction(async (tx) => {
+    const credit = await tx.billingCredit.create({
+      data: {
+        organizationId: input.organizationId, amountMinor: input.amountMinor, remainingMinor: input.amountMinor,
+        type: input.type, reason: input.reason, createdByUserId: m.userId,
+      },
+    });
+    await emitDomainEvent(tx, {
+      type: "CreditStatusChanged", aggregateId: credit.id, organizationId: input.organizationId, actorUserId: m.userId,
+      payload: { creditId: credit.id, change: "ISSUED", status: credit.status, creditType: credit.type, amountMinor: credit.amountMinor, remainingMinor: credit.remainingMinor, currency: credit.currency },
+    });
+    await recordAuditEvent("commercial.billing.creditIssued", m.userId, { creditId: credit.id, amountMinor: input.amountMinor, type: input.type }, { organizationId: input.organizationId }, tx);
+    return credit;
   });
-  await recordAuditEvent("commercial.billing.creditIssued", m.userId, { creditId: credit.id, amountMinor: input.amountMinor, type: input.type }, { organizationId: input.organizationId });
-  return credit;
 }
 
 /**
@@ -72,7 +79,16 @@ export async function applyCreditToInvoice(m: ActorMemberships, input: { creditI
     await tx.billingInvoice.update({ where: { id: input.invoiceId }, data: computeTotals(lines) });
 
     const after = await tx.billingCredit.findUniqueOrThrow({ where: { id: input.creditId } });
-    if (after.remainingMinor === 0) await tx.billingCredit.update({ where: { id: input.creditId }, data: { status: "APPLIED", invoiceId: input.invoiceId } });
+    const final = after.remainingMinor === 0
+      ? await tx.billingCredit.update({ where: { id: input.creditId }, data: { status: "APPLIED", invoiceId: input.invoiceId } })
+      : after;
+    await emitDomainEvent(tx, {
+      type: "CreditStatusChanged", aggregateId: credit.id, organizationId: credit.organizationId, actorUserId: m.userId,
+      payload: {
+        creditId: credit.id, change: "APPLIED", status: final.status, creditType: final.type, amountMinor: input.amountMinor,
+        remainingMinor: final.remainingMinor, currency: final.currency, invoiceId: input.invoiceId,
+      },
+    });
 
     await recordAuditEvent("commercial.billing.creditApplied", m.userId, { creditId: input.creditId, invoiceId: input.invoiceId, amountMinor: input.amountMinor }, { organizationId: invoice.organizationId }, tx);
     return tx.billingInvoice.findUniqueOrThrow({ where: { id: input.invoiceId }, include: { lines: true } });

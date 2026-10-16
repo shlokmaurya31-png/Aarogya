@@ -876,6 +876,46 @@ Gate `verify-postgres-records-access-events`; the core journey gains step 8b
   allowlisted types) emits nothing; external identifiers emit at 9c
   (`ExternalIdentifierStatusChanged`), not as demographics.
 
+**As built: step 9, events (batch 5).** Billing and claims events (#50–54, 58,
+59) and the triage's step-9 events: `ChargePosted`, `ChargeVoided`,
+`HospitalInvoiceIssued` / `Voided`, `HospitalPaymentRecorded` /
+`StatusChanged`, `HospitalRefundStatusChanged`, `BillingAdjustmentStatusChanged`,
+`CoverageStatusChanged`, `PreauthStatusChanged`, `PreauthDecided`,
+`ClaimDrafted`, `ClaimSubmitted`, `ClaimStatusChanged`, `ClaimSettled`,
+`ClaimQueryStatusChanged`, `ClaimReconciliationStatusChanged`, and on the
+commercial side `InvoiceVoided`, `CreditStatusChanged`,
+`SubscriptionStatusChanged`, `ReconciliationExceptionCreated` / `Resolved` from
+the provider reconciliation. All LOW; IDs, amounts and closed codes only (never
+a reason, denial text, query, answer or note). Gate
+`verify-postgres-billing-claims-events`; the NHCX, SaaS-billing,
+commercial-entitlements and late-charges gates assert their events; the core
+journey expects `ChargePosted` at ICU, labs, medication and OT. Departures:
+
+- **Charge categories are a closed set** (`CHARGE_CATEGORIES`, the billing
+  screen's list), refused otherwise by `createCharge`, so `ChargePosted` carries
+  the code. It also carries `pricingStatus` and `isLate`.
+- **`HospitalInvoiceIssued`** carries `documentType`, `supplementsInvoiceId` and
+  `lineCount`, so the supplementary flow is visible in the stream.
+- **`ClaimSettled`** has `stage` (SETTLED from `settleClaim`, NOTIFIED from
+  `recordSettlement`, RECONCILED from `reconcileSettlement`) and `settlementId`
+  for the NHCX stages. **`ClaimSubmitted`** has `channel` (DIRECT from
+  `submitClaim`, NHCX from `dispatchSubmission`): it marks the dispatch, in the
+  exchange-create transaction before the transport call; the transport outcome
+  is the exchange's state, and a retry emits nothing.
+- **`PreauthDecided` has no currency**: a pre-authorization stores none.
+- **Compare-and-set where the event needs the real "from":** `expirePreAuth`,
+  `deactivateCoverage` (an already INACTIVE coverage is returned unchanged, no
+  event), commercial `voidInvoice` and `transitionSubscription`. Commercial
+  `resolveException` resolves once (a second call is a conflict) and now also
+  sets `status` RESOLVED and frees the finding key, like the triage path.
+- **Now transactional with their event:** `recordQuery`, `recordSettlement`,
+  `raiseException`, `issueCredit`, and the provider reconciliation's exception
+  insert.
+- **The deciding user** is passed by the routes to `issueInvoice`,
+  `rejectRefund`, `completeRefund`, `rejectAdjustment`, `deactivateCoverage`,
+  `decidePreAuth` and the claim transitions (optional `byUserId`).
+- Coverage events use the patient's facility as the tenant.
+
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b
 (quality, safety, operations) and 9c (access, identity, interoperability,

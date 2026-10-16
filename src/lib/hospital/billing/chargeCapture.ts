@@ -5,10 +5,18 @@ import { computeLineNetAmountMinor } from "./money";
 import { getOrCreateBillingAccount } from "./billingAccount";
 import { priceFor } from "./pricing";
 import { createTask } from "@/lib/hospital/task";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 type Tx = Prisma.TransactionClient;
 
 /** Issued (or paid) invoice statuses: a charge posted after one exists is late (batch 5, decision 2). */
+/** The charge categories (the billing screen offers exactly these); ChargePosted carries the code. */
+export const CHARGE_CATEGORIES = ["CONSULTATION", "BED", "PROCEDURE", "LAB", "IMAGING", "PHARMACY", "NURSING", "PACKAGE", "OTHER"] as const;
+
+function assertChargeCategory(category: string) {
+  if (!(CHARGE_CATEGORIES as readonly string[]).includes(category)) throw new BadRequestError(`Unknown charge category: use one of ${CHARGE_CATEGORIES.join(", ")}.`);
+}
+
 const ISSUED_INVOICE_STATUSES = ["ISSUED", "PARTIALLY_PAID", "PAID"] as const;
 
 async function encounterIsInvoiced(tx: Tx, encounterId: string): Promise<boolean> {
@@ -28,6 +36,21 @@ async function raiseLateChargeTask(tx: Tx, charge: { id: string; facilityId: str
   }, actorUserId);
 }
 
+/** ChargePosted (spine §9 step 9), in the charge's own transaction, from every charge path. */
+async function emitChargePosted(tx: Tx, charge: {
+  id: string; encounterId: string; patientId: string; facilityId: string; category: string; sourceType: string | null; sourceId: string | null;
+  netAmountMinor: number; currency: string; pricingStatus: string; isLate: boolean; postedByUserId: string | null;
+}) {
+  await emitFacilityEvent(tx, {
+    type: "ChargePosted", aggregateId: charge.id, facilityId: charge.facilityId, encounterId: charge.encounterId, actorUserId: charge.postedByUserId,
+    payload: {
+      chargeId: charge.id, encounterId: charge.encounterId, patientId: charge.patientId, category: charge.category,
+      ...(charge.sourceType ? { sourceType: charge.sourceType } : {}), ...(charge.sourceId ? { sourceId: charge.sourceId } : {}),
+      netAmountMinor: charge.netAmountMinor, currency: charge.currency, pricingStatus: charge.pricingStatus, isLate: charge.isLate,
+    },
+  });
+}
+
 export class ChargeAlreadyInvoicedError extends BadRequestError {
   constructor() {
     super("This charge has already been folded into an invoice — void the invoice line or issue a financial adjustment instead.");
@@ -39,7 +62,7 @@ interface CreateChargeInput {
   patientId: string;
   facilityId: string;
   description: string;
-  category: string; // CONSULTATION | BED | PROCEDURE | LAB | IMAGING | PHARMACY | NURSING | PACKAGE | OTHER
+  category: string; // one of CHARGE_CATEGORIES
   chargeCode?: string | null;
   quantity?: number;
   unitPriceMinor: number;
@@ -60,6 +83,7 @@ interface CreateChargeInput {
  * sourceId only.
  */
 export async function createCharge(tx: Tx, input: CreateChargeInput) {
+  assertChargeCategory(input.category);
   const quantity = input.quantity ?? 1;
   const discountMinor = input.discountMinor ?? 0;
   const netAmountMinor = computeLineNetAmountMinor(quantity, input.unitPriceMinor, discountMinor);
@@ -86,6 +110,7 @@ export async function createCharge(tx: Tx, input: CreateChargeInput) {
       isLate,
     },
   });
+  await emitChargePosted(tx, charge);
   if (isLate) await raiseLateChargeTask(tx, charge, input.postedByUserId);
 
   return { charge };
@@ -107,6 +132,7 @@ export async function createChargeIfNotExists(
 ) {
   const existing = await tx.charge.findFirst({ where: { sourceType: input.sourceType, sourceId: input.sourceId } });
   if (existing) return { charge: existing, alreadyExisted: true as const };
+  assertChargeCategory(input.category);
 
   const quantity = input.quantity ?? 1;
   const discountMinor = input.discountMinor ?? 0;
@@ -130,7 +156,10 @@ export async function createChargeIfNotExists(
     ON CONFLICT ("sourceType", "sourceId") DO NOTHING
   `;
   const charge = await tx.charge.findFirstOrThrow({ where: { sourceType: input.sourceType, sourceId: input.sourceId } });
-  if (rowsInserted > 0 && charge.isLate) await raiseLateChargeTask(tx, charge, input.postedByUserId);
+  if (rowsInserted > 0) {
+    await emitChargePosted(tx, charge);
+    if (charge.isLate) await raiseLateChargeTask(tx, charge, input.postedByUserId);
+  }
 
   return { charge, alreadyExisted: rowsInserted === 0 };
 }
@@ -166,5 +195,9 @@ export async function voidCharge(tx: Tx, chargeId: string, input: { reason: stri
     data: { status: "VOIDED", voidedAt: new Date(), voidedByUserId: input.byUserId, voidReason: input.reason },
   });
   if (result.count !== 1) throw new BadRequestError("Charge was already voided or is no longer in the expected state.");
+  await emitFacilityEvent(tx, {
+    type: "ChargeVoided", aggregateId: charge.id, facilityId: charge.facilityId, encounterId: charge.encounterId, actorUserId: input.byUserId,
+    payload: { chargeId: charge.id, encounterId: charge.encounterId, patientId: charge.patientId, netAmountMinor: charge.netAmountMinor, currency: charge.currency },
+  });
   return tx.charge.findUniqueOrThrow({ where: { id: chargeId } });
 }

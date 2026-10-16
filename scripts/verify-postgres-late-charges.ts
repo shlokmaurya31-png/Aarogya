@@ -98,6 +98,13 @@ async function main() {
   const supIssued = await prisma.$transaction((tx) => issueInvoice(tx, sup.id, {}));
   report("Issuing it numbers it SUP-… and closes the LATE_CHARGE tasks",
     supIssued.invoiceNumber!.startsWith("SUP-") && (await task(surgical.id))?.status === "COMPLETED" && (await task(labCharge.id))?.status === "COMPLETED");
+  const lateEvents = await prisma.domainEventOutbox.findMany({ where: { eventType: "ChargePosted", aggregateId: { in: [surgical.id, labCharge.id] } } });
+  report("ChargePosted marks both late charges isLate",
+    lateEvents.length === 2 && lateEvents.every((e) => (e.payload as { isLate?: boolean }).isLate === true));
+  const supEvent = await prisma.domainEventOutbox.findMany({ where: { eventType: "HospitalInvoiceIssued", aggregateId: sup.id } });
+  const sp = supEvent[0]?.payload as { documentType?: string; supplementsInvoiceId?: string; lineCount?: number } | undefined;
+  report("HospitalInvoiceIssued for the supplementary invoice names its type and the original",
+    supEvent.length === 1 && sp?.documentType === "SUPPLEMENTARY_INVOICE" && sp.supplementsInvoiceId === original.id && sp.lineCount === 2);
 
   // 5. Charged exactly once.
   const charges = await prisma.charge.findMany({ where: { encounterId: enc.id, status: "POSTED" }, include: { invoiceLine: true } });

@@ -20,7 +20,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const preAuth = await prisma.preAuthorization.findUnique({ where: { id }, include: { encounter: true } });
     if (!preAuth || preAuth.encounter.facilityId !== facilityId) throw new NotFoundError("Pre-authorization not found.");
 
-    const updated = await prisma.$transaction((tx) => decidePreAuth(tx, id, { status, approvedAmountMinor }));
+    const updated = await prisma.$transaction((tx) => decidePreAuth(tx, id, { status, approvedAmountMinor, byUserId: session.userId }));
 
     await recordAuditEvent(
       "hospital.insurance.preauthDecided",

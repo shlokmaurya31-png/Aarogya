@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "crypto";
+import { emitClaimSubmitted } from "@/lib/hospital/billing/claims";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError, ConflictError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
@@ -250,18 +251,25 @@ export async function dispatchSubmission(
   const correlationId = randomUUID();
   let exchange;
   try {
-    exchange = await prisma.nhcxExchange.create({
-      data: {
-        facilityId: input.facilityId,
-        submissionId: submission.id,
-        claimId: submission.claimId,
-        exchangeType: "CLAIM",
-        direction: "OUTBOUND",
-        protocolState: "NOT_SUBMITTED",
-        idempotencyKey,
-        correlationId,
-        requestedByUserId: input.actor.userId,
-      },
+    // ClaimSubmitted with the exchange that carries it (spine §9 step 9).
+    exchange = await prisma.$transaction(async (tx) => {
+      const created = await tx.nhcxExchange.create({
+        data: {
+          facilityId: input.facilityId,
+          submissionId: submission.id,
+          claimId: submission.claimId,
+          exchangeType: "CLAIM",
+          direction: "OUTBOUND",
+          protocolState: "NOT_SUBMITTED",
+          idempotencyKey,
+          correlationId,
+          requestedByUserId: input.actor.userId,
+        },
+      });
+      await emitClaimSubmitted(tx, {
+        claimId: submission.claimId, channel: "NHCX", submissionId: submission.id, exchangeId: created.id, version: submission.version, byUserId: input.actor.userId,
+      });
+      return created;
     });
   } catch (e) {
     // Lost the insert race: somebody else created the same logical exchange.

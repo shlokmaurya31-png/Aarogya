@@ -1,8 +1,18 @@
 import { Prisma, PayerType } from "@prisma/client";
 import { BadRequestError } from "@/lib/auth/rbac";
 import { dateRangesOverlap } from "./pricing";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 type Tx = Prisma.TransactionClient;
+
+/** CoverageStatusChanged (spine §9 step 9); the tenant is the patient's facility. */
+async function emitCoverageStatus(tx: Tx, c: { id: string; patientId: string; payerId: string; status: string; priorityOrder: number }, from: string | null, byUserId: string | null) {
+  const patient = await tx.patient.findUniqueOrThrow({ where: { id: c.patientId }, select: { facilityId: true } });
+  await emitFacilityEvent(tx, {
+    type: "CoverageStatusChanged", aggregateId: c.id, facilityId: patient.facilityId, actorUserId: byUserId,
+    payload: { coverageId: c.id, patientId: c.patientId, payerId: c.payerId, from, to: c.status, priorityOrder: c.priorityOrder },
+  });
+}
 
 export class OverlappingPrimaryCoverageError extends BadRequestError {
   constructor() {
@@ -57,7 +67,7 @@ export async function addPatientCoverage(
     if (overlaps) throw new OverlappingPrimaryCoverageError();
   }
 
-  return tx.patientCoverage.create({
+  const coverage = await tx.patientCoverage.create({
     data: {
       patientId: input.patientId,
       payerId: input.payerId,
@@ -69,8 +79,17 @@ export async function addPatientCoverage(
       addedByUserId: input.addedByUserId,
     },
   });
+  await emitCoverageStatus(tx, coverage, null, input.addedByUserId);
+  return coverage;
 }
 
-export async function deactivateCoverage(tx: Tx, coverageId: string) {
-  return tx.patientCoverage.update({ where: { id: coverageId }, data: { status: "INACTIVE" } });
+/** Idempotent: an already INACTIVE coverage is returned unchanged, with no event. */
+export async function deactivateCoverage(tx: Tx, coverageId: string, input: { byUserId?: string | null } = {}) {
+  const coverage = await tx.patientCoverage.findUniqueOrThrow({ where: { id: coverageId } });
+  if (coverage.status === "INACTIVE") return coverage;
+  const result = await tx.patientCoverage.updateMany({ where: { id: coverageId, status: coverage.status }, data: { status: "INACTIVE" } });
+  if (result.count !== 1) throw new BadRequestError("Coverage changed concurrently. Refresh and try again.");
+  const updated = await tx.patientCoverage.findUniqueOrThrow({ where: { id: coverageId } });
+  await emitCoverageStatus(tx, updated, coverage.status, input.byUserId ?? null);
+  return updated;
 }

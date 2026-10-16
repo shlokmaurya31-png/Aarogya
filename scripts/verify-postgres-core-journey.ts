@@ -98,13 +98,13 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
   let admissionId = "";
   // The seeded admission-checklist workflow (D7, prisma/seed.ts) adds its task.
   await step("6 Admit", ["AdmissionCreated", "TaskCreated"], async () => { admissionId = (await confirmAdmissionRequest(reqId, by)).admission.id; });
-  await step("7 ICU", ["IcuAdmitted", "PatientTransferred"], () => transferWithinIcu({ admissionId, toBedId: icuBed.id, facilityId, reason: "deterioration", byUserId: by }));
+  await step("7 ICU", ["IcuAdmitted", "PatientTransferred", "ChargePosted"], () => transferWithinIcu({ admissionId, toBedId: icuBed.id, facilityId, reason: "deterioration", byUserId: by }));
 
   let resultId = "";
   // 8. Labs: the order (with its in-transaction collection task), collection,
   // and a critical result (→ critical-result task; notification, not an event).
   // Receipt in the lab is SpecimenStatusChanged (batch 4: found by the extended emit rule).
-  await step("8 Labs", ["LabOrderPlaced", "TaskCreated", "SpecimenCollected", "SpecimenStatusChanged", "LabResultReleased", "TaskCreated"], async () => {
+  await step("8 Labs", ["ChargePosted", "LabOrderPlaced", "TaskCreated", "SpecimenCollected", "SpecimenStatusChanged", "LabResultReleased", "TaskCreated"], async () => {
     const lab = await placeLabOrder({ facilityId, staffId: doctor.id, byUserId: by, encounterId: enc.id, patientId: patient.id, testName: `Troponin ${run}`, category: "Biochemistry", priority: "STAT" });
     const sp = lab.specimen!;
     await tx((t) => collectSpecimen(t, sp.id, nurse.id, undefined, nurse.userId));
@@ -140,7 +140,7 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
     await tx((t) => linkMedicationToItem(t, SYSTEM_ACTOR, { target: { scope: "FACILITY", facilityId }, drugName, itemId: item.id }));
     const lot = await prisma.itemLot.create({ data: { itemId: item.id, facilityId, lotNumber: `CJ-LOT-${run}`, status: "ACTIVE", expiresAt: new Date("2029-01-01") } });
     await tx((t) => createAdjustment(t, { facilityId, itemId: item.id, lotId: lot.id, locationId: pharmacy.id, quantityDelta: 10, reason: "FOUND", requestedByStaffId: pharmacist.id, actorUserId: pharmacist.userId, idempotencyKey: `cj-${run}` }));
-    await step("8c Medication", ["MedicationOrdered", "MedicationVerified", "MedicationDispensed", "MedicationAdministered"], async () => {
+    await step("8c Medication", ["MedicationOrdered", "MedicationVerified", "MedicationDispensed", "ChargePosted", "MedicationAdministered"], async () => {
       const o = await createMedicationOrder({ facilityId, encounterId: enc.id, patientId: patient.id, orderingStaffId: doctor.id, drugName, dose: "1 tab", route: "PO", frequency: "BD", overrideReason: "journey", byUserId: by });
       if (o.blocked) throw new Error("unexpected safety block");
       orderId = o.order.id;
@@ -161,7 +161,7 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
     const kit = await prisma.item.create({ data: { facilityId, sku: `CJ-KIT-${run}`, name: `Kit ${run}`, category: "CONSUMABLE", baseUnit: "PIECE" } });
     const kitLot = await prisma.itemLot.create({ data: { itemId: kit.id, facilityId, lotNumber: `CJ-KIT-LOT-${run}`, status: "ACTIVE", expiresAt: new Date("2030-01-01") } });
     await tx((t) => createAdjustment(t, { facilityId, itemId: kit.id, lotId: kitLot.id, locationId: pharmacy.id, quantityDelta: 1, reason: "FOUND", requestedByStaffId: doctor.id, actorUserId: by, idempotencyKey: `cj-kit-${run}` }));
-    await step("9 OT", ["SurgeryRequested", "SurgeryStatusChanged", "SurgeryStatusChanged", "SurgeryScheduled", "ProcedureStarted", "SurgeryItemUsed", "ProcedureCompleted"], async () => {
+    await step("9 OT", ["SurgeryRequested", "SurgeryStatusChanged", "SurgeryStatusChanged", "SurgeryScheduled", "ProcedureStarted", "SurgeryItemUsed", "ProcedureCompleted", "ChargePosted", "ChargePosted"], async () => {
       const s = await requestSurgery({ facilityId, patientId: patient.id, encounterId: enc.id, procedureId: proc.id, urgency: "URGENT", requestedByStaffId: doctor.id, byUserId: by });
       surgeryId = s.id;
       await transitionSurgery({ surgeryId, facilityId, to: "REVIEWED", actorStaffId: doctor.id, byUserId: by });
@@ -186,9 +186,11 @@ async function main() {
   const all = await prisma.domainEventOutbox.findMany({ where: { correlationId: a.encounterId }, orderBy: { seq: "asc" } });
   const producers = all.map((e) => e.eventType).filter((t) => !t.startsWith("Task"));
   // IcuAdmitted is emitted before PatientTransferred inside the transfer (as the ADT gate asserts).
-  const expectedProducers = ["EdArrivalRegistered", "PatientTriaged", "AdmissionRequested", "BedReserved", "AdmissionCreated", "IcuAdmitted", "PatientTransferred",
-    "LabOrderPlaced", "SpecimenCollected", "SpecimenStatusChanged", "LabResultReleased", "CriticalResultAcknowledged", "MedicationOrdered", "MedicationVerified", "MedicationDispensed", "MedicationAdministered",
-    "SurgeryRequested", "SurgeryStatusChanged", "SurgeryStatusChanged", "SurgeryScheduled", "ProcedureStarted", "SurgeryItemUsed", "ProcedureCompleted"];
+  // ChargePosted (step 9): the ICU fee and the theatre charges come from charge-capture after
+  // their event; the lab and dispensing charges are posted in their own transaction.
+  const expectedProducers = ["EdArrivalRegistered", "PatientTriaged", "AdmissionRequested", "BedReserved", "AdmissionCreated", "IcuAdmitted", "PatientTransferred", "ChargePosted",
+    "ChargePosted", "LabOrderPlaced", "SpecimenCollected", "SpecimenStatusChanged", "LabResultReleased", "CriticalResultAcknowledged", "MedicationOrdered", "MedicationVerified", "MedicationDispensed", "ChargePosted", "MedicationAdministered",
+    "SurgeryRequested", "SurgeryStatusChanged", "SurgeryStatusChanged", "SurgeryScheduled", "ProcedureStarted", "SurgeryItemUsed", "ProcedureCompleted", "ChargePosted", "ChargePosted"];
   report("The producers' events, in emission order", producers.join() === expectedProducers.join(), producers.join(" → "));
 
   const bad = all.flatMap((e) => {

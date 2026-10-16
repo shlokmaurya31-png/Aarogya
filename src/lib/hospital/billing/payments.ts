@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { BadRequestError, ConflictError, NotFoundError } from "@/lib/auth/rbac";
 import { getOrCreateBillingAccount } from "./billingAccount";
 import { refreshInvoicePaymentStatus } from "./invoices";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 type Tx = Prisma.TransactionClient;
 
@@ -74,6 +75,15 @@ export async function recordPayment(tx: Tx, input: RecordPaymentInput) {
     ON CONFLICT ("facilityId", "idempotencyKey") DO NOTHING
   `;
   const payment = assertPaymentReplay(await tx.payment.findUniqueOrThrow({ where: { facilityId_idempotencyKey: { facilityId: input.facilityId, idempotencyKey: input.idempotencyKey } } }), input);
+  if (rowsInserted > 0) {
+    await emitFacilityEvent(tx, {
+      type: "HospitalPaymentRecorded", aggregateId: payment.id, facilityId: payment.facilityId, encounterId: account.encounterId, actorUserId: input.receivedByUserId,
+      payload: {
+        paymentId: payment.id, billingAccountId: account.id, encounterId: account.encounterId, patientId: payment.patientId,
+        amountMinor: payment.amountMinor, currency: payment.currency, method: payment.method,
+      },
+    });
+  }
 
   return { payment, alreadyExisted: rowsInserted === 0 };
 }
@@ -140,7 +150,14 @@ export async function allocatePayment(
       await tx.paymentAllocation.create({
         data: { paymentId: input.paymentId, invoiceId: input.invoiceId, amountMinor: input.amountMinor, allocatedByUserId: input.allocatedByUserId },
       });
-      await refreshInvoicePaymentStatus(tx, input.invoiceId);
+      const after = await refreshInvoicePaymentStatus(tx, input.invoiceId);
+      await emitFacilityEvent(tx, {
+        type: "HospitalPaymentStatusChanged", aggregateId: payment.id, facilityId: payment.facilityId, encounterId: invoice.encounterId, actorUserId: input.allocatedByUserId,
+        payload: {
+          paymentId: payment.id, encounterId: invoice.encounterId, patientId: payment.patientId, change: "ALLOCATED", status: payment.status,
+          invoiceId: invoice.id, amountMinor: input.amountMinor, currency: payment.currency, invoiceStatus: after.status,
+        },
+      });
       return tx.payment.findUniqueOrThrow({ where: { id: input.paymentId } });
     }
   }
@@ -157,6 +174,14 @@ export async function voidPayment(tx: Tx, paymentId: string, input: { reason: st
     data: { status: "VOIDED", voidedAt: new Date(), voidedByUserId: input.byUserId, voidReason: input.reason },
   });
   if (result.count !== 1) throw new BadRequestError("Payment was already voided or is no longer in the expected state.");
+  const account = await tx.billingAccount.findUniqueOrThrow({ where: { id: payment.billingAccountId }, select: { encounterId: true } });
+  await emitFacilityEvent(tx, {
+    type: "HospitalPaymentStatusChanged", aggregateId: payment.id, facilityId: payment.facilityId, encounterId: account.encounterId, actorUserId: input.byUserId,
+    payload: {
+      paymentId: payment.id, encounterId: account.encounterId, patientId: payment.patientId, change: "VOIDED", status: "VOIDED",
+      amountMinor: payment.amountMinor, currency: payment.currency,
+    },
+  });
   return tx.payment.findUniqueOrThrow({ where: { id: paymentId } });
 }
 

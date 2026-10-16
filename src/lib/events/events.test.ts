@@ -188,3 +188,42 @@ describe("step-7 payload codes mirror their sources", () => {
     expect(options("PatientAccessSessionStatusChanged", "to")).toEqual(Object.values($Enums.PatientAccessSessionStatus).sort());
   });
 });
+
+describe("step-9 payload codes mirror their sources", () => {
+  const options = (type: string, key: string) => {
+    const shape = (getEventContract(type, 1)!.payload as unknown as { shape: Record<string, { options?: string[]; unwrap?: () => unknown }> }).shape;
+    let f = shape[key] as { options?: string[]; unwrap?: () => unknown };
+    while (!f.options && f.unwrap) f = f.unwrap() as typeof f;
+    return [...(f.options ?? [])].sort();
+  };
+  const cases: [string, string, readonly string[]][] = [
+    ["HospitalInvoiceVoided", "from", Object.values($Enums.InvoiceStatus)],
+    ["HospitalInvoiceIssued", "documentType", Object.values($Enums.InvoiceDocumentType)],
+    ["HospitalPaymentRecorded", "method", Object.values($Enums.PaymentMethod)],
+    ["HospitalPaymentStatusChanged", "status", Object.values($Enums.PaymentStatus)],
+    ["HospitalRefundStatusChanged", "to", Object.values($Enums.RefundStatus)],
+    ["BillingAdjustmentStatusChanged", "to", Object.values($Enums.AdjustmentStatus)],
+    ["BillingAdjustmentStatusChanged", "adjustmentType", Object.values($Enums.AdjustmentType)],
+    ["CoverageStatusChanged", "to", Object.values($Enums.CoverageStatus)],
+    ["PreauthStatusChanged", "to", Object.values($Enums.PreAuthStatus)],
+    ["ClaimStatusChanged", "to", Object.values($Enums.ClaimStatus)],
+    ["ClaimQueryStatusChanged", "to", Object.values($Enums.ClaimQueryStatus)],
+    ["ClaimReconciliationStatusChanged", "to", Object.values($Enums.ReconciliationExceptionStatus)],
+    ["ClaimReconciliationStatusChanged", "severity", Object.values($Enums.AlertSeverity)],
+    ["CreditStatusChanged", "status", Object.values($Enums.BillingCreditStatus)],
+    ["CreditStatusChanged", "creditType", Object.values($Enums.BillingCreditType)],
+    ["InvoiceVoided", "from", Object.values($Enums.BillingInvoiceStatus)],
+    ["SubscriptionStatusChanged", "to", Object.values($Enums.SubscriptionStatus)],
+  ];
+  for (const [type, key, source] of cases) {
+    it(`${type}.${key} mirrors its Prisma enum`, () => expect(options(type, key)).toEqual([...source].sort()));
+  }
+  it("ChargePosted.category = CHARGE_CATEGORIES", async () => {
+    const { CHARGE_CATEGORIES } = await import("@/lib/hospital/billing/chargeCapture");
+    expect(options("ChargePosted", "category")).toEqual([...CHARGE_CATEGORIES].sort());
+  });
+  it("ClaimReconciliationStatusChanged.exceptionType = EXCEPTION_TYPES", async () => {
+    const { EXCEPTION_TYPES } = await import("@/lib/hospital/nhcx/stateMachines");
+    expect(options("ClaimReconciliationStatusChanged", "exceptionType")).toEqual([...EXCEPTION_TYPES].sort());
+  });
+});

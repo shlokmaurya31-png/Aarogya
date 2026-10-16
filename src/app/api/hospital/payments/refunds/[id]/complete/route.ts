@@ -12,7 +12,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const { session, facilityId } = await requireFacilityStaff("billing:refund:approve", body?.facilityId);
 
     const refund = await findRefundInFacility(id, facilityId);
-    const updated = await prisma.$transaction((tx) => completeRefund(tx, id));
+    const updated = await prisma.$transaction((tx) => completeRefund(tx, id, { byUserId: session.userId }));
 
     await recordAuditEvent(
       "hospital.refund.completed",

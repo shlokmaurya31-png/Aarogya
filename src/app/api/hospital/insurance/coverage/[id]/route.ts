@@ -14,7 +14,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const coverage = await prisma.patientCoverage.findUnique({ where: { id }, include: { patient: true } });
     if (!coverage || coverage.patient.facilityId !== facilityId) throw new NotFoundError("Coverage not found.");
 
-    const updated = await prisma.$transaction((tx) => deactivateCoverage(tx, id));
+    const updated = await prisma.$transaction((tx) => deactivateCoverage(tx, id, { byUserId: session.userId }));
     await recordAuditEvent(
       "hospital.insurance.coverageDeactivated",
       session.userId,

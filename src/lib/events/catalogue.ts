@@ -42,6 +42,24 @@ const bloodRequestStatus = z.enum(["REQUESTED", "REVIEWED", "APPROVED", "COMPATI
 const transfusionStatus = z.enum(["RECEIVED", "IN_PROGRESS", "PAUSED", "COMPLETED", "STOPPED"]);
 const transfusionReactionStatus = z.enum(["REPORTED", "UNDER_REVIEW", "ESCALATED", "RESOLVED"]);
 const transferRequestStatus = z.enum(["REQUESTED", "ACCEPTED", "BED_RESERVED", "PATIENT_IN_TRANSIT", "COMPLETED", "CANCELLED", "REJECTED"]);
+const invoiceStatus = z.enum(["DRAFT", "ISSUED", "PARTIALLY_PAID", "PAID", "VOID"]);
+const invoiceDocumentType = z.enum(["INVOICE", "SUPPLEMENTARY_INVOICE", "DEBIT_NOTE"]);
+const paymentStatus = z.enum(["RECEIVED", "VOIDED"]);
+const paymentMethod = z.enum(["CASH", "CARD", "UPI", "NETBANKING", "CHEQUE", "INSURANCE_SETTLEMENT"]);
+const refundStatus = z.enum(["REQUESTED", "APPROVED", "REJECTED", "COMPLETED"]);
+const adjustmentStatus = z.enum(["PENDING", "APPROVED", "REJECTED"]);
+const adjustmentType = z.enum(["CREDIT_NOTE", "DEBIT_NOTE", "WRITE_OFF", "DISCOUNT"]);
+const claimStatus = z.enum(["DRAFT", "SUBMITTED", "UNDER_REVIEW", "APPROVED", "PARTIALLY_APPROVED", "REJECTED", "SETTLED", "CLOSED"]);
+const preAuthStatus = z.enum(["REQUESTED", "APPROVED", "DENIED", "EXPIRED"]);
+const coverageStatus = z.enum(["ACTIVE", "INACTIVE", "EXPIRED"]);
+const claimQueryStatus = z.enum(["RECEIVED", "UNDER_REVIEW", "RESPONSE_DRAFT", "RESPONSE_SUBMITTED", "ACKNOWLEDGED", "RESOLVED", "CLOSED"]);
+const claimExceptionStatus = z.enum(["OPEN", "ACKNOWLEDGED", "RESOLVED", "DISMISSED"]);
+const claimExceptionType = z.enum(["AMOUNT_MISMATCH", "MISSING_SETTLEMENT", "DUPLICATE_SETTLEMENT", "OVERPAYMENT", "UNDERPAYMENT", "ORPHAN_EXTERNAL_REFERENCE", "UNMATCHED_CLAIM", "STALE_EXTERNAL_STATUS"]);
+const alertSeverity = z.enum(["INFO", "WARNING", "CRITICAL"]);
+const billingCreditStatus = z.enum(["ACTIVE", "APPLIED", "VOID"]);
+const billingCreditType = z.enum(["PROMOTIONAL", "MANUAL", "CORRECTION", "CONTRACT"]);
+const billingInvoiceStatus = z.enum(["DRAFT", "OPEN", "PARTIALLY_PAID", "PAID", "PAST_DUE", "VOID", "UNCOLLECTIBLE"]);
+const subscriptionStatus = z.enum(["TRIAL", "ACTIVE", "PAST_DUE", "GRACE", "SUSPENDED", "CANCELLED", "EXPIRED"]);
 
 function contract<P extends z.ZodTypeAny>(c: EventContract<P>): EventContract<P> {
   return c;
@@ -608,6 +626,135 @@ export const EVENT_CONTRACTS: EventContract[] = [
     }).strict(),
   }),
 
+  // ── Hospital billing, claims and NHCX (spine §9 step 9) ───────────────────
+  contract({
+    type: "ChargePosted", version: 1, aggregateType: "CHARGE", scope: "FACILITY",
+    sensitivity: "LOW", producer: "charge capture (createCharge, createChargeIfNotExists when it inserts): every charge path",
+    payload: z.object({
+      chargeId: id, encounterId: id, patientId: id,
+      /** CHARGE_CATEGORIES (chargeCapture.ts). */
+      category: z.enum(["CONSULTATION", "BED", "PROCEDURE", "LAB", "IMAGING", "PHARMACY", "NURSING", "PACKAGE", "OTHER"]),
+      /** The source's model name (LabOrder, Surgery, …) and ID; never its content. */
+      sourceType: z.string().regex(/^[A-Za-z][A-Za-z0-9]{1,63}$/).optional(), sourceId: optId,
+      netAmountMinor: minor, currency,
+      pricingStatus: z.enum(["PRICED", "NEEDS_PRICING"]),
+      /** Posted after the encounter's invoice was issued: collected on a supplementary invoice. */
+      isLate: z.boolean(),
+    }).strict(),
+  }),
+  contract({
+    type: "ChargeVoided", version: 1, aggregateType: "CHARGE", scope: "FACILITY",
+    sensitivity: "LOW", producer: "charge capture (voidCharge: an un-invoiced charge)",
+    payload: z.object({ chargeId: id, encounterId: id, patientId: id, netAmountMinor: minor, currency }).strict(),
+  }),
+  contract({
+    type: "HospitalInvoiceIssued", version: 1, aggregateType: "HOSPITAL_INVOICE", scope: "FACILITY",
+    sensitivity: "LOW", producer: "billing (issueInvoice: invoices, supplementary invoices and debit notes)",
+    payload: z.object({
+      invoiceId: id, encounterId: id, patientId: id, totalMinor: minor, currency, lineCount: z.number().int().positive(),
+      documentType: invoiceDocumentType,
+      /** Set on a supplementary invoice or debit note: the issued invoice it supplements. */
+      supplementsInvoiceId: optId,
+    }).strict(),
+  }),
+  contract({
+    type: "HospitalInvoiceVoided", version: 1, aggregateType: "HOSPITAL_INVOICE", scope: "FACILITY",
+    sensitivity: "LOW", producer: "billing (voidInvoice)",
+    payload: z.object({ invoiceId: id, encounterId: id, patientId: id, from: invoiceStatus, totalMinor: minor, currency, documentType: invoiceDocumentType }).strict(),
+  }),
+  contract({
+    type: "HospitalPaymentRecorded", version: 1, aggregateType: "HOSPITAL_PAYMENT", scope: "FACILITY",
+    sensitivity: "LOW", producer: "billing (recordPayment: the idempotent insert, first time only)",
+    payload: z.object({ paymentId: id, billingAccountId: id, encounterId: id, patientId: id, amountMinor: minor, currency, method: paymentMethod }).strict(),
+  }),
+  contract({
+    type: "HospitalPaymentStatusChanged", version: 1, aggregateType: "HOSPITAL_PAYMENT", scope: "FACILITY",
+    sensitivity: "LOW", producer: "billing (allocatePayment, voidPayment)",
+    payload: z.object({
+      paymentId: id, encounterId: id, patientId: id, change: z.enum(["ALLOCATED", "VOIDED"]), status: paymentStatus,
+      /** ALLOCATED: the invoice, the amount allocated and the invoice's status after it. */
+      invoiceId: optId, amountMinor: minor, currency, invoiceStatus: invoiceStatus.optional(),
+    }).strict(),
+  }),
+  contract({
+    type: "HospitalRefundStatusChanged", version: 1, aggregateType: "HOSPITAL_REFUND", scope: "FACILITY",
+    sensitivity: "LOW", producer: "billing (completeRefund, rejectRefund)",
+    payload: z.object({ refundId: id, paymentId: id, encounterId: id, patientId: id, from: refundStatus, to: refundStatus, amountMinor: minor, currency }).strict(),
+  }),
+  contract({
+    type: "BillingAdjustmentStatusChanged", version: 1, aggregateType: "BILLING_ADJUSTMENT", scope: "FACILITY",
+    sensitivity: "LOW", producer: "billing (approveAdjustment, rejectAdjustment)",
+    payload: z.object({ adjustmentId: id, invoiceId: id, encounterId: id, patientId: id, adjustmentType, from: adjustmentStatus, to: adjustmentStatus, amountMinor: minor, currency }).strict(),
+  }),
+  contract({
+    type: "CoverageStatusChanged", version: 1, aggregateType: "COVERAGE", scope: "FACILITY",
+    sensitivity: "LOW", producer: "billing (addPatientCoverage, deactivateCoverage)",
+    payload: z.object({ coverageId: id, patientId: id, payerId: id, from: coverageStatus.nullable(), to: coverageStatus, priorityOrder: z.number().int() }).strict(),
+  }),
+  contract({
+    type: "PreauthStatusChanged", version: 1, aggregateType: "PREAUTH", scope: "FACILITY",
+    sensitivity: "LOW", producer: "billing (requestPreAuth, expirePreAuth); the decision is PreauthDecided",
+    payload: z.object({ preAuthId: id, coverageId: id, encounterId: id, patientId: id, from: preAuthStatus.nullable(), to: preAuthStatus, requestedAmountMinor: minor }).strict(),
+  }),
+  contract({
+    type: "PreauthDecided", version: 1, aggregateType: "PREAUTH", scope: "FACILITY",
+    sensitivity: "LOW", producer: "billing (decidePreAuth)",
+    payload: z.object({
+      preAuthId: id, coverageId: id, encounterId: id, patientId: id, decision: z.enum(["APPROVED", "DENIED"]),
+      /** Minor units of the facility's currency (a pre-authorization stores none of its own). */
+      approvedAmountMinor: minor.optional(),
+    }).strict(),
+  }),
+  contract({
+    type: "ClaimDrafted", version: 1, aggregateType: "CLAIM", scope: "FACILITY",
+    sensitivity: "LOW", producer: "billing (createClaimDraft: by staff, or by claim-drafting on HospitalInvoiceIssued)",
+    payload: z.object({
+      claimId: id, invoiceId: id, coverageId: id, encounterId: id, patientId: id, preAuthId: optId,
+      submittedAmountMinor: minor, currency,
+    }).strict(),
+  }),
+  contract({
+    type: "ClaimSubmitted", version: 1, aggregateType: "CLAIM", scope: "FACILITY",
+    sensitivity: "LOW", producer: "billing (submitClaim: direct) and NHCX (dispatchSubmission: the exchange create)",
+    payload: z.object({
+      claimId: id, encounterId: id, patientId: id, channel: z.enum(["DIRECT", "NHCX"]),
+      /** NHCX only. */
+      submissionId: optId, exchangeId: optId, version: z.number().int().positive().optional(),
+    }).strict(),
+  }),
+  contract({
+    type: "ClaimStatusChanged", version: 1, aggregateType: "CLAIM", scope: "FACILITY",
+    sensitivity: "LOW", producer: "billing (recordClaimDecision, closeClaim); submission is ClaimSubmitted, settlement ClaimSettled",
+    payload: z.object({
+      claimId: id, invoiceId: id, encounterId: id, patientId: id, from: claimStatus, to: claimStatus,
+      approvedAmountMinor: minor.optional(), currency,
+    }).strict(),
+  }),
+  contract({
+    type: "ClaimSettled", version: 1, aggregateType: "CLAIM", scope: "FACILITY",
+    sensitivity: "LOW", producer: "billing (settleClaim: SETTLED); NHCX (recordSettlement: NOTIFIED, reconcileSettlement: RECONCILED)",
+    payload: z.object({
+      claimId: id, invoiceId: id, encounterId: id, patientId: id,
+      /** SETTLED: the approved amount finalized; NOTIFIED: the payer's settlement notice; RECONCILED: matched to a payment. */
+      stage: z.enum(["SETTLED", "NOTIFIED", "RECONCILED"]),
+      settlementId: optId, settledAmountMinor: minor, currency,
+    }).strict(),
+  }),
+  contract({
+    type: "ClaimQueryStatusChanged", version: 1, aggregateType: "CLAIM_QUERY", scope: "FACILITY",
+    sensitivity: "LOW", producer: "NHCX queries (recordQuery, transitionQuery, respondToQuery); never the question or answer",
+    payload: z.object({ queryId: id, claimId: id, submissionId: id, patientId: id, from: claimQueryStatus.nullable(), to: claimQueryStatus }).strict(),
+  }),
+  contract({
+    type: "ClaimReconciliationStatusChanged", version: 1, aggregateType: "CLAIM_RECONCILIATION_EXCEPTION", scope: "FACILITY",
+    sensitivity: "LOW", producer: "NHCX reconciliation (raiseException, resolveException); never the detail or note",
+    payload: z.object({
+      exceptionId: id, claimId: optId, invoiceId: optId, settlementId: optId,
+      exceptionType: claimExceptionType, severity: alertSeverity,
+      from: claimExceptionStatus.nullable(), to: claimExceptionStatus, varianceMinor: minor.optional(),
+    }).strict(),
+  }),
+
   // ── Documents, notes, patient access and consent (spine §9 step 7) ────────
   contract({
     type: "PatientDocumentUploaded", version: 1, aggregateType: "CLINICAL_DOCUMENT", scope: "FACILITY",
@@ -744,6 +891,25 @@ export const EVENT_CONTRACTS: EventContract[] = [
     type: "ReconciliationExceptionResolved", version: 1, aggregateType: "RECONCILIATION_EXCEPTION", scope: "ORGANIZATION",
     sensitivity: "LOW", producer: "commercial reconciliation intelligence (transitionException)",
     payload: z.object({ exceptionId: id, status: id }).strict(),
+  }),
+  contract({
+    type: "InvoiceVoided", version: 1, aggregateType: "INVOICE", scope: "ORGANIZATION",
+    sensitivity: "LOW", producer: "commercial billing (voidInvoice)",
+    payload: z.object({ invoiceId: id, from: billingInvoiceStatus, totalMinor: minor, currency }).strict(),
+  }),
+  contract({
+    type: "CreditStatusChanged", version: 1, aggregateType: "CREDIT", scope: "ORGANIZATION",
+    sensitivity: "LOW", producer: "commercial billing (issueCredit, applyCreditToInvoice)",
+    payload: z.object({
+      creditId: id, change: z.enum(["ISSUED", "APPLIED"]), status: billingCreditStatus, creditType: billingCreditType,
+      /** ISSUED: the credit's amount; APPLIED: the amount applied, with the invoice. */
+      amountMinor: minor, remainingMinor: minor, currency, invoiceId: optId,
+    }).strict(),
+  }),
+  contract({
+    type: "SubscriptionStatusChanged", version: 1, aggregateType: "SUBSCRIPTION", scope: "ORGANIZATION",
+    sensitivity: "LOW", producer: "commercial subscriptions (transitionSubscription); entitlements follow it",
+    payload: z.object({ subscriptionId: id, from: subscriptionStatus, to: subscriptionStatus }).strict(),
   }),
 ];
 

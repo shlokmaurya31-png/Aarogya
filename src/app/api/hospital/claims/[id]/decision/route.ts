@@ -19,7 +19,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     const claim = await findClaimInFacility(id, facilityId);
     const invoice = await prisma.invoice.findUniqueOrThrow({ where: { id: claim.invoiceId } });
-    const updated = await prisma.$transaction((tx) => recordClaimDecision(tx, id, { status, approvedAmountMinor, denialReason }));
+    const updated = await prisma.$transaction((tx) => recordClaimDecision(tx, id, { status, approvedAmountMinor, denialReason, byUserId: session.userId }));
 
     await recordAuditEvent(
       "hospital.claim.decided",

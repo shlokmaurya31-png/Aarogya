@@ -172,6 +172,14 @@ async function run() {
       const after = await prisma.billingInvoice.findUniqueOrThrow({ where: { id: draft.id } });
       if (after.discountMinor === 50000 && after.totalMinor === STARTER_TOTAL - 50000) ok("credit reduces the DRAFT invoice total"); else bad("credit apply", JSON.stringify({ d: after.discountMinor, t: after.totalMinor }));
       await expectDeny("credit cannot over-apply beyond its balance", () => applyCreditToInvoice(mPlatform, { creditId: credit.id, invoiceId: draft.id, amountMinor: 999999 }), 400);
+      // Step 9: the credit's events, IDs and codes only (no reason text).
+      const creditEvents = await prisma.domainEventOutbox.findMany({ where: { eventType: "CreditStatusChanged", aggregateId: credit.id }, orderBy: { seq: "asc" } });
+      const changes = creditEvents.map((e) => (e.payload as { change: string; amountMinor: number }));
+      if (changes.map((c) => `${c.change}:${c.amountMinor}`).join() === "ISSUED:100000,APPLIED:50000" && !JSON.stringify(creditEvents.map((e) => e.payload)).includes("welcome")) ok("CreditStatusChanged: ISSUED then APPLIED (one each; the refused applications emit nothing; no reason text)");
+      else bad("credit events", JSON.stringify(changes));
+      await expectAllow("an unpaid DRAFT invoice can be voided", () => voidInvoice(mPlatform, draft.id, "gate void"));
+      const voided = await prisma.domainEventOutbox.findMany({ where: { eventType: "InvoiceVoided", aggregateId: draft.id } });
+      if (voided.length === 1 && (voided[0].payload as { from?: string }).from === "DRAFT" && voided[0].organizationId === ID.orgB) ok("InvoiceVoided once, from DRAFT, scoped to the organization"); else bad("InvoiceVoided", JSON.stringify(voided.map((e) => e.payload)));
     }
   }
 
@@ -230,9 +238,10 @@ async function concurrency(mPlatform: ActorMemberships) {
   {
     const results = await Promise.allSettled(Array.from({ length: 6 }, () => renewSubscription(mPlatform, { organizationId: ID.orgB, providerKind: "FAKE" })));
     const okCount = results.filter((x) => x.status === "fulfilled").length;
-    // Count only invoices this renewal could have produced: non-DRAFT (a leftover
-    // DRAFT from the credit test on org B must not confuse the assertion).
-    const invoices = await prisma.billingInvoice.count({ where: { organizationId: ID.orgB, status: { not: "DRAFT" } } });
+    // Count only invoices this renewal could have produced: neither DRAFT nor
+    // VOID (the credit test's DRAFT on org B, voided by the step-9 check, must
+    // not confuse the assertion; a renewal never produces a VOID invoice).
+    const invoices = await prisma.billingInvoice.count({ where: { organizationId: ID.orgB, status: { notIn: ["DRAFT", "VOID"] } } });
     const payments = await prisma.billingPayment.count({ where: { organizationId: ID.orgB } });
     if (payments === 1 && invoices === 1) ok(`duplicate renewal: one invoice + one payment across ${okCount}/6 calls`); else bad("duplicate renewal", `inv=${invoices} pay=${payments}`);
   }

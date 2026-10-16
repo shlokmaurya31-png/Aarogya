@@ -8,6 +8,7 @@ import { textContains } from "@/lib/search";
 import { closeTask, OPEN_STATUSES } from "@/lib/hospital/task";
 import { facilityOrganizationId } from "@/lib/events/tenant";
 import { resolveEffectiveInternal } from "@/lib/config/resolver";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 type Tx = Prisma.TransactionClient;
 
@@ -150,7 +151,7 @@ const NUMBER_PREFIX = { INVOICE: "INV", SUPPLEMENTARY_INVOICE: "SUP", DEBIT_NOTE
 export async function issueInvoice(
   tx: Tx,
   invoiceId: string,
-  input: { discountMinor?: number; taxRatePercent?: number; dueAt?: Date }
+  input: { discountMinor?: number; taxRatePercent?: number; dueAt?: Date; byUserId?: string | null }
 ) {
   const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId }, include: { lines: true } });
   if (invoice.status !== "DRAFT") throw new InvoiceNotDraftError();
@@ -170,6 +171,14 @@ export async function issueInvoice(
     data: { status: "ISSUED", invoiceNumber, issuedAt: new Date(), dueAt: input.dueAt, ...totals },
   });
   if (result.count !== 1) throw new InvoiceConcurrencyError("issued");
+  await emitFacilityEvent(tx, {
+    type: "HospitalInvoiceIssued", aggregateId: invoice.id, facilityId: invoice.facilityId, encounterId: invoice.encounterId, actorUserId: input.byUserId ?? null,
+    payload: {
+      invoiceId: invoice.id, encounterId: invoice.encounterId, patientId: invoice.patientId, totalMinor: totals.totalMinor, currency: invoice.currency,
+      lineCount: invoice.lines.length, documentType: invoice.documentType,
+      ...(invoice.supplementsInvoiceId ? { supplementsInvoiceId: invoice.supplementsInvoiceId } : {}),
+    },
+  });
   // Late charges now collected: their billing exception tasks are done.
   const late = invoice.lines.map((l) => l.chargeId).filter((id): id is string => !!id).map((id) => `LATE_CHARGE:${id}`);
   if (late.length) {
@@ -190,6 +199,13 @@ export async function voidInvoice(tx: Tx, invoiceId: string, input: { reason: st
     data: { status: "VOID", voidedAt: new Date(), voidedByUserId: input.byUserId, voidReason: input.reason },
   });
   if (result.count !== 1) throw new InvoiceConcurrencyError("voided");
+  await emitFacilityEvent(tx, {
+    type: "HospitalInvoiceVoided", aggregateId: invoice.id, facilityId: invoice.facilityId, encounterId: invoice.encounterId, actorUserId: input.byUserId,
+    payload: {
+      invoiceId: invoice.id, encounterId: invoice.encounterId, patientId: invoice.patientId, from: invoice.status,
+      totalMinor: invoice.totalMinor, currency: invoice.currency, documentType: invoice.documentType,
+    },
+  });
   return tx.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
 }
 

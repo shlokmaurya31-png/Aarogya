@@ -13,7 +13,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const claim = await findClaimInFacility(id, facilityId);
     const invoice = await prisma.invoice.findUniqueOrThrow({ where: { id: claim.invoiceId } });
-    const updated = await prisma.$transaction((tx) => closeClaim(tx, id));
+    const updated = await prisma.$transaction((tx) => closeClaim(tx, id, { byUserId: session.userId }));
 
     await recordAuditEvent(
       "hospital.claim.closed",
