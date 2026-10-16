@@ -686,3 +686,29 @@ for payments and refunds. That's a guard on the symptom, not the cause.
 The migration is one per model. Existing keys are already globally
 unique, so they're unique per tenant too and no data changes. The raw
 `INSERT … ON CONFLICT` statements must name the new composite target.
+
+## 9. Backlog: quantities stored as float (recorded 2026-10-16, batch 4)
+
+**Not changed yet; a later batch converts them.** Dispensed and stock
+quantities are `Float` (double precision), so a fractional quantity can drift
+(0.1 + 0.2 ≠ 0.3) and a balance can be off by a rounding error that no
+constraint catches. `MedicationDispensed.quantity` carries the same float into
+the event payload.
+
+Columns: `DispensingRecord.quantity`, `MedicationOrder.dispensedQuantity` and
+`dispenseTargetQuantity`, `StockLedgerEntry.onHandDelta` / `reservedDelta`,
+`StockBalance.onHandQty` / `reservedQty`, `StockReservation.quantity`,
+`StockTransfer.quantity`, `StockAdjustment.quantityDelta`,
+`WasteRecord.quantity`, `StockTakeLine.*Quantity`, `MedicationReturn.quantity`,
+`PharmacyRequest.quantity`, `DepartmentSupplyRequest.quantity`,
+`SurgeryItemUsage.quantity`, `Item.reorderQuantity`, and the procurement line
+quantities (requisition, RFQ, purchase order, goods receipt). Billing
+quantities (`Charge.quantity`, `InvoiceLine.quantity`, `PackageItem.quantity`)
+belong in the same review.
+
+**Plan:** convert to `Decimal` (`NUMERIC`, with a scale per unit of measure)
+in one refuse-don't-guess migration: it stops, naming the rows, if any value
+does not convert exactly at the chosen scale (rather than rounding it), and
+checks that every `StockBalance` still equals the sum of its ledger entries
+afterwards. Event contracts that carry a quantity get a new version with a
+decimal string. Not part of Week 3.
