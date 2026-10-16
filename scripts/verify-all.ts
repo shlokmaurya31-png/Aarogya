@@ -145,7 +145,15 @@ interface Result {
   status: "PASS" | "FAIL" | "TIMEOUT";
   durationMs: number;
   tail: string[];
+  exitCode: number | null;
+  signal: string | null;
+  peakRssBytes: number | null;
+  /** True when the gate printed nothing at all (stdout and stderr empty). */
+  silent: boolean;
 }
+
+/** Lines of each stream kept in the per-gate log (.verify-report/gates/<name>.log). */
+const LOG_TAIL_LINES = 200;
 
 function parseArgs(argv: string[]): Options {
   const opts: Options = { freshEach: false, only: [], timeoutMs: 300_000 };
@@ -234,14 +242,52 @@ function discover(opts: Options): string[] {
 /** Runs a command, streaming nothing; returns exit status and captured output. */
 let childEnv: NodeJS.ProcessEnv = process.env;
 
-function run(cmd: string, args: string[], timeoutMs: number): Promise<{ code: number | null; timedOut: boolean; output: string }> {
+interface RunOutcome {
+  code: number | null;
+  signal: string | null;
+  timedOut: boolean;
+  /** stdout and stderr interleaved as they arrived. */
+  output: string;
+  stdout: string;
+  stderr: string;
+  peakRssBytes: number | null;
+}
+
+/**
+ * /usr/bin/time reports the child's peak memory: `-l` on macOS (bytes), `-v` on
+ * Linux (kbytes). Its report is appended to stderr; it is parsed and removed.
+ */
+const TIME_BIN = existsSync("/usr/bin/time") ? "/usr/bin/time" : null;
+const TIME_FLAG = process.platform === "darwin" ? "-l" : "-v";
+
+function splitTimeReport(stderr: string): { stderr: string; peakRssBytes: number | null; signal: string | null } {
+  const mac = /^\s+[\d.]+ real\s+[\d.]+ user\s+[\d.]+ sys\s*$/m.exec(stderr);
+  const gnu = /^\tCommand (being timed|terminated by signal)/m.exec(stderr);
+  const at = [mac?.index, gnu?.index].filter((n): n is number => n !== undefined).sort((a, b) => a - b)[0];
+  if (at === undefined) return { stderr, peakRssBytes: null, signal: null };
+  const report = stderr.slice(at);
+  const macRss = /(\d+)\s+maximum resident set size/.exec(report);
+  const gnuRss = /Maximum resident set size \(kbytes\): (\d+)/.exec(report);
+  const sig = /terminated by signal (\d+)/.exec(report);
+  return {
+    stderr: stderr.slice(0, at),
+    peakRssBytes: macRss ? Number(macRss[1]) : gnuRss ? Number(gnuRss[1]) * 1024 : null,
+    signal: sig ? `signal ${sig[1]}` : null,
+  };
+}
+
+/** Runs a command, streaming nothing; returns its exit code, signal, output (and each stream) and peak memory. */
+function run(cmd: string, args: string[], timeoutMs: number, opts: { measure?: boolean } = {}): Promise<RunOutcome> {
   return new Promise((resolve) => {
+    const [bin, argv] = opts.measure && TIME_BIN ? [TIME_BIN, [TIME_FLAG, cmd, ...args]] : [cmd, args];
     // detached: the child gets its own process group, so a timeout kills
     // tsx and everything it spawned.
-    const child = spawn(cmd, args, { cwd: ROOT, env: childEnv, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(bin, argv, { cwd: ROOT, env: childEnv, detached: true, stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
-    child.stdout.on("data", (d) => (output += d));
-    child.stderr.on("data", (d) => (output += d));
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (d) => { output += d; stdout += d; });
+    child.stderr.on("data", (d) => { output += d; stderr += d; });
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
@@ -251,11 +297,39 @@ function run(cmd: string, args: string[], timeoutMs: number): Promise<{ code: nu
         child.kill("SIGKILL");
       }
     }, timeoutMs);
-    child.on("close", (code) => {
+    child.on("close", (code, signal) => {
       clearTimeout(timer);
-      resolve({ code, timedOut, output });
+      const t = opts.measure && TIME_BIN ? splitTimeReport(stderr) : { stderr, peakRssBytes: null, signal: null };
+      const timeReport = stderr.slice(t.stderr.length);
+      // A child killed by a signal under /usr/bin/time shows as 128+N (or the report says so).
+      const childSignal = signal ?? t.signal ?? (code !== null && code > 128 && code < 160 ? `signal ${code - 128}` : null);
+      resolve({ code, signal: childSignal, timedOut, output: timeReport ? output.replace(timeReport, "") : output, stdout, stderr: t.stderr, peakRssBytes: t.peakRssBytes });
     });
   });
+}
+
+function fmtBytes(n: number | null): string {
+  return n === null ? "—" : `${Math.round(n / 1024 / 1024)} MB`;
+}
+
+/** The per-gate log: exit, signal, duration, peak memory, then the last lines of stdout and stderr. */
+function writeGateLog(name: string, r: RunOutcome, durationMs: number, status: Result["status"]) {
+  const dir = path.join(REPORT_DIR, "gates");
+  mkdirSync(dir, { recursive: true });
+  const silent = !r.stdout.trim() && !r.stderr.trim();
+  writeFileSync(path.join(dir, `${name}.log`), [
+    `gate:      ${name}`,
+    `status:    ${status}${silent ? "  — NO OUTPUT" : ""}`,
+    `exit code: ${r.code ?? "none"}`,
+    `signal:    ${r.signal ?? "none"}${r.timedOut ? " (killed by the verify-all timeout)" : ""}`,
+    `duration:  ${fmt(durationMs)}`,
+    `peak RSS:  ${fmtBytes(r.peakRssBytes)}${TIME_BIN ? "" : " (no /usr/bin/time)"}`,
+    "",
+    `── stdout (last ${LOG_TAIL_LINES} lines) ──`, ...lastLines(r.stdout, LOG_TAIL_LINES),
+    "",
+    `── stderr (last ${LOG_TAIL_LINES} lines) ──`, ...lastLines(r.stderr, LOG_TAIL_LINES),
+    "",
+  ].join("\n"));
 }
 
 async function resetDatabase() {
@@ -294,12 +368,16 @@ function report(results: Result[], opts: Options, host: string, totalMs: number)
     `- Result: **${passed}/${results.length} passed** in ${fmt(totalMs)}`,
     `- Excluded: ${[...EXCLUDED].join(", ")} (needs external ABDM sandbox credentials)`,
     "",
-    "| # | Script | Result | Duration |",
-    "|---|--------|--------|----------|",
-    ...results.map((r, i) => `| ${i + 1} | ${r.name} | ${r.status === "PASS" ? "PASS" : `**${r.status}**`} | ${fmt(r.durationMs)} |`),
+    `- Per-gate logs (exit code, signal, duration, peak memory, last ${LOG_TAIL_LINES} lines of stdout and stderr): .verify-report/gates/<gate>.log`,
+    "",
+    "| # | Script | Result | Duration | Exit | Signal | Peak RSS |",
+    "|---|--------|--------|----------|------|--------|----------|",
+    ...results.map((r, i) => `| ${i + 1} | ${r.name} | ${r.status === "PASS" ? "PASS" : `**${r.status}**`} | ${fmt(r.durationMs)} | ${r.exitCode ?? "—"} | ${r.signal ?? "—"} | ${fmtBytes(r.peakRssBytes)} |`),
   ];
   for (const r of results.filter((x) => x.status !== "PASS")) {
-    lines.push("", `## ${r.name}: ${r.status}`, "", "Last 40 lines of output:", "", "```", ...r.tail, "```");
+    lines.push("", `## ${r.name}: ${r.status}`, "");
+    if (r.silent) lines.push(`**NO OUTPUT: the gate exited with code ${r.exitCode ?? "none"}, signal ${r.signal ?? "none"}, after ${fmt(r.durationMs)}.**`, "");
+    lines.push(`Exit code ${r.exitCode ?? "none"}, signal ${r.signal ?? "none"}, peak RSS ${fmtBytes(r.peakRssBytes)}. Full tail: .verify-report/gates/${r.name}.log`, "", "Last 40 lines of output:", "", "```", ...r.tail, "```");
   }
   return lines.join("\n") + "\n";
 }
@@ -328,11 +406,20 @@ async function main() {
     console.log(`[${i + 1}/${names.length}] ${name}`);
     if (opts.freshEach) await resetDatabase();
     const t0 = Date.now();
-    const r = await run(TSX, [path.join("scripts", `${name}.ts`)], opts.timeoutMs);
+    const r = await run(TSX, [path.join("scripts", `${name}.ts`)], opts.timeoutMs, { measure: true });
     const status = r.timedOut ? "TIMEOUT" : r.code === 0 ? "PASS" : "FAIL";
-    const result: Result = { name, status, durationMs: Date.now() - t0, tail: status === "PASS" ? [] : lastLines(r.output, 40) };
+    const durationMs = Date.now() - t0;
+    const silent = !r.stdout.trim() && !r.stderr.trim();
+    const result: Result = {
+      name, status, durationMs, tail: status === "PASS" ? [] : lastLines(r.output, 40),
+      exitCode: r.code, signal: r.signal, peakRssBytes: r.peakRssBytes, silent,
+    };
     results.push(result);
-    console.log(`  ${status} (${fmt(result.durationMs)})`);
+    writeGateLog(name, r, durationMs, status);
+    console.log(`  ${status} (${fmt(durationMs)}${r.peakRssBytes !== null ? `, ${fmtBytes(r.peakRssBytes)}` : ""})`);
+    if (status !== "PASS" && silent) {
+      console.log(`  !!!! ${name} exited with NO OUTPUT — exit code ${r.code ?? "none"}, signal ${r.signal ?? "none"}${r.timedOut ? " (timeout)" : ""}. See .verify-report/gates/${name}.log`);
+    }
   }
 
   const md = report(results, opts, host, Date.now() - started);
