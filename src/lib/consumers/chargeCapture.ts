@@ -21,8 +21,9 @@ import { priceFor, PriceNotFoundError } from "@/lib/hospital/billing/pricing";
  * generic one; with neither, a zero-priced charge marked "needs pricing" (never
  * blocks, never silently skips), except consultation and triage, which are
  * charged only where a tariff exists. A charge for an encounter whose invoice
- * is already issued dead-letters (a biller decides; it is in the dead-letter
- * list). Re-reads everything and checks the event's tenant.
+ * is already issued is recorded like any other, marked late, with a billing
+ * exception task (chargeCapture.ts), and collected on a supplementary invoice.
+ * Re-reads everything and checks the event's tenant.
  */
 interface ChargeSpec {
   encounterId: string;
@@ -54,9 +55,6 @@ async function postCharge(event: DomainEventEnvelope, spec: ChargeSpec) {
     }
   }
   if (!price && spec.onlyWhereTariffed) return;
-
-  const invoiced = await prisma.invoice.findFirst({ where: { encounterId: enc.id, status: { in: ["ISSUED", "PARTIALLY_PAID", "PAID"] } }, select: { id: true } });
-  if (invoiced) throw new PermanentEventError(`Encounter ${enc.id} is already invoiced; ${spec.sourceType} ${spec.sourceId} needs a supplementary charge decision.`, "ENCOUNTER_INVOICED");
 
   await prisma.$transaction((tx) => createChargeIfNotExists(tx, {
     encounterId: enc.id, patientId: enc.patientId, facilityId: enc.facilityId, category: spec.category,

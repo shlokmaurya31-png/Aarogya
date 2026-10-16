@@ -3233,6 +3233,9 @@ model Charge {
 
   // Batch 5: NEEDS_PRICING when posted with no tariff (amount 0); billing
   // prices it or waives it (with a reason) before its invoice can be issued.
+  // Batch 5: posted after the encounter's invoice was issued; collected on a
+  // supplementary invoice (or debit note) linked to the original.
+  isLate         Boolean             @default(false)
   pricingStatus  ChargePricingStatus @default(PRICED)
   waiverReason   ChargeWaiverReason?
   pricedAt       DateTime?
@@ -3493,40 +3496,48 @@ enum InvoiceStatus {
  * never a void of a paid invoice).
  */
 model Invoice {
-  id                String         @id @default(cuid())
-  invoiceNumber     String?        @unique // null while DRAFT; assigned atomically at ISSUED
-  billingAccount    BillingAccount @relation(fields: [billingAccountId], references: [id])
-  billingAccountId  String
-  encounter         Encounter      @relation(fields: [encounterId], references: [id])
-  encounterId       String
-  patient           Patient        @relation(fields: [patientId], references: [id])
-  patientId         String
-  facility          Facility       @relation(fields: [facilityId], references: [id])
-  facilityId        String
-  payer             Payer?         @relation(fields: [payerId], references: [id]) // null = self-pay
-  payerId           String?
-  status            InvoiceStatus  @default(DRAFT)
-  subtotalMinor     Int            @default(0)
-  discountMinor     Int            @default(0)
-  taxMinor          Int            @default(0)
-  totalMinor        Int            @default(0) // frozen at ISSUED
-  allocatedMinor    Int            @default(0) // guarded running total, atomically maintained by allocatePayment — never exceeds totalMinor
-  currency          String         @default("INR")
-  issuedAt          DateTime?
-  dueAt             DateTime?
-  voidedAt          DateTime?
-  voidedByUserId    String?
-  voidReason        String?
-  generatedByUserId String
-  createdAt         DateTime       @default(now())
+  id                   String              @id @default(cuid())
+  invoiceNumber        String? // null while DRAFT; assigned atomically at ISSUED; unique per facility (its sequence is per facility)
+  billingAccount       BillingAccount      @relation(fields: [billingAccountId], references: [id])
+  billingAccountId     String
+  encounter            Encounter           @relation(fields: [encounterId], references: [id])
+  encounterId          String
+  patient              Patient             @relation(fields: [patientId], references: [id])
+  patientId            String
+  facility             Facility            @relation(fields: [facilityId], references: [id])
+  facilityId           String
+  payer                Payer?              @relation(fields: [payerId], references: [id]) // null = self-pay
+  payerId              String?
+  status               InvoiceStatus       @default(DRAFT)
+  subtotalMinor        Int                 @default(0)
+  discountMinor        Int                 @default(0)
+  taxMinor             Int                 @default(0)
+  totalMinor           Int                 @default(0) // frozen at ISSUED
+  allocatedMinor       Int                 @default(0) // guarded running total, atomically maintained by allocatePayment — never exceeds totalMinor
+  currency             String              @default("INR")
+  issuedAt             DateTime?
+  dueAt                DateTime?
+  voidedAt             DateTime?
+  voidedByUserId       String?
+  voidReason           String?
+  generatedByUserId    String
+  createdAt            DateTime            @default(now())
+  // Batch 5: a supplementary invoice or debit note collects late charges and
+  // links to the original INVOICE (CHECK: linked exactly when not an INVOICE).
+  documentType         InvoiceDocumentType @default(INVOICE)
+  supplementsInvoiceId String?
+  supplements          Invoice?            @relation("InvoiceSupplements", fields: [supplementsInvoiceId], references: [id], onDelete: Restrict)
+  supplementary        Invoice[]           @relation("InvoiceSupplements")
 
   lines       InvoiceLine[]
   allocations PaymentAllocation[]
   adjustments FinancialAdjustment[]
   claim       Claim?
 
+  @@unique([facilityId, invoiceNumber])
   @@index([billingAccountId])
   @@index([facilityId, status])
+  @@index([supplementsInvoiceId])
 }
 
 model InvoiceLine {
@@ -3724,7 +3735,7 @@ model Claim {
   preAuthorizationId   String?           @unique
   facility             Facility          @relation(fields: [facilityId], references: [id])
   facilityId           String
-  claimNumber          String?           @unique // assigned at SUBMITTED, same InvoiceSequence mechanism
+  claimNumber          String? // assigned at SUBMITTED, same InvoiceSequence mechanism; unique per facility
   status               ClaimStatus       @default(DRAFT)
   submittedAmountMinor Int
   approvedAmountMinor  Int?
@@ -3740,6 +3751,7 @@ model Claim {
   submissions ClaimSubmission[]
   lines       ClaimLine[]
 
+  @@unique([facilityId, claimNumber])
   @@index([facilityId, status])
 }
 
@@ -10074,4 +10086,10 @@ enum ChargeWaiverReason {
   CLINICAL_ERROR
   NOT_BILLABLE
   OTHER
+}
+
+enum InvoiceDocumentType {
+  INVOICE
+  SUPPLEMENTARY_INVOICE
+  DEBIT_NOTE
 }

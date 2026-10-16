@@ -830,6 +830,20 @@ Seeded tariffs: PROCEDURE:GENERIC, BLOOD:GENERIC, ICU:ADMISSION and ITEM:<sku>
 for the seeded consumables, surgical supplies and implants (no procedures or
 blood products are seeded, so those have generic codes only).
 
+**Batch 5, decision 2 (late charges).** Replaces the ENCOUNTER_INVOICED dead
+letter. Every charge path (consumer or in-transaction) records a charge that
+arrives after the encounter's invoice is issued as a normal charge with
+`isLate`, and opens one LATE_CHARGE task for billing. `draftSupplementaryInvoice`
+collects the encounter's un-invoiced charges onto a new document linked to the
+original (`Invoice.documentType` SUPPLEMENTARY_INVOICE or DEBIT_NOTE from the
+facility key `billing.late_charge.document_type`, `supplementsInvoiceId`;
+CHECK: linked exactly when not an INVOICE); issuing it numbers it SUP-/DN- and
+closes the LATE_CHARGE tasks. Issued invoices are never edited. `ChargePosted`
+for every charge is step 9's. Bug fixed here: invoice and claim numbers come
+from a per-facility sequence but were unique across facilities, so a second
+facility's first invoice of the year collided; they are unique per facility.
+Gate `verify-postgres-late-charges`.
+
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b
 (quality, safety, operations) and 9c (access, identity, interoperability,

@@ -5,6 +5,9 @@ import { sumMinor } from "./money";
 import { getOrCreateBillingAccount } from "./billingAccount";
 import { nextSequence, formatSequenceNumber } from "./sequence";
 import { textContains } from "@/lib/search";
+import { closeTask, OPEN_STATUSES } from "@/lib/hospital/task";
+import { facilityOrganizationId } from "@/lib/events/tenant";
+import { resolveEffectiveInternal } from "@/lib/config/resolver";
 
 type Tx = Prisma.TransactionClient;
 
@@ -111,6 +114,38 @@ export async function addChargeToInvoice(tx: Tx, invoiceId: string, chargeId: st
   return tx.invoice.findUniqueOrThrow({ where: { id: invoiceId }, include: { lines: true } });
 }
 
+/** `billing.late_charge.document_type` for the facility: SUPPLEMENTARY_INVOICE (default) or DEBIT_NOTE. */
+export async function lateChargeDocumentType(facilityId: string): Promise<"SUPPLEMENTARY_INVOICE" | "DEBIT_NOTE"> {
+  const organizationId = await facilityOrganizationId(prisma, facilityId);
+  const { value } = await resolveEffectiveInternal({ key: "billing.late_charge.document_type", organizationId, facilityId });
+  return value === "DEBIT_NOTE" ? "DEBIT_NOTE" : "SUPPLEMENTARY_INVOICE";
+}
+
+/**
+ * Batch 5, decision 2: collect an encounter's charges that are on no invoice
+ * (the late ones) onto a new DRAFT document linked to the issued original. The
+ * original is never edited. The document type follows the facility's
+ * `billing.late_charge.document_type`.
+ */
+export async function draftSupplementaryInvoice(tx: Tx, input: { originalInvoiceId: string; generatedByUserId: string }) {
+  const original = await tx.invoice.findUniqueOrThrow({ where: { id: input.originalInvoiceId } });
+  if (original.documentType !== "INVOICE") throw new BadRequestError("Supplement the original invoice, not a supplementary document.");
+  if (!["ISSUED", "PARTIALLY_PAID", "PAID"].includes(original.status)) throw new BadRequestError("Only an issued invoice can be supplemented; add the charges to the draft instead.");
+  const pending = await tx.charge.findMany({ where: { encounterId: original.encounterId, status: "POSTED", invoiceLine: null }, orderBy: [{ createdAt: "asc" }, { id: "asc" }], select: { id: true } });
+  if (!pending.length) throw new BadRequestError("This encounter has no un-invoiced charges to collect.");
+  const supplementary = await tx.invoice.create({
+    data: {
+      billingAccountId: original.billingAccountId, encounterId: original.encounterId, patientId: original.patientId, facilityId: original.facilityId,
+      payerId: original.payerId, generatedByUserId: input.generatedByUserId,
+      documentType: await lateChargeDocumentType(original.facilityId), supplementsInvoiceId: original.id,
+    },
+  });
+  for (const c of pending) await addChargeToInvoice(tx, supplementary.id, c.id);
+  return tx.invoice.findUniqueOrThrow({ where: { id: supplementary.id }, include: { lines: true } });
+}
+
+const NUMBER_PREFIX = { INVOICE: "INV", SUPPLEMENTARY_INVOICE: "SUP", DEBIT_NOTE: "DN" } as const;
+
 /** Guarded DRAFT -> ISSUED: assigns invoiceNumber atomically via the fiscal-year sequence and freezes totals. Losing a concurrent double-issue attempt gets InvoiceConcurrencyError, never a duplicate number. */
 export async function issueInvoice(
   tx: Tx,
@@ -128,13 +163,19 @@ export async function issueInvoice(
 
   const fiscalYear = new Date().getFullYear();
   const seq = await nextSequence(tx, { facilityId: invoice.facilityId, fiscalYear });
-  const invoiceNumber = formatSequenceNumber("INV", fiscalYear, seq);
+  const invoiceNumber = formatSequenceNumber(NUMBER_PREFIX[invoice.documentType], fiscalYear, seq);
 
   const result = await tx.invoice.updateMany({
     where: { id: invoiceId, status: "DRAFT" },
     data: { status: "ISSUED", invoiceNumber, issuedAt: new Date(), dueAt: input.dueAt, ...totals },
   });
   if (result.count !== 1) throw new InvoiceConcurrencyError("issued");
+  // Late charges now collected: their billing exception tasks are done.
+  const late = invoice.lines.map((l) => l.chargeId).filter((id): id is string => !!id).map((id) => `LATE_CHARGE:${id}`);
+  if (late.length) {
+    const tasks = await tx.task.findMany({ where: { facilityId: invoice.facilityId, idempotencyKey: { in: late }, status: { in: OPEN_STATUSES } }, select: { id: true } });
+    for (const t of tasks) await closeTask(tx, t.id, "COMPLETED", { completedAt: new Date() });
+  }
   return tx.invoice.findUniqueOrThrow({ where: { id: invoiceId }, include: { lines: true } });
 }
 

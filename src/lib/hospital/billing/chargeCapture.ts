@@ -4,8 +4,29 @@ import { BadRequestError } from "@/lib/auth/rbac";
 import { computeLineNetAmountMinor } from "./money";
 import { getOrCreateBillingAccount } from "./billingAccount";
 import { priceFor } from "./pricing";
+import { createTask } from "@/lib/hospital/task";
 
 type Tx = Prisma.TransactionClient;
+
+/** Issued (or paid) invoice statuses: a charge posted after one exists is late (batch 5, decision 2). */
+const ISSUED_INVOICE_STATUSES = ["ISSUED", "PARTIALLY_PAID", "PAID"] as const;
+
+async function encounterIsInvoiced(tx: Tx, encounterId: string): Promise<boolean> {
+  return (await tx.invoice.count({ where: { encounterId, documentType: "INVOICE", status: { in: [...ISSUED_INVOICE_STATUSES] } } })) > 0;
+}
+
+/**
+ * A late charge is recorded like any other (issued invoices are never edited)
+ * and raises one billing exception task, so billing collects it on a
+ * supplementary invoice or debit note linked to the original.
+ */
+async function raiseLateChargeTask(tx: Tx, charge: { id: string; facilityId: string; patientId: string; encounterId: string }, actorUserId?: string | null) {
+  await createTask(tx, {
+    facilityId: charge.facilityId, patientId: charge.patientId, encounterId: charge.encounterId,
+    type: "LATE_CHARGE", title: "A charge was posted after the invoice was issued: collect it on a supplementary invoice",
+    priority: "URGENT", assignedRole: "BILLING_STAFF", source: "EVENT", idempotencyKey: `LATE_CHARGE:${charge.id}`,
+  }, actorUserId);
+}
 
 export class ChargeAlreadyInvoicedError extends BadRequestError {
   constructor() {
@@ -44,6 +65,7 @@ export async function createCharge(tx: Tx, input: CreateChargeInput) {
   const netAmountMinor = computeLineNetAmountMinor(quantity, input.unitPriceMinor, discountMinor);
 
   await getOrCreateBillingAccount(tx, { encounterId: input.encounterId, patientId: input.patientId, facilityId: input.facilityId });
+  const isLate = await encounterIsInvoiced(tx, input.encounterId);
 
   const charge = await tx.charge.create({
     data: {
@@ -61,8 +83,10 @@ export async function createCharge(tx: Tx, input: CreateChargeInput) {
       sourceType: input.sourceType,
       sourceId: input.sourceId,
       postedByUserId: input.postedByUserId ?? null,
+      isLate,
     },
   });
+  if (isLate) await raiseLateChargeTask(tx, charge, input.postedByUserId);
 
   return { charge };
 }
@@ -88,6 +112,7 @@ export async function createChargeIfNotExists(
   const discountMinor = input.discountMinor ?? 0;
   const netAmountMinor = computeLineNetAmountMinor(quantity, input.unitPriceMinor, discountMinor);
   await getOrCreateBillingAccount(tx, { encounterId: input.encounterId, patientId: input.patientId, facilityId: input.facilityId });
+  const isLate = await encounterIsInvoiced(tx, input.encounterId);
 
   // Raw INSERT ... ON CONFLICT DO NOTHING, not create-then-catch-P2002 and
   // not Prisma's createMany({skipDuplicates}) — the former aborts the
@@ -100,11 +125,12 @@ export async function createChargeIfNotExists(
   // returned row count tells us who won — verified against both engines
   // under genuine concurrent load (see scripts/verify-postgres-billing-concurrency.ts).
   const rowsInserted = await tx.$executeRaw`
-    INSERT INTO "Charge" (id, "encounterId", "patientId", "facilityId", description, category, "chargeCode", quantity, "unitPriceMinor", "discountMinor", "netAmountMinor", currency, "sourceType", "sourceId", "postedByUserId", "pricingStatus")
-    VALUES (${randomUUID()}, ${input.encounterId}, ${input.patientId}, ${input.facilityId}, ${input.description}, ${input.category}, ${input.chargeCode ?? null}, ${quantity}, ${input.unitPriceMinor}, ${discountMinor}, ${netAmountMinor}, ${input.currency ?? "INR"}, ${input.sourceType}, ${input.sourceId}, ${input.postedByUserId ?? null}, ${input.pricingStatus ?? "PRICED"}::"ChargePricingStatus")
+    INSERT INTO "Charge" (id, "encounterId", "patientId", "facilityId", description, category, "chargeCode", quantity, "unitPriceMinor", "discountMinor", "netAmountMinor", currency, "sourceType", "sourceId", "postedByUserId", "pricingStatus", "isLate")
+    VALUES (${randomUUID()}, ${input.encounterId}, ${input.patientId}, ${input.facilityId}, ${input.description}, ${input.category}, ${input.chargeCode ?? null}, ${quantity}, ${input.unitPriceMinor}, ${discountMinor}, ${netAmountMinor}, ${input.currency ?? "INR"}, ${input.sourceType}, ${input.sourceId}, ${input.postedByUserId ?? null}, ${input.pricingStatus ?? "PRICED"}::"ChargePricingStatus", ${isLate})
     ON CONFLICT ("sourceType", "sourceId") DO NOTHING
   `;
   const charge = await tx.charge.findFirstOrThrow({ where: { sourceType: input.sourceType, sourceId: input.sourceId } });
+  if (rowsInserted > 0 && charge.isLate) await raiseLateChargeTask(tx, charge, input.postedByUserId);
 
   return { charge, alreadyExisted: rowsInserted === 0 };
 }

@@ -189,6 +189,7 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/hospital/billing/coverage.ts#deactivateCoverage": { category: "PLANNED", reason: "(b) money or stock: will emit CoverageStatusChanged", step: 9, events: ["CoverageStatusChanged"] },
   "src/lib/hospital/billing/invoices.ts#addChargeToInvoice": { category: "PROCESS_STEP", reason: "edit to a draft invoice", boundary: ["HospitalInvoiceIssued", "HospitalInvoiceVoided"] },
   "src/lib/hospital/billing/invoices.ts#draftInvoiceForAccount": { category: "PROCESS_STEP", reason: "draft invoice; money moves on HospitalInvoiceIssued", boundary: ["HospitalInvoiceIssued", "HospitalInvoiceVoided"] },
+  "src/lib/hospital/billing/invoices.ts#draftSupplementaryInvoice": { category: "PROCESS_STEP", reason: "draft supplementary invoice or debit note; money moves when it is issued", boundary: ["HospitalInvoiceIssued", "HospitalInvoiceVoided"] },
   "src/lib/hospital/billing/invoices.ts#issueInvoice": { category: "PLANNED", reason: "will emit HospitalInvoiceIssued", step: 9, events: ["HospitalInvoiceIssued"] },
   "src/lib/hospital/billing/invoices.ts#refreshInvoicePaymentStatus": { category: "BOOKKEEPING", reason: "derived status, decision log or provenance written as part of another operation" },
   "src/lib/hospital/billing/invoices.ts#syncDraftLineForCharge": { category: "BOOKKEEPING", reason: "keeps a draft invoice line in step inside priceCharge/waiveCharge, whose events cover it" },

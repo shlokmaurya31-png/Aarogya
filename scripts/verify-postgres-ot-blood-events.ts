@@ -186,8 +186,8 @@ async function main() {
   await drain();
   report("Redelivering charges and stock events changes nothing (charges/ledger)", (await counts()) === before, `${before} → ${await counts()}`);
 
+  // An already-invoiced encounter: the charge is recorded late (batch 5, decision 2; it used to dead-letter).
   const late = await openEncounter({ facilityId, patientId: patient.id, type: "IPD", chiefComplaint: "Invoiced", byUserId: by });
-  // The encounter's own billing account and an ISSUED invoice on it (fixture: the issue path itself is step 9's).
   const acct = await prisma.billingAccount.create({ data: { facilityId, patientId: patient.id, encounterId: late.id } });
   await prisma.invoice.create({ data: { facilityId, billingAccountId: acct.id, encounterId: late.id, patientId: patient.id, status: "ISSUED", generatedByUserId: by } });
   const lateSurgery = await requestSurgery({ facilityId, patientId: patient.id, encounterId: late.id, procedureName: "Late", requestedByStaffId: doctor.id, byUserId: by });
@@ -198,10 +198,8 @@ async function main() {
   await startProcedure({ surgeryId: lateSurgery.id, facilityId, byUserId: by });
   await completeProcedure({ surgeryId: lateSurgery.id, facilityId, byUserId: by });
   await drain();
-  const lateEvent = await prisma.domainEventOutbox.findFirstOrThrow({ where: { eventType: "ProcedureCompleted", aggregateId: lateSurgery.id } });
-  const lateDelivery = await prisma.domainEventDelivery.findUnique({ where: { eventId_consumerName: { eventId: lateEvent.eventId, consumerName: "charge-capture" } } });
-  report("A charge for an already-invoiced encounter dead-letters (ENCOUNTER_INVOICED) and posts nothing",
-    lateDelivery?.status === "DEAD_LETTER" && lateDelivery.lastErrorCode === "ENCOUNTER_INVOICED" && (await chargesFor("Surgery", lateSurgery.id)).length === 0);
+  const lateCharges = await chargesFor("Surgery", lateSurgery.id);
+  report("A charge for an already-invoiced encounter is recorded once, marked late (no dead letter)", lateCharges.length === 1 && lateCharges[0].isLate);
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();

@@ -156,6 +156,7 @@ export type AuditEventType =
   // Phase 5 — Billing + Insurance + Revenue Cycle. Recorded through the
   // same synchronous AuditEvent mechanism as every prior phase.
   | "hospital.billing.chargeVoided"
+  | "hospital.billing.supplementaryDrafted"
   | "hospital.billing.tariffCreated"
   | "hospital.billing.tariffDeactivated"
   | "hospital.billing.packageCreated"
