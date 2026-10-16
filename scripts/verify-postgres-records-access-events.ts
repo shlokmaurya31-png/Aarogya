@@ -15,6 +15,11 @@
  *   6. The runner expires an ACTIVE delegation past its date with
  *      FamilyAccessRevoked (EXPIRED); a lapsed invitation emits nothing.
  *   7. PatientDemographicsUpdated for an MRN added by staff (type, no value).
+ *   8. Created final (batch 6, fix 2): a note created signed emits
+ *      ClinicalNoteSigned (a draft emits nothing); a staff document and each new
+ *      version emit ClinicalDocumentRecorded (type code, no title; an unknown
+ *      type is refused); a problem added by hand emits ProblemListUpdated
+ *      (v2, MANUAL).
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-records-access-events.ts
  */
@@ -22,7 +27,9 @@ import { PDFDocument } from "pdf-lib";
 import { prisma } from "../src/lib/db";
 import { uploadPatientDocument } from "../src/lib/patient/experience/documents";
 import { generateAndStoreDocument } from "../src/lib/documents/service";
-import { signNote, amendNote } from "../src/lib/hospital/clinicalNote";
+import { createNote, signNote, amendNote } from "../src/lib/hospital/clinicalNote";
+import { recordStaffDocument, versionStaffDocument } from "../src/lib/documents/staffDocuments";
+import { addProblem } from "../src/lib/hospital/problemList";
 import { requestConsent, closeConsentRequest, grantConsent, expireLapsedConsents } from "../src/lib/consent/lifecycle";
 import { issueAccessCode, redeemAccessCode, extendAccessSession, endAccessSession } from "../src/lib/patient/accessSession";
 import { sweepDelegationExpiry } from "../src/lib/patient/experience/delegationSweep";
@@ -81,6 +88,26 @@ async function main() {
   report("signNote → ClinicalNoteSigned (type SOAP, no content), correlated by the encounter",
     signed.length === 1 && signed[0].entryType === "SOAP" && !JSON.stringify(signed).includes("secret") && (await events("ClinicalNoteSigned", draft.id))[0].correlationId === enc.id);
   report("amendNote → ClinicalNoteSigned naming the note it supersedes", amend.length === 1 && amend[0].supersedesEntryId === draft.id);
+
+  // 8. Created final (batch 6, fix 2).
+  const signedAtOnce = await createNote({ encounterId: enc.id, authorStaffId: staffId, authorRole: "DOCTOR", type: "progress", content: { s: `secret ${run}` }, sign: true, byUserId: doctor.id });
+  const draftOnly = await createNote({ encounterId: enc.id, authorStaffId: staffId, authorRole: "DOCTOR", type: "SOAP", content: { s: "draft" }, sign: false, byUserId: doctor.id });
+  const atOnce = await payloads("ClinicalNoteSigned", signedAtOnce.id);
+  report("A note created already signed emits ClinicalNoteSigned (type code, no content); a draft emits nothing",
+    atOnce.length === 1 && atOnce[0].entryType === "PROGRESS" && !JSON.stringify(atOnce).includes("secret") && (await payloads("ClinicalNoteSigned", draftOnly.id)).length === 0);
+  const staffDoc = await recordStaffDocument({ facilityId, patientId: patient.id, encounterId: enc.id, type: "CONSENT_FORM", title: `Consent ${run} secret`, staffId, byUserId: doctor.id });
+  const v2 = await versionStaffDocument({ documentId: staffDoc.id, facilityId, title: `Consent v2 ${run} secret`, staffId, byUserId: doctor.id });
+  const docEvents = [...await payloads("ClinicalDocumentRecorded", staffDoc.id), ...await payloads("ClinicalDocumentRecorded", v2.id)];
+  report("A staff document and its new version emit ClinicalDocumentRecorded (type, version, the one superseded; never the title)",
+    docEvents.length === 2 && docEvents[0].documentType === "CONSENT_FORM" && docEvents[0].version === 1 && docEvents[1].version === 2
+      && docEvents[1].supersedesDocumentId === staffDoc.id && !JSON.stringify(docEvents).includes("secret"));
+  report("A staff document of an unknown type is refused",
+    await recordStaffDocument({ facilityId, patientId: patient.id, type: "misc scan", title: "x", staffId, byUserId: doctor.id }).then(() => false, () => true));
+  const manual = await addProblem({ facilityId, patientId: patient.id, diagnosis: `Hypertension ${run}`, byUserId: doctor.id });
+  const manualEvents = await events("ProblemListUpdated", manual.id);
+  const mp = manualEvents[0]?.payload as { source?: string; created?: boolean; diagnosisId?: string } | undefined;
+  report("A problem added by hand emits ProblemListUpdated v2 (MANUAL, created; no diagnosis text)",
+    manualEvents.length === 1 && manualEvents[0].eventVersion === 2 && mp?.source === "MANUAL" && mp.created === true && !("diagnosisId" in mp) && !JSON.stringify(mp).includes("Hypertension"));
 
   // 4. Consent.
   const consentInput = { facilityId, patientId: patient.id, purpose: "TREATMENT", scopes: ["LAB"], recipientType: "FACILITY", recipientIdentifier: `HFR-${run}`, byUserId: doctor.id };

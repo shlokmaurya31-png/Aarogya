@@ -15,6 +15,24 @@ async function emitNoteSigned(tx: Prisma.TransactionClient, note: ClinicalNote, 
   });
 }
 
+/**
+ * Creates a note (batch 6, fix 2). A note created already SIGNED is signed in
+ * that transaction, so it emits ClinicalNoteSigned exactly as signNote does; a
+ * DRAFT emits nothing until it is signed.
+ */
+export async function createNote(input: { encounterId: string; authorStaffId: string; authorRole: string; type: string; content: Prisma.InputJsonValue; sign: boolean; byUserId: string }) {
+  return prisma.$transaction(async (tx) => {
+    const note = await tx.clinicalNote.create({
+      data: {
+        encounterId: input.encounterId, authorStaffId: input.authorStaffId, authorRole: input.authorRole, type: input.type, content: input.content,
+        status: input.sign ? "SIGNED" : "DRAFT", signedAt: input.sign ? new Date() : undefined,
+      },
+    });
+    if (input.sign) await emitNoteSigned(tx, note, input.byUserId);
+    return note;
+  });
+}
+
 export class NoteConcurrencyError extends BadRequestError {
   constructor(status: string) {
     super(`This note is already ${status} — refresh and try again.`);

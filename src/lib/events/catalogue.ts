@@ -511,6 +511,15 @@ export const EVENT_CONTRACTS: EventContract[] = [
     sensitivity: "INTERNAL", producer: "problem list (addDiagnosisToProblemList)",
     payload: z.object({ problemId: id, patientId: id, diagnosisId: id, encounterId: id, created: z.boolean() }).strict(),
   }),
+  contract({
+    type: "ProblemListUpdated", version: 2, aggregateType: "PROBLEM", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "problem list (addDiagnosisToProblemList: DIAGNOSIS; addProblem, created by staff: MANUAL)",
+    payload: z.object({
+      problemId: id, patientId: id, created: z.boolean(),
+      /** v2 (batch 6): a problem added by hand has no diagnosis or encounter. */
+      source: z.enum(["DIAGNOSIS", "MANUAL"]), diagnosisId: optId, encounterId: optId,
+    }).strict(),
+  }),
 
   // ── Operating theatre and blood bank (spine §9 step 8) ───────────────────
   contract({
@@ -771,6 +780,20 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({ documentId: id, patientId: id, documentType: z.enum(["REPORT", "REFERRAL_LETTER", "ID_PROOF", "OTHER"]), uploadedBy: z.enum(["PATIENT"]) }).strict(),
   }),
   contract({
+    type: "ClinicalDocumentRecorded", version: 1, aggregateType: "CLINICAL_DOCUMENT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "staff documents (recordStaffDocument, versionStaffDocument): created final, so the create is the fact",
+    payload: z.object({
+      documentId: id, patientId: id, encounterId: optId,
+      /** CLINICAL_DOCUMENT_TYPE_CODES (staffDocuments.ts); a legacy free-text type is reported as OTHER. Never the title. */
+      documentType: z.enum(["REPORT", "CONSENT_FORM", "REFERRAL_LETTER", "DISCHARGE_SUMMARY", "ID_PROOF", "OTHER", "PRESCRIPTION", "OPD_SUMMARY", "LAB_REPORT",
+        "RADIOLOGY_REPORT", "INVOICE", "REFUND_NOTE", "CLAIM_PACKET", "CERTIFICATE", "DEATH_CERTIFICATE", "BIRTH_RECORD"]),
+      accessPolicy: z.enum(["CLINICAL_STAFF", "PATIENT_VISIBLE", "RESTRICTED"]),
+      version: z.number().int().positive(),
+      /** A new version: the one it supersedes. */
+      supersedesDocumentId: optId,
+    }).strict(),
+  }),
+  contract({
     type: "DocumentGenerated", version: 1, aggregateType: "CLINICAL_DOCUMENT", scope: "FACILITY",
     sensitivity: "INTERNAL", producer: "documents (generateAndStoreDocument)",
     payload: z.object({
@@ -780,7 +803,7 @@ export const EVENT_CONTRACTS: EventContract[] = [
   }),
   contract({
     type: "ClinicalNoteSigned", version: 1, aggregateType: "CLINICAL_NOTE", scope: "FACILITY",
-    sensitivity: "INTERNAL", producer: "clinical notes (signNote, amendNote)",
+    sensitivity: "INTERNAL", producer: "clinical notes (signNote, amendNote, createNote when created signed)",
     payload: z.object({
       /** The signed note (also the aggregate id). Keys avoid "note": the sensitive-key guard refuses them. */
       entryId: id, encounterId: id, patientId: id,

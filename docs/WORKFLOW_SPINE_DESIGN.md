@@ -983,6 +983,27 @@ still raises derived flags but never reads or lifts a hold. The barrier list
 leads with each active hold. This replaces "lower a derived flag to hold a
 discharge". Gate `verify-postgres-discharge-holds`.
 
+**Batch 6, fix 2: records created final emit their event.** Searched every
+create in a terminal status (SIGNED, CURRENT, ACTIVE, VERIFIED, …):
+- A note created already signed through the note route now goes through
+  `createNote`, which emits `ClinicalNoteSigned` in its transaction (a draft
+  emits nothing until signed).
+- Staff-recorded documents and their new versions (routes `documents` and
+  `documents/[id]/version`) go through `recordStaffDocument` /
+  `versionStaffDocument` and emit the new `ClinicalDocumentRecorded` (type
+  code, visibility, version, the version it supersedes; never the title).
+  Staff document types are a closed set (`STAFF_DOCUMENT_TYPES`, the screen's
+  list); a stored legacy type is reported as OTHER.
+- A problem added by hand (`patients/[id]/problems`) goes through
+  `addProblem`: `ProblemListUpdated` v2 (`source` MANUAL; diagnosis and
+  encounter optional; `addDiagnosisToProblemList` emits DIAGNOSIS).
+- The three routes leave the route-write allowlist. Every other terminal
+  create already emits (nursing assessments, triage, blood typing, note
+  amendments, generated documents) or is in memory only (FHIR/claim packages).
+  Not fixed, because no event type exists for them: vitals, intake/output,
+  diagnoses, allergies, referrals, emergency contacts and schedule blocks are
+  still written by their routes (the route-write allowlist).
+
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b
 (quality, safety, operations) and 9c (access, identity, interoperability,

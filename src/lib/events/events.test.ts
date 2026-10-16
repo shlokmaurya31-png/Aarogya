@@ -227,3 +227,22 @@ describe("step-9 payload codes mirror their sources", () => {
     expect(options("ClaimReconciliationStatusChanged", "exceptionType")).toEqual([...EXCEPTION_TYPES].sort());
   });
 });
+
+describe("batch 6 payload codes mirror their sources", () => {
+  const options = (type: string, key: string) => {
+    const shape = (getEventContract(type, 1)!.payload as unknown as { shape: Record<string, { options?: string[]; unwrap?: () => unknown }> }).shape;
+    let f = shape[key] as { options?: string[]; unwrap?: () => unknown };
+    while (!f.options && f.unwrap) f = f.unwrap() as typeof f;
+    return [...(f.options ?? [])].sort();
+  };
+  it("ClinicalDocumentRecorded.documentType = CLINICAL_DOCUMENT_TYPE_CODES", async () => {
+    const { CLINICAL_DOCUMENT_TYPE_CODES } = await import("@/lib/documents/staffDocuments");
+    expect(options("ClinicalDocumentRecorded", "documentType")).toEqual([...CLINICAL_DOCUMENT_TYPE_CODES].sort());
+  });
+  it("ClinicalDocumentRecorded.accessPolicy = ClinicalDocumentAccessPolicy", () => {
+    expect(options("ClinicalDocumentRecorded", "accessPolicy")).toEqual(Object.values($Enums.ClinicalDocumentAccessPolicy).sort());
+  });
+  it("DischargeHoldChanged.reasonCode = DischargeHoldReason", () => {
+    expect(options("DischargeHoldChanged", "reasonCode")).toEqual(Object.values($Enums.DischargeHoldReason).sort());
+  });
+});
