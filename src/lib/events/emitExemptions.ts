@@ -58,7 +58,8 @@ export interface EmitExemption {
 }
 
 /**
- * Events whose fact is itself sensitive (docs/EVENT_TRIAGE.md, Sensitivity).
+ * Events whose fact is itself sensitive (docs/EVENT_TRIAGE.md, Sensitivity;
+ * ConsentExpired and TransfusionReactionStatusChanged confirmed in batch 4).
  * A catalogued contract with one of these names must be SENSITIVE; the test
  * also checks each name is catalogued or still owed.
  */

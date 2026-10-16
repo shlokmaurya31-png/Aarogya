@@ -17,7 +17,8 @@
 
 - Already marked in the design: `ConsentGranted`, `ConsentRevoked`, `MedicationDoseMissed`, `TransfusionReactionReported`, `FamilyAccessGranted`, `FamilyAccessRevoked`.
 - Approved change 3: `ResuscitationStatusChanged`, `BreakGlassStatusChanged`, `LegalHoldSet`, `PrivacyRequestStatusChanged`, `InfectionExposureRecorded`.
-- Added by the same rule, for confirmation: `ConsentExpired` (a consent fact, like `ConsentRevoked`) and `TransfusionReactionStatusChanged` (the lifecycle of a reported reaction).
+- Confirmed 2026-10-16 (batch 4, decision 4): `ConsentExpired` (a consent fact, like `ConsentRevoked`) and `TransfusionReactionStatusChanged` (the lifecycle of a reported reaction).
+- Batch 4, decision 2: `MedicationDoseNotGiven` (a refused or held dose).
 
 Every other event is `INTERNAL` (clinical/operational IDs about a patient) or `LOW` (commercial).
 
