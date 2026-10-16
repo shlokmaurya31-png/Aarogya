@@ -1019,6 +1019,19 @@ PTCA (scheduled for its typical duration) with a seeded stent and issues a
 seeded PRBC unit (step 9b), and asserts each is charged at its specific tariff
 with nothing needing a price; the needs-pricing gate checks the catalogue.
 
+**As built: step 9a (batch 6).** Gate `verify-postgres-supply-events`, grown
+per item.
+
+- **`StockMoved`** is emitted by `postLedgerEntry` (a registered emitting
+  helper) for every ledger entry it posts, in the caller's transaction, so
+  every stock path emits it (adjustments, reservations, releases,
+  consumption, transfers, returns, waste, issues, receipts). An idempotent
+  replay posts nothing and emits nothing. Payload: the entry, item, lot,
+  location, movement type, deltas, unit, waste/adjustment reason codes, the
+  source document, patient and encounter (so INTERNAL, not LOW); never the
+  reason text or notes. Aggregate ITEM_LOT; correlated by the encounter when
+  there is one. A cancelled transfer posts RETURN at the source.
+
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b
 (quality, safety, operations) and 9c (access, identity, interoperability,

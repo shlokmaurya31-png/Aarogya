@@ -149,7 +149,7 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
     await tx((t) => linkMedicationToItem(t, SYSTEM_ACTOR, { target: { scope: "FACILITY", facilityId }, drugName, itemId: item.id }));
     const lot = await prisma.itemLot.create({ data: { itemId: item.id, facilityId, lotNumber: `CJ-LOT-${run}`, status: "ACTIVE", expiresAt: new Date("2029-01-01") } });
     await tx((t) => createAdjustment(t, { facilityId, itemId: item.id, lotId: lot.id, locationId: pharmacy.id, quantityDelta: 10, reason: "FOUND", requestedByStaffId: pharmacist.id, actorUserId: pharmacist.userId, idempotencyKey: `cj-${run}` }));
-    await step("8c Medication", ["MedicationOrdered", "MedicationVerified", "MedicationDispensed", "ChargePosted", "MedicationAdministered"], async () => {
+    await step("8c Medication", ["MedicationOrdered", "MedicationVerified", "StockMoved", "MedicationDispensed", "ChargePosted", "MedicationAdministered"], async () => {
       const o = await createMedicationOrder({ facilityId, encounterId: enc.id, patientId: patient.id, orderingStaffId: doctor.id, drugName, dose: "1 tab", route: "PO", frequency: "BD", overrideReason: "journey", byUserId: by });
       if (o.blocked) throw new Error("unexpected safety block");
       orderId = o.order.id;
@@ -173,7 +173,7 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
     const stent = await prisma.item.findUniqueOrThrow({ where: { sku: implantSku("DES", facilityId) } });
     const stentLot = await prisma.itemLot.create({ data: { itemId: stent.id, facilityId, lotNumber: `CJ-DES-LOT-${run}`, status: "ACTIVE", expiresAt: new Date("2030-01-01") } });
     await tx((t) => createAdjustment(t, { facilityId, itemId: stent.id, lotId: stentLot.id, locationId: pharmacy.id, quantityDelta: 1, reason: "FOUND", requestedByStaffId: doctor.id, actorUserId: by, idempotencyKey: `cj-des-${run}` }));
-    await step("9 OT", ["SurgeryRequested", "SurgeryStatusChanged", "SurgeryStatusChanged", "SurgeryScheduled", "ProcedureStarted", "SurgeryItemUsed", "ProcedureCompleted", "ChargePosted", "ChargePosted"], async () => {
+    await step("9 OT", ["SurgeryRequested", "SurgeryStatusChanged", "SurgeryStatusChanged", "SurgeryScheduled", "ProcedureStarted", "SurgeryItemUsed", "ProcedureCompleted", "ChargePosted", "StockMoved", "ChargePosted"], async () => {
       const s = await requestSurgery({ facilityId, patientId: patient.id, encounterId: enc.id, procedureId: proc.id, urgency: "URGENT", requestedByStaffId: doctor.id, byUserId: by });
       surgeryId = s.id;
       await transitionSurgery({ surgeryId, facilityId, to: "REVIEWED", actorStaffId: doctor.id, byUserId: by });
@@ -259,9 +259,10 @@ async function main() {
   // IcuAdmitted is emitted before PatientTransferred inside the transfer (as the ADT gate asserts).
   // ChargePosted (step 9): the ICU fee and the theatre charges come from charge-capture after
   // their event; the lab and dispensing charges are posted in their own transaction.
+  // StockMoved (step 9a): the dispense (in its transaction) and the stent (stock-movement).
   const expectedProducers = ["EdArrivalRegistered", "PatientTriaged", "AdmissionRequested", "BedReserved", "AdmissionCreated", "IcuAdmitted", "PatientTransferred", "ChargePosted",
-    "ChargePosted", "LabOrderPlaced", "SpecimenCollected", "SpecimenStatusChanged", "LabResultReleased", "CriticalResultAcknowledged", "MedicationOrdered", "MedicationVerified", "MedicationDispensed", "ChargePosted", "MedicationAdministered",
-    "SurgeryRequested", "SurgeryStatusChanged", "SurgeryStatusChanged", "SurgeryScheduled", "ProcedureStarted", "SurgeryItemUsed", "ProcedureCompleted", "ChargePosted", "ChargePosted",
+    "ChargePosted", "LabOrderPlaced", "SpecimenCollected", "SpecimenStatusChanged", "LabResultReleased", "CriticalResultAcknowledged", "MedicationOrdered", "MedicationVerified", "StockMoved", "MedicationDispensed", "ChargePosted", "MedicationAdministered",
+    "SurgeryRequested", "SurgeryStatusChanged", "SurgeryStatusChanged", "SurgeryScheduled", "ProcedureStarted", "SurgeryItemUsed", "ProcedureCompleted", "ChargePosted", "StockMoved", "ChargePosted",
     "BloodCompatibilityRecorded", "BloodRequestStatusChanged", "BloodRequestStatusChanged", "BloodRequestStatusChanged", "BloodCompatibilityRecorded", "BloodRequestStatusChanged", "BloodIssued", "ChargePosted",
     // 9b: blood. 10–14: pre-authorization, discharge (bed-days in finalize), invoice → claim, late charge → supplementary → its claim.
     "PreauthStatusChanged", "PreauthDecided", "DischargeInitiated", "DocumentGenerated", "ChargePosted", "PatientDischarged", "EncounterClosed",

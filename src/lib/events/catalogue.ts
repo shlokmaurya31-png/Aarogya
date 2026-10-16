@@ -472,6 +472,22 @@ export const EVENT_CONTRACTS: EventContract[] = [
     }).strict(),
   }),
   contract({
+    type: "StockMoved", version: 1, aggregateType: "ITEM_LOT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "inventory ledger (postLedgerEntry): every stock movement, from every path, once per ledger entry",
+    payload: z.object({
+      ledgerEntryId: id, itemId: id, lotId: id, locationId: id,
+      movementType: z.enum(["RECEIPT", "ISSUE", "TRANSFER_OUT", "TRANSFER_IN", "RETURN", "WASTE", "ADJUSTMENT", "RESERVATION", "RELEASE"]),
+      onHandDelta: z.number(), reservedDelta: z.number(),
+      unit: z.enum(["TABLET", "CAPSULE", "VIAL", "AMPOULE", "BOTTLE", "BOX", "PACK", "PIECE", "ML", "MG", "GRAM", "KG", "LITER", "OTHER"]),
+      wasteReason: z.enum(["EXPIRED", "DAMAGED", "CONTAMINATED", "OPENED_UNUSED", "ACCIDENTAL_LOSS"]).optional(),
+      adjustmentReason: z.enum(["COUNT_CORRECTION", "DAMAGE", "LOSS", "FOUND", "DATA_CORRECTION", "OTHER"]).optional(),
+      /** The source document's model name and ID (never the reason text or notes). */
+      sourceType: z.string().regex(/^[A-Za-z][A-Za-z0-9]{1,63}$/).optional(), sourceId: optId, movementGroupId: optId,
+      /** A movement for a patient (an issue to an encounter): INTERNAL, not LOW. */
+      patientId: optId, encounterId: optId,
+    }).strict(),
+  }),
+  contract({
     type: "StockLotStatusChanged", version: 1, aggregateType: "ITEM_LOT", scope: "FACILITY",
     sensitivity: "LOW", producer: "inventory lots (quarantineLot, releaseLotFromQuarantine), pharmacy recalls",
     payload: z.object({ lotId: id, itemId: id, from: lotStatus, to: lotStatus, cause: z.enum(["QUARANTINE", "RELEASE", "RECALL"]), recallId: optId }).strict(),
