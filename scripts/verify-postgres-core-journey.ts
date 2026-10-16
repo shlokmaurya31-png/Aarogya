@@ -1,8 +1,9 @@
 /**
  * Workflow spine §7: the core-journey replay test. Grows a step at a time
- * (§9); this version covers steps 1–8a of the §7 journey plus the medication
- * round that step 6 wired. Later steps (8b documents, 9 OT, 10–13 discharge,
- * billing, claim) extend it.
+ * (§9); this version covers steps 1–8a of the §7 journey, the medication
+ * round that step 6 wired, and step 9 (OT, with the charge-capture and
+ * stock-movement consumers, spine step 8). Later steps (8b documents, 10–13
+ * discharge, billing, claim) extend it.
  *
  * Drives the real service functions, drains the runner after each step and
  * asserts, by correlationId = the encounter:
@@ -30,6 +31,7 @@ import { enterResult, verifyResult, acknowledgeResult } from "../src/lib/hospita
 import { createMedicationOrder, verifyMedicationOrder, dispenseMedication, administerMedication } from "../src/lib/hospital/medicationLifecycle";
 import { linkMedicationToItem, SYSTEM_ACTOR } from "../src/lib/hospital/inventory/itemMedicationLink";
 import { createAdjustment } from "../src/lib/hospital/inventory/adjustment";
+import { createProcedure, createOperatingTheatre, requestSurgery, transitionSurgery, scheduleSurgery, startProcedure, recordItemUsage, completeProcedure } from "../src/lib/hospital/surgery";
 import { getEventContract } from "../src/lib/events/catalogue";
 import { assertNoSensitiveData } from "../src/lib/events/sensitiveGuard";
 import { replayEvent } from "../src/lib/events/replay";
@@ -134,7 +136,29 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
       await administerMedication({ administrationId: first.id, status: "GIVEN", administeredByStaffId: nurse.id, safetyChecksConfirmed: true, byUserId: nurse.userId });
     });
   }
-  return { facilityId, patientId: patient.id, encounterId: enc.id, orderId, resultId, steps, registered, openAfter8, critTask };
+  let surgeryId = "";
+  let usageId = "";
+  if (opts.full) {
+    // 9. OT: the case, a consumable from stock, completion (→ charge-capture, stock-movement).
+    const pharmacy = await prisma.stockLocation.findFirstOrThrow({ where: { facilityId, name: "Central Pharmacy" } });
+    const proc = await createProcedure({ facilityId, code: `CJ-PROC-${run}`, name: "Angioplasty", byUserId: by });
+    const ot = await createOperatingTheatre({ facilityId, name: `CJ OT ${run}`, byUserId: by });
+    const kit = await prisma.item.create({ data: { facilityId, sku: `CJ-KIT-${run}`, name: `Kit ${run}`, category: "CONSUMABLE", baseUnit: "PIECE" } });
+    const kitLot = await prisma.itemLot.create({ data: { itemId: kit.id, facilityId, lotNumber: `CJ-KIT-LOT-${run}`, status: "ACTIVE", expiresAt: new Date("2030-01-01") } });
+    await tx((t) => createAdjustment(t, { facilityId, itemId: kit.id, lotId: kitLot.id, locationId: pharmacy.id, quantityDelta: 1, reason: "FOUND", requestedByStaffId: doctor.id, actorUserId: by, idempotencyKey: `cj-kit-${run}` }));
+    await step("9 OT", ["SurgeryRequested", "SurgeryStatusChanged", "SurgeryStatusChanged", "SurgeryScheduled", "ProcedureStarted", "SurgeryItemUsed", "ProcedureCompleted"], async () => {
+      const s = await requestSurgery({ facilityId, patientId: patient.id, encounterId: enc.id, procedureId: proc.id, urgency: "URGENT", requestedByStaffId: doctor.id, byUserId: by });
+      surgeryId = s.id;
+      await transitionSurgery({ surgeryId, facilityId, to: "REVIEWED", actorStaffId: doctor.id, byUserId: by });
+      await transitionSurgery({ surgeryId, facilityId, to: "APPROVED", actorStaffId: doctor.id, byUserId: by });
+      const at = new Date(Date.now() + 2 * 86_400_000 + Math.floor(Math.random() * 1000) * 60_000);
+      await scheduleSurgery({ surgeryId, facilityId, operatingTheatreId: ot.id, startAt: at, endAt: new Date(at.getTime() + 3_600_000), schedulerStaffId: doctor.id, byUserId: by });
+      await startProcedure({ surgeryId, facilityId, surgeonStaffId: doctor.id, byUserId: by });
+      usageId = (await recordItemUsage({ surgeryId, facilityId, usageType: "CONSUMABLE", itemId: kit.id, itemLotId: kitLot.id, quantity: 1, locationId: pharmacy.id, recordedByStaffId: doctor.id, actorUserId: by, byUserId: by })).id;
+      await completeProcedure({ surgeryId, facilityId, byUserId: by });
+    });
+  }
+  return { facilityId, patientId: patient.id, encounterId: enc.id, orderId, resultId, surgeryId, usageId, steps, registered, openAfter8, critTask };
 }
 
 async function main() {
@@ -148,7 +172,8 @@ async function main() {
   const producers = all.map((e) => e.eventType).filter((t) => !t.startsWith("Task"));
   // IcuAdmitted is emitted before PatientTransferred inside the transfer (as the ADT gate asserts).
   const expectedProducers = ["EdArrivalRegistered", "PatientTriaged", "AdmissionRequested", "BedReserved", "AdmissionCreated", "IcuAdmitted", "PatientTransferred",
-    "LabOrderPlaced", "SpecimenCollected", "SpecimenStatusChanged", "LabResultReleased", "CriticalResultAcknowledged", "MedicationOrdered", "MedicationVerified", "MedicationDispensed", "MedicationAdministered"];
+    "LabOrderPlaced", "SpecimenCollected", "SpecimenStatusChanged", "LabResultReleased", "CriticalResultAcknowledged", "MedicationOrdered", "MedicationVerified", "MedicationDispensed", "MedicationAdministered",
+    "SurgeryRequested", "SurgeryStatusChanged", "SurgeryStatusChanged", "SurgeryScheduled", "ProcedureStarted", "SurgeryItemUsed", "ProcedureCompleted"];
   report("The producers' events, in emission order", producers.join() === expectedProducers.join(), producers.join(" → "));
 
   const bad = all.flatMap((e) => {
@@ -173,6 +198,9 @@ async function main() {
     (ack.payload as { minutesToAcknowledge: number }).minutesToAcknowledge === Math.floor((result.acknowledgedAt!.getTime() - result.verifiedAt!.getTime()) / 60_000));
   const doses = await prisma.medicationAdministration.count({ where: { medicationOrderId: a.orderId } });
   report("mar-scheduler scheduled the BD doses once", doses === 3, String(doses));
+  const otCharges = await prisma.charge.count({ where: { OR: [{ sourceType: "Surgery", sourceId: a.surgeryId }, { sourceType: "SurgeryItemUsage", sourceId: a.usageId }, { sourceType: "IcuAdmission" }], encounterId: a.encounterId } });
+  const kitIssued = await prisma.stockLedgerEntry.count({ where: { sourceType: "SurgeryItemUsage", sourceId: a.usageId } });
+  report("9 OT: charge-capture charged the procedure, the consumable and the ICU admission once each; stock-movement issued the kit once", otCharges === 3 && kitIssued === 1, `${otCharges} charges, ${kitIssued} ledger`);
 
   // Replay every event of journey A through replay.ts; nothing new may appear.
   const counts = async () => [
@@ -180,6 +208,7 @@ async function main() {
     await prisma.notification.count({ where: { encounterId: a.encounterId } }),
     await prisma.medicationAdministration.count({ where: { medicationOrder: { encounterId: a.encounterId } } }),
     await prisma.charge.count({ where: { encounterId: a.encounterId } }),
+    await prisma.stockLedgerEntry.count({ where: { encounterId: a.encounterId } }),
   ].join("/");
   const before = await counts();
   const admin = await prisma.user.findFirstOrThrow({ where: { role: "AAROGYA_ADMIN" }, orderBy: { id: "asc" } });
@@ -187,7 +216,7 @@ async function main() {
   for (const id of ids) await replayEvent(platform, id, { reason: "core-journey replay gate" });
   await drain();
   const after = await counts();
-  report("Replay: re-running every event creates no task, notification, dose or charge (tasks/notifications/doses/charges)", after === before, `${before} → ${after}`);
+  report("Replay: re-running every event creates no task, notification, dose, charge or stock movement (tasks/notifications/doses/charges/ledger)", after === before, `${before} → ${after}`);
   const replayDead = await prisma.domainEventOutbox.count({ where: { eventId: { in: ids }, status: { not: "PROCESSED" } } });
   report("…and every replayed event is PROCESSED again", replayDead === 0, String(replayDead));
 

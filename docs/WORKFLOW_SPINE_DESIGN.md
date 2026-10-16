@@ -794,6 +794,30 @@ letters by `/api/hospital/enterprise/events/dead-letters`. The tenancy-sweep
 fixtures of the queue tables are created finished, so they never enter the
 queues. Gate: `verify-postgres-bounded-retry`.
 
+**As built: step 8 (batch 4).** OT and blood events (#39–46) and the triage's
+step-8 events; consumers `charge-capture` and `stock-movement`. Gate
+`verify-postgres-ot-blood-events`; the core journey gains step 9. Departures:
+
+- **Surgical stock moves in the consumer.** `recordItemUsage` no longer calls
+  `issueStock`; it emits `SurgeryItemUsed` with the issuing location and
+  `stock-movement` issues it (ledger keyed by the usage, so redelivery is a
+  no-op). A shortfall leaves the usage recorded, dead-letters with
+  STOCK_UNAVAILABLE and opens one INVENTORY_EXCEPTION task: the §2 row, and
+  ADR 0004's example of a direct call to remove. Before, a shortfall rolled the
+  usage back. `MedicationDispensed` is not consumed (no dispensing path moved).
+- **Pricing.** Specific tariff, then generic (`PROCEDURE:<code>` /
+  `PROCEDURE:GENERIC`, `ITEM:<sku>` / `OT_<type>:GENERIC`, `BLOOD:<code>` /
+  `BLOOD:GENERIC`, `ICU:ADMISSION`); with none, a zero-priced charge whose
+  description says "needs pricing". Consultation (`CONSULT_OPD`, OPD
+  encounters) and ED triage (`ED:TRIAGE`) only where tariffed.
+- **Invoiced encounter.** The charge dead-letters with ENCOUNTER_INVOICED
+  (visible in the dead-letter list). No reconciliation-exception row: the
+  existing exception model is the commercial one; a hospital-billing one is
+  step 9's.
+- **Blood unit transitions** compare-and-set on the exact status read, and the
+  "ignore if it already moved" calls ignore only that conflict (they swallowed
+  every error). `verifyCompatibility` is now compare-and-set.
+
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b
 (quality, safety, operations) and 9c (access, identity, interoperability,

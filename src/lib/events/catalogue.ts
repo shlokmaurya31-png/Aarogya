@@ -33,6 +33,12 @@ const lotStatus = z.enum(["ACTIVE", "QUARANTINED", "EXPIRED", "RECALLED", "DEPLE
 const icuDeviceStatus = z.enum(["PLANNED", "ACTIVE", "REMOVED", "DISCONTINUED"]);
 const icuInfusionStatus = z.enum(["RUNNING", "PAUSED", "STOPPED"]);
 const resuscitationStatus = z.enum(["ACTIVATED", "ACTIVE", "STABILIZED", "HANDED_OVER", "DISPOSITION_PENDING", "CLOSED"]);
+const surgeryStatus = z.enum(["REQUESTED", "REVIEWED", "APPROVED", "SCHEDULED", "IN_PROGRESS", "COMPLETED", "CANCELLED"]);
+const recoveryStatus = z.enum(["PENDING", "IN_RECOVERY", "READY_FOR_TRANSFER", "TRANSFERRED"]);
+const bloodUnitStatus = z.enum(["AVAILABLE", "RESERVED", "ISSUED", "IN_TRANSIT", "TRANSFUSING", "TRANSFUSED", "RETURNED", "WASTED", "QUARANTINED", "EXPIRED", "DISCARDED"]);
+const bloodRequestStatus = z.enum(["REQUESTED", "REVIEWED", "APPROVED", "COMPATIBILITY_PENDING", "READY", "ISSUED", "COMPLETED", "CANCELLED", "REJECTED"]);
+const transfusionStatus = z.enum(["RECEIVED", "IN_PROGRESS", "PAUSED", "COMPLETED", "STOPPED"]);
+const transfusionReactionStatus = z.enum(["REPORTED", "UNDER_REVIEW", "ESCALATED", "RESOLVED"]);
 const transferRequestStatus = z.enum(["REQUESTED", "ACCEPTED", "BED_RESERVED", "PATIENT_IN_TRANSIT", "COMPLETED", "CANCELLED", "REJECTED"]);
 
 function contract<P extends z.ZodTypeAny>(c: EventContract<P>): EventContract<P> {
@@ -475,6 +481,110 @@ export const EVENT_CONTRACTS: EventContract[] = [
     type: "ProblemListUpdated", version: 1, aggregateType: "PROBLEM", scope: "FACILITY",
     sensitivity: "INTERNAL", producer: "problem list (addDiagnosisToProblemList)",
     payload: z.object({ problemId: id, patientId: id, diagnosisId: id, encounterId: id, created: z.boolean() }).strict(),
+  }),
+
+  // ── Operating theatre and blood bank (spine §9 step 8) ───────────────────
+  contract({
+    type: "SurgeryRequested", version: 1, aggregateType: "SURGERY", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "surgery (requestSurgery)",
+    payload: z.object({ surgeryId: id, encounterId: id, patientId: id, procedureId: optId, urgency: z.enum(["ELECTIVE", "URGENT", "EMERGENCY"]) }).strict(),
+  }),
+  contract({
+    type: "SurgeryScheduled", version: 1, aggregateType: "SURGERY", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "surgery (scheduleSurgery)",
+    payload: z.object({ surgeryId: id, scheduleId: id, operatingTheatreId: id, encounterId: id, patientId: id, startAt: iso, endAt: iso }).strict(),
+  }),
+  contract({
+    type: "ProcedureStarted", version: 1, aggregateType: "SURGERY", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "surgery (startProcedure)",
+    payload: z.object({ surgeryId: id, encounterId: id, patientId: id }).strict(),
+  }),
+  contract({
+    type: "ProcedureCompleted", version: 1, aggregateType: "SURGERY", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "surgery (completeProcedure)",
+    payload: z.object({ surgeryId: id, encounterId: id, patientId: id, procedureId: optId, durationMinutes: z.number().int().min(0) }).strict(),
+  }),
+  contract({
+    type: "SurgeryItemUsed", version: 1, aggregateType: "SURGERY", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "surgery (recordItemUsage)",
+    payload: z.object({
+      usageId: id, surgeryId: id, encounterId: id, patientId: id, itemId: id, itemLotId: optId,
+      usageType: z.enum(["IMPLANT", "CONSUMABLE"]), quantity: z.number().positive(),
+      /** The stock location to issue from; absent: the usage is recorded without moving stock. */
+      locationId: optId,
+    }).strict(),
+  }),
+  contract({
+    type: "SurgeryStatusChanged", version: 1, aggregateType: "SURGERY", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "surgery (transitionSurgery, cancelSchedule, updateRecovery)",
+    payload: z.object({
+      surgeryId: id, encounterId: id, patientId: id,
+      /** STATUS: the case's lifecycle; SCHEDULE_CANCELLED: its theatre slot freed; RECOVERY: the PACU phase. */
+      change: z.enum(["STATUS", "SCHEDULE_CANCELLED", "RECOVERY"]),
+      from: z.union([surgeryStatus, recoveryStatus]).nullable(), to: z.union([surgeryStatus, recoveryStatus]),
+    }).strict(),
+  }),
+  contract({
+    type: "PerioperativeRecordRecorded", version: 1, aggregateType: "SURGERY", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "surgery (recordAnesthesia, updateChecklistItem)",
+    payload: z.object({
+      surgeryId: id, encounterId: id, patientId: id, recordId: id, kind: z.enum(["ANESTHESIA", "SAFETY_CHECKLIST"]),
+      anesthesiaStatus: z.enum(["PLANNED", "IN_PROGRESS", "COMPLETED"]).optional(),
+      checklistPhase: z.enum(["BEFORE_INDUCTION", "BEFORE_INCISION", "BEFORE_LEAVING"]).optional(), checked: z.boolean().optional(),
+    }).strict(),
+  }),
+  contract({
+    type: "BloodUnitStatusChanged", version: 1, aggregateType: "BLOOD_UNIT", scope: "FACILITY",
+    sensitivity: "LOW", producer: "blood bank (every unit transition: register, release, quarantine, recall, waste, reserve, issue, return, transfuse)",
+    payload: z.object({ unitId: id, productId: id, from: bloodUnitStatus.nullable(), to: bloodUnitStatus, recalled: z.boolean() }).strict(),
+  }),
+  contract({
+    type: "BloodRequestStatusChanged", version: 1, aggregateType: "BLOOD_REQUEST", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "blood bank (requestBlood, transitionRequest, issue and transfusion completion)",
+    payload: z.object({
+      requestId: id, encounterId: id, patientId: id, from: bloodRequestStatus.nullable(), to: bloodRequestStatus,
+      priority: z.enum(["ROUTINE", "URGENT", "EMERGENCY"]),
+    }).strict(),
+  }),
+  contract({
+    type: "EmergencyBloodReleaseAuthorized", version: 1, aggregateType: "BLOOD_REQUEST", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "blood bank (authorizeEmergencyRelease)",
+    payload: z.object({ requestId: id, encounterId: id, patientId: id, authorizedByStaffId: id }).strict(),
+  }),
+  contract({
+    type: "BloodCompatibilityRecorded", version: 1, aggregateType: "BLOOD_COMPATIBILITY", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "blood bank (recordPatientTyping, verifyCompatibility)",
+    payload: z.object({
+      recordId: id, patientId: id, encounterId: optId, kind: z.enum(["PATIENT_TYPING", "CROSSMATCH_VERIFIED"]),
+      requestId: optId, unitId: optId,
+      /** CROSSMATCH_VERIFIED only. */
+      result: z.enum(["COMPATIBLE", "INCOMPATIBLE"]).optional(),
+    }).strict(),
+  }),
+  contract({
+    type: "BloodIssued", version: 1, aggregateType: "BLOOD_ISSUE", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "blood bank (issueUnit)",
+    payload: z.object({ issueId: id, unitId: id, requestId: id, encounterId: id, patientId: id, productId: id, emergencyRelease: z.boolean() }).strict(),
+  }),
+  contract({
+    type: "TransfusionStarted", version: 1, aggregateType: "TRANSFUSION", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "blood bank (startTransfusion)",
+    payload: z.object({ transfusionId: id, unitId: id, requestId: id, encounterId: id, patientId: id }).strict(),
+  }),
+  contract({
+    type: "TransfusionStatusChanged", version: 1, aggregateType: "TRANSFUSION", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "blood bank (transitionTransfusion)",
+    payload: z.object({ transfusionId: id, unitId: id, encounterId: id, patientId: id, from: transfusionStatus, to: transfusionStatus }).strict(),
+  }),
+  contract({
+    type: "TransfusionReactionReported", version: 1, aggregateType: "TRANSFUSION", scope: "FACILITY",
+    sensitivity: "SENSITIVE", producer: "blood bank (reportReaction)",
+    payload: z.object({ reactionId: id, transfusionId: id, unitId: id, encounterId: id, patientId: id }).strict(),
+  }),
+  contract({
+    type: "TransfusionReactionStatusChanged", version: 1, aggregateType: "TRANSFUSION", scope: "FACILITY",
+    sensitivity: "SENSITIVE", producer: "blood bank (transitionReaction)",
+    payload: z.object({ reactionId: id, transfusionId: id, encounterId: id, patientId: id, from: transfusionReactionStatus, to: transfusionReactionStatus }).strict(),
   }),
 
   // ── Interoperability ─────────────────────────────────────────────────────────

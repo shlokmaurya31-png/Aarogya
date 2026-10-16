@@ -4,6 +4,7 @@ import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import type { Prisma, AboGroup, RhStatus, BloodUnitStatus, BloodRequestStatus, BloodRequestPriority } from "@prisma/client";
 import { parseEnum } from "@/lib/enumValue";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 /**
  * Blood Bank & Transfusion service (Phase B4). Composes the canonical
@@ -63,13 +64,42 @@ type Tx = Prisma.TransactionClient;
  */
 async function guardedUnitTransition(
   tx: Tx,
-  input: { unitId: string; facilityId: string; from: BloodUnitStatus[]; to: BloodUnitStatus; data?: Prisma.BloodUnitUpdateManyMutationInput }
+  input: { unitId: string; facilityId: string; from: BloodUnitStatus[]; to: BloodUnitStatus; data?: Prisma.BloodUnitUpdateManyMutationInput; byUserId?: string }
 ): Promise<void> {
+  // Compare-and-set on the exact status read, so BloodUnitStatusChanged names
+  // the real "from" (the one place every unit transition goes through).
+  const unit = await tx.bloodUnit.findUnique({ where: { id: input.unitId }, select: { status: true, facilityId: true } });
+  if (!unit || unit.facilityId !== input.facilityId || !input.from.includes(unit.status)) throw new BloodUnitConflictError();
   const result = await tx.bloodUnit.updateMany({
-    where: { id: input.unitId, facilityId: input.facilityId, status: { in: input.from } },
+    where: { id: input.unitId, facilityId: input.facilityId, status: unit.status },
     data: { status: input.to, ...(input.data ?? {}) },
   });
   if (result.count !== 1) throw new BloodUnitConflictError();
+  await emitUnitStatus(tx, input.unitId, unit.status, input.byUserId);
+}
+
+/** BloodUnitStatusChanged for a unit's current state (inventory; no patient in the payload). */
+async function emitUnitStatus(tx: Tx, unitId: string, from: BloodUnitStatus | null, byUserId?: string) {
+  const u = await tx.bloodUnit.findUniqueOrThrow({ where: { id: unitId }, select: { id: true, facilityId: true, productId: true, status: true, recalled: true } });
+  await emitFacilityEvent(tx, {
+    type: "BloodUnitStatusChanged", aggregateId: u.id, facilityId: u.facilityId, actorUserId: byUserId,
+    payload: { unitId: u.id, productId: u.productId, from, to: u.status, recalled: u.recalled },
+  });
+}
+
+/** For the transitions that may legitimately not apply (already moved on): ignore only that conflict. */
+function ignoreUnitConflict(err: unknown): void {
+  if (!(err instanceof BloodUnitConflictError)) throw err;
+}
+
+type RequestRef = { id: string; facilityId: string; encounterId: string; patientId: string; priority: BloodRequestPriority };
+
+/** BloodRequestStatusChanged, correlated by the encounter. */
+async function emitRequestStatus(tx: Tx, r: RequestRef, from: BloodRequestStatus | null, to: BloodRequestStatus, byUserId?: string) {
+  await emitFacilityEvent(tx, {
+    type: "BloodRequestStatusChanged", aggregateId: r.id, facilityId: r.facilityId, actorUserId: byUserId, encounterId: r.encounterId,
+    payload: { requestId: r.id, encounterId: r.encounterId, patientId: r.patientId, from, to, priority: r.priority },
+  });
 }
 
 async function loadUnit(tx: Tx, unitId: string, facilityId: string) {
@@ -116,14 +146,18 @@ export async function registerBloodUnit(input: {
   }
   // A blood group provided at registration is a recorded value, not a
   // confirmed authorized typing — that requires recordUnitTyping + verify.
-  const unit = await prisma.bloodUnit.create({
-    data: {
-      facilityId: input.facilityId, productId: input.productId, unitNumber: input.unitNumber,
-      aboGroup: input.aboGroup, rhStatus: input.rhStatus, collectedAt: input.collectedAt, expiresAt: input.expiresAt,
-      itemLotId: input.itemLotId, locationId: input.locationId, donorReference: input.donorReference,
-      sourceOrganization: input.sourceOrganization, collectionEventRef: input.collectionEventRef,
-      quarantineReason: "Awaiting testing/release", registeredByStaffId: input.registeredByStaffId,
-    },
+  const unit = await prisma.$transaction(async (tx) => {
+    const created = await tx.bloodUnit.create({
+      data: {
+        facilityId: input.facilityId, productId: input.productId, unitNumber: input.unitNumber,
+        aboGroup: input.aboGroup, rhStatus: input.rhStatus, collectedAt: input.collectedAt, expiresAt: input.expiresAt,
+        itemLotId: input.itemLotId, locationId: input.locationId, donorReference: input.donorReference,
+        sourceOrganization: input.sourceOrganization, collectionEventRef: input.collectionEventRef,
+        quarantineReason: "Awaiting testing/release", registeredByStaffId: input.registeredByStaffId,
+      },
+    });
+    await emitUnitStatus(tx, created.id, null, input.byUserId);
+    return created;
   });
   await recordAuditEvent("hospital.blood.unitRegistered", input.byUserId, { unitId: unit.id, unitNumber: unit.unitNumber, productId: input.productId }, { facilityId: input.facilityId });
   return unit;
@@ -135,7 +169,7 @@ export async function releaseUnit(input: { unitId: string; facilityId: string; b
     if (unit.recalled) throw new BadRequestError("A recalled unit cannot be released to available stock.");
     if (unit.expiresAt && unit.expiresAt.getTime() <= Date.now()) throw new BadRequestError("An expired unit cannot be released to available stock.");
     if (!isUnitTransitionAllowed(unit.status, "AVAILABLE")) throw new BloodUnitTransitionError(unit.status, "AVAILABLE");
-    await guardedUnitTransition(tx, { unitId: unit.id, facilityId: input.facilityId, from: [unit.status], to: "AVAILABLE", data: { quarantineReason: null } });
+    await guardedUnitTransition(tx, { byUserId: input.byUserId, unitId: unit.id, facilityId: input.facilityId, from: [unit.status], to: "AVAILABLE", data: { quarantineReason: null } });
     await tx.auditEvent.create({ data: { type: "hospital.blood.unitReleased", userId: input.byUserId, detail: { unitId: unit.id, from: unit.status }, facilityId: input.facilityId } });
     return tx.bloodUnit.findUniqueOrThrow({ where: { id: unit.id } });
   });
@@ -145,7 +179,7 @@ export async function quarantineUnit(input: { unitId: string; facilityId: string
   return prisma.$transaction(async (tx) => {
     const unit = await loadUnit(tx, input.unitId, input.facilityId);
     if (!isUnitTransitionAllowed(unit.status, "QUARANTINED")) throw new BloodUnitTransitionError(unit.status, "QUARANTINED");
-    await guardedUnitTransition(tx, { unitId: unit.id, facilityId: input.facilityId, from: [unit.status], to: "QUARANTINED", data: { quarantineReason: input.reason } });
+    await guardedUnitTransition(tx, { byUserId: input.byUserId, unitId: unit.id, facilityId: input.facilityId, from: [unit.status], to: "QUARANTINED", data: { quarantineReason: input.reason } });
     await tx.auditEvent.create({ data: { type: "hospital.blood.unitQuarantined", userId: input.byUserId, detail: { unitId: unit.id, from: unit.status, reason: input.reason }, facilityId: input.facilityId } });
     return tx.bloodUnit.findUniqueOrThrow({ where: { id: unit.id } });
   });
@@ -158,8 +192,11 @@ export async function recallUnit(input: { unitId: string; facilityId: string; re
     // Flag recall on any state; additionally pull issuable units into QUARANTINE.
     await tx.bloodUnit.update({ where: { id: unit.id }, data: { recalled: true, recallReason: input.reason } });
     if (unit.status === "AVAILABLE" || unit.status === "RESERVED") {
-      await guardedUnitTransition(tx, { unitId: unit.id, facilityId: input.facilityId, from: ["AVAILABLE", "RESERVED"], to: "QUARANTINED", data: { quarantineReason: `Recall: ${input.reason}` } });
+      await guardedUnitTransition(tx, { byUserId: input.byUserId, unitId: unit.id, facilityId: input.facilityId, from: ["AVAILABLE", "RESERVED"], to: "QUARANTINED", data: { quarantineReason: `Recall: ${input.reason}` } });
       await tx.bloodReservation.updateMany({ where: { unitId: unit.id, status: "ACTIVE" }, data: { status: "RELEASED", releasedAt: new Date(), releasedReason: "Recall" } });
+    } else {
+      // The recall flag is the safety fact even when the unit stays where it is.
+      await emitUnitStatus(tx, unit.id, unit.status, input.byUserId);
     }
     await tx.auditEvent.create({ data: { type: "hospital.blood.unitRecalled", userId: input.byUserId, detail: { unitId: unit.id, reason: input.reason }, facilityId: input.facilityId } });
     return tx.bloodUnit.findUniqueOrThrow({ where: { id: unit.id } });
@@ -170,7 +207,7 @@ export async function wasteUnit(input: { unitId: string; facilityId: string; rea
   return prisma.$transaction(async (tx) => {
     const unit = await loadUnit(tx, input.unitId, input.facilityId);
     if (!isUnitTransitionAllowed(unit.status, "WASTED")) throw new BloodUnitTransitionError(unit.status, "WASTED");
-    await guardedUnitTransition(tx, { unitId: unit.id, facilityId: input.facilityId, from: [unit.status], to: "WASTED", data: { quarantineReason: input.reason } });
+    await guardedUnitTransition(tx, { byUserId: input.byUserId, unitId: unit.id, facilityId: input.facilityId, from: [unit.status], to: "WASTED", data: { quarantineReason: input.reason } });
     // Free any active reservation — the unit is gone.
     await tx.bloodReservation.updateMany({ where: { unitId: unit.id, status: "ACTIVE" }, data: { status: "RELEASED", releasedAt: new Date(), releasedReason: "Wasted" } });
     await tx.auditEvent.create({ data: { type: "hospital.blood.unitWasted", userId: input.byUserId, detail: { unitId: unit.id, from: unit.status, reason: input.reason }, facilityId: input.facilityId } });
@@ -184,12 +221,20 @@ export async function recordPatientTyping(input: {
 }) {
   const patient = await prisma.patient.findUnique({ where: { id: input.patientId } });
   if (!patient || patient.facilityId !== input.facilityId) throw new NotFoundError("Patient not found in this facility.");
-  const rec = await prisma.bloodTypingRecord.create({
-    data: {
-      facilityId: input.facilityId, patientId: input.patientId, encounterId: input.encounterId,
-      aboGroup: input.aboGroup, rhStatus: input.rhStatus, antibodyScreen: input.antibodyScreen, specimenRef: input.specimenRef,
-      status: input.aboGroup ? "RESULTED" : "PENDING", performedByStaffId: input.performedByStaffId,
-    },
+  const rec = await prisma.$transaction(async (tx) => {
+    const created = await tx.bloodTypingRecord.create({
+      data: {
+        facilityId: input.facilityId, patientId: input.patientId, encounterId: input.encounterId,
+        aboGroup: input.aboGroup, rhStatus: input.rhStatus, antibodyScreen: input.antibodyScreen, specimenRef: input.specimenRef,
+        status: input.aboGroup ? "RESULTED" : "PENDING", performedByStaffId: input.performedByStaffId,
+      },
+    });
+    // That a typing was recorded, never the group.
+    await emitFacilityEvent(tx, {
+      type: "BloodCompatibilityRecorded", aggregateId: created.id, facilityId: input.facilityId, actorUserId: input.byUserId, encounterId: input.encounterId,
+      payload: { recordId: created.id, patientId: input.patientId, kind: "PATIENT_TYPING", ...(input.encounterId ? { encounterId: input.encounterId } : {}) },
+    });
+    return created;
   });
   await recordAuditEvent("hospital.blood.typingRecorded", input.byUserId, { typingId: rec.id, scope: "PATIENT" }, { facilityId: input.facilityId, patientId: input.patientId, encounterId: input.encounterId });
   return rec;
@@ -251,12 +296,16 @@ export async function requestBlood(input: {
   const quantity = input.quantity ?? 1;
   if (quantity <= 0) throw new BadRequestError("Quantity must be positive.");
 
-  const request = await prisma.bloodRequest.create({
-    data: {
-      facilityId: input.facilityId, patientId: input.patientId, encounterId: input.encounterId, productId: input.productId,
-      productName, quantity, priority: input.priority ?? "ROUTINE", indication: input.indication, requiredBy: input.requiredBy,
-      surgeryId: input.surgeryId, requestedByStaffId: input.requestedByStaffId,
-    },
+  const request = await prisma.$transaction(async (tx) => {
+    const created = await tx.bloodRequest.create({
+      data: {
+        facilityId: input.facilityId, patientId: input.patientId, encounterId: input.encounterId, productId: input.productId,
+        productName, quantity, priority: input.priority ?? "ROUTINE", indication: input.indication, requiredBy: input.requiredBy,
+        surgeryId: input.surgeryId, requestedByStaffId: input.requestedByStaffId,
+      },
+    });
+    await emitRequestStatus(tx, created, null, created.status, input.byUserId);
+    return created;
   });
   await recordAuditEvent("hospital.blood.requestCreated", input.byUserId, { requestId: request.id, productName, quantity, priority: request.priority }, { facilityId: input.facilityId, patientId: input.patientId, encounterId: input.encounterId });
   return request;
@@ -280,11 +329,12 @@ export async function transitionRequest(input: { requestId: string; facilityId: 
     if (input.to === "CANCELLED" || input.to === "REJECTED") {
       const reservations = await tx.bloodReservation.findMany({ where: { requestId: request.id, status: "ACTIVE" } });
       for (const r of reservations) {
-        await guardedUnitTransition(tx, { unitId: r.unitId, facilityId: input.facilityId, from: ["RESERVED"], to: "AVAILABLE" }).catch(() => undefined);
+        await guardedUnitTransition(tx, { byUserId: input.byUserId, unitId: r.unitId, facilityId: input.facilityId, from: ["RESERVED"], to: "AVAILABLE" }).catch(ignoreUnitConflict);
       }
       await tx.bloodReservation.updateMany({ where: { requestId: request.id, status: "ACTIVE" }, data: { status: "RELEASED", releasedAt: new Date(), releasedReason: input.to } });
     }
     await tx.auditEvent.create({ data: { type: "hospital.blood.requestStatusChanged", userId: input.byUserId, detail: { requestId: request.id, from: request.status, to: input.to }, facilityId: request.facilityId, patientId: request.patientId, encounterId: request.encounterId } });
+    await emitRequestStatus(tx, request, request.status, input.to, input.byUserId);
     return tx.bloodRequest.findUniqueOrThrow({ where: { id: request.id } });
   });
 }
@@ -297,6 +347,10 @@ export async function authorizeEmergencyRelease(input: { requestId: string; faci
     if (request.status === "COMPLETED" || request.status === "CANCELLED" || request.status === "REJECTED") throw new BadRequestError("Cannot authorize emergency release on a closed request.");
     await tx.bloodRequest.update({ where: { id: request.id }, data: { emergencyRelease: true, emergencyReason: input.reason, emergencyAuthorizedByStaffId: input.authorizedByStaffId, emergencyAuthorizedAt: new Date() } });
     await tx.auditEvent.create({ data: { type: "hospital.blood.emergencyReleaseAuthorized", userId: input.byUserId, detail: { requestId: request.id, reason: input.reason, authorizedByStaffId: input.authorizedByStaffId }, facilityId: request.facilityId, patientId: request.patientId, encounterId: request.encounterId } });
+    await emitFacilityEvent(tx, {
+      type: "EmergencyBloodReleaseAuthorized", aggregateId: request.id, facilityId: request.facilityId, actorUserId: input.byUserId, encounterId: request.encounterId,
+      payload: { requestId: request.id, encounterId: request.encounterId, patientId: request.patientId, authorizedByStaffId: input.authorizedByStaffId },
+    });
     return tx.bloodRequest.findUniqueOrThrow({ where: { id: request.id } });
   });
 }
@@ -330,8 +384,17 @@ export async function verifyCompatibility(input: { testId: string; facilityId: s
     if (!test || test.facilityId !== input.facilityId) throw new NotFoundError("Compatibility test not found.");
     if (test.status !== "COMPATIBLE" && test.status !== "INCOMPATIBLE") throw new BadRequestError("Only a COMPATIBLE/INCOMPATIBLE result can be verified.");
     if (test.verifiedByStaffId) throw new BadRequestError("Compatibility result is already verified.");
-    const updated = await tx.bloodCompatibilityTest.update({ where: { id: test.id }, data: { verifiedByStaffId: input.verifiedByStaffId, verifiedAt: new Date() } });
+    const res = await tx.bloodCompatibilityTest.updateMany({ where: { id: test.id, verifiedByStaffId: null }, data: { verifiedByStaffId: input.verifiedByStaffId, verifiedAt: new Date() } });
+    if (res.count !== 1) throw new BadRequestError("Compatibility result is already verified.");
+    const updated = await tx.bloodCompatibilityTest.findUniqueOrThrow({ where: { id: test.id } });
     await tx.auditEvent.create({ data: { type: "hospital.blood.compatibilityVerified", userId: input.byUserId, detail: { testId: test.id, requestId: test.requestId, status: test.status }, facilityId: test.facilityId, patientId: test.patientId, encounterId: test.encounterId } });
+    await emitFacilityEvent(tx, {
+      type: "BloodCompatibilityRecorded", aggregateId: test.id, facilityId: test.facilityId, actorUserId: input.byUserId, encounterId: test.encounterId,
+      payload: {
+        recordId: test.id, patientId: test.patientId, encounterId: test.encounterId, kind: "CROSSMATCH_VERIFIED", requestId: test.requestId,
+        result: test.status as "COMPATIBLE" | "INCOMPATIBLE", ...(test.unitId ? { unitId: test.unitId } : {}),
+      },
+    });
     return updated;
   });
 }
@@ -351,7 +414,7 @@ export async function reserveUnits(input: { requestId: string; facilityId: strin
       assertUnitIssuable(unit);
       // AVAILABLE -> RESERVED, guarded. If any unit is lost to a concurrent
       // reservation, the whole transaction rolls back → all-or-none.
-      await guardedUnitTransition(tx, { unitId, facilityId: input.facilityId, from: ["AVAILABLE"], to: "RESERVED" });
+      await guardedUnitTransition(tx, { byUserId: input.byUserId, unitId, facilityId: input.facilityId, from: ["AVAILABLE"], to: "RESERVED" });
       const reservation = await tx.bloodReservation.create({
         data: { facilityId: input.facilityId, unitId, requestId: request.id, patientId: request.patientId, encounterId: request.encounterId, reservedByStaffId: input.reservedByStaffId, expiresAt: input.expiresAt },
       });
@@ -369,7 +432,7 @@ export async function releaseReservation(input: { reservationId: string; facilit
     const result = await tx.bloodReservation.updateMany({ where: { id: reservation.id, status: "ACTIVE" }, data: { status: "RELEASED", releasedAt: new Date(), releasedReason: input.reason ?? "Released" } });
     if (result.count !== 1) throw new BadRequestError("Reservation is not active.");
     // Only return the unit to AVAILABLE if it is still RESERVED (not already issued).
-    await guardedUnitTransition(tx, { unitId: reservation.unitId, facilityId: input.facilityId, from: ["RESERVED"], to: "AVAILABLE" }).catch(() => undefined);
+    await guardedUnitTransition(tx, { byUserId: input.byUserId, unitId: reservation.unitId, facilityId: input.facilityId, from: ["RESERVED"], to: "AVAILABLE" }).catch(ignoreUnitConflict);
     await tx.auditEvent.create({ data: { type: "hospital.blood.reservationReleased", userId: input.byUserId, detail: { reservationId: reservation.id, unitId: reservation.unitId }, facilityId: input.facilityId, patientId: reservation.patientId, encounterId: reservation.encounterId } });
     return tx.bloodReservation.findUniqueOrThrow({ where: { id: reservation.id } });
   });
@@ -396,7 +459,7 @@ export async function issueUnit(input: { requestId: string; facilityId: string; 
     }
 
     // AVAILABLE or RESERVED -> ISSUED, guarded (single-winner double-issue barrier).
-    await guardedUnitTransition(tx, { unitId: unit.id, facilityId: input.facilityId, from: ["AVAILABLE", "RESERVED"], to: "ISSUED" });
+    await guardedUnitTransition(tx, { byUserId: input.byUserId, unitId: unit.id, facilityId: input.facilityId, from: ["AVAILABLE", "RESERVED"], to: "ISSUED" });
     await tx.bloodReservation.updateMany({ where: { unitId: unit.id, status: "ACTIVE" }, data: { status: "CONSUMED" } });
 
     const issue = await tx.bloodIssue.create({
@@ -406,8 +469,15 @@ export async function issueUnit(input: { requestId: string; facilityId: string; 
         issueLocation: input.issueLocation, recipientLocation: input.recipientLocation,
       },
     });
-    if (request.status !== "ISSUED") await tx.bloodRequest.updateMany({ where: { id: request.id, status: request.status }, data: { status: "ISSUED" } });
+    if (request.status !== "ISSUED") {
+      const moved = await tx.bloodRequest.updateMany({ where: { id: request.id, status: request.status }, data: { status: "ISSUED" } });
+      if (moved.count === 1) await emitRequestStatus(tx, request, request.status, "ISSUED", input.byUserId);
+    }
     await tx.auditEvent.create({ data: { type: "hospital.blood.unitIssued", userId: input.byUserId, detail: { issueId: issue.id, unitId: unit.id, requestId: request.id, emergencyRelease: request.emergencyRelease }, facilityId: request.facilityId, patientId: request.patientId, encounterId: request.encounterId } });
+    await emitFacilityEvent(tx, {
+      type: "BloodIssued", aggregateId: issue.id, facilityId: request.facilityId, actorUserId: input.byUserId, encounterId: request.encounterId,
+      payload: { issueId: issue.id, unitId: unit.id, requestId: request.id, encounterId: request.encounterId, patientId: request.patientId, productId: unit.productId, emergencyRelease: request.emergencyRelease },
+    });
     return issue;
   });
 }
@@ -419,7 +489,7 @@ export async function dispatchIssue(input: { issueId: string; facilityId: string
     if (!issue || issue.facilityId !== input.facilityId) throw new NotFoundError("Issue record not found.");
     const result = await tx.bloodIssue.updateMany({ where: { id: issue.id, status: "ISSUED" }, data: { status: "IN_TRANSIT", dispatchedByStaffId: input.dispatchedByStaffId, dispatchedAt: new Date() } });
     if (result.count !== 1) throw new BadRequestError("Issue is not in an ISSUED state.");
-    await guardedUnitTransition(tx, { unitId: issue.unitId, facilityId: input.facilityId, from: ["ISSUED"], to: "IN_TRANSIT" }).catch(() => undefined);
+    await guardedUnitTransition(tx, { byUserId: input.byUserId, unitId: issue.unitId, facilityId: input.facilityId, from: ["ISSUED"], to: "IN_TRANSIT" }).catch(ignoreUnitConflict);
     await tx.auditEvent.create({ data: { type: "hospital.blood.unitDispatched", userId: input.byUserId, detail: { issueId: issue.id, unitId: issue.unitId }, facilityId: issue.facilityId, patientId: issue.patientId, encounterId: issue.encounterId } });
     return tx.bloodIssue.findUniqueOrThrow({ where: { id: issue.id } });
   });
@@ -431,7 +501,7 @@ export async function receiveIssue(input: { issueId: string; facilityId: string;
     if (!issue || issue.facilityId !== input.facilityId) throw new NotFoundError("Issue record not found.");
     const result = await tx.bloodIssue.updateMany({ where: { id: issue.id, status: { in: ["ISSUED", "IN_TRANSIT"] } }, data: { status: "RECEIVED", receivedByStaffId: input.receivedByStaffId, receivedAt: new Date() } });
     if (result.count !== 1) throw new BadRequestError("Issue cannot be received in its current state.");
-    await guardedUnitTransition(tx, { unitId: issue.unitId, facilityId: input.facilityId, from: ["IN_TRANSIT"], to: "ISSUED" }).catch(() => undefined);
+    await guardedUnitTransition(tx, { byUserId: input.byUserId, unitId: issue.unitId, facilityId: input.facilityId, from: ["IN_TRANSIT"], to: "ISSUED" }).catch(ignoreUnitConflict);
     await tx.auditEvent.create({ data: { type: "hospital.blood.unitReceived", userId: input.byUserId, detail: { issueId: issue.id, unitId: issue.unitId }, facilityId: issue.facilityId, patientId: issue.patientId, encounterId: issue.encounterId } });
     return tx.bloodIssue.findUniqueOrThrow({ where: { id: issue.id } });
   });
@@ -444,7 +514,7 @@ export async function returnUnit(input: { issueId: string; facilityId: string; r
     if (!issue || issue.facilityId !== input.facilityId) throw new NotFoundError("Issue record not found.");
     // Guarded: the unit must still be issued/in-transit (not transfusing) — this
     // is also the return-vs-transfusion race barrier.
-    await guardedUnitTransition(tx, { unitId: issue.unitId, facilityId: input.facilityId, from: ["ISSUED", "IN_TRANSIT"], to: "RETURNED", data: { quarantineReason: input.reason } });
+    await guardedUnitTransition(tx, { byUserId: input.byUserId, unitId: issue.unitId, facilityId: input.facilityId, from: ["ISSUED", "IN_TRANSIT"], to: "RETURNED", data: { quarantineReason: input.reason } });
     await tx.bloodIssue.updateMany({ where: { id: issue.id, status: { in: ["ISSUED", "IN_TRANSIT", "RECEIVED"] } }, data: { status: "RETURNED", returnedReason: input.reason, returnedAt: new Date(), receivedByStaffId: input.receivedByStaffId } });
     await tx.auditEvent.create({ data: { type: "hospital.blood.unitReturned", userId: input.byUserId, detail: { issueId: issue.id, unitId: issue.unitId, reason: input.reason }, facilityId: issue.facilityId, patientId: issue.patientId, encounterId: issue.encounterId } });
     return tx.bloodIssue.findUniqueOrThrow({ where: { id: issue.id } });
@@ -469,7 +539,7 @@ export async function startTransfusion(input: {
     }
     // ISSUED -> TRANSFUSING, guarded (single-winner; also the transfusion-start
     // side of the return-vs-transfusion and waste/issue races).
-    await guardedUnitTransition(tx, { unitId: unit.id, facilityId: input.facilityId, from: ["ISSUED"], to: "TRANSFUSING" });
+    await guardedUnitTransition(tx, { byUserId: input.byUserId, unitId: unit.id, facilityId: input.facilityId, from: ["ISSUED"], to: "TRANSFUSING" });
     const transfusion = await tx.transfusion.create({
       data: {
         facilityId: input.facilityId, requestId: request.id, unitId: unit.id, patientId: request.patientId, encounterId: request.encounterId,
@@ -479,6 +549,10 @@ export async function startTransfusion(input: {
       },
     });
     await tx.auditEvent.create({ data: { type: "hospital.blood.transfusionStarted", userId: input.byUserId, detail: { transfusionId: transfusion.id, unitId: unit.id, requestId: request.id }, facilityId: request.facilityId, patientId: request.patientId, encounterId: request.encounterId } });
+    await emitFacilityEvent(tx, {
+      type: "TransfusionStarted", aggregateId: transfusion.id, facilityId: request.facilityId, actorUserId: input.byUserId, encounterId: request.encounterId,
+      payload: { transfusionId: transfusion.id, unitId: unit.id, requestId: request.id, encounterId: request.encounterId, patientId: request.patientId },
+    });
     return transfusion;
   });
 }
@@ -486,8 +560,16 @@ export async function startTransfusion(input: {
 export async function recordTransfusionObservation(input: { transfusionId: string; facilityId: string; observationType: string; value: string; recordedByStaffId: string; byUserId: string }) {
   const transfusion = await prisma.transfusion.findUnique({ where: { id: input.transfusionId } });
   if (!transfusion || transfusion.facilityId !== input.facilityId) throw new NotFoundError("Transfusion not found.");
-  const obs = await prisma.transfusionObservation.create({
-    data: { transfusionId: transfusion.id, observationType: input.observationType, value: input.value, recordedByStaffId: input.recordedByStaffId },
+  const obs = await prisma.$transaction(async (tx) => {
+    const created = await tx.transfusionObservation.create({
+      data: { transfusionId: transfusion.id, observationType: input.observationType, value: input.value, recordedByStaffId: input.recordedByStaffId },
+    });
+    // The kind only, never the value.
+    await emitFacilityEvent(tx, {
+      type: "ObservationRecorded", aggregateId: created.id, facilityId: transfusion.facilityId, actorUserId: input.byUserId, encounterId: transfusion.encounterId,
+      payload: { observationId: created.id, encounterId: transfusion.encounterId, patientId: transfusion.patientId, observationKind: "TRANSFUSION" },
+    });
+    return created;
   });
   await recordAuditEvent("hospital.blood.transfusionObservationRecorded", input.byUserId, { transfusionId: transfusion.id, observationId: obs.id, observationType: input.observationType }, { facilityId: transfusion.facilityId, patientId: transfusion.patientId, encounterId: transfusion.encounterId });
   return obs;
@@ -518,9 +600,14 @@ export async function transitionTransfusion(input: { transfusionId: string; faci
     // On completion the unit is spent (TRANSFUSED). On stop, leave it TRANSFUSING
     // for explicit disposition (quarantine/waste) — never silently reusable.
     if (input.to === "COMPLETED") {
-      await guardedUnitTransition(tx, { unitId: transfusion.unitId, facilityId: input.facilityId, from: ["TRANSFUSING"], to: "TRANSFUSED" }).catch(() => undefined);
-      await tx.bloodRequest.updateMany({ where: { id: transfusion.requestId, status: "ISSUED" }, data: { status: "COMPLETED" } });
+      await guardedUnitTransition(tx, { byUserId: input.byUserId, unitId: transfusion.unitId, facilityId: input.facilityId, from: ["TRANSFUSING"], to: "TRANSFUSED" }).catch(ignoreUnitConflict);
+      const done = await tx.bloodRequest.updateMany({ where: { id: transfusion.requestId, status: "ISSUED" }, data: { status: "COMPLETED" } });
+      if (done.count === 1) await emitRequestStatus(tx, await tx.bloodRequest.findUniqueOrThrow({ where: { id: transfusion.requestId } }), "ISSUED", "COMPLETED", input.byUserId);
     }
+    await emitFacilityEvent(tx, {
+      type: "TransfusionStatusChanged", aggregateId: transfusion.id, facilityId: transfusion.facilityId, actorUserId: input.byUserId, encounterId: transfusion.encounterId,
+      payload: { transfusionId: transfusion.id, unitId: transfusion.unitId, encounterId: transfusion.encounterId, patientId: transfusion.patientId, from: transfusion.status, to: input.to },
+    });
     await tx.auditEvent.create({ data: { type: input.to === "COMPLETED" ? "hospital.blood.transfusionCompleted" : "hospital.blood.transfusionStatusChanged", userId: input.byUserId, detail: { transfusionId: transfusion.id, from: transfusion.status, to: input.to }, facilityId: transfusion.facilityId, patientId: transfusion.patientId, encounterId: transfusion.encounterId } });
     return tx.transfusion.findUniqueOrThrow({ where: { id: transfusion.id } });
   });
@@ -541,9 +628,14 @@ export async function reportReaction(input: { transfusionId: string; facilityId:
     // return to available inventory. Guarded from any non-terminal state.
     const unit = await loadUnit(tx, transfusion.unitId, input.facilityId);
     if (isUnitTransitionAllowed(unit.status, "QUARANTINED")) {
-      await guardedUnitTransition(tx, { unitId: unit.id, facilityId: input.facilityId, from: [unit.status], to: "QUARANTINED", data: { quarantineReason: "Transfusion reaction under investigation" } }).catch(() => undefined);
+      await guardedUnitTransition(tx, { byUserId: input.byUserId, unitId: unit.id, facilityId: input.facilityId, from: [unit.status], to: "QUARANTINED", data: { quarantineReason: "Transfusion reaction under investigation" } }).catch(ignoreUnitConflict);
     }
     await tx.auditEvent.create({ data: { type: "hospital.blood.reactionReported", userId: input.byUserId, detail: { reactionId: reaction.id, transfusionId: transfusion.id, unitId: transfusion.unitId }, facilityId: transfusion.facilityId, patientId: transfusion.patientId, encounterId: transfusion.encounterId } });
+    // SENSITIVE; never the symptoms. On the transfusion's aggregate, so its review follows it in order.
+    await emitFacilityEvent(tx, {
+      type: "TransfusionReactionReported", aggregateId: transfusion.id, facilityId: transfusion.facilityId, actorUserId: input.byUserId, encounterId: transfusion.encounterId,
+      payload: { reactionId: reaction.id, transfusionId: transfusion.id, unitId: transfusion.unitId, encounterId: transfusion.encounterId, patientId: transfusion.patientId },
+    });
     return reaction;
   });
 }
@@ -567,6 +659,10 @@ export async function transitionReaction(input: { reactionId: string; facilityId
     const result = await tx.transfusionReaction.updateMany({ where: { id: reaction.id, status: reaction.status }, data });
     if (result.count !== 1) throw new BadRequestError("Reaction changed state concurrently — refresh and try again.");
     await tx.auditEvent.create({ data: { type: "hospital.blood.reactionStatusChanged", userId: input.byUserId, detail: { reactionId: reaction.id, from: reaction.status, to: input.to }, facilityId: reaction.facilityId, patientId: reaction.patientId, encounterId: reaction.encounterId } });
+    await emitFacilityEvent(tx, {
+      type: "TransfusionReactionStatusChanged", aggregateId: reaction.transfusionId, facilityId: reaction.facilityId, actorUserId: input.byUserId, encounterId: reaction.encounterId,
+      payload: { reactionId: reaction.id, transfusionId: reaction.transfusionId, encounterId: reaction.encounterId, patientId: reaction.patientId, from: reaction.status, to: input.to },
+    });
     return tx.transfusionReaction.findUniqueOrThrow({ where: { id: reaction.id } });
   });
 }

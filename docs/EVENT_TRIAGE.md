@@ -600,6 +600,7 @@ names: 81 (77 new).
 
 | Step | State |
 |---|---|
+| 8 | **wired** (2026-10-16, batch 4) with the 8 planned OT/blood events: 22 triage functions, 10 events. `BloodUnitStatusChanged` is emitted by the one unit transition every path uses, so `dispatchIssue` / `receiveIssue` (exempted as transport logistics) now emit it too (ISSUED ↔ IN_TRANSIT) and left the exemptions. `TransfusionReactionReported` has no `severity` (the model has none). |
 | 4 | **wired** (2026-10-16, batch 4): 18 functions, 7 events. The admission-request, appointment no-show and transfer-request transitions became compare-and-set (they read the status, then wrote without a guard). `completeTransferRequest` also emits `TransferRequestStatusChanged` (COMPLETED), so the request's stream is whole. The task-generator cancels a bed-allocation task whose request is cancelled or rejected (it stayed open). |
 | 5b | **wired** (2026-10-16): 8 functions, 4 events |
 | 6 | **wired** (2026-10-16): 33 functions, 16 events, plus the 9 planned step-6 events |

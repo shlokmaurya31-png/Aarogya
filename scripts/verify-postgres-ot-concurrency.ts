@@ -7,6 +7,7 @@
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-ot-concurrency.ts
  */
 import { PrismaClient } from "@prisma/client";
+import { runTick } from "../src/lib/runner/tick";
 import { createOperatingTheatre, createProcedure, requestSurgery, transitionSurgery, scheduleSurgery, startProcedure, completeProcedure, recordItemUsage, SurgeryScheduleConflictError, SurgeryTransitionError } from "../src/lib/hospital/surgery";
 import { createAdjustment } from "../src/lib/hospital/inventory/adjustment";
 import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
@@ -86,9 +87,19 @@ async function main() {
     const attempt = () => recordItemUsage({ surgeryId: s.id, facilityId: facility.id, usageType: "IMPLANT", itemId: item.id, itemLotId: lot.id, quantity: 1, locationId: loc.id, recordedByStaffId: staff.id, actorUserId: staff.userId, byUserId: staff.userId }).then(() => ({ ok: true as const }), (err) => ({ ok: false as const, err }));
     const [r1, r2] = await Promise.all([attempt(), attempt()]);
     const succeeded = [r1, r2].filter((r) => r.ok).length;
+    // Spine step 8: stock moves in the stock-movement consumer (SurgeryItemUsed), so run it.
+    await runTick({ budgetMs: 20_000 });
     const balance = await prisma.stockBalance.findFirst({ where: { itemId: item.id, lotId: lot.id, locationId: loc.id } });
     const consumedUsages = await prisma.surgeryItemUsage.count({ where: { surgeryId: s.id, stockConsumed: true } });
     report("D: implant inventory over-issue safety — at most one stock-consuming use succeeds, on-hand never negative", (balance?.onHandQty ?? 0) >= 0 && consumedUsages <= 1 && succeeded >= 1, `succeeded=${succeeded}, onHand=${balance?.onHandQty}, consumedUsages=${consumedUsages}`);
+    // Both uses are recorded (the clinical record is never rolled back); exactly one consumed the
+    // single unit, and the other's movement dead-lettered with an inventory exception task.
+    const usages = await prisma.surgeryItemUsage.findMany({ where: { surgeryId: s.id }, select: { id: true, stockConsumed: true } });
+    const unconsumed = usages.filter((u) => !u.stockConsumed);
+    const exceptionTasks = await prisma.task.count({ where: { idempotencyKey: { in: unconsumed.map((u) => `INVENTORY_EXCEPTION:${u.id}`) } } });
+    report("D2: one unit, two uses: exactly one issued (on-hand 0); the other raised one inventory exception task",
+      usages.length === 2 && consumedUsages === 1 && balance?.onHandQty === 0 && unconsumed.length === 1 && exceptionTasks === 1,
+      `usages=${usages.length}, consumed=${consumedUsages}, onHand=${balance?.onHandQty}, exceptionTasks=${exceptionTasks}`);
   }
 
   // ── E: invalid transition rejected (completed surgery cannot go back to scheduled) ──
