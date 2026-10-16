@@ -916,6 +916,41 @@ journey expects `ChargePosted` at ICU, labs, medication and OT. Departures:
   `decidePreAuth` and the claim transitions (optional `byUserId`).
 - Coverage events use the patient's facility as the tenant.
 
+**As built: step 9, consumers (batch 5).** `claim-drafting` and
+`discharge-readiness`. Gate `verify-postgres-billing-consumers`. Departures:
+
+- **claim-drafting** drafts on the primary ACTIVE coverage valid on the issue
+  date (lowest `priorityOrder`), attaching the encounter's unclaimed APPROVED
+  pre-authorization on it. No migration was needed: `Claim.invoiceId` is
+  already unique, so a claim staff drafted first (or a concurrent draft) wins
+  and the consumer skips. The "blocker" when no pre-authorization exists is one
+  CLAIM_PREAUTH_MISSING task for billing (URGENT), closed by the consumer when a
+  person submits, rejects or closes the claim. Supplementary invoices get their
+  own claim. The claim's creator is the issuing user (the invoice's generator if
+  none).
+- **discharge-readiness is raise-only, not an absolute recompute.** Staff set
+  all six flags by hand and `finalizeDischarge` requires them; bed-day charges
+  post at finalize, so the encounter is never fully billed before discharge. An
+  absolute recompute would take back flags a person set and block every
+  discharge. The consumer derives `documentationReady` (a final discharge
+  summary), `billingReady` (every posted charge priced and on an issued
+  document, each paid or carried by a live claim) and `insuranceReady` (no
+  active coverage, or no pre-authorization awaiting a decision and an approved
+  one or a live claim for every issued document), and only sets a flag that is
+  false. Raising commutes, so no per-admission ordering is needed. Limitation: a
+  person who lowers a derived flag to hold a discharge sees it raised again by
+  the next billing event while the condition holds; `clinicallyReady` (never
+  derived) is the hold. `clinicallyReady`, `pharmacyReady` and `transportReady`
+  stay human: nothing recorded says take-home medication is complete. Each
+  raise is audited (`hospital.discharge.readinessDerived`).
+- **Subscriptions differ from the §2 table:** it listens to the charge, invoice,
+  allocation (`HospitalPaymentStatusChanged`: allocation is what pays an
+  invoice; `HospitalPaymentRecorded` changes nothing derived), claim,
+  pre-authorization and coverage events, plus `DischargeInitiated` and
+  `DocumentGenerated`. Not `LabResultReleased`, `ImagingReportReleased`,
+  `MedicationDispensed` or `TaskCompleted`: no derived flag depends on them
+  (pending results are barriers computed on read).
+
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b
 (quality, safety, operations) and 9c (access, identity, interoperability,

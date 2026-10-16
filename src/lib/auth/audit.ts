@@ -98,6 +98,7 @@ export type AuditEventType =
   | "hospital.transferRequest.completed"
   | "hospital.transferRequest.cancelled"
   | "hospital.discharge.blockerChanged"
+  | "hospital.discharge.readinessDerived"
   | "hospital.discharge.expectedDateChanged"
   | "hospital.location.assigned"
   // Phase 3 — Doctor OS / Nursing OS / Medication Lifecycle / Pharmacy.
