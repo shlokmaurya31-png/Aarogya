@@ -270,6 +270,7 @@ const SEGMENT_MODELS: Record<string, string> = {
   "trace/patient/[patientId]": "Patient",
   "billing/[encounterId]": "Encounter",
   "charges/[chargeId]": "Charge",
+  "holds/[holdId]": "DischargeHold",
   "packages/[id]": "PackageDefinition",
   "adjustments/[id]": "FinancialAdjustment",
   "compatibility/[id]": "BloodCompatibilityTest",

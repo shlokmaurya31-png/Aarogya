@@ -39,7 +39,10 @@ const MAX_DEPTH = 8;
  * the runner never picks them up: a RUNNABLE instance or a PENDING event left
  * by a tenancy sweep would otherwise sit in (or churn through) the queues.
  */
-const INERT: Record<string, Record<string, string>> = {
+const INERT: Record<string, Record<string, unknown>> = {
+  // A cleared hold: Discharge has no tenant column, so every tenant's fixture
+  // shares a discharge, and only active holds are unique per reason.
+  DischargeHold: { clearedAt: new Date(), clearedByUserId: "tsw-fixture" },
   WorkflowInstance: { status: "COMPLETED" },
   WorkflowStep: { status: "COMPLETED" },
   WorkflowTimer: { status: "COMPLETED" },

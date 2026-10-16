@@ -937,10 +937,9 @@ journey expects `ChargePosted` at ICU, labs, medication and OT. Departures:
   document, each paid or carried by a live claim) and `insuranceReady` (no
   active coverage, or no pre-authorization awaiting a decision and an approved
   one or a live claim for every issued document), and only sets a flag that is
-  false. Raising commutes, so no per-admission ordering is needed. Limitation: a
-  person who lowers a derived flag to hold a discharge sees it raised again by
-  the next billing event while the condition holds; `clinicallyReady` (never
-  derived) is the hold. `clinicallyReady`, `pharmacyReady` and `transportReady`
+  false. Raising commutes, so no per-admission ordering is needed. To hold a
+  discharge, a person places a discharge hold (batch 6, fix 1), which no
+  derived flag lifts. `clinicallyReady`, `pharmacyReady` and `transportReady`
   stay human: nothing recorded says take-home medication is complete. Each
   raise is audited (`hospital.discharge.readinessDerived`).
 - **Subscriptions differ from the §2 table:** it listens to the charge, invoice,
@@ -970,6 +969,19 @@ with no tariff is priced, so `ChargeRepriced`) and claim-drafting's draft (13),
 then a late charge and its supplementary invoice with its own draft claim and
 blocker task (14). It asserts every charge is billed exactly once across the
 two documents, and the replay check now also counts claims.
+
+**Batch 6, fix 1: discharge holds.** `DischargeHold` (migration
+`20261018100000`): reason code (BILLING, INSURANCE, CLINICAL, DOCUMENTATION,
+PHARMACY, TRANSPORT, PATIENT_REQUEST, LEGAL, OTHER), who placed it and when, who
+cleared it and when; at most one active hold per reason. `placeDischargeHold` /
+`clearDischargeHold` emit `DischargeHoldChanged` (PLACED | CLEARED) and are
+audited; routes `…/admissions/[id]/discharge/holds` and `…/holds/[holdId]/clear`.
+`finalizeDischarge` refuses with `DischargeOnHoldError` while any hold is
+active; both it and placing lock the discharge row, so a hold racing a
+discharge either lands first and blocks it or is refused. discharge-readiness
+still raises derived flags but never reads or lifts a hold. The barrier list
+leads with each active hold. This replaces "lower a derived flag to hold a
+discharge". Gate `verify-postgres-discharge-holds`.
 
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b

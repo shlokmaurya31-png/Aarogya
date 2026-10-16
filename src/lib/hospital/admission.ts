@@ -9,6 +9,7 @@ import { PriceNotFoundError } from "./billing/pricing";
 import { ceilStayDays } from "./billing/money";
 import { BedConcurrencyError } from "./bed";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+import { lockDischarge, activeHoldReasons, DischargeOnHoldError } from "./dischargeHold";
 
 export class BedNotAvailableError extends Error {
   constructor() {
@@ -259,6 +260,10 @@ export class DischargeNotReadyError extends Error {
 /** Finalizes discharge: requires every readiness flag true, then frees the bed to CLEANING (brief §50 — bed workflow: discharged -> cleaning requested -> ... -> available). */
 export async function finalizeDischarge(dischargeId: string, byUserId: string, dischargeSummary: unknown, dischargeType?: string) {
   const result = await prisma.$transaction(async (tx) => {
+    // Batch 6: an active manual hold blocks discharge whatever the flags say (lock first: a concurrent hold waits).
+    await lockDischarge(tx, dischargeId);
+    const holds = await activeHoldReasons(tx, dischargeId);
+    if (holds.length > 0) throw new DischargeOnHoldError(holds);
     const discharge = await tx.discharge.findUniqueOrThrow({ where: { id: dischargeId }, include: { admission: { include: { encounter: true } } } });
     const missing = (["clinicallyReady", "documentationReady", "billingReady", "insuranceReady", "pharmacyReady", "transportReady"] as const).filter(
       (k) => !discharge[k]

@@ -248,6 +248,15 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({ admissionId: id, encounterId: id, patientId: id, icuUnitId: optId, viaTransfer: z.boolean() }).strict(),
   }),
   contract({
+    type: "DischargeHoldChanged", version: 1, aggregateType: "DISCHARGE", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "discharge holds (placeDischargeHold, clearDischargeHold)",
+    payload: z.object({
+      holdId: id, dischargeId: id, admissionId: id, encounterId: id, patientId: id,
+      change: z.enum(["PLACED", "CLEARED"]),
+      reasonCode: z.enum(["BILLING", "INSURANCE", "CLINICAL", "DOCUMENTATION", "PHARMACY", "TRANSPORT", "PATIENT_REQUEST", "LEGAL", "OTHER"]),
+    }).strict(),
+  }),
+  contract({
     type: "DischargeInitiated", version: 1, aggregateType: "DISCHARGE", scope: "FACILITY",
     sensitivity: "INTERNAL", producer: "admissions (initiateDischarge)",
     payload: z.object({ dischargeId: id, admissionId: id, encounterId: id, patientId: id }).strict(),

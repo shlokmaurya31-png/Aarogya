@@ -25,6 +25,9 @@ import { recordAuditEvent } from "@/lib/auth/audit";
  * clinicallyReady, pharmacyReady and transportReady stay human decisions
  * (nothing recorded says take-home medication is complete). Pending results
  * and consults are not flags: the barrier engine computes them on read.
+ * A manual discharge hold (dischargeHold.ts) is never read or touched here:
+ * raising a flag does not lift a hold, and finalizeDischarge refuses while one
+ * is active.
  */
 const LIVE_CLAIM = ["DRAFT", "SUBMITTED", "UNDER_REVIEW", "APPROVED", "PARTIALLY_APPROVED", "SETTLED"] as const;
 const ISSUED = ["ISSUED", "PARTIALLY_PAID", "PAID"] as const;

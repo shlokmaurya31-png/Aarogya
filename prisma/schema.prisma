@@ -2487,6 +2487,39 @@ model Discharge {
   initiatedByStaffId      String?
   expectedDischargeAt     DateTime?
   expectedDischargeReason String?
+  holds                   DischargeHold[]
+}
+
+/// Batch 6 fix 1: why a discharge is held.
+enum DischargeHoldReason {
+  BILLING
+  INSURANCE
+  CLINICAL
+  DOCUMENTATION
+  PHARMACY
+  TRANSPORT
+  PATIENT_REQUEST
+  LEGAL
+  OTHER
+}
+
+/// A manual hold on a discharge (batch 6 fix 1): who placed it, why (a code),
+/// when; cleared by a person. While any hold is active (clearedAt null),
+/// finalizeDischarge refuses, whatever the readiness flags say. At most one
+/// active hold per reason (partial unique index in the migration).
+model DischargeHold {
+  id              String              @id @default(cuid())
+  discharge       Discharge           @relation(fields: [dischargeId], references: [id])
+  dischargeId     String
+  facilityId      String
+  reasonCode      DischargeHoldReason
+  placedByUserId  String
+  placedAt        DateTime            @default(now())
+  clearedByUserId String?
+  clearedAt       DateTime?
+
+  @@index([dischargeId])
+  @@index([facilityId, clearedAt])
 }
 
 model ClinicalNote {
