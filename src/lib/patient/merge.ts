@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+import { carryLinksOnMerge, restoreLinksOnUnmerge, type LinkSnapshot } from "@/lib/person/merge";
 
 export class AlreadyMergedError extends Error {
   constructor() {
@@ -72,6 +73,11 @@ export async function mergePatients(input: {
         reason: input.reason,
       },
     });
+    // Phase 0: Person links follow the merge (carried, superseded, or the
+    // merge is refused when the records belong to different people), and are
+    // recorded so an unmerge restores them exactly.
+    const linkSnapshot = await carryLinksOnMerge(tx, { sourcePatientId: input.sourcePatientId, targetPatientId: input.targetPatientId, mergeRecordId: created.id, actorUserId: input.actorUserId });
+    await tx.patientMergeRecord.update({ where: { id: created.id }, data: { linkSnapshot: linkSnapshot as unknown as object } });
     // Audit write lives inside the same transaction as the merge itself —
     // both commit together or neither does, so a client never sees a
     // failure response for a merge that actually went through (see the
@@ -119,6 +125,10 @@ export async function unmergePatients(input: {
       data: { mergedIntoId: null, mergedAt: null },
     });
     if (cas.count !== 1) throw new NotMergedError();
+
+    // Phase 0: Person links exactly as they were before the merge.
+    const record = await tx.patientMergeRecord.findFirst({ where: { sourcePatientId: input.patientId, targetPatientId: patient.mergedIntoId! }, orderBy: [{ createdAt: "desc" }, { id: "desc" }] });
+    if (record) await restoreLinksOnUnmerge(tx, { snapshot: record.linkSnapshot as unknown as LinkSnapshot | null, mergeRecordId: record.id, actorUserId: input.actorUserId });
 
     await tx.auditEvent.create({
       data: {

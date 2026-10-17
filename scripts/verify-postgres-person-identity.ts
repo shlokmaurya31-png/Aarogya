@@ -25,10 +25,19 @@
  *      in-person verification still works; after the hold, codes work
  *      again; every phone change, by staff or the patient, notifies the
  *      previous number with no clinical or facility detail.
+ *   9. Facility merges: a link is carried to the target (source SUPERSEDED),
+ *      superseded when both are the same person's, refused when they're
+ *      different people's or a verification is in progress; unmerge restores
+ *      the links exactly.
+ *  10. Person merges: only with the other account's password and a code to
+ *      each account's email; wrong codes merge nothing; everything the
+ *      person owns moves to the survivor, the other login ends, different
+ *      sharing choices both lapse (asked again); there is no staff path.
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-person-identity.ts
  */
 process.env.SMS_PROVIDER = "outbox";
+process.env.EMAIL_PROVIDER = "outbox";
 
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -36,6 +45,11 @@ import { SMS_OUTBOX_FILE } from "../src/lib/messaging/sms";
 import { submitSecondFactor, verifyLinkCode } from "../src/lib/person/linking";
 import { updatePatientRecord } from "../src/lib/patient/demographics";
 import { updateProfile } from "../src/lib/patient/experience/profile";
+import { EMAIL_OUTBOX_FILE } from "../src/lib/email/send";
+import { mergePatients, unmergePatients } from "../src/lib/patient/merge";
+import { startPersonMerge, confirmPersonMerge } from "../src/lib/person/merge";
+import { hashPassword } from "../src/lib/auth/password";
+import { decidePersonConsent } from "../src/lib/person/consent";
 import { prisma } from "../src/lib/db";
 import { registerPatientAccount, connectFacilityRecord } from "../src/lib/patient/selfRegistration";
 import {
@@ -239,6 +253,80 @@ async function main() {
   await linkAccountForGate(prisma, selfUser.id, selfRec.id);
   await updateProfile({ patientId: selfRec.id, patientIds: [selfRec.id], facilityId: PUNE, isSelf: true, allowedClasses: new Set(["PERSONAL"]) }, { phone: `91${String(Date.now()).slice(-8)}` }, selfUser.id);
   report("The patient changes their phone in the portal: the previous number is told", (await smsTo(selfRec.phone!)).some((m) => /phone number on your hospital record/.test(m.text)));
+
+  // ── 9. Facility merges ──
+  const mkRec = (tag: string) => prisma.patient.create({ data: { uhid: `PIDM-${tag}-${run}`, facilityId: PUNE, fullName: `Merge ${tag} ${run}`, sex: "F" } });
+  const acct = async (tag: string) => {
+    const u = await prisma.user.create({ data: { email: `pidm-${tag}-${run}@verify.aarogya`, passwordHash: await hashPassword(`Merge@${run}`), role: "PATIENT", displayName: `Merge ${tag}` } });
+    const p = await prisma.person.create({ data: { displayName: `Merge ${tag}`, accounts: { create: { userId: u.id, role: "OWNER" } } } });
+    return { userId: u.id, email: u.email, personId: p.id };
+  };
+  const lnk = (personId: string, patientId: string, userId: string) => prisma.personPatientLink.create({ data: { personId, patientId, facilityId: PUNE, status: "ACTIVE", method: "SELF_CREATED", linkedAt: new Date(), linkedByUserId: userId } });
+  const P = await acct("p"); const Q = await acct("q");
+  // source linked, target not → carried
+  const s1 = await mkRec("s1"); const t1 = await mkRec("t1");
+  const l1 = await lnk(P.personId, s1.id, P.userId);
+  const m1 = await mergePatients({ sourcePatientId: s1.id, targetPatientId: t1.id, actorStaffId: B.id, actorUserId: B.userId, reason: "duplicate" });
+  const carried = await prisma.personPatientLink.findFirst({ where: { patientId: t1.id, status: "ACTIVE" } });
+  report("Merge: the target gains the source's link (same Person, same method); the source's is SUPERSEDED",
+    carried?.personId === P.personId && carried?.method === "SELF_CREATED" && (await prisma.personPatientLink.findUniqueOrThrow({ where: { id: l1.id } })).status === "SUPERSEDED");
+  report("…PersonPatientLinkSuperseded, and the snapshot is on the merge record",
+    (await prisma.domainEventOutbox.count({ where: { eventType: "PersonPatientLinkSuperseded", aggregateId: l1.id } })) === 1 && Boolean((await prisma.patientMergeRecord.findUniqueOrThrow({ where: { id: m1.id } })).linkSnapshot));
+  await unmergePatients({ patientId: s1.id, actorStaffId: B.id, actorUserId: B.userId, reason: "wrong merge" });
+  report("Unmerge restores the links exactly: source ACTIVE again, the carried link SUPERSEDED",
+    (await prisma.personPatientLink.findUniqueOrThrow({ where: { id: l1.id } })).status === "ACTIVE" && (await prisma.personPatientLink.findUniqueOrThrow({ where: { id: carried!.id } })).status === "SUPERSEDED"
+      && (await prisma.personPatientLink.count({ where: { patientId: t1.id, status: { in: ["ACTIVE", "PENDING_VERIFICATION", "REVERIFICATION_REQUIRED"] } } })) === 0);
+  // both the same person's → source superseded
+  const s2 = await mkRec("s2"); const t2 = await mkRec("t2");
+  const l2s = await lnk(P.personId, s2.id, P.userId); const l2t = await lnk(P.personId, t2.id, P.userId);
+  await mergePatients({ sourcePatientId: s2.id, targetPatientId: t2.id, actorStaffId: B.id, actorUserId: B.userId, reason: "duplicate" });
+  report("Merge of two records of the same person: the source's link is SUPERSEDED, the target's stays",
+    (await prisma.personPatientLink.findUniqueOrThrow({ where: { id: l2s.id } })).status === "SUPERSEDED" && (await prisma.personPatientLink.findUniqueOrThrow({ where: { id: l2t.id } })).status === "ACTIVE");
+  // different people → refused, nothing changes
+  const s3 = await mkRec("s3"); const t3 = await mkRec("t3");
+  await lnk(P.personId, s3.id, P.userId); await lnk(Q.personId, t3.id, Q.userId);
+  const diff = await mergePatients({ sourcePatientId: s3.id, targetPatientId: t3.id, actorStaffId: B.id, actorUserId: B.userId, reason: "duplicate" }).then(() => "merged", (e) => e.constructor.name);
+  report("Merge of records linked to different people is refused, and nothing is merged",
+    diff === "PersonLinkConflictError" && (await prisma.patient.findUniqueOrThrow({ where: { id: s3.id } })).mergedIntoId === null);
+  // a verification in progress → refused
+  const s4 = await mkRec("s4"); const t4 = await mkRec("t4");
+  await prisma.personPatientLink.create({ data: { personId: P.personId, patientId: s4.id, facilityId: PUNE, status: "PENDING_VERIFICATION", method: "IN_PERSON_ID", idType: "PAN", idLast4: "1111", inPersonReason: "NO_PHONE_ON_RECORD", verifiedByStaffId: A.id } });
+  report("Merge while a verification is in progress is refused",
+    await refused(mergePatients({ sourcePatientId: s4.id, targetPatientId: t4.id, actorStaffId: B.id, actorUserId: B.userId, reason: "duplicate" })));
+
+  // ── 10. Person merges ──
+  const emailCode = async (to: string) => {
+    const lines = (await readFile(EMAIL_OUTBOX_FILE, "utf8").catch(() => "")).trim().split("\n").filter(Boolean).reverse();
+    for (const l of lines) { const m = JSON.parse(l) as { to: string; text: string }; if (m.to === to) return /\b(\d{6})\b/.exec(m.text)?.[1] ?? null; }
+    return null;
+  };
+  const X = await acct("x"); const Y = await acct("y");
+  const sx = await mkRec("x"); const sy = await mkRec("y");
+  await lnk(X.personId, sx.id, X.userId); const ly = await lnk(Y.personId, sy.id, Y.userId);
+  await prisma.personContact.create({ data: { personId: Y.personId, kind: "EMAIL", value: Y.email } });
+  await decidePersonConsent({ userId: X.userId, purpose: "SHARE_UPLOADS_WITH_TREATING", decision: "GRANTED" });
+  await decidePersonConsent({ userId: Y.userId, purpose: "SHARE_UPLOADS_WITH_TREATING", decision: "DECLINED" });
+  report("Person merge: a wrong password for the other account is refused, with no detail", await refused(startPersonMerge(X.userId, { otherEmail: Y.email, otherPassword: "wrong" })));
+  report("…an account can't merge with itself", await refused(startPersonMerge(X.userId, { otherEmail: X.email, otherPassword: `Merge@${run}` })));
+  const mr = await startPersonMerge(X.userId, { otherEmail: Y.email, otherPassword: `Merge@${run}` });
+  const cx = await emailCode(X.email); const cy = await emailCode(Y.email);
+  report("…a code goes to each account's email", Boolean(cx && cy && cx !== cy));
+  const wrongCodes = await confirmPersonMerge(X.userId, mr.requestId, { thisAccountCode: cx!, otherAccountCode: cx! });
+  report("…one wrong code merges nothing", wrongCodes.status === "INVALID" && (await prisma.person.findUniqueOrThrow({ where: { id: Y.personId } })).status === "ACTIVE");
+  report("…the other account can't confirm a merge it didn't start", await refused(confirmPersonMerge(Y.userId, mr.requestId, { thisAccountCode: cy!, otherAccountCode: cx! })));
+  const merged = await confirmPersonMerge(X.userId, mr.requestId, { thisAccountCode: cx!, otherAccountCode: cy! });
+  const yAfter = await prisma.person.findUniqueOrThrow({ where: { id: Y.personId } });
+  report("Both codes: MERGED into the surviving Person", merged.status === "MERGED" && yAfter.status === "MERGED" && yAfter.mergedIntoPersonId === X.personId);
+  report("…the other Person's link, contact and access log moved to the survivor",
+    (await prisma.personPatientLink.findUniqueOrThrow({ where: { id: ly.id } })).personId === X.personId
+      && (await prisma.personContact.count({ where: { personId: X.personId, value: Y.email } })) === 1 && (await prisma.personAccessLogEntry.count({ where: { personId: Y.personId } })) === 0);
+  report("…the survivor's login now holds both records; the other login holds none",
+    (await selfPatientIds(X.userId)).sort().join() === [sx.id, sy.id].sort().join() && (await selfPatientIds(Y.userId)).length === 0);
+  report("…different sharing choices both lapse, so the person is asked again", (await prisma.personConsent.count({ where: { personId: X.personId, status: "ACTIVE" } })) === 0);
+  report("…PersonMerged once, and a reversible snapshot", (await prisma.domainEventOutbox.count({ where: { eventType: "PersonMerged", aggregateId: X.personId } })) === 1
+    && Boolean((await prisma.personMergeRecord.findFirst({ where: { personId: X.personId, sourcePersonId: Y.personId } }))?.snapshot));
+  const routes = (await import("node:fs")).readdirSync("src/app/api/hospital", { recursive: true }).map(String);
+  report("There is no staff route that merges Persons", !routes.some((r) => /person/i.test(r) && /merge/i.test(r)));
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();

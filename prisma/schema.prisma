@@ -4020,6 +4020,10 @@ model PatientMergeRecord {
   reason          String
   createdAt       DateTime             @default(now())
 
+  /// Phase 0: the Person links before the merge (which link was superseded,
+  /// which was carried to the target), so an unmerge restores them exactly.
+  linkSnapshot Json?
+
   @@index([sourcePatientId])
   @@index([targetPatientId])
 }
@@ -10265,6 +10269,8 @@ enum PersonAccessLogKind {
   REVERIFICATION_REQUIRED
   CONSENT_DECIDED
   RECORD_ACCESSED
+  PERSON_MERGED
+  LINK_SUPERSEDED
 }
 
 model Person {
@@ -10291,6 +10297,11 @@ model Person {
 
   consents  PersonConsent[]
   documents ClinicalDocument[]
+
+  mergeRequests         PersonMergeRequest[] @relation("PersonMergeTarget")
+  mergeRequestsAsSource PersonMergeRequest[] @relation("PersonMergeSource")
+  mergeRecords          PersonMergeRecord[]  @relation("PersonMergeRecordTarget")
+  mergeRecordsAsSource  PersonMergeRecord[]  @relation("PersonMergeRecordSource")
 
   @@index([mergedIntoPersonId])
 }
@@ -10431,4 +10442,55 @@ model PersonConsent {
   createdAt       DateTime              @default(now())
 
   @@index([personId, purpose, status])
+}
+
+enum PersonMergeRequestStatus {
+  PENDING
+  COMPLETED
+  EXPIRED
+  FAILED
+}
+
+enum PersonMergeMethod {
+  BOTH_ACCOUNTS_PROVEN
+}
+
+/// One human with two Persons asks to merge them: signed in as the target,
+/// with the other account's password, then a code sent to each account's
+/// email. Staff can never start or decide one. personId is the surviving
+/// (target) Person.
+model PersonMergeRequest {
+  id                String                   @id @default(cuid())
+  person            Person                   @relation("PersonMergeTarget", fields: [personId], references: [id])
+  personId          String
+  sourcePerson      Person                   @relation("PersonMergeSource", fields: [sourcePersonId], references: [id])
+  sourcePersonId    String
+  initiatedByUserId String
+  targetCodeHash    String
+  sourceCodeHash    String
+  expiresAt         DateTime
+  attempts          Int                      @default(0)
+  status            PersonMergeRequestStatus @default(PENDING)
+  createdAt         DateTime                 @default(now())
+  completedAt       DateTime?
+
+  @@index([personId, status])
+}
+
+/// A completed Person merge, with what was re-pointed (snapshot) so it can be
+/// reversed. personId is the surviving (target) Person.
+model PersonMergeRecord {
+  id             String            @id @default(cuid())
+  person         Person            @relation("PersonMergeRecordTarget", fields: [personId], references: [id])
+  personId       String
+  sourcePerson   Person            @relation("PersonMergeRecordSource", fields: [sourcePersonId], references: [id])
+  sourcePersonId String
+  method         PersonMergeMethod
+  requestId      String            @unique
+  actorUserId    String
+  snapshot       Json
+  createdAt      DateTime          @default(now())
+  reversedAt     DateTime?
+
+  @@index([sourcePersonId])
 }

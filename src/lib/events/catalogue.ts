@@ -1301,6 +1301,16 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({ linkId: id, personId: id, patientId: id, reason: z.enum(["FRONT_DESK_LINK", "NO_EVIDENCE"]) }).strict(),
   }),
   contract({
+    type: "PersonPatientLinkSuperseded", version: 1, aggregateType: "PERSON_PATIENT_LINK", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "person identity (a facility merge carries or supersedes a record's link; an unmerge restores it)",
+    payload: z.object({ linkId: id, personId: id, patientId: id, replacedByLinkId: optId, cause: z.enum(["FACILITY_MERGE", "FACILITY_UNMERGE"]), mergeRecordId: id }).strict(),
+  }),
+  contract({
+    type: "PersonMerged", version: 1, aggregateType: "PERSON", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "person identity (confirmPersonMerge: one human proved control of both accounts)",
+    payload: z.object({ personId: id, sourcePersonId: id, mergeRecordId: id, method: z.enum(["BOTH_ACCOUNTS_PROVEN"]) }).strict(),
+  }),
+  contract({
     type: "PatientContactConfirmed", version: 1, aggregateType: "PATIENT", scope: "FACILITY",
     sensitivity: "INTERNAL", producer: "person identity (confirmPatientContact: staff confirm the record's phone with the patient present)",
     payload: z.object({ patientId: id, contact: z.enum(["PHONE"]), via: z.enum(["STAFF_IN_PERSON"]) }).strict(),

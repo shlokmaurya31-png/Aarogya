@@ -68,6 +68,9 @@ export type AuditEventType =
   // linking a facility record to a Person (facility audit; the person's
   // access log records the same facts).
   | "person.consent.decided"
+  | "person.merge.requested"
+  | "person.merge.refused"
+  | "person.merge.completed"
   | "patient.person.link.requested"
   | "patient.person.link.secondFactorFailed"
   | "patient.person.link.codeSent"

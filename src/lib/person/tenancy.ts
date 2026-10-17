@@ -18,6 +18,8 @@ export const PERSON_SCOPED_MODELS = [
   "PersonIdentifier",
   "PersonAccessLogEntry",
   "PersonConsent",
+  "PersonMergeRequest",
+  "PersonMergeRecord",
 ] as const;
 
 /** Facility-owned models that reference a Person. */

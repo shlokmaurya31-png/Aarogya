@@ -96,8 +96,9 @@ async function main() {
   const orphanEvents = await prisma.$queryRawUnsafe<{ n: bigint; sample: string | null }[]>(
     `SELECT count(*) AS n, min(o."eventType") AS sample FROM "DomainEventOutbox" o
       WHERE o."personId" IS NOT NULL AND o."facilityId" IS NOT NULL
-        AND NOT EXISTS (SELECT 1 FROM "PersonPatientLink" l WHERE l."personId" = o."personId" AND l."patientId" = o."payload"->>'patientId' AND l."facilityId" = o."facilityId")`);
-  report("Every FACILITY event carrying a personId concerns a record linked to that person, in that facility", Number(orphanEvents[0].n) === 0, `${orphanEvents[0].n} ${orphanEvents[0].sample ?? ""}`);
+        AND NOT EXISTS (SELECT 1 FROM "PersonPatientLink" l WHERE l."patientId" = o."payload"->>'patientId' AND l."facilityId" = o."facilityId"
+          AND (l."personId" = o."personId" OR l."personId" = (SELECT p."mergedIntoPersonId" FROM "Person" p WHERE p."id" = o."personId")))`);
+  report("Every FACILITY event carrying a personId concerns a record linked to that person (or the person they merged into), in that facility", Number(orphanEvents[0].n) === 0, `${orphanEvents[0].n} ${orphanEvents[0].sample ?? ""}`);
   // An upload's owner is (or was) linked to the record it sits on.
   const strayUploads = await prisma.$queryRawUnsafe<{ n: bigint }[]>(
     `SELECT count(*) AS n FROM "ClinicalDocument" d WHERE d."personId" IS NOT NULL
