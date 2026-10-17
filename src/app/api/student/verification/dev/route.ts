@@ -1,6 +1,6 @@
+import { setOwnVerificationStatusForDev } from "@/lib/student/accounts";
 import { NextRequest, NextResponse } from "next/server";
 import { VerificationStatus } from "@prisma/client";
-import { prisma } from "@/lib/db";
 import { requireSession } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 
@@ -22,10 +22,7 @@ export async function POST(req: NextRequest) {
   const status =
     action === "approve" ? VerificationStatus.VERIFIED : action === "reject" ? VerificationStatus.REJECTED : VerificationStatus.UNDER_REVIEW;
 
-  const profile = await prisma.studentProfile.update({
-    where: { userId: session.userId },
-    data: { verificationStatus: status, verifiedAt: status === VerificationStatus.VERIFIED ? new Date() : null },
-  });
+  const profile = await setOwnVerificationStatusForDev(session.userId, status);
 
   await recordAuditEvent(
     status === VerificationStatus.VERIFIED ? "student.verification.approved" : "student.verification.rejected",

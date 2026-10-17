@@ -1,11 +1,11 @@
+import { openCaseAttempt } from "@/lib/student/cases";
 import { NextRequest } from "next/server";
-import { AttemptMode, CaseStage } from "@prisma/client";
-import { prisma } from "@/lib/db";
+import { AttemptMode } from "@prisma/client";
 import { requireVerifiedStudent } from "@/lib/auth/currentStudent";
 import { withApiErrors, NotFoundError } from "@/lib/auth/rbac";
 import { getActiveCaseProvider } from "@/lib/clinical/gateway";
 import { toPublicView } from "@/lib/caseEngine/publicView";
-import { emptyRevealedState, type RevealedState } from "@/lib/caseEngine/types";
+import { type RevealedState } from "@/lib/caseEngine/types";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import type { CaseStage as TsCaseStage } from "@/types/clinicalCase";
 
@@ -21,25 +21,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const full = await provider.getCaseFull(id);
     if (!full) throw new NotFoundError("Case not found.");
 
-    let attempt = restart
-      ? null
-      : await prisma.caseAttempt.findFirst({
-          where: { caseId: id, studentId: session.userId, submittedAt: null },
-          orderBy: { startedAt: "desc" },
-        });
-
-    if (!attempt) {
-      attempt = await prisma.caseAttempt.create({
-        data: {
-          caseId: id,
-          studentId: session.userId,
-          mode,
-          stage: CaseStage.TRIAGE,
-          revealedState: emptyRevealedState() as object,
-        },
-      });
-      await recordAuditEvent("student.case.opened", session.userId, { caseId: id, attemptId: attempt.id });
-    }
+    const { attempt, created } = await openCaseAttempt({ caseId: id, studentId: session.userId, mode: mode === AttemptMode.EXAM ? "EXAM" : "PRACTICE", restart });
+    if (created) await recordAuditEvent("student.case.opened", session.userId, { caseId: id, attemptId: attempt.id });
 
     const revealed = attempt.revealedState as unknown as RevealedState;
     const view = toPublicView(full, revealed, attempt.stage as unknown as TsCaseStage, attempt.hintsUsed);

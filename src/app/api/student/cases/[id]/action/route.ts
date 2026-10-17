@@ -1,6 +1,6 @@
+import { ownOpenAttempt, recordCaseAction } from "@/lib/student/cases";
 import { NextRequest } from "next/server";
 import { CaseStage } from "@prisma/client";
-import { prisma } from "@/lib/db";
 import { requireVerifiedStudent } from "@/lib/auth/currentStudent";
 import { withApiErrors, NotFoundError, BadRequestError } from "@/lib/auth/rbac";
 import { getActiveCaseProvider } from "@/lib/clinical/gateway";
@@ -19,11 +19,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const action = body?.action as CaseActionInput | undefined;
     if (!attemptId || !action) throw new BadRequestError("attemptId and action are required.");
 
-    const attempt = await prisma.caseAttempt.findUnique({ where: { id: attemptId } });
-    if (!attempt || attempt.caseId !== id || attempt.studentId !== session.userId) {
-      throw new NotFoundError("Attempt not found.");
-    }
-    if (attempt.submittedAt) throw new BadRequestError("This attempt has already been submitted.");
+    const attempt = await ownOpenAttempt(attemptId, id, session.userId);
 
     const provider = getActiveCaseProvider();
     const full = await provider.getCaseFull(id);
@@ -65,10 +61,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         break;
     }
 
-    const updated = await prisma.caseAttempt.update({ where: { id: attempt.id }, data: updateData });
-
-    await prisma.caseAction.create({
-      data: { attemptId: attempt.id, stage: currentStage as unknown as CaseStage, type: action.type, payload: action as object },
+    const updated = await recordCaseAction({
+      attemptId: attempt.id, data: updateData,
+      action: { stage: currentStage as unknown as CaseStage, type: action.type, payload: action as object },
     });
     await recordAuditEvent("student.case.action", session.userId, { caseId: id, attemptId: attempt.id, type: action.type });
 

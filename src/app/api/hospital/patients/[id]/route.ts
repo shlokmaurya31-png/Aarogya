@@ -1,3 +1,4 @@
+import { updatePatientRecord } from "@/lib/patient/demographics";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
@@ -46,24 +47,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const parsed = UpdateSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestError("Invalid patient update.");
 
-    const existing = await prisma.patient.findUnique({ where: { id } });
-    if (!existing || existing.facilityId !== facilityId) throw new NotFoundError("Patient not found.");
-
     const d = parsed.data;
     const deceasedAt =
       d.deceased === true ? (d.deceasedAt ? new Date(d.deceasedAt) : new Date()) : d.deceased === false ? null : undefined;
 
-    const patient = await prisma.patient.update({
-      where: { id },
-      data: {
-        ...(d.fullName !== undefined ? { fullName: d.fullName } : {}),
-        ...(d.preferredName !== undefined ? { preferredName: d.preferredName } : {}),
-        ...(d.phone !== undefined ? { phone: d.phone } : {}),
-        ...(d.address !== undefined ? { address: d.address } : {}),
-        ...(d.bloodGroup !== undefined ? { bloodGroup: d.bloodGroup } : {}),
-        ...(d.language !== undefined ? { language: d.language } : {}),
-        ...(deceasedAt !== undefined ? { deceasedAt } : {}),
-      },
+    const patient = await updatePatientRecord({
+      patientId: id, facilityId, byUserId: session.userId,
+      changes: { fullName: d.fullName, preferredName: d.preferredName, phone: d.phone, address: d.address, bloodGroup: d.bloodGroup, language: d.language, deceasedAt },
     });
 
     await recordAuditEvent("hospital.patient.updated", session.userId, { patientId: id }, { facilityId, patientId: id });

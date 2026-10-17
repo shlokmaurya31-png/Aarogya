@@ -33,6 +33,9 @@
 export const EMIT_EXEMPTION_CATEGORIES = [
   "PLANNED", "BOOKKEEPING", "REFERENCE_DATA", "CONFIGURATION",
   "PROCESS_STEP", "OPERATIONAL_DETAIL", "INTEGRATION_PROTOCOL", "CONSUMER_OUTPUT",
+  // Batch 7: the Scholar learning product (outside the hospital workflow spine), and
+  // account credentials (audited; an event must never carry a credential).
+  "SCHOLAR", "ACCOUNT_SECURITY",
 ] as const;
 export type EmitExemptionCategory = (typeof EMIT_EXEMPTION_CATEGORIES)[number];
 
@@ -105,6 +108,22 @@ export const EMITTING_HELPERS: Record<string, string[]> = {
 };
 
 export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
+  "src/lib/auth/credentials.ts#replacePasswordHash": { category: "ACCOUNT_SECURITY", reason: "password change and reset; audited (security.password.*), never an event: events must not carry credentials" },
+  "src/lib/hospital/admission.ts#updateDischargePlan": { category: "OPERATIONAL_DETAIL", reason: "staff readiness flags and expected discharge time, read only by finalizeDischarge; a hold (DischargeHoldChanged) is the event-bearing block" },
+  "src/lib/hospital/encounterRecords.ts#updateEncounterDetails": { category: "OPERATIONAL_DETAIL", reason: "triage level and attending clinician on the encounter row; status changes emit through transitionEncounter" },
+  "src/lib/hospital/encounterRecords.ts#assignEncounterLocation": { category: "OPERATIONAL_DETAIL", reason: "in-encounter location (bed or area label); bed placement is AdmissionCreated / PatientTransferred" },
+  "src/lib/hospital/encounterRecords.ts#createEpisodeOfCare": { category: "OPERATIONAL_DETAIL", reason: "groups encounters for display; no reaction depends on it" },
+  "src/lib/hospital/interoperability/connections.ts#configureInteropConnection": { category: "CONFIGURATION", reason: "a facility's connection settings for an external system (credentials refused)" },
+  "src/lib/hospital/scheduleBlocks.ts#createScheduleBlock": { category: "CONFIGURATION", reason: "clinic sessions and leave; bookability reads them on demand" },
+  "src/lib/student/accounts.ts#registerStudentAccount": { category: "SCHOLAR", reason: "Scholar student account and verification submission; audited" },
+  "src/lib/student/accounts.ts#reviewStudentVerification": { category: "SCHOLAR", reason: "Scholar verification decision; audited" },
+  "src/lib/student/accounts.ts#setOwnVerificationStatusForDev": { category: "SCHOLAR", reason: "dev-only verification shortcut (disabled in production)" },
+  "src/lib/student/cases.ts#openCaseAttempt": { category: "SCHOLAR", reason: "Scholar case attempt; audited" },
+  "src/lib/student/cases.ts#recordCaseAction": { category: "SCHOLAR", reason: "Scholar case action; audited" },
+  "src/lib/student/cases.ts#submitCaseAttempt": { category: "SCHOLAR", reason: "Scholar submission and XP; audited" },
+  "src/lib/student/cases.ts#createClinicalCaseDraft": { category: "SCHOLAR", reason: "an educator's draft teaching case (synthetic, redacted); audited" },
+  "src/lib/student/notebook.ts#createNotebookEntry": { category: "SCHOLAR", reason: "a student's private note" },
+  "src/lib/student/notebook.ts#deleteNotebookEntry": { category: "SCHOLAR", reason: "a student's private note" },
   "src/lib/auth/audit.ts#recordAuditEvent": { category: "BOOKKEEPING", reason: "event/audit infrastructure" },
   "src/lib/auth/authorize/engine.ts#authorizeAccess": { category: "BOOKKEEPING", reason: "derived status, decision log or provenance written as part of another operation" },
   "src/lib/auth/authorize/sessionControl.ts#revokeAllSessions": { category: "BOOKKEEPING", reason: "derived status, decision log or provenance written as part of another operation" },
@@ -207,7 +226,6 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/hospital/inventory/items.ts#updateItem": { category: "REFERENCE_DATA", reason: "catalogue / master data; no runtime reaction depends on it" },
   "src/lib/hospital/inventory/locations.ts#createStockLocation": { category: "REFERENCE_DATA", reason: "catalogue / master data; no runtime reaction depends on it" },
   "src/lib/hospital/inventory/locations.ts#updateStockLocation": { category: "REFERENCE_DATA", reason: "catalogue / master data; no runtime reaction depends on it" },
-  "src/lib/hospital/inventory/lots.ts#ensureLotExpiryState": { category: "BOOKKEEPING", reason: "derived status, decision log or provenance written as part of another operation" },
   "src/lib/hospital/inventory/lots.ts#getOrCreateLot": { category: "BOOKKEEPING", reason: "derived balance / get-or-create helper called inside a larger operation" },
   "src/lib/hospital/inventory/stockBalance.ts#atomicConvertReservedToIssued": { category: "BOOKKEEPING", reason: "derived balance / get-or-create helper called inside a larger operation" },
   "src/lib/hospital/inventory/stockBalance.ts#atomicDecrementOnHand": { category: "BOOKKEEPING", reason: "derived balance / get-or-create helper called inside a larger operation" },
@@ -330,25 +348,5 @@ export const OWED_EVENTS: Record<string, { event: string; step: number }> = {
  * registration, encounter creation and lab/imaging order placement.
  */
 export const ROUTE_WRITE_ALLOWLIST: readonly string[] = [
-  "src/app/api/admin/verifications/students/route.ts#PATCH",
-  "src/app/api/educator/cases/route.ts#POST",
-  "src/app/api/hospital/admissions/[id]/discharge/route.ts#PATCH",
-  "src/app/api/hospital/encounters/[id]/location/route.ts#POST",
-  "src/app/api/hospital/encounters/[id]/route.ts#PATCH",
-  "src/app/api/hospital/episodes/route.ts#POST",
-  "src/app/api/hospital/interoperability/connections/route.ts#PATCH",
-  "src/app/api/hospital/inventory/lots/expiry-sweep/route.ts#POST",
-  "src/app/api/hospital/patients/[id]/emergency-contacts/route.ts#POST",
-  "src/app/api/hospital/patients/[id]/route.ts#PATCH",
-  "src/app/api/hospital/schedule-blocks/route.ts#POST",
-  "src/app/api/patient/access-session/[id]/end/route.ts#POST",
-  "src/app/api/scholar-auth/password/change/route.ts#POST",
-  "src/app/api/scholar-auth/password/reset/route.ts#POST",
-  "src/app/api/student/cases/[id]/action/route.ts#POST",
-  "src/app/api/student/cases/[id]/route.ts#GET",
-  "src/app/api/student/cases/[id]/submit/route.ts#POST",
-  "src/app/api/student/notebook/route.ts#DELETE",
-  "src/app/api/student/notebook/route.ts#POST",
-  "src/app/api/student/register/route.ts#POST",
-  "src/app/api/student/verification/dev/route.ts#POST",
+  // Empty since batch 7: every route-level write moved into a service.
 ];

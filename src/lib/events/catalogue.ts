@@ -561,6 +561,12 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({ lotId: id, itemId: id, from: lotStatus, to: lotStatus, cause: z.enum(["QUARANTINE", "RELEASE", "RECALL"]), recallId: optId }).strict(),
   }),
   contract({
+    type: "StockLotStatusChanged", version: 2, aggregateType: "ITEM_LOT", scope: "FACILITY",
+    sensitivity: "LOW", producer: "inventory lots (quarantineLot, releaseLotFromQuarantine, expireLapsedLots), pharmacy recalls",
+    /** v2 (batch 7): the expiry sweep (EXPIRY). */
+    payload: z.object({ lotId: id, itemId: id, from: lotStatus, to: lotStatus, cause: z.enum(["QUARANTINE", "RELEASE", "RECALL", "EXPIRY"]), recallId: optId }).strict(),
+  }),
+  contract({
     type: "ObservationRecorded", version: 1, aggregateType: "OBSERVATION", scope: "FACILITY",
     sensitivity: "INTERNAL", producer: "ICU (recordObservation); ED reassessment and transfusion observations at steps 4/8",
     payload: z.object({
@@ -1167,6 +1173,18 @@ export const EVENT_CONTRACTS: EventContract[] = [
       patientId: id, changeKind: z.enum(["PROFILE", "IDENTIFIER_ADDED"]),
       /** PROFILE: which fields changed, never their values. */
       fields: z.array(z.enum(["PREFERRED_NAME", "PHONE", "ADDRESS", "LANGUAGE", "COMMUNICATION_PREFERENCE"])).optional(),
+      identifierType: z.enum(["UHID", "MRN"]).optional(),
+    }).strict(),
+  }),
+  contract({
+    type: "PatientDemographicsUpdated", version: 2, aggregateType: "PATIENT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "patient profile (updateProfile), staff edits (updatePatientRecord, addEmergencyContact), identifiers (addPatientIdentifier)",
+    payload: z.object({
+      patientId: id,
+      /** v2 (batch 7): staff edits and emergency contacts. */
+      changeKind: z.enum(["PROFILE", "IDENTIFIER_ADDED", "EMERGENCY_CONTACT_ADDED"]),
+      /** PROFILE: which fields changed, never their values. */
+      fields: z.array(z.enum(["FULL_NAME", "PREFERRED_NAME", "PHONE", "ADDRESS", "BLOOD_GROUP", "LANGUAGE", "DECEASED", "COMMUNICATION_PREFERENCE"])).optional(),
       identifierType: z.enum(["UHID", "MRN"]).optional(),
     }).strict(),
   }),

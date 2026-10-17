@@ -1,3 +1,4 @@
+import { replacePasswordHash } from "@/lib/auth/credentials";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
@@ -34,7 +35,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Current password is incorrect." }, { status: 400 });
   }
 
-  await prisma.user.update({ where: { id: user.id }, data: { passwordHash: await hashPassword(newPassword) } });
+  await replacePasswordHash(user.id, await hashPassword(newPassword));
   // Sign out every other device, then re-issue this device's cookie at the new version.
   await invalidateSessionsOnCredentialChange(user.id);
   await createSession(user.id, user.role);

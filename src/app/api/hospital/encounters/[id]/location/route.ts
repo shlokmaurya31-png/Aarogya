@@ -1,3 +1,4 @@
+import { assignEncounterLocation } from "@/lib/hospital/encounterRecords";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
@@ -33,12 +34,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const encounter = await prisma.encounter.findUnique({ where: { id } });
     if (!encounter || encounter.facilityId !== facilityId) throw new NotFoundError("Encounter not found.");
 
-    const location = await prisma.$transaction(async (tx) => {
-      await tx.encounterLocation.updateMany({ where: { encounterId: id, releasedAt: null }, data: { releasedAt: new Date() } });
-      return tx.encounterLocation.create({
-        data: { encounterId: id, facilityId, bedId: parsed.data.bedId, areaLabel: parsed.data.areaLabel, assignedByStaffId: staff?.id },
-      });
-    });
+    const location = await assignEncounterLocation({ encounterId: id, facilityId, bedId: parsed.data.bedId, areaLabel: parsed.data.areaLabel, staffId: staff?.id });
 
     await recordAuditEvent(
       "hospital.location.assigned",

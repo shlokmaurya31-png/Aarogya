@@ -126,6 +126,7 @@ const ORDER = [
   "verify-postgres-clinical-records-events",
   "verify-postgres-quality-ops-events",
   "verify-postgres-access-identity-events",
+  "verify-postgres-route-services",
   // §7: the core-journey replay test, extended at each spine step.
   "verify-postgres-core-journey",
   // Batch 4: bounded retries; runs after the tenancy sweep (checks its fixtures)

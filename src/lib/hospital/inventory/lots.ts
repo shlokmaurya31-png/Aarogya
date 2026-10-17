@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
+import { prisma } from "@/lib/db";
 import { BadRequestError } from "@/lib/auth/rbac";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 type Tx = Prisma.TransactionClient;
 
 /** StockLotStatusChanged (a safety fact: the lot can or can't be issued), in the caller's transaction. */
-function emitLotStatus(tx: Tx, lot: { id: string; itemId: string; facilityId: string }, from: string, to: string, cause: "QUARANTINE" | "RELEASE", byUserId: string) {
+function emitLotStatus(tx: Tx, lot: { id: string; itemId: string; facilityId: string }, from: string, to: string, cause: "QUARANTINE" | "RELEASE" | "EXPIRY", byUserId: string | null) {
   return emitFacilityEvent(tx, {
     type: "StockLotStatusChanged", aggregateId: lot.id, facilityId: lot.facilityId, actorUserId: byUserId,
     payload: { lotId: lot.id, itemId: lot.itemId, from, to, cause },
@@ -51,10 +52,31 @@ export async function getOrCreateNoLotSentinel(tx: Tx, itemId: string, facilityI
 export async function ensureLotExpiryState(tx: Tx, lotId: string) {
   const lot = await tx.itemLot.findUniqueOrThrow({ where: { id: lotId } });
   if (lot.status === "ACTIVE" && lot.expiresAt && lot.expiresAt.getTime() <= Date.now()) {
-    await tx.itemLot.updateMany({ where: { id: lotId, status: "ACTIVE" }, data: { status: "EXPIRED" } });
+    const r = await tx.itemLot.updateMany({ where: { id: lotId, status: "ACTIVE" }, data: { status: "EXPIRED" } });
+    if (r.count === 1) await emitLotStatus(tx, lot, "ACTIVE", "EXPIRED", "EXPIRY", null);
     return tx.itemLot.findUniqueOrThrow({ where: { id: lotId } });
   }
   return lot;
+}
+
+/**
+ * The expiry sweep (batch 7, item 5; it was a bulk update in its route): every
+ * ACTIVE lot of the facility past its expiry becomes EXPIRED, one at a time,
+ * compare-and-set, each with StockLotStatusChanged (EXPIRY).
+ */
+export async function expireLapsedLots(facilityId: string, byUserId: string | null) {
+  const lapsed = await prisma.itemLot.findMany({ where: { facilityId, status: "ACTIVE", expiresAt: { lte: new Date() } }, select: { id: true, itemId: true, facilityId: true } });
+  let expired = 0;
+  for (const lot of lapsed) {
+    const done = await prisma.$transaction(async (tx) => {
+      const r = await tx.itemLot.updateMany({ where: { id: lot.id, status: "ACTIVE" }, data: { status: "EXPIRED" } });
+      if (r.count !== 1) return false;
+      await emitLotStatus(tx, lot, "ACTIVE", "EXPIRED", "EXPIRY", byUserId);
+      return true;
+    });
+    if (done) expired++;
+  }
+  return { expired };
 }
 
 export async function quarantineLot(tx: Tx, lotId: string, input: { reason: string; byUserId: string }) {

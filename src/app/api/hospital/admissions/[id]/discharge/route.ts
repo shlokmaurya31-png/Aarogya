@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
-import { initiateDischarge, updateDischargeReadiness } from "@/lib/hospital/admission";
+import { initiateDischarge, updateDischargePlan } from "@/lib/hospital/admission";
 
 /** Discharge Command Center (brief §36): shows exactly why a patient hasn't left via these readiness flags. */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -50,15 +50,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     for (const key of allowedKeys) {
       if (typeof body?.[key] === "boolean") flags[key] = body[key];
     }
-    let updated = await updateDischargeReadiness(admission.discharge.id, flags);
-
+    const updated = await updateDischargePlan({
+      dischargeId: admission.discharge.id, flags,
+      ...(typeof body?.expectedDischargeAt === "string" ? { expectedDischargeAt: new Date(body.expectedDischargeAt), expectedDischargeReason: body?.expectedDischargeReason ?? null } : {}),
+    });
     // Expected discharge date/time (brief §39) — tracked with an explicit reason for
     // each change, never silently overwritten, so expected-vs-actual LOS variance stays explainable.
     if (typeof body?.expectedDischargeAt === "string") {
-      updated = await prisma.discharge.update({
-        where: { id: admission.discharge.id },
-        data: { expectedDischargeAt: new Date(body.expectedDischargeAt), expectedDischargeReason: body?.expectedDischargeReason ?? null },
-      });
       await recordAuditEvent(
         "hospital.discharge.expectedDateChanged",
         session.userId,

@@ -1138,6 +1138,29 @@ unguarded update, so a review could be re-decided (now once, guarded on
 
 With 9b and 9c, no PLANNED exemption and no OWED event remains.
 
+**Batch 7, item 5: the route-write allowlist is empty.** The last 21 route
+handlers that wrote tables directly now call services:
+- **Emitting:** staff patient edits and emergency contacts
+  (`updatePatientRecord`, `addEmergencyContact`: `PatientDemographicsUpdated` v2,
+  with FULL_NAME, BLOOD_GROUP, DECEASED and EMERGENCY_CONTACT_ADDED); the lot
+  expiry sweep (`expireLapsedLots`, per lot with `StockLotStatusChanged` v2,
+  cause EXPIRY; the lazy expiry in `ensureLotExpiryState` emits the same); the
+  patient ending their own access (`endOwnAccessSession`; an unredeemed code is
+  cancelled without an event, as in fix 3).
+- **Exempt, with reasons:** encounter details, location and episodes and the
+  staff discharge plan (OPERATIONAL_DETAIL); schedule blocks and
+  interoperability connections (CONFIGURATION); the Scholar learning product
+  (new category SCHOLAR: accounts, verification, case attempts, notebook,
+  educator drafts); password change and reset (new category ACCOUNT_SECURITY:
+  audited, never an event, since events must not carry credentials).
+- **Fixed on the way:** an encounter location accepted another facility's bed,
+  and the attending clinician another facility's staff; a Scholar attempt
+  could be submitted twice concurrently (scored twice, XP added twice) and
+  acted on after submission; student registration created the user and profile
+  separately (a failure left an orphan user); an unknown profile in the
+  verification review was a 500.
+Gate `verify-postgres-route-services`.
+
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b
 (quality, safety, operations) and 9c (access, identity, interoperability,

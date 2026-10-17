@@ -1,6 +1,5 @@
+import { ownOpenAttempt, submitCaseAttempt } from "@/lib/student/cases";
 import { NextRequest } from "next/server";
-import { CaseStage } from "@prisma/client";
-import { prisma } from "@/lib/db";
 import { requireVerifiedStudent } from "@/lib/auth/currentStudent";
 import { withApiErrors, NotFoundError, BadRequestError } from "@/lib/auth/rbac";
 import { getActiveCaseProvider } from "@/lib/clinical/gateway";
@@ -19,11 +18,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const attemptId = body?.attemptId as string | undefined;
     if (!attemptId) throw new BadRequestError("attemptId is required.");
 
-    const attempt = await prisma.caseAttempt.findUnique({ where: { id: attemptId } });
-    if (!attempt || attempt.caseId !== id || attempt.studentId !== session.userId) {
-      throw new NotFoundError("Attempt not found.");
-    }
-    if (attempt.submittedAt) throw new BadRequestError("This attempt has already been submitted.");
+    const attempt = await ownOpenAttempt(attemptId, id, session.userId);
 
     const provider = getActiveCaseProvider();
     const full = await provider.getCaseFull(id);
@@ -43,26 +38,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       hintsUsed: attempt.hintsUsed,
     });
 
-    const updated = await prisma.caseAttempt.update({
-      where: { id: attempt.id },
-      data: { stage: CaseStage.COMPLETE, submittedAt: new Date(), score: breakdown as unknown as object },
-    });
+    const xpGain = Math.round(breakdown.total * 4);
+    const lastActive = profile.lastActiveAt;
+    const isConsecutiveDay = lastActive ? Date.now() - lastActive.getTime() < 1000 * 60 * 60 * 48 : false;
+    // Exactly once (a concurrent second submit is refused), with the XP added atomically.
+    const updated = await submitCaseAttempt({ attemptId: attempt.id, studentId: session.userId, score: breakdown as unknown as object, xpGain, consecutiveDay: isConsecutiveDay });
 
     await updateCompetencies(session.userId, breakdown);
     const newAchievements = await grantEarnedAchievements(session.userId, full, breakdown);
-
-    const xpGain = Math.round(breakdown.total * 4);
-    const now = new Date();
-    const lastActive = profile.lastActiveAt;
-    const isConsecutiveDay = lastActive ? now.getTime() - lastActive.getTime() < 1000 * 60 * 60 * 48 : false;
-    await prisma.studentProfile.update({
-      where: { userId: session.userId },
-      data: {
-        clinicalXp: profile.clinicalXp + xpGain,
-        streakDays: isConsecutiveDay ? profile.streakDays + 1 : 1,
-        lastActiveAt: now,
-      },
-    });
 
     await recordAuditEvent("student.case.submitted", session.userId, {
       caseId: id,

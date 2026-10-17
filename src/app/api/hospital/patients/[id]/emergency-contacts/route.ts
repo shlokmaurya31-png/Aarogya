@@ -1,3 +1,4 @@
+import { addEmergencyContact } from "@/lib/patient/demographics";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
@@ -34,12 +35,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const parsed = AddSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestError("Invalid emergency contact.");
 
-    const patient = await prisma.patient.findUnique({ where: { id } });
-    if (!patient || patient.facilityId !== facilityId) throw new NotFoundError("Patient not found.");
-
-    const contact = await prisma.patientEmergencyContact.create({
-      data: { patientId: id, name: parsed.data.name, relation: parsed.data.relation, phone: parsed.data.phone, priority: parsed.data.priority ?? 1 },
-    });
+    const contact = await addEmergencyContact({ patientId: id, facilityId, name: parsed.data.name, relation: parsed.data.relation, phone: parsed.data.phone, priority: parsed.data.priority, byUserId: session.userId });
 
     await recordAuditEvent(
       "hospital.patient.emergencyContactAdded",

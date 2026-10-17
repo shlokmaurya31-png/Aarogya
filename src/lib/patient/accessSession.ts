@@ -172,6 +172,22 @@ export async function redeemAccessCode(opts: {
 }
 
 /** End an ACTIVE session (records the visit). `by` = who initiated the end. */
+/**
+ * The patient ends their own access (batch 7, item 5; the cancel was written
+ * by the route): an unredeemed code is CANCELLED (no access occurred, so no
+ * event, as for any unredeemed code); a live session is ended as by the doctor.
+ */
+export async function endOwnAccessSession(sessionId: string, patientId: string, actingUserId: string) {
+  const existing = await prisma.patientAccessSession.findUnique({ where: { id: sessionId } });
+  if (!existing || existing.patientId !== patientId) return null;
+  if (existing.status === "PENDING") {
+    await prisma.patientAccessSession.updateMany({ where: { id: sessionId, status: "PENDING" }, data: { status: "CANCELLED", endedAt: new Date(), endedBy: "PATIENT" } });
+    return { status: "CANCELLED" as const };
+  }
+  const ended = await endAccessSession(sessionId, "PATIENT", actingUserId);
+  return { status: ended?.status ?? ("ENDED" as const) };
+}
+
 export async function endAccessSession(sessionId: string, by: "DOCTOR" | "PATIENT" | "SYSTEM", actingUserId: string | null) {
   const now = new Date();
   const session = await prisma.patientAccessSession.findUnique({ where: { id: sessionId } });

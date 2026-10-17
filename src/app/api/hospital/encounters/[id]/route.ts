@@ -1,3 +1,4 @@
+import { updateEncounterDetails } from "@/lib/hospital/encounterRecords";
 import { NextRequest } from "next/server";
 import { EncounterStatus } from "@prisma/client";
 import { prisma } from "@/lib/db";
@@ -23,20 +24,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     const triageLevel = body?.triageLevel as number | undefined;
     const requestedStatus = body?.status as EncounterStatus | undefined;
-    if (triageLevel !== undefined && (triageLevel < 1 || triageLevel > 5)) {
-      throw new BadRequestError("triageLevel must be between 1 (resuscitation) and 5 (non-urgent).");
-    }
-
-    // Non-state-machine field updates (triageLevel, attendingStaffId) apply directly.
-    if (triageLevel !== undefined || body?.attendingStaffId) {
-      await prisma.encounter.update({
-        where: { id },
-        data: {
-          ...(triageLevel !== undefined ? { triageLevel } : {}),
-          ...(body?.attendingStaffId ? { attendingStaffId: body.attendingStaffId } : {}),
-        },
-      });
-    }
+    // Non-state-machine field updates (triageLevel, attendingStaffId) go through the service.
+    await updateEncounterDetails({ encounterId: id, facilityId, triageLevel, attendingStaffId: body?.attendingStaffId });
 
     // Status change (triage level entry implies TRIAGED unless an explicit status was also given).
     // transitionEncounter() audits the status change itself — only log separately when there was no status change.

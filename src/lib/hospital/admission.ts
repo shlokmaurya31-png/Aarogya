@@ -244,6 +244,25 @@ export async function initiateDischarge(admissionId: string, byUserId: string, i
   return discharge;
 }
 
+/**
+ * Staff's discharge plan (batch 7, item 5; previously written by its route):
+ * the readiness flags a person sets and the expected discharge time with its
+ * reason. Planning inputs that only finalizeDischarge reads; a hold is the
+ * event-bearing way to block a discharge (dischargeHold.ts), so this emits
+ * nothing (OPERATIONAL_DETAIL in emitExemptions.ts).
+ */
+export async function updateDischargePlan(input: {
+  dischargeId: string;
+  flags: Partial<Record<"clinicallyReady" | "documentationReady" | "billingReady" | "insuranceReady" | "pharmacyReady" | "transportReady", boolean>>;
+  expectedDischargeAt?: Date; expectedDischargeReason?: string | null;
+}) {
+  let discharge = await updateDischargeReadiness(input.dischargeId, input.flags);
+  if (input.expectedDischargeAt) {
+    discharge = await prisma.discharge.update({ where: { id: input.dischargeId }, data: { expectedDischargeAt: input.expectedDischargeAt, expectedDischargeReason: input.expectedDischargeReason ?? null } });
+  }
+  return discharge;
+}
+
 export async function updateDischargeReadiness(
   dischargeId: string,
   flags: Partial<Record<"clinicallyReady" | "documentationReady" | "billingReady" | "insuranceReady" | "pharmacyReady" | "transportReady", boolean>>
