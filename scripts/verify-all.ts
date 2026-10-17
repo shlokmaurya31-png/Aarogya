@@ -123,6 +123,7 @@ const ORDER = [
   "verify-postgres-invoice-drafting-guard",
   "verify-postgres-discharge-holds",
   "verify-postgres-supply-events",
+  "verify-postgres-clinical-records-events",
   // §7: the core-journey replay test, extended at each spine step.
   "verify-postgres-core-journey",
   // Batch 4: bounded retries; runs after the tenancy sweep (checks its fixtures)

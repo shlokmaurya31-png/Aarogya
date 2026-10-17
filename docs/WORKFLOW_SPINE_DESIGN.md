@@ -248,7 +248,7 @@ order (§3.3).
 
 | Consumer | Subscribes to | Writes | Idempotency key | Failure / retry / dead letter | Ordered per aggregate |
 |---|---|---|---|---|---|
-| `rag-indexer` | `ClinicalNoteSigned`, `LabResultReleased`, `ImagingReportReleased`, `PatientDocumentUploaded`, `DocumentGenerated`, `PatientDischarged`, `ConsentRevoked`, `FamilyAccessRevoked` | the patient's retrieval index (chunks + embeddings, pgvector) and its access list | chunk key = (sourceType, sourceId, chunkNo); one index row per source, replaced in place | retry (embedding provider down); dead letter on a source the tenant can't read | **yes** (per aggregate: an amendment must not be overtaken by its predecessor) |
+| `rag-indexer` | `ClinicalNoteSigned`, `LabResultReleased`, `ImagingReportReleased`, `PatientDocumentUploaded`, `DocumentGenerated`, `ClinicalDocumentRecorded`, `ObservationRecorded` (VITALS, INTAKE, OUTPUT), `DiagnosisRecorded`, `AllergyListUpdated`, `ReferralStatusChanged`, `ProblemListUpdated`, `PatientDischarged`, `ConsentRevoked`, `FamilyAccessRevoked` (reserved; batch 7 added the clinical-record events: the indexer re-reads each record through the access model, the event carries only IDs and codes) | the patient's retrieval index (chunks + embeddings, pgvector) and its access list | chunk key = (sourceType, sourceId, chunkNo); one index row per source, replaced in place | retry (embedding provider down); dead letter on a source the tenant can't read | **yes** (per aggregate: an amendment must not be overtaken by its predecessor) |
 
 - **Amendments replace.** `ClinicalNoteSigned` with `supersedesNoteId`, an
   amended lab result or report: the consumer deletes the superseded source's
@@ -1075,6 +1075,24 @@ per item.
 
 Step 9a has no PLANNED entries left, and the cut list is empty
 (`StockBelowReorder`, `GoodsReceived`).
+
+**Batch 7, item 1: clinical writes out of the routes.** Vitals and
+intake/output (`recordVitals`, `recordIntakeOutput`) emit `ObservationRecorded`
+v2 (kinds VITALS, INTAKE, OUTPUT join the point-of-care kinds; vitals carry an
+`abnormal` flag from the facility's configured thresholds, never which value).
+Diagnoses (`recordDiagnosis`, `updateDiagnosis`) emit `DiagnosisRecorded`
+(ADDED | UPDATED | RESOLVED, the type and status codes and whether it is coded;
+never the text or the code, since a diagnosis code is the diagnosis). Allergies
+(`recordAllergy`, `updateAllergy`) emit `AllergyListUpdated` (ADDED | UPDATED |
+INACTIVATED; severity, verification and criticality codes; never the substance
+or reaction). Referrals (`createReferral`, `respondToReferral`) emit
+`ReferralStatusChanged`. New PATCH routes make UPDATED, RESOLVED and
+INACTIVATED reachable (a resolved diagnosis or inactive allergy can't be
+changed; record a new one). Bug fixed: a referral's response had no
+transition rule or guard, so a COMPLETED, CANCELLED or REJECTED referral could
+be changed again; those are now final, and responses compare-and-set. The six
+routes leave the route-write allowlist. Gate
+`verify-postgres-clinical-records-events`.
 
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b

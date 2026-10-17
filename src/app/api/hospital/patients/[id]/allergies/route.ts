@@ -1,10 +1,9 @@
 import { NextRequest } from "next/server";
+import { recordAllergy, updateAllergy } from "@/lib/hospital/clinicalRecords";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
-import { parseEnum, parseOptionalEnum } from "@/lib/enumValue";
-import { $Enums } from "@prisma/client";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return withApiErrors(async () => {
@@ -27,21 +26,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const body = await req.json().catch(() => null);
     const { session, facilityId } = await requireFacilityStaff("allergy:manage", body?.facilityId);
 
-    const patient = await prisma.patient.findUnique({ where: { id } });
-    if (!patient || patient.facilityId !== facilityId) throw new NotFoundError("Patient not found.");
-
     const { substance, reaction, severity } = body ?? {};
-    if (!substance || !severity) throw new BadRequestError("substance and severity are required.");
-
-    const allergy = await prisma.allergy.create({
-      data: {
-        patientId: id, substance, reaction, status: "ACTIVE",
-        // The chart sends lowercase (mild/moderate/severe); stored as the Severity enum.
-        severity: parseEnum($Enums.Severity, String(severity).toUpperCase(), "severity"),
-        criticality: parseOptionalEnum($Enums.AllergyCriticality, body?.criticality, "criticality"),
-        verification: parseEnum($Enums.AllergyVerification, body?.verification ?? "UNCONFIRMED", "verification"),
-      },
-    });
+    const allergy = await recordAllergy({ patientId: id, facilityId, substance, reaction, severity, criticality: body?.criticality, verification: body?.verification, byUserId: session.userId });
 
     await recordAuditEvent(
       "hospital.allergy.added",
@@ -49,6 +35,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       { patientId: id, allergyId: allergy.id },
       { facilityId, patientId: id }
     );
+    return { allergy };
+  });
+}
+
+/** Batch 7: change an allergy ({ allergyId, status?, severity?, criticality?, verification? }); INACTIVE or ENTERED_IN_ERROR inactivates it. */
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  return withApiErrors(async () => {
+    const { id } = await params;
+    const body = await req.json().catch(() => null);
+    const { session, facilityId } = await requireFacilityStaff("allergy:manage", body?.facilityId);
+    if (!body?.allergyId) throw new BadRequestError("allergyId is required.");
+    const current = await prisma.allergy.findUnique({ where: { id: body.allergyId }, select: { patientId: true } });
+    if (!current || current.patientId !== id) throw new NotFoundError("Allergy not found.");
+    const allergy = await updateAllergy({ allergyId: body.allergyId, facilityId, status: body.status, severity: body.severity, criticality: body.criticality, verification: body.verification, byUserId: session.userId });
+    await recordAuditEvent("hospital.allergy.updated", session.userId, { patientId: id, allergyId: allergy.id, status: allergy.status }, { facilityId, patientId: id });
     return { allergy };
   });
 }

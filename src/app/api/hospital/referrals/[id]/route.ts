@@ -1,11 +1,9 @@
 import { NextRequest } from "next/server";
-import { prisma } from "@/lib/db";
+import { respondToReferral } from "@/lib/hospital/referral";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
-import { withApiErrors, NotFoundError, BadRequestError } from "@/lib/auth/rbac";
+import { withApiErrors } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
-import { syncOrderStatus } from "@/lib/hospital/orderEnvelope";
 
-const VALID_STATUSES = ["ACKNOWLEDGED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "REJECTED"];
 
 /**
  * Specialist consult workflow (brief §8/§161): requested -> accepted ->
@@ -20,26 +18,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const body = await req.json().catch(() => null);
     const { session, facilityId, staff } = await requireFacilityStaff("referral:respond", body?.facilityId);
 
-    const referral = await prisma.referral.findUnique({ where: { id }, include: { encounter: true } });
-    if (!referral || referral.encounter.facilityId !== facilityId) throw new NotFoundError("Referral not found.");
-
     const { status, notes } = body ?? {};
-    if (!status || !VALID_STATUSES.includes(status)) throw new BadRequestError(`status must be one of ${VALID_STATUSES.join(", ")}.`);
-
-    const updated = await prisma.$transaction(async (tx) => {
-      const row = await tx.referral.update({
-        where: { id },
-        data: {
-          status,
-          notes: notes ?? referral.notes,
-          toStaffId: referral.toStaffId ?? staff?.id,
-          respondedAt: new Date(),
-          acceptedAt: status === "ACKNOWLEDGED" && !referral.acceptedAt ? new Date() : referral.acceptedAt,
-        },
-      });
-      await syncOrderStatus(tx, "REFERRAL", id);
-      return row;
-    });
+    const { referral: updated, previous: referral } = await respondToReferral({ referralId: id, facilityId, status, notes, staffId: staff?.id, byUserId: session.userId });
 
     await recordAuditEvent(
       "hospital.referral.updated",

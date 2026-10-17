@@ -1,11 +1,10 @@
 import { NextRequest } from "next/server";
+import { recordDiagnosis, updateDiagnosis } from "@/lib/hospital/clinicalRecords";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
-import { normalizeCode } from "@/lib/hospital/problemList";
 
-const VALID_TYPES = ["PRIMARY", "SECONDARY", "PROVISIONAL", "RULE_OUT", "FINAL"];
 
 /** Diagnosis (brief §17) — distinct from Problem, see docs/CLINICAL_CORE.md and docs/TARGET_DOMAIN_ARCHITECTURE.md §2. */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -15,26 +14,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const { session, facilityId, staff } = await requireFacilityStaff("diagnosis:manage", body?.facilityId);
     if (!staff) throw new BadRequestError("Diagnoses must be recorded by a staff account.");
 
-    const encounter = await prisma.encounter.findUnique({ where: { id } });
-    if (!encounter || encounter.facilityId !== facilityId) throw new NotFoundError("Encounter not found.");
-
     const { diagnosis, type, onsetDate, codeSystem, code, codeDisplay } = body ?? {};
-    if (!diagnosis || !type || !VALID_TYPES.includes(type)) {
-      throw new BadRequestError(`diagnosis is required and type must be one of ${VALID_TYPES.join(", ")}.`);
-    }
-    const coded = normalizeCode({ codeSystem, code, codeDisplay });
-
-    const created = await prisma.diagnosis.create({
-      data: {
-        patientId: encounter.patientId,
-        encounterId: id,
-        diagnosis,
-        type,
-        onsetDate: onsetDate ? new Date(onsetDate) : undefined,
-        ...coded,
-        diagnosedByStaffId: staff.id,
-      },
-    });
+    const created = await recordDiagnosis({ encounterId: id, facilityId, staffId: staff.id, diagnosis, type, onsetDate: onsetDate ? new Date(onsetDate) : undefined, codeSystem, code, codeDisplay, byUserId: session.userId });
+    const encounter = await prisma.encounter.findUniqueOrThrow({ where: { id }, select: { patientId: true } });
 
     await recordAuditEvent(
       "hospital.diagnosis.added",
@@ -57,5 +39,20 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
     const diagnoses = await prisma.diagnosis.findMany({ where: { encounterId: id }, orderBy: { createdAt: "desc" } });
     return { diagnoses };
+  });
+}
+
+/** Batch 7: change a diagnosis's type or status ({ diagnosisId, type?, status? }); RESOLVED resolves it. */
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  return withApiErrors(async () => {
+    const { id } = await params;
+    const body = await req.json().catch(() => null);
+    const { session, facilityId } = await requireFacilityStaff("diagnosis:manage", body?.facilityId);
+    if (!body?.diagnosisId) throw new BadRequestError("diagnosisId is required.");
+    const current = await prisma.diagnosis.findUnique({ where: { id: body.diagnosisId }, select: { encounterId: true } });
+    if (!current || current.encounterId !== id) throw new NotFoundError("Diagnosis not found.");
+    const updated = await updateDiagnosis({ diagnosisId: body.diagnosisId, facilityId, type: body.type, status: body.status, byUserId: session.userId });
+    await recordAuditEvent("hospital.diagnosis.updated", session.userId, { encounterId: id, diagnosisId: updated.id, status: updated.status, type: updated.type }, { facilityId, patientId: updated.patientId, encounterId: id });
+    return { diagnosis: updated };
   });
 }

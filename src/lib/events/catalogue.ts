@@ -569,6 +569,49 @@ export const EVENT_CONTRACTS: EventContract[] = [
     }).strict(),
   }),
   contract({
+    type: "ObservationRecorded", version: 2, aggregateType: "OBSERVATION", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "ICU, ED reassessment, transfusion observations; vitals (recordVitals) and intake/output (recordIntakeOutput) since batch 7",
+    payload: z.object({
+      observationId: id, encounterId: id, patientId: id,
+      /** v2 (batch 7): VITALS, INTAKE and OUTPUT join the point-of-care kinds. */
+      observationKind: z.enum(["ICU_VENTILATOR", "ICU_NEURO", "ICU_ABG", "ED_REASSESSMENT", "TRANSFUSION", "VITALS", "INTAKE", "OUTPUT"]),
+      /** VITALS: some value is outside the facility's configured thresholds (never which, never the values). */
+      abnormal: z.boolean().optional(),
+    }).strict(),
+  }),
+  contract({
+    type: "DiagnosisRecorded", version: 1, aggregateType: "DIAGNOSIS", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "diagnoses (recordDiagnosis: ADDED; updateDiagnosis: UPDATED | RESOLVED)",
+    payload: z.object({
+      diagnosisId: id, encounterId: id, patientId: id, action: z.enum(["ADDED", "UPDATED", "RESOLVED"]),
+      diagnosisType: z.enum(["PRIMARY", "SECONDARY", "PROVISIONAL", "RULE_OUT", "FINAL"]),
+      status: z.enum(["ACTIVE", "RESOLVED", "ENTERED_IN_ERROR"]),
+      /** Whether it carries a terminology code (never the code or the text: a diagnosis code is the diagnosis). */
+      coded: z.boolean(),
+    }).strict(),
+  }),
+  contract({
+    type: "AllergyListUpdated", version: 1, aggregateType: "ALLERGY", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "allergies (recordAllergy: ADDED; updateAllergy: UPDATED | INACTIVATED)",
+    payload: z.object({
+      allergyId: id, patientId: id, action: z.enum(["ADDED", "UPDATED", "INACTIVATED"]),
+      status: z.enum(["ACTIVE", "INACTIVE", "ENTERED_IN_ERROR"]),
+      severity: z.enum(["MILD", "MODERATE", "SEVERE"]),
+      verification: z.enum(["UNCONFIRMED", "CONFIRMED"]),
+      criticality: z.enum(["LOW", "HIGH", "UNABLE_TO_ASSESS"]).optional(),
+    }).strict(),
+  }),
+  contract({
+    type: "ReferralStatusChanged", version: 1, aggregateType: "REFERRAL", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "referrals (createReferral: PLACED; respondToReferral)",
+    payload: z.object({
+      referralId: id, encounterId: id, patientId: id,
+      from: z.enum(["DRAFT", "PLACED", "ACKNOWLEDGED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "REJECTED"]).nullable(),
+      to: z.enum(["DRAFT", "PLACED", "ACKNOWLEDGED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "REJECTED"]),
+      priority: orderPriority, toDepartmentId: optId, toStaffId: optId,
+    }).strict(),
+  }),
+  contract({
     type: "IcuDeviceStatusChanged", version: 1, aggregateType: "ICU_DEVICE", scope: "FACILITY",
     sensitivity: "INTERNAL", producer: "ICU (recordDevice, updateDeviceStatus)",
     payload: z.object({ deviceId: id, encounterId: id, patientId: id, from: icuDeviceStatus.nullable(), to: icuDeviceStatus }).strict(),
