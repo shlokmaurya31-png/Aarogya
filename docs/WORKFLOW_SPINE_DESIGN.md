@@ -1094,6 +1094,13 @@ be changed again; those are now final, and responses compare-and-set. The six
 routes leave the route-write allowlist. Gate
 `verify-postgres-clinical-records-events`.
 
+**Batch 7, item 2: ledger integrity.** The inventory security and concurrency
+gates set `onHandQty` directly on fixture balances, so the ledger and
+`StockBalance` disagreed for their rows (8 mismatches). Their fixtures now add
+stock through `scripts/lib/stockFixture.ts` (a balance increment plus its
+`postLedgerEntry` ADJUSTMENT), and the 9a gate's reconciliation is
+facility-wide and requires 0 mismatches.
+
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b
 (quality, safety, operations) and 9c (access, identity, interoperability,

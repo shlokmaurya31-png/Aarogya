@@ -229,9 +229,8 @@ async function main() {
   report("Approve and reject racing: exactly one wins, and the stock matches the winner",
     [ap, rj].filter((r) => r.status === "fulfilled").length === 1 && (ap.status === "fulfilled" ? raced === "10/0" : raced === "70/0"), `${ap.status}/${rj.status} ${raced}`);
   const rec = await tx((t) => reconcileBalances(t, facilityId));
-  // Scoped to this gate's item: older gates' fixtures write StockBalance rows directly, without ledger entries.
-  const mine = rec.discrepancies.filter((d) => d.itemId === item.id);
-  report("The ledger still reconciles with every balance of this item (all its lots and locations)", mine.length === 0, JSON.stringify(mine));
+  // Facility-wide (batch 7, item 2): every gate's fixtures now create stock through the ledger.
+  report("The ledger reconciles with every stock balance in the facility (0 mismatches)", rec.discrepancies.length === 0, `${rec.checked} balances checked; ${JSON.stringify(rec.discrepancies.slice(0, 3))}`);
   report("No waste payload carries its notes", !JSON.stringify([...w1e, ...w2e]).includes("secret") && !(await wasteMoves(w2.waste.id)).includes("secret"));
 
   // 5. Procurement.

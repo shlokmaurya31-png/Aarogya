@@ -8,13 +8,13 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-inventory-concurrency.ts
  */
+import { seedFixtureStock } from "./lib/stockFixture";
 import { PrismaClient } from "@prisma/client";
 import { issueStock } from "../src/lib/hospital/inventory/issue";
 import { InsufficientStockError } from "../src/lib/hospital/inventory/stockBalance";
 import { reserveStock } from "../src/lib/hospital/inventory/reservation";
 import { initiateTransfer, receiveTransfer, TransferConcurrencyError } from "../src/lib/hospital/inventory/transfer";
 import { createAdjustment } from "../src/lib/hospital/inventory/adjustment";
-import { getOrCreateStockBalance } from "../src/lib/hospital/inventory/stockBalance";
 import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
@@ -37,10 +37,9 @@ async function freshLocation(facilityId: string, name: string) {
 async function freshLot(itemId: string, facilityId: string, lotNumber: string) {
   return prisma.itemLot.create({ data: { itemId, facilityId, lotNumber: `${lotNumber}-${runId}`, status: "ACTIVE" } });
 }
-async function seedBalance(facilityId: string, itemId: string, lotId: string, locationId: string, onHandQty: number) {
-  const balance = await prisma.$transaction((tx) => getOrCreateStockBalance(tx, { facilityId, itemId, lotId, locationId }));
-  await prisma.stockBalance.update({ where: { id: balance.id }, data: { onHandQty } });
-  return balance;
+/** Fixture stock through the ledger (batch 7, item 2), so the ledger and balances reconcile. */
+async function seedBalance(facilityId: string, itemId: string, lotId: string, locationId: string, onHandQty: number, actorUserId: string) {
+  return seedFixtureStock({ facilityId, itemId, lotId, locationId, quantity: onHandQty, actorUserId, key: `conc-${lotId}-${locationId}` });
 }
 
 async function main() {
@@ -52,7 +51,7 @@ async function main() {
     const item = await freshItem(facility.id, "Race1Item");
     const location = await freshLocation(facility.id, "Race1Loc");
     const lot = await freshLot(item.id, facility.id, "R1");
-    await seedBalance(facility.id, item.id, lot.id, location.id, 5);
+    await seedBalance(facility.id, item.id, lot.id, location.id, 5, staff.userId);
 
     const attempt = (n: number) =>
       prisma
@@ -75,7 +74,7 @@ async function main() {
     const item = await freshItem(facility.id, "Race2Item");
     const location = await freshLocation(facility.id, "Race2Loc");
     const lot = await freshLot(item.id, facility.id, "R2");
-    await seedBalance(facility.id, item.id, lot.id, location.id, 3);
+    await seedBalance(facility.id, item.id, lot.id, location.id, 3, staff.userId);
 
     const attempt = (n: number) =>
       prisma
@@ -99,7 +98,7 @@ async function main() {
     const destA = await freshLocation(facility.id, "Race4DestA");
     const destB = await freshLocation(facility.id, "Race4DestB");
     const lot = await freshLot(item.id, facility.id, "R4");
-    await seedBalance(facility.id, item.id, lot.id, source.id, 10);
+    await seedBalance(facility.id, item.id, lot.id, source.id, 10, staff.userId);
 
     const attempt = (n: number, toLocationId: string) =>
       prisma
@@ -120,7 +119,7 @@ async function main() {
     const source = await freshLocation(facility.id, "Race5Src");
     const dest = await freshLocation(facility.id, "Race5Dest");
     const lot = await freshLot(item.id, facility.id, "R5");
-    await seedBalance(facility.id, item.id, lot.id, source.id, 10);
+    await seedBalance(facility.id, item.id, lot.id, source.id, 10, staff.userId);
     const { transfer } = await prisma.$transaction((tx) =>
       initiateTransfer(tx, { facilityId: facility.id, itemId: item.id, lotId: lot.id, fromLocationId: source.id, toLocationId: dest.id, quantity: 10, requestedByStaffId: staff.id, actorUserId: staff.userId, idempotencyKey: `race5-init-${runId}` })
     );
@@ -144,7 +143,7 @@ async function main() {
     const item = await freshItem(facility.id, "Race6Item");
     const location = await freshLocation(facility.id, "Race6Loc");
     const lot = await freshLot(item.id, facility.id, "R6");
-    await seedBalance(facility.id, item.id, lot.id, location.id, 10);
+    await seedBalance(facility.id, item.id, lot.id, location.id, 10, staff.userId);
 
     const attempt = (n: number) =>
       prisma
