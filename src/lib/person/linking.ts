@@ -45,10 +45,16 @@ export function phoneUsable(p: { phone: string | null; phoneConfirmedAt: Date | 
   return Boolean(p.phone && p.phoneConfirmedAt && now.getTime() - p.phoneConfirmedAt.getTime() <= PHONE_CONFIRMATION_MAX_AGE_MS);
 }
 
-/** Does this facility record already belong to a Person (a live link), or to a pre-Phase-0 account? */
-export async function recordIsClaimed(patientId: string): Promise<boolean> {
+/**
+ * Does this facility record already belong to a Person (a live link), or to a
+ * pre-Phase-0 account? `exceptPersonId`: that person's own link awaiting
+ * reverification (after the identity migration) doesn't count against them.
+ */
+export async function recordIsClaimed(patientId: string, exceptPersonId?: string | null): Promise<boolean> {
   const [live, legacy] = await Promise.all([
-    prisma.personPatientLink.count({ where: { patientId, status: { in: LIVE_LINK } } }),
+    prisma.personPatientLink.count({
+      where: { patientId, status: { in: LIVE_LINK }, ...(exceptPersonId ? { NOT: { personId: exceptPersonId, status: "REVERIFICATION_REQUIRED" } } : {}) },
+    }),
     prisma.patient.count({ where: { id: patientId, userId: { not: null } } }),
   ]);
   return live > 0 || legacy > 0;
@@ -78,8 +84,8 @@ export type LinkRoute = "SECOND_FACTOR_REQUIRED" | "IN_PERSON_REQUIRED" | "FRONT
  * account) holds goes to front-desk review; a record with a phone confirmed
  * within 12 months asks for the second factor; anything else is in-person.
  */
-export async function routeFor(candidate: { id: string; phone: string | null; phoneConfirmedAt: Date | null }): Promise<{ route: LinkRoute; reason: string | null }> {
-  if (await recordIsClaimed(candidate.id)) return { route: "FRONT_DESK_REVIEW", reason: "the matched record is already connected to an account" };
+export async function routeFor(candidate: { id: string; phone: string | null; phoneConfirmedAt: Date | null }, personId?: string | null): Promise<{ route: LinkRoute; reason: string | null }> {
+  if (await recordIsClaimed(candidate.id, personId)) return { route: "FRONT_DESK_REVIEW", reason: "the matched record is already connected to an account" };
   if (phoneUsable(candidate)) return { route: "SECOND_FACTOR_REQUIRED", reason: null };
   return { route: "IN_PERSON_REQUIRED", reason: candidate.phone ? "PHONE_NOT_CONFIRMED" : "NO_PHONE_ON_RECORD" };
 }
@@ -182,7 +188,7 @@ async function completeLink(r: PatientLinkRequest, personId: string, userId: str
   try {
     await prisma.$transaction(async (tx) => {
       const p = await tx.patient.findUnique({ where: { id: r.candidatePatientId! }, select: { mergedIntoId: true, userId: true } });
-      if (!p || p.mergedIntoId || p.userId) throw new ConflictError("claimed");
+      if (!p || p.mergedIntoId || (p.userId && p.userId !== userId)) throw new ConflictError("claimed");
       const done = await tx.patientLinkRequest.updateMany({ where: { id: r.id, status: r.status }, data: { status: "LINKED", otpHash: null, resolvedAt: new Date() } });
       if (done.count !== 1) throw new ConflictError("claimed");
       await recordActiveLink(tx, { personId, patientId: r.candidatePatientId!, facilityId: r.facilityId, method, linkedByUserId: userId, linkRequestId: r.id });
@@ -197,6 +203,32 @@ async function completeLink(r: PatientLinkRequest, personId: string, userId: str
   await recordAuditEvent("patient.person.link.linked", userId, { linkRequestId: r.id, patientId: r.candidatePatientId, personId, method }, { facilityId: r.facilityId, patientId: r.candidatePatientId! });
   await notifyPerson(personId, "LINKED");
   return true;
+}
+
+// ── Reverification (links the identity migration couldn't trust) ────────────
+
+/**
+ * The person verifies a link the identity migration marked
+ * REVERIFICATION_REQUIRED: the same routes as a new link (second factor +
+ * code to the record's phone, or in person). Verifying makes it ACTIVE.
+ */
+export async function startReverification(userId: string, linkId: string) {
+  const personId = await requireOwnedPerson(userId);
+  const link = await prisma.personPatientLink.findUnique({ where: { id: linkId }, include: { person: { select: { displayName: true, sex: true } }, patient: { select: { id: true, phone: true, phoneConfirmedAt: true, sex: true } } } });
+  if (!link || link.personId !== personId) throw new NotFoundError();
+  if (link.status !== "REVERIFICATION_REQUIRED") throw new ConflictError("This connection doesn't need verifying.");
+  const open = await prisma.patientLinkRequest.findFirst({ where: { personId, candidatePatientId: link.patientId, status: { in: ["SECOND_FACTOR_REQUIRED", "OTP_SENT", "IN_PERSON_REQUIRED", "FRONT_DESK_REVIEW"] } } });
+  if (open) return { requestId: open.id, status: open.status };
+  const { route, reason } = await routeFor(link.patient, personId);
+  const request = await prisma.patientLinkRequest.create({
+    data: {
+      userId, personId, facilityId: link.facilityId, candidatePatientId: link.patientId, status: route, reviewReason: reason ?? "reverification after the identity migration",
+      initiatedBy: "PERSON", method: route === "SECOND_FACTOR_REQUIRED" ? "OTP_RECORD_CONTACT" : route === "IN_PERSON_REQUIRED" ? "IN_PERSON_ID" : null,
+      matchConfidence: "REVERIFY", matchScore: 0, matchedOn: [], claimedName: link.person.displayName, claimedSex: link.person.sex ?? link.patient.sex,
+    },
+  });
+  await recordAuditEvent("patient.person.link.requested", userId, { linkRequestId: request.id, linkId, route, reverification: true }, { facilityId: link.facilityId, patientId: link.patientId });
+  return { requestId: request.id, status: route };
 }
 
 // ── (c) In-person ID verification ───────────────────────────────────────────
@@ -220,15 +252,15 @@ export async function startInPersonVerification(input: { facilityId: string; req
   if (!r || r.facilityId !== input.facilityId) throw new NotFoundError("Link request not found.");
   if (!["IN_PERSON_REQUIRED", "FRONT_DESK_REVIEW", "SECOND_FACTOR_REQUIRED"].includes(r.status)) throw new ConflictError("This request has already been resolved.");
   if (!r.candidatePatientId || !r.personId) throw new BadRequestError("This request has no matched record or person.");
-  if (await recordIsClaimed(r.candidatePatientId)) throw new ConflictError("The record is already connected to an account.");
+  if (await recordIsClaimed(r.candidatePatientId, r.personId)) throw new ConflictError("The record is already connected to an account.");
+  const inPerson = { method: "IN_PERSON_ID" as const, linkRequestId: r.id, idType, idLast4: input.idLast4, inPersonReason: reason, verifiedByStaffId: input.staffId };
+  // The person's own link awaiting reverification is verified in place.
+  const pending = await prisma.personPatientLink.findFirst({ where: { personId: r.personId, patientId: r.candidatePatientId, status: "REVERIFICATION_REQUIRED" } });
   let link;
   try {
-    link = await prisma.personPatientLink.create({
-      data: {
-        personId: r.personId, patientId: r.candidatePatientId, facilityId: r.facilityId, status: "PENDING_VERIFICATION",
-        method: "IN_PERSON_ID", linkRequestId: r.id, idType, idLast4: input.idLast4, inPersonReason: reason, verifiedByStaffId: input.staffId,
-      },
-    });
+    link = pending
+      ? await prisma.personPatientLink.update({ where: { id: pending.id }, data: { ...inPerson, status: "PENDING_VERIFICATION", version: { increment: 1 } } })
+      : await prisma.personPatientLink.create({ data: { personId: r.personId, patientId: r.candidatePatientId, facilityId: r.facilityId, status: "PENDING_VERIFICATION", ...inPerson } });
   } catch (err) {
     if ((err as { code?: string }).code === "P2002") throw new ConflictError("A verification for this record is already in progress.");
     throw err;
@@ -270,7 +302,7 @@ export async function confirmPendingLink(userId: string, linkId: string) {
   if (link.method === "ABHA_BOTH_VERIFIED" && !ABHA_LINKING_ENABLED()) throw new BadRequestError("ABHA linking is not available.");
   await prisma.$transaction(async (tx) => {
     const p = await tx.patient.findUnique({ where: { id: link.patientId }, select: { mergedIntoId: true, userId: true } });
-    if (!p || p.mergedIntoId || p.userId) throw new ConflictError("The record is already connected to an account.");
+    if (!p || p.mergedIntoId || (p.userId && p.userId !== userId)) throw new ConflictError("The record is already connected to an account.");
     const r = await tx.personPatientLink.updateMany({
       where: { id: link.id, status: "PENDING_VERIFICATION", version: link.version },
       data: { status: "ACTIVE", linkedAt: new Date(), linkedByUserId: userId, version: { increment: 1 } },

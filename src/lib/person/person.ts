@@ -72,16 +72,19 @@ export async function recordActiveLink(tx: Tx, input: {
   linkRequestId?: string | null;
   inPerson?: { idType: Prisma.PersonPatientLinkCreateInput["idType"]; idLast4: string; reason: Prisma.PersonPatientLinkCreateInput["inPersonReason"]; verifiedByStaffId: string; approvedByStaffId: string };
 }) {
-  const link = await tx.personPatientLink.create({
-    data: {
-      personId: input.personId, patientId: input.patientId, facilityId: input.facilityId, status: "ACTIVE",
-      method: input.method, linkRequestId: input.linkRequestId ?? undefined, linkedAt: new Date(), linkedByUserId: input.linkedByUserId,
-      ...(input.inPerson ? {
-        idType: input.inPerson.idType, idLast4: input.inPerson.idLast4, inPersonReason: input.inPerson.reason,
-        verifiedByStaffId: input.inPerson.verifiedByStaffId, approvedByStaffId: input.inPerson.approvedByStaffId,
-      } : {}),
-    },
-  });
+  const fields = {
+    method: input.method, linkRequestId: input.linkRequestId ?? undefined, linkedAt: new Date(), linkedByUserId: input.linkedByUserId,
+    ...(input.inPerson ? {
+      idType: input.inPerson.idType, idLast4: input.inPerson.idLast4, inPersonReason: input.inPerson.reason,
+      verifiedByStaffId: input.inPerson.verifiedByStaffId, approvedByStaffId: input.inPerson.approvedByStaffId,
+    } : {}),
+  };
+  // A link the identity migration couldn't trust (REVERIFICATION_REQUIRED)
+  // becomes ACTIVE in place once this person verifies it.
+  const pending = await tx.personPatientLink.findFirst({ where: { personId: input.personId, patientId: input.patientId, status: "REVERIFICATION_REQUIRED" } });
+  const link = pending
+    ? await tx.personPatientLink.update({ where: { id: pending.id }, data: { ...fields, status: "ACTIVE", version: { increment: 1 } } })
+    : await tx.personPatientLink.create({ data: { personId: input.personId, patientId: input.patientId, facilityId: input.facilityId, status: "ACTIVE", ...fields } });
   await tx.personAccessLogEntry.create({
     data: { personId: input.personId, kind: "LINKED", accessingFacilityId: input.facilityId, actorUserId: input.linkedByUserId, detail: { linkId: link.id, method: input.method } },
   });

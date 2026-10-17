@@ -1296,6 +1296,11 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({ linkId: id, personId: id, patientId: id, by: z.enum(["PERSON", "FACILITY", "PLATFORM"]), reason: z.enum(["PERSON_REQUEST", "WRONG_PERSON", "FACILITY_MERGE", "PERSON_MERGE", "SECURITY"]) }).strict(),
   }),
   contract({
+    type: "PersonLinkReverificationRequired", version: 1, aggregateType: "PERSON_PATIENT_LINK", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "person identity (the identity migration: an existing account link without verification evidence)",
+    payload: z.object({ linkId: id, personId: id, patientId: id, reason: z.enum(["FRONT_DESK_LINK", "NO_EVIDENCE"]) }).strict(),
+  }),
+  contract({
     type: "PatientContactConfirmed", version: 1, aggregateType: "PATIENT", scope: "FACILITY",
     sensitivity: "INTERNAL", producer: "person identity (confirmPatientContact: staff confirm the record's phone with the patient present)",
     payload: z.object({ patientId: id, contact: z.enum(["PHONE"]), via: z.enum(["STAFF_IN_PERSON"]) }).strict(),
