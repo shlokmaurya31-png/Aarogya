@@ -4,6 +4,7 @@ import { BadRequestError } from "@/lib/auth/rbac";
 import { getOrCreateStockBalance, atomicIncrementOnHand, atomicDecrementOnHand } from "./stockBalance";
 import { postLedgerEntry } from "./ledger";
 import { assertItemInFacility, assertLocationInFacility, assertLotInFacility, assertReplayInFacility } from "./facilityScope";
+import { emitStockDocumentStatus } from "./stockDocumentEvent";
 
 type Tx = Prisma.TransactionClient;
 
@@ -121,6 +122,10 @@ export async function approveAdjustment(tx: Tx, adjustmentId: string, input: { a
     actorUserId: input.actorUserId,
     actorStaffId: input.approvedByStaffId,
   });
+  await emitStockDocumentStatus(tx, {
+    documentType: "ADJUSTMENT", documentId: adjustment.id, facilityId: adjustment.facilityId, from: "PENDING_APPROVAL", to: "APPROVED",
+    itemId: adjustment.itemId, locationId: adjustment.locationId, actorUserId: input.actorUserId,
+  });
 
   return tx.stockAdjustment.findUniqueOrThrow({ where: { id: adjustmentId } });
 }
@@ -131,5 +136,10 @@ export async function rejectAdjustment(tx: Tx, adjustmentId: string, input: { re
     data: { status: "REJECTED", rejectedAt: new Date(), rejectionReason: input.rejectionReason },
   });
   if (result.count !== 1) throw new AdjustmentConcurrencyError(adjustmentId);
-  return tx.stockAdjustment.findUniqueOrThrow({ where: { id: adjustmentId } });
+  const rejected = await tx.stockAdjustment.findUniqueOrThrow({ where: { id: adjustmentId } });
+  await emitStockDocumentStatus(tx, {
+    documentType: "ADJUSTMENT", documentId: rejected.id, facilityId: rejected.facilityId, from: "PENDING_APPROVAL", to: "REJECTED",
+    itemId: rejected.itemId, locationId: rejected.locationId, actorUserId: input.actorUserId,
+  });
+  return rejected;
 }

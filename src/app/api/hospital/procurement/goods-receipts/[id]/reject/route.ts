@@ -16,7 +16,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const receipt = await prisma.goodsReceipt.findUnique({ where: { id } });
     if (!receipt || receipt.facilityId !== facilityId) throw new NotFoundError("Goods receipt not found.");
 
-    const updated = await prisma.$transaction((tx) => rejectGoodsReceipt(tx, id, { rejectedByStaffId: staff.id, reason: body.reason }));
+    const updated = await prisma.$transaction((tx) => rejectGoodsReceipt(tx, id, { rejectedByStaffId: staff.id, reason: body.reason, actorUserId: session.userId }));
     await recordAuditEvent("hospital.procurement.goodsReceiptRejected", session.userId, { goodsReceiptId: id, reason: body.reason }, { facilityId });
     return { receipt: updated };
   });

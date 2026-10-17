@@ -1038,6 +1038,14 @@ per item.
   the caller updated `StockBalance` first. task-generator opens one
   STOCK_REORDER task for PROCUREMENT_OFFICER (URGENT at zero) while none is
   open for that item and location; a person completes it.
+- **`StockDocumentStatusChanged`** (closed `documentType` ADJUSTMENT | WASTE |
+  GOODS_RECEIPT | STOCK_TAKE, from/to from the union of the four status
+  enums) for an adjustment approved or rejected, a stock take completed (with
+  its variance line count; each variance posts `StockMoved`) and a goods
+  receipt rejected; waste at its own item. **`GoodsReceived`** (off the cut
+  list) when a receipt is approved: purchase order, supplier, line counts; each
+  accepted line posts a RECEIPT `StockMoved`. Recording a receipt stays a
+  process step. Rejection reasons are never in a payload.
 
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b

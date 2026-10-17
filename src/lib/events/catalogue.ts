@@ -493,6 +493,25 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({ itemId: id, locationId: id, ledgerEntryId: id, onHandQty: z.number(), reorderPoint: z.number(), reorderQuantity: z.number().optional() }).strict(),
   }),
   contract({
+    type: "StockDocumentStatusChanged", version: 1, aggregateType: "STOCK_DOCUMENT", scope: "FACILITY",
+    sensitivity: "LOW", producer: "inventory documents: adjustments (approve, reject), waste (approve, reject), stock takes (complete), goods receipts (reject; approval is GoodsReceived)",
+    payload: z.object({
+      /** Triage approved change 2: the closed code for the merged document kinds. */
+      documentType: z.enum(["ADJUSTMENT", "WASTE", "GOODS_RECEIPT", "STOCK_TAKE"]),
+      documentId: id,
+      from: z.enum(["POSTED", "PENDING_APPROVAL", "APPROVED", "REJECTED", "RECORDED", "DRAFT", "IN_PROGRESS", "COMPLETED", "CANCELLED"]),
+      to: z.enum(["POSTED", "PENDING_APPROVAL", "APPROVED", "REJECTED", "RECORDED", "DRAFT", "IN_PROGRESS", "COMPLETED", "CANCELLED"]),
+      itemId: optId, locationId: optId,
+      /** A stock take: how many lines had a variance (each posts StockMoved). */
+      varianceLineCount: z.number().int().min(0).optional(),
+    }).strict(),
+  }),
+  contract({
+    type: "GoodsReceived", version: 1, aggregateType: "GOODS_RECEIPT", scope: "FACILITY",
+    sensitivity: "LOW", producer: "procurement (approveGoodsReceipt: stock is posted on approval)",
+    payload: z.object({ goodsReceiptId: id, purchaseOrderId: id, supplierId: id, lineCount: z.number().int().positive(), acceptedLineCount: z.number().int().min(0) }).strict(),
+  }),
+  contract({
     type: "StockLotStatusChanged", version: 1, aggregateType: "ITEM_LOT", scope: "FACILITY",
     sensitivity: "LOW", producer: "inventory lots (quarantineLot, releaseLotFromQuarantine), pharmacy recalls",
     payload: z.object({ lotId: id, itemId: id, from: lotStatus, to: lotStatus, cause: z.enum(["QUARANTINE", "RELEASE", "RECALL"]), recallId: optId }).strict(),

@@ -7,6 +7,8 @@ import { postLedgerEntry } from "@/lib/hospital/inventory/ledger";
 import { assertItemInFacility, assertLocationInFacility, assertPurchaseOrderInFacility, assertPurchaseOrderLineInFacility, assertReplayInFacility } from "@/lib/hospital/inventory/facilityScope";
 import { nextGoodsReceiptSequence, formatSequenceNumber } from "./sequence";
 import { recomputeReceivingStatus } from "./purchaseOrders";
+import { emitStockDocumentStatus } from "@/lib/hospital/inventory/stockDocumentEvent";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 type Tx = Prisma.TransactionClient;
 
@@ -159,16 +161,26 @@ export async function approveGoodsReceipt(tx: Tx, receiptId: string, input: { ap
   }
 
   await recomputeReceivingStatus(tx, receipt.purchaseOrderId);
+  const po = await tx.purchaseOrder.findUniqueOrThrow({ where: { id: receipt.purchaseOrderId }, select: { supplierId: true } });
+  await emitFacilityEvent(tx, {
+    type: "GoodsReceived", aggregateId: receipt.id, facilityId: receipt.facilityId, actorUserId: input.actorUserId,
+    payload: {
+      goodsReceiptId: receipt.id, purchaseOrderId: receipt.purchaseOrderId, supplierId: po.supplierId,
+      lineCount: receipt.lines.length, acceptedLineCount: receipt.lines.filter((l) => l.acceptedQuantity > 0).length,
+    },
+  });
   return tx.goodsReceipt.findUniqueOrThrow({ where: { id: receiptId }, include: { lines: true } });
 }
 
-export async function rejectGoodsReceipt(tx: Tx, receiptId: string, input: { rejectedByStaffId: string; reason: string }) {
+export async function rejectGoodsReceipt(tx: Tx, receiptId: string, input: { rejectedByStaffId: string; reason: string; actorUserId?: string | null }) {
   const result = await tx.goodsReceipt.updateMany({
     where: { id: receiptId, status: "RECORDED" },
     data: { status: "REJECTED", rejectedByStaffId: input.rejectedByStaffId, rejectedAt: new Date(), rejectionReason: input.reason },
   });
   if (result.count !== 1) throw new GoodsReceiptConcurrencyError("not RECORDED");
-  return tx.goodsReceipt.findUniqueOrThrow({ where: { id: receiptId } });
+  const rejected = await tx.goodsReceipt.findUniqueOrThrow({ where: { id: receiptId } });
+  await emitStockDocumentStatus(tx, { documentType: "GOODS_RECEIPT", documentId: rejected.id, facilityId: rejected.facilityId, from: "RECORDED", to: "REJECTED", actorUserId: input.actorUserId });
+  return rejected;
 }
 
 /** Convenience: allocates a receipt number when recording — kept separate from recordGoodsReceipt so the sequence isn't burned on an idempotent-retry no-op. Callers that want a numbered receipt call this once, right after a successful (alreadyExisted:false) recordGoodsReceipt. */

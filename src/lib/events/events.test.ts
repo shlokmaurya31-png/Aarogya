@@ -246,3 +246,23 @@ describe("batch 6 payload codes mirror their sources", () => {
     expect(options("DischargeHoldChanged", "reasonCode")).toEqual(Object.values($Enums.DischargeHoldReason).sort());
   });
 });
+
+describe("step-9a payload codes mirror their sources", () => {
+  const options = (type: string, key: string) => {
+    const shape = (getEventContract(type, 1)!.payload as unknown as { shape: Record<string, { options?: string[]; unwrap?: () => unknown }> }).shape;
+    let f = shape[key] as { options?: string[]; unwrap?: () => unknown };
+    while (!f.options && f.unwrap) f = f.unwrap() as typeof f;
+    return [...(f.options ?? [])].sort();
+  };
+  it("StockMoved codes mirror StockMovementType, UnitOfMeasure, WasteReason and AdjustmentReason", () => {
+    expect(options("StockMoved", "movementType")).toEqual(Object.values($Enums.StockMovementType).sort());
+    expect(options("StockMoved", "unit")).toEqual(Object.values($Enums.UnitOfMeasure).sort());
+    expect(options("StockMoved", "wasteReason")).toEqual(Object.values($Enums.WasteReason).sort());
+    expect(options("StockMoved", "adjustmentReason")).toEqual(Object.values($Enums.AdjustmentReason).sort());
+  });
+  it("StockDocumentStatusChanged statuses are exactly the union of the four documents' status enums", () => {
+    const union = [...new Set([...Object.values($Enums.StockAdjustmentStatus), ...Object.values($Enums.WasteRecordStatus), ...Object.values($Enums.GoodsReceiptStatus), ...Object.values($Enums.StockTakeStatus)])].sort();
+    expect(options("StockDocumentStatusChanged", "from")).toEqual(union);
+    expect(options("StockDocumentStatusChanged", "to")).toEqual(union);
+  });
+});
