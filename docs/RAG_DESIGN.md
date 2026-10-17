@@ -1,12 +1,16 @@
 # Retrieval-augmented answers over the patient record: design (Week 4b)
 
-- **Status:** Design, revision 2, for review. No code yet.
+- **Status:** Design, revision 3, for review. No code yet.
+- **Revision 3 (2026-10-17):**
+  - person-owned sources (`docs/PERSON_IDENTITY_DESIGN.md`, Phase 0);
+  - product decisions 2–11 applied (§13.2): the reviewer roles, deferred India-hosted embeddings with a re-embed job instead of a fixed vector column, same-organization consent through the existing consent model, guardian consents lapsing at 18, items pending the clinical advisor.
 - **Revision 2 (2026-10-17):**
   - aligned to `docs/PRODUCT_SPEC.md` feature E;
   - the open questions of revision 1 answered by product direction (§13);
   - the patient-provided records of the document pipeline (`docs/DOCUMENT_PIPELINE_DESIGN.md`) added as an index source.
 - **Branch:** `foundation/w4-intelligence`
 - **Builds on:**
+  - **Person identity (Phase 0):** uploads, patient-provided facts and patient-given consents (including `AI_ASSISTANCE`) belong to the `Person`;
   - ADR 0001: one Postgres; `vector` is already enabled;
   - ADR 0003: adapters for external services;
   - ADR 0004: modules sync through events;
@@ -31,7 +35,7 @@
 10. Evaluation
 11. Data protection
 12. Order of wiring, each step with its gate
-13. Decisions on revision 1's open questions
+13. Product decisions
 14. Decisions taken for you
 15. Open questions
 
@@ -70,7 +74,7 @@ Every retrieved chunk carries one origin, and the answer shows it on each line:
 | Label | Meaning | Source |
 |---|---|---|
 | `VERIFIED` | Issued and signed by a hospital in the system | released lab results, signed notes and documents, discharge summaries, diagnoses, allergies recorded by clinicians, referrals, observations |
-| `PATIENT_PROVIDED` | Confirmed by the patient (or a proxy) from an upload | `PatientProvidedRecord` and patient-provided allergies (pipeline §6), linked to the original page |
+| `PATIENT_PROVIDED` | Confirmed by the person (or a proxy) from an upload; **person-owned** | `PatientProvidedRecord` (pipeline §2.6) and patient-provided allergies, linked to the original page; labelled "handwritten" too when the source page was |
 | `TRANSLATED` | Shown in a language other than the original's | translation rows (pipeline §2.4); always together with the origin label of what was translated, e.g. "patient-provided · translated from Marathi" |
 
 Rules:
@@ -87,8 +91,9 @@ Three models in one migration. All are tenant-scoped and join the tenancy sweep 
 | Field | Notes |
 |---|---|
 | `id` | |
-| `organizationId`, `facilityId` | The source record's tenant, never the caller's. |
-| `patientId` | Canonical id. Merges are handled at query time with `patientIds`. |
+| `ownerType` | `FACILITY_PATIENT` (a facility record) or `PERSON` (a person-owned source). |
+| `organizationId?`, `facilityId?`, `patientId?` | Set for `FACILITY_PATIENT`: the source record's tenant, never the caller's. `patientId` is canonical; merges are handled at query time with `patientIds`. |
+| `personId?` | Set for `PERSON` sources. Also set on `FACILITY_PATIENT` documents whose patient has an ACTIVE link, so a person's whole record can be gathered for the owner. Unlinking clears it (§5.6). |
 | `encounterId?` | |
 | `sourceType` | `CLINICAL_NOTE`, `LAB_RESULT`, `IMAGING_REPORT`, `PATIENT_DOCUMENT`, `GENERATED_DOCUMENT`, `CLINICAL_DOCUMENT`, `OBSERVATION`, `DIAGNOSIS`, `ALLERGY`, `REFERRAL`, `PROBLEM`, `DISCHARGE_SUMMARY`, `PATIENT_PROVIDED_RECORD` |
 | `sourceId`, `sourceVersion` | An amendment or correction is a new version. |
@@ -105,34 +110,54 @@ Three models in one migration. All are tenant-scoped and join the tenancy sweep 
 | `withdrawnAt`, `withdrawnReason` | The reason is a closed code: `AMENDED`, `SOURCE_DELETED`, `REJECTED_BY_PATIENT`, `CONSENT_WITHDRAWN`, `ERASURE`, `REINDEX`. |
 
 - Unique on `(sourceType, sourceId, sourceVersion)`.
-- Indexed on `(facilityId, patientId, status)`.
+- Indexed on `(facilityId, patientId, status)` and `(personId, status)`.
+- CHECKs:
+  - `FACILITY_PATIENT` requires `facilityId` and `patientId`;
+  - `PERSON` requires `personId` and no `facilityId`;
+  - `origin = PATIENT_PROVIDED` requires `ownerType = PERSON`.
+- `PERSON` documents join the PERSON tenancy segment (Person design §8.1).
 
 ### 3.2 `RagChunk`: the unit retrieval returns
 
 | Field | Notes |
 |---|---|
 | `id`, `documentId` (cascade), `chunkNo` | `(documentId, chunkNo)` is unique. |
-| `facilityId`, `patientId`, `category`, `sensitiveCategory`, `origin`, `audience`, `status` | Copied from the document so every filter runs on the chunk row, before ranking. |
+| `ownerType`, `facilityId`, `patientId`, `personId`, `category`, `sensitiveCategory`, `origin`, `audience`, `status` | Copied from the document so every filter runs on the chunk row, before ranking. |
 | `text` | The chunk in its original language (protected as PHI). |
 | `translatedText?`, `translationLanguage?` | For patient-facing modes, filled when the original isn't in the patient's language. Taken from the pipeline's translation rows. |
 | `heading?`, `tokenCount` | |
-| `embedding` | `vector(1024)`, via `Unsupported("vector(1024)")`, read and written with raw SQL. |
 | `tsv` | A generated column: `to_tsvector('simple', …)` over the original text and any translation. |
 
 Indexes:
-- HNSW on `embedding` (`vector_cosine_ops`, m 16, ef_construction 64);
 - GIN on `tsv`;
-- B-tree on `(facilityId, patientId, status, audience)`.
+- B-tree on `(facilityId, patientId, status, audience)` and `(personId, status, audience)`.
 
-**Dimensions: 1024.** Every query is about one patient, so the planner usually filters with the B-tree first and computes exact distances. HNSW covers patients with very large records, with `hnsw.iterative_scan = relaxed_order`. A provider with another dimension needs a new column and a re-embed (§5.8); dimensions are never mixed.
+### 3.2a `RagEmbedding`: one vector per chunk per embedding model (decision 8)
+
+Changing the embedding provider or its dimension must be a background job, not a schema migration. So the vector is not a fixed-dimension column on the chunk:
+
+| Field | Notes |
+|---|---|
+| `chunkId` (cascade), `embeddingModel`, `embeddingVersion` | Unique together. `embeddingVersion` changes when the same model is re-run with different input preparation (the context prefix, chunking). |
+| `dims` | |
+| `embedding` | An untyped pgvector `vector`. A CHECK enforces `vector_dims(embedding) = dims`. |
+| `ownerType`, `facilityId`, `patientId`, `personId`, `status` | Copied from the chunk, for filtering. |
+| `createdAt` | |
+
+How it is used:
+- **Queries** read only the active model (`ai.embedding.active` = `{model, version}`) and compare with exact cosine distance after the B-tree filters. Every query is about one patient, so this is a scan over that patient's chunks: hundreds to a few thousand rows.
+- **No ANN index is required**, so a new model or dimension needs no DDL. An HNSW index can be added later by migration if a patient's record grows past what the exact scan serves within budget. The gate measures that budget (§12 step 3).
+- **Every chunk records** `embeddingModel` and `embeddingVersion` (decision 8), and so does every `AiInteraction` (§3.3).
+- **Re-embed job:** §5.8.
 
 ### 3.3 `AiInteraction`: one request, for audit, safety review and evaluation
 
 | Field | Notes |
 |---|---|
 | `id`, `organizationId`, `facilityId`, `userId`, `role` | |
-| `patientId`, `proxyGrantId?`, `shareId?` | The access path used. |
+| `patientId?`, `personId?`, `proxyGrantId?`, `shareId?`, `consentId?` | The subject and the access path used. |
 | `mode`, `language`, `model` | The generation model actually used (§6.1). |
+| `embeddingModel`, `embeddingVersion` | The embedding the query was ranked with. |
 | `outcome` | `ANSWERED`, `NO_RECORD`, `REFUSED_SAFETY`, `CITATION_INVALID`, `RATE_LIMITED`, `ERROR`. |
 | `retrievedChunkIds[]`, `citedChunkIds[]`, `topScore`, `threshold` | |
 | `inputTokens`, `outputTokens`, `latencyMs` | |
@@ -154,12 +179,15 @@ The index can always be rebuilt from the record. So:
 
 ### 4.2 When index rows go
 
+Index rows are deleted in the cases in the table below. A person-owned source belongs to the Person (Person design §7), so a facility unlink never deletes the person's own documents.
+
 | Trigger | What goes |
 |---|---|
 | An amended or corrected source | The previous version's chunks, in the same transaction that inserts the new ones. The old document row stays `SUPERSEDED`, with no text. |
 | Source voided, entered in error, or a patient-provided record withdrawn | That document goes to `WITHDRAWN` and its chunks are deleted. |
 | AI consent withdrawn (§11.3) | Every document and chunk for the patient. |
 | An erasure request completes | Everything for the patient, including any `AiInteraction` text. |
+| A facility unlink (`PersonPatientUnlinked`) | Nothing is deleted. The facility's documents lose their `personId` and the person's documents become unreachable from that facility, both in the same consumer step. A `WRONG_PERSON` unlink also withdraws conflicts derived from that facility. |
 | An embedding model change | Re-embed, then drop the old rows or column. |
 
 A share expiring, a proxy permission removed, or family access revoked deletes nothing. Access is checked on every request, so the next request is refused.
@@ -170,8 +198,9 @@ A share expiring, a proxy permission removed, or family access revoked deletes n
   - It is encrypted at the application level with AES-256-GCM, under a key from the environment and its KMS.
   - `keyVersion` allows key rotation.
   - It is kept for `ai.staff_text_retention_days` (default **90**), then purged by the runner's sweep.
-  - Only an `AI_SAFETY_REVIEWER` permission can decrypt it, and every decryption is audited.
-- **Patient and proxy modes:** no text is kept unless the patient opts in. The opt-in is its own consent purpose, `AI_TEXT_RETENTION`, with its own DPDP notice. With the opt-in, the same encryption and retention apply. Without it, only metadata is kept.
+  - Decryption needs the `ai:interaction:text:read` permission. It is held only by the **clinical-advisor** role and a **platform safety-officer** role (decision 7), both new and platform-level.
+  - Every read is audited (who, which interaction, why: a closed reason code plus a ticket reference) and appears in a monthly review report.
+- **Patient and proxy modes:** no text is kept unless the person opts in. The opt-in is its own consent purpose, `AI_TEXT_RETENTION`, with its own DPDP notice. With the opt-in, the same encryption and retention apply. Without it, only metadata is kept.
 - **Metadata** (ids, scores, outcome, counts) is kept for 1 year.
 
 ## 5. The `rag-indexer` consumer
@@ -188,8 +217,11 @@ A share expiring, a proxy permission removed, or family access revoked deletes n
 | `PatientDischarged` | The discharge summary, unless `DocumentGenerated` already indexed it. |
 | `PatientProvidedRecordAdded`, `PatientProvidedRecordUpdated` (pipeline §4) | Confirmed facts from uploads, labelled `PATIENT_PROVIDED`. |
 | `DocumentTranslated` (pipeline §4) | Fills `translatedText` on that document's chunks. Never creates facts. |
-| `PatientDocumentUploaded` | Title, type and date only, until its facts are confirmed. |
+| `PersonDocumentUploaded` | Title, type and date only, until its facts are confirmed (a PERSON document). |
+| `PersonPatientLinked`, `PersonPatientUnlinked`, `PersonPatientLinkSuperseded`, `PersonMerged` (Person design §9) | Set, clear or re-point `personId` on facility documents; re-point person documents on a merge. |
+| `ConsentGranted` / `ConsentRevoked` for the upload-sharing choice (Person design §8.3) | Nothing indexed or deleted. The choice is checked at query time; the event is recorded for the audit trail. |
 | `ConsentRevoked` | Removal, when the revoked consent is the AI consent (§11.3). |
+| `ConsentLapsed` (new; on turning 18) | AI over the member's record stops until they confirm (§11.3). |
 | `FamilyAccessRevoked`, proxy and share expiry events | Recorded as seen; nothing is removed (§4.2). |
 
 Medications and allergies are **also read live** at query time (§7.4) and given to the model with their own citations.
@@ -245,9 +277,16 @@ Events carry IDs and codes only. The indexer loads each source through the servi
 - refuses facilities that the data switch doesn't allow;
 - emits no events.
 
-### 5.8 Re-embedding and failures
+### 5.8 Re-embedding (a background job, decision 8) and failures
 
-- **Model change:** a new column and index, a backfill, a switch of the query, then the old column is dropped. Each is a separate migration.
+`npm run rag:reembed -- --model <id> --version <n>`, also runnable from the runner:
+1. Writes `RagEmbedding` rows for the new `{model, version}` alongside the active ones. It works per patient or person in batches, with a resumable cursor, rate-limited, and idempotent on `(chunkId, model, version)`.
+2. Reports coverage. When 100% of `ACTIVE` chunks have the new embedding, an operator switches `ai.embedding.active` (a config change, audited).
+3. After a grace period, deletes the old model's rows.
+
+New chunks are embedded with every model whose re-embed job is running, so coverage converges. No step needs a schema migration.
+
+Failures:
 - **Provider down:** retried with backoff.
 - **Unrenderable source:** dead letter.
 
@@ -271,16 +310,16 @@ Events carry IDs and codes only. The indexer loads each source through the servi
 interface EmbeddingProvider {
   readonly id: "voyage" | "india-hosted" | "mock";
   readonly model: string;
-  readonly dimensions: 1024;
+  readonly dimensions: number;
   embed(texts: string[], inputType: "document" | "query"): Promise<number[][]>;
   rerank?(query: string, documents: string[]): Promise<{ index: number; score: number }[]>;
 }
 ```
 
 - **Voyage:** a multilingual model at 1024 dimensions, plus its reranker. Used for synthetic data.
-- **India-hosted:** a slot for an embedding model served in an Indian region, behind the same interface. It must produce 1024 dimensions, or adding it is a re-embed.
+- **India-hosted: deferred** (decision 8). The adapter keeps the slot. Any dimension works, because of `RagEmbedding` (§3.2a); switching is a re-embed job (§5.8).
   - Before real data: check the DPDP cross-border transfer rules for each processor.
-  - If Voyage isn't allowed, this provider becomes the default for real-data facilities.
+  - If Voyage isn't allowed for real data, an India-hosted provider is chosen then.
 - **Mock:** deterministic and offline.
   - Feature hashing of word unigrams and bigrams into 1024 dimensions, L2-normalized.
   - Its reranker is BM25.
@@ -294,11 +333,12 @@ Every query starts from a CTE built only from server-side values:
 
 1. **Access path:**
    - **Treating facility:** the caller's facility, with the patient registered there.
-   - **Another facility in the same organization:** only with the patient's consent.
+   - **Another facility in the same organization:** only with the patient's consent, an `InteropConsent` with recipient type `ORGANIZATION` (decision 9; 4c extends it).
    - **Share:** the share's facility or doctor, the categories it covers, and its date range.
    - **Proxy:** the proxy's granted categories and the `USE_AI` permission.
-   - **Patient:** their own scope.
-2. **Patient:** `patientId = ANY(scope.patientIds)`.
+   - **Patient:** their own scope, meaning their Person (all their person-owned documents) plus their ACTIVE links' facility documents.
+   - **Person-owned chunks for facility staff:** only with the person's upload-sharing opt-in (Person design §8.3) and an active care relationship, or through a share that includes `UPLOADS`. A nurse also needs the assignment. Without these, a `PERSON` chunk is never a candidate for staff.
+2. **Subject:** `patientId = ANY(scope.patientIds)` for facility chunks, `personId = scope.personId` for person chunks (merge-aware on both).
 3. **Status:** `status = 'ACTIVE'`.
 4. **Category:** `category` within what the access path allows.
 5. **Sensitive categories:**
@@ -309,7 +349,7 @@ Every query starts from a CTE built only from server-side values:
 7. **Role:**
    - a nurse requires an open `NursingAssignment` for this patient at the caller's facility;
    - `VISIT_BRIEF` requires an active share or treating access.
-8. **AI consent:** must be active when the facility holds real data (§11).
+8. **AI consent:** `AI_ASSISTANCE` (a person-given consent) must be active, and not lapsed, when the data is real (§11).
 
 The request supplies only `patientId`, `mode` and the question. Everything else comes from the session and the resolved scope.
 
@@ -444,6 +484,7 @@ Canary strings are planted in records the caller must not see:
 - an expired share;
 - a proxy without `USE_AI` or without the category;
 - a nurse's unassigned patient;
+- Person B's uploads and patient-provided facts, asked for by: a treating facility without B's opt-in; a facility outside the care window; a facility after B unlinked; Person A's account;
 - a same-organization facility without consent;
 - an unconfirmed extracted fact.
 
@@ -465,10 +506,15 @@ The same switch as the pipeline:
 | Setting | Default | Meaning |
 |---|---|---|
 | `AI_REAL_DATA_ENABLED` (env) | `false` | When false, the indexer, backfill and `/api/ai/ask` refuse any facility not marked `SYNTHETIC`. |
-| `Facility.dataClassification` | `REAL` for every new facility; `SYNTHETIC` only for the seeded demo facilities (set by migration) | |
+| `Facility.dataClassification`, `Person.dataClassification` | `REAL` for every new facility and Person; `SYNTHETIC` only for the seeded demo ones (set by migration) | A query over real data is refused while the switch is off. |
 | `ai.enabled` (per facility) | `false` | An admin turns the assistant on per facility. |
 
 With the switch off, a real facility's events are still delivered and recorded as skipped. Turning it on later means a backfill, not a gap.
+
+**The switch stays off until the clinical advisor signs off** (decision 11). The advisor is not yet named. Every item that waits for them is marked **"pending clinical advisor"**:
+- the sensitive-category list (§3.1, §5.3);
+- the evaluation answers (§10.1);
+- each mode's prompt and refusal rules (§9.9).
 
 ### 11.2 Before real data (none of this is in Week 4)
 
@@ -489,21 +535,29 @@ New purposes in the existing consent model:
 - `AI_ASSISTANCE`: AI over this patient's record, scoped by category;
 - `AI_TEXT_RETENTION`: keeping patient-side question and answer text (§4.3).
 
+Both are **person-given** consents (Person design §7) on `InteropConsent` with `subjectPersonId`.
+
 Rules:
 - For a minor, the guardian consents.
+- **On turning 18 (decision 10),** every guardian-given consent, including `AI_ASSISTANCE`, `AI_TEXT_RETENTION`, `DOCUMENT_PROCESSING` and parental access, lapses to "needs your confirmation". It emits `ConsentLapsed`.
+  - While lapsed, the consent counts as not granted: no AI over the record, no new indexing, and no text retention.
+  - The index is kept for 90 days (`ai.lapsed_consent_index_days`). If the member confirms, nothing needs rebuilding.
+  - If they decline or don't confirm in time, the index is deleted as for a withdrawal.
 - A proxy grants `AI_ASSISTANCE` only if their permissions include consent.
 - Withdrawing `AI_ASSISTANCE` emits `ConsentRevoked`, which removes the patient's index (§5.6).
 
 ## 12. Order of wiring, each step with its gate
 
-Each step is its own commit. `verify:all`, `npm test`, lint and build stay green after each. Steps 1–2 are shared with the document pipeline, and whichever phase comes first builds them.
+Each step is its own commit. `verify:all`, `npm test`, lint and build stay green after each.
+- **Prerequisite:** Phase 0 (Person identity) is complete.
+- **Shared steps:** steps 1–2 are shared with the document pipeline, and whichever phase comes first builds them.
 
 | # | Step | Gate |
 |---|---|---|
 | 1 | The real-data switch: `Facility.dataClassification`, `ai.enabled`, the `AI_ASSISTANCE` and `AI_TEXT_RETENTION` consent purposes | Unit tests and `verify-postgres-ai-switch`: a REAL facility is refused everywhere while the switch is off. |
 | 2 | Model config per mode, and the provider boundary extended (`answerFromRecord`) with the mock | Unit tests: the model is chosen from config; no real provider without a key. |
-| 3 | Models and migration: `RagDocument`, `RagChunk` (vector, HNSW, tsvector, GIN), `AiInteraction` with encrypted text fields | Migration on a fresh database; drift check; index-existence test; tenancy sweep. |
-| 4 | Embeddings adapter: Voyage, the India-hosted slot, the mock | Unit tests: determinism, 1024 dimensions, similar texts closer than unrelated ones. |
+| 3 | Models and migration: `RagDocument` (owner CHECKs), `RagChunk` (tsvector, GIN), `RagEmbedding` (untyped vector with the dimension CHECK), `AiInteraction` with encrypted text fields; the reviewer roles and permission | Migration on a fresh database; drift check; constraint tests; tenancy sweep with the PERSON segment; a latency test: exact-scan retrieval over a 20,000-chunk patient within the budget. |
+| 4 | Embeddings adapter (Voyage, the mock, the deferred India-hosted slot) and the re-embed job (§5.8) | Unit tests: determinism, similar texts closer than unrelated ones. Gate: a re-embed to a mock model of another dimension reaches 100% coverage; the switch changes rankings; no schema change. |
 | 5 | Renderers, categories and the sensitivity mapping (the placeholder list), chunker | Golden-file tests per source type; every source type maps to a category. |
 | 6 | The `rag-indexer` (§5.1) and backfill; `EXPECTED_CONSUMERS` gains it; the catalogue doc regenerates | `verify-postgres-rag-indexer`: one document per version; replay creates nothing; supersede on amendment; consent withdrawal removes everything; REAL facility skipped; backfill matches consumption. The core journey covers the indexer. |
 | 7 | Retrieval: filters, hybrid ranking, origin ranking, per-mode thresholds | `verify-postgres-rag-leaks` (§10.3): zero leaks. Unit tests for fusion and thresholds. |
@@ -511,7 +565,9 @@ Each step is its own commit. `verify:all`, `npm test`, lint and build stay green
 | 9 | Evaluation set and scorer | CI: the mock retrieval target. Manually, with real providers on synthetic data: at least 90%, recorded in the PR. |
 | 10 | UI: the doctor visit brief and chart Q&A, the nurse panel, the patient explain/timeline/pre-visit screens, the proxy switcher | UI tests and a smoke test per mode against the mock. |
 
-## 13. Decisions on revision 1's open questions (product direction, 2026-10-17)
+## 13. Product decisions
+
+### 13.1 Revision 2: revision 1's open questions (2026-10-17)
 
 | # | Question | Decision |
 |---|---|---|
@@ -526,9 +582,26 @@ Each step is its own commit. `verify:all`, `npm test`, lint and build stay green
 | 9 | "No record found" threshold | One per mode; patient modes stricter (§7.3). |
 | 10 | Evaluation answers | Written by the team, marked "pending clinical advisor sign-off" (§10.1). |
 
+### 13.2 Revision 3 decisions (product direction, 2026-10-17)
+
+| # | Decision | Where |
+|---|---|---|
+| 1 | Person identity first; patient-provided sources, uploads and patient-given consents belong to the Person | §2, §3.1, §5.1, §7.1, §11.3 |
+| 3 | Treating-facility clinicians see patient-provided facts only with the person's opt-in | §7.1 |
+| 4 | Handwritten facts carry their label | §2 |
+| 7 | 90 days for staff text; decryption only for the clinical-advisor and platform safety-officer roles; every read audited | §4.3 |
+| 8 | India-hosted embeddings deferred; `embeddingModel` and version on every chunk; re-embedding is a background job, not a schema migration | §3.2a, §5.8, §6.2 |
+| 9 | Same-organization access reuses the existing consent model with an organization recipient; 4c extends it | §7.1 |
+| 10 | At 18, guardian-given consents lapse to "needs your confirmation" | §11.3 |
+| 11 | Clinical advisor not yet named; blocked items marked "pending clinical advisor"; the real-data switch stays off until sign-off | §11.1 |
+
 ## 14. Decisions taken for you
 
 All take the more conservative option and can be reversed.
+
+- **No ANN index at first.** Decision 8 says a provider change must not need a migration, and a fixed-dimension column with an HNSW index would. Retrieval is an exact scan over one patient's or person's embeddings. HNSW is added by migration only if the latency gate shows it is needed.
+- **A lapsed consent counts as not granted.** The index is kept 90 days so confirming needs no rebuild, then deleted.
+- **A facility unlink deletes nothing.** It only detaches: the facility's documents lose the `personId`, and the person's documents stop being reachable from that facility.
 
 - **Free-form patient Q&A is dropped.** Revision 1 had `PATIENT_QA`. Feature E lists explain-my-report, the timeline and pre-visit questions, so open patient questions are allowed only as follow-ups inside `EXPLAIN_REPORT`, about that report.
 - **The nurse handoff is kept** from the Week 4 brief, limited to assigned patients like chart Q&A.
@@ -541,8 +614,8 @@ All take the more conservative option and can be reversed.
 
 ## 15. Open questions
 
-1. **Staff text retention period.** Is 90 days right, and who holds the `AI_SAFETY_REVIEWER` permission?
-2. **India-hosted embeddings.** Which model or provider? Its dimension must be 1024, or real-data facilities need a separate column.
-3. **Sensitive-category mapping.** The clinical advisor's list, and its codes (ICD-10 ranges, tests, note types).
-4. **Same-organization consent.** Is the existing `InteropConsent` with recipient ORGANIZATION the right vehicle, or does 4c's sharing model replace it?
-5. **Proxies of minors.** At 18 the member chooses whether parents keep access (feature D). Should the AI index of a newly adult member be re-consented?
+Revision 2's questions are settled: decisions 7, 8, 9 and 10, and decision 5 of revision 2 (the sensitive list is pending the clinical advisor). What remains:
+
+1. **Lapsed-consent index window.** Is 90 days right before deleting a newly adult member's index if they don't confirm?
+2. **Reviewer access to patient opt-in text.** Should the clinical advisor and safety officer also be able to read patient text that the patient opted to keep, or staff text only?
+3. **The exact-scan latency budget.** Proposed: p95 under 150 ms at 20,000 chunks for one patient. Is that acceptable before an ANN index becomes necessary?
