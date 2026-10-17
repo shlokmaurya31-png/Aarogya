@@ -7,6 +7,7 @@ import type { Prisma } from "@prisma/client";
 import { isStaffInFacility } from "@/lib/auth/staffFacility";
 import { parseEnum } from "@/lib/enumValue";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+import { staffCanSeeDocument } from "@/lib/person/access";
 
 /** StaffAuthorizationChanged (step 9c; triage approved change 2): changeType and whose authorization changed. */
 async function emitAuthorization(
@@ -204,7 +205,8 @@ export async function createCredential(input: {
   await assertStaffInFacility(prisma, input.staffId, input.facilityId);
   if (input.documentId) {
     const doc = await prisma.clinicalDocument.findUnique({ where: { id: input.documentId } });
-    if (!doc || doc.facilityId !== input.facilityId) throw new NotFoundError("Document not found in this facility.");
+    // Phase 0: a patient's upload the facility may not see is not found.
+    if (!doc || doc.facilityId !== input.facilityId || !(await staffCanSeeDocument(doc, input.facilityId))) throw new NotFoundError("Document not found in this facility.");
   }
   const cred = await prisma.$transaction(async (tx) => {
     const created = await tx.credential.create({
@@ -271,7 +273,8 @@ export async function grantPrivilege(input: {
   if (input.staffId === input.grantedByStaffId) throw new BadRequestError("A clinical privilege cannot be granted to yourself.");
   if (input.documentId) {
     const doc = await prisma.clinicalDocument.findUnique({ where: { id: input.documentId } });
-    if (!doc || doc.facilityId !== input.facilityId) throw new NotFoundError("Document not found in this facility.");
+    // Phase 0: a patient's upload the facility may not see is not found.
+    if (!doc || doc.facilityId !== input.facilityId || !(await staffCanSeeDocument(doc, input.facilityId))) throw new NotFoundError("Document not found in this facility.");
   }
   const priv = await prisma.$transaction(async (tx) => {
     const created = await tx.staffPrivilege.create({

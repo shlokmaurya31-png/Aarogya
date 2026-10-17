@@ -6,6 +6,7 @@ import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { buildAuthorizationActor } from "@/lib/auth/authorize/context";
 import { authorizeAccess } from "@/lib/auth/authorize/engine";
+import { staffDocumentVisibility } from "@/lib/person/access";
 
 /** Document metadata foundation (brief §26) — metadata-only this phase, see docs/CLINICAL_CORE.md §8. */
 export async function GET(req: NextRequest) {
@@ -19,8 +20,10 @@ export async function GET(req: NextRequest) {
     if (!patient || patient.facilityId !== facilityId) throw new NotFoundError("Patient not found.");
 
     const includeSuperseded = searchParams.get("includeSuperseded") === "true";
+    // Phase 0: a patient's uploads reach staff only under personAccess.
+    const visible = await staffDocumentVisibility(facilityId, [patientId]);
     const documents = await prisma.clinicalDocument.findMany({
-      where: { patientId, ...(includeSuperseded ? {} : { status: "CURRENT" }) },
+      where: { AND: [{ patientId, ...(includeSuperseded ? {} : { status: "CURRENT" }) }, visible] },
       orderBy: { createdAt: "desc" },
     });
 

@@ -8,8 +8,8 @@ export async function GET() {
   return withApiErrors(async () => {
     const { patient } = await requirePatientSelf();
     const [summary, timeline] = await Promise.all([
-      buildPatientSummary(patient.id),
-      buildPatientTimeline(patient.id),
+      buildPatientSummary(patient.id, { kind: "PATIENT" }),
+      buildPatientTimeline(patient.id, { kind: "PATIENT" }),
     ]);
     return { summary, timeline };
   });

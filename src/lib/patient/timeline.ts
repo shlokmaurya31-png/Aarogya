@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { resolvePatientIdsForRead } from "./merge";
 import { TRANSFER_WITH_LOCATIONS, transferRouteLabel } from "@/lib/hospital/admission";
+import { documentVisibilityFor, type DocumentViewer } from "@/lib/person/access";
 
 /**
  * The longitudinal timeline (brief §32) is built by reading every typed
@@ -36,8 +37,10 @@ export interface TimelineEntry {
 // paginated full history browser (no UI for that exists yet).
 const TIMELINE_ROW_LIMIT = 200;
 
-export async function buildPatientTimeline(patientId: string): Promise<TimelineEntry[]> {
+/** `viewer` decides which patient uploads appear (Phase 0, personAccess): required, so no caller can skip it. */
+export async function buildPatientTimeline(patientId: string, viewer: DocumentViewer): Promise<TimelineEntry[]> {
   const patientIds = await resolvePatientIdsForRead(patientId);
+  const documentsVisible = await documentVisibilityFor(viewer, patientIds);
 
   const [encounters, diagnoses, problems, allergies, vitals, notes, medOrders, labOrders, imagingOrders, tasks, referrals, admissions, specimens, labResults, imagingStudies, imagingReports, transfers, documents] =
     await Promise.all([
@@ -58,7 +61,7 @@ export async function buildPatientTimeline(patientId: string): Promise<TimelineE
       prisma.imagingStudy.findMany({ where: { patientId: { in: patientIds } }, orderBy: { createdAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
       prisma.imagingReport.findMany({ where: { imagingOrder: { patientId: { in: patientIds } } }, orderBy: { reportedAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
       prisma.transfer.findMany({ where: { admission: { encounter: { patientId: { in: patientIds } } } }, include: TRANSFER_WITH_LOCATIONS, orderBy: { toLocation: { assignedAt: "desc" } }, take: TIMELINE_ROW_LIMIT }),
-      prisma.clinicalDocument.findMany({ where: { patientId: { in: patientIds } }, include: { uploadedBy: { include: { user: true } } }, orderBy: { createdAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
+      prisma.clinicalDocument.findMany({ where: { AND: [{ patientId: { in: patientIds } }, documentsVisible] }, include: { uploadedBy: { include: { user: true } } }, orderBy: { createdAt: "desc" }, take: TIMELINE_ROW_LIMIT }),
     ]);
 
   const entries: TimelineEntry[] = [];

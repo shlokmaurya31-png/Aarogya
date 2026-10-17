@@ -4,6 +4,7 @@ import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 import { BadRequestError } from "@/lib/auth/rbac";
 import { getStorageAdapter } from "@/lib/storage";
 import type { PatientAccessScope } from "../context";
+import { ownedPersonId } from "@/lib/person/access";
 
 /**
  * A patient uploads a document (an outside report, a referral letter, an ID)
@@ -37,6 +38,10 @@ export async function uploadPatientDocument(
     scope: scope.patientId,
   });
 
+  // Phase 0: the upload belongs to the uploader's Person. Staff see it only
+  // through personAccess() (the person's sharing choice + a care relationship).
+  const ownerPersonId = await ownedPersonId(actorUserId);
+
   let doc;
   try {
     doc = await prisma.$transaction(async (tx) => {
@@ -50,12 +55,13 @@ export async function uploadPatientDocument(
           sha256: stored.sha256,
           accessPolicy: "PATIENT_VISIBLE",
           uploadedByUserId: actorUserId,
+          personId: ownerPersonId,
         },
       });
       // In the insert's transaction; the object was stored first, and a rolled-back
       // insert deletes it below (design §1.2 #55).
       await emitFacilityEvent(tx, {
-        type: "PatientDocumentUploaded", aggregateId: created.id, facilityId: scope.facilityId, actorUserId,
+        type: "PatientDocumentUploaded", aggregateId: created.id, facilityId: scope.facilityId, actorUserId, personId: ownerPersonId,
         payload: { documentId: created.id, patientId: scope.patientId, documentType: input.type, uploadedBy: "PATIENT" },
       });
       return created;

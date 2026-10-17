@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { authorizeAccess } from "@/lib/auth/authorize/engine";
 import type { AuthorizationActor } from "@/lib/auth/authorize/types";
+import { staffDocumentVisibility } from "@/lib/person/access";
 
 /**
  * Phase C5 — canonical claim package composition.
@@ -192,8 +193,11 @@ export async function buildClaimPackage(args: {
     : [];
 
   // ── Documents: minimized, then individually authorized ────────────────────
+  // Phase 0: a patient's uploads go into a claim only if the facility may see them.
+  const uploadsVisible = await staffDocumentVisibility(args.facilityId, [patient.id]);
   const candidates = await prisma.clinicalDocument.findMany({
     where: {
+      AND: [uploadsVisible],
       facilityId: args.facilityId,
       patientId: patient.id,
       status: "CURRENT",

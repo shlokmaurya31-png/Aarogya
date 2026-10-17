@@ -8,7 +8,9 @@
  *   3. The front desk opens an encounter; the patient uploads a document.
  *   4. The portal, the Hospital OS chart and the hospital API all return the
  *      same patient ID, the same demographics, the same encounter and the
- *      same document.
+ *      same document (Phase 0: the hospital sees the patient's upload only
+ *      after the person chooses to share uploads with hospitals treating
+ *      them; hidden before the choice and after declining).
  *
  * Builds and starts the app (unless --no-build) with SMS_PROVIDER=outbox, so
  * the gate can read the code the server sent.
@@ -123,8 +125,17 @@ async function main() {
     report("Hospital OS chart: same patient ID", chartPatient?.id === P, `HTTP ${chart.status}`);
     report("Hospital OS chart: same demographics", same(chartPatient));
     report("Hospital OS chart: the encounter", ((chart.json.encounters as { id: string }[]) ?? []).some((e) => e.id === E));
-    const docs = await call(doctor, "GET", `/api/hospital/documents?patientId=${P}`);
-    report("Hospital OS chart: the document", ((docs.json.documents as { id: string }[]) ?? []).some((d) => d.id === D));
+    // Phase 0: the upload belongs to the person. The hospital treating them
+    // sees it only once they choose "share my uploads with hospitals treating
+    // me" (no default), inside a care relationship (the open encounter).
+    const hasDoc = async () => (((await call(doctor, "GET", `/api/hospital/documents?patientId=${P}`)).json.documents as { id: string }[]) ?? []).some((d) => d.id === D);
+    const overview = await call(patientCookie, "GET", "/api/patient/person");
+    report("Portal: the person is asked to choose upload sharing (no default)", overview.status === 200 && (overview.json.sharing as { choiceNeeded?: boolean })?.choiceNeeded === true && (overview.json.sharing as { uploadsWithTreatingHospitals?: unknown }).uploadsWithTreatingHospitals === null);
+    report("Hospital OS chart: the upload is hidden before the person chooses", !(await hasDoc()));
+    const declined = await call(patientCookie, "POST", "/api/patient/person/sharing", { decision: "DECLINED" });
+    report("Hospital OS chart: …and after they decline", declined.status === 200 && !(await hasDoc()));
+    const granted = await call(patientCookie, "POST", "/api/patient/person/sharing", { decision: "GRANTED" });
+    report("Hospital OS chart: the document, once they share with hospitals treating them", granted.status === 200 && (await hasDoc()));
 
     const api = await call(frontDesk, "GET", `/api/hospital/patients/${P}`);
     const apiPatient = api.json.patient as Record<string, unknown> | undefined;

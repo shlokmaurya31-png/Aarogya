@@ -9,6 +9,7 @@ import {
 } from "@/lib/hospital/quality/shared";
 import { parseEnum } from "@/lib/enumValue";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+import { staffCanSeeDocument } from "@/lib/person/access";
 
 type Tx = Prisma.TransactionClient;
 
@@ -351,7 +352,8 @@ export async function attachEvidence(input: {
   }
   if (input.documentId) {
     const doc = await prisma.clinicalDocument.findUnique({ where: { id: input.documentId } });
-    if (!doc || doc.facilityId !== input.facilityId) throw new NotFoundError("Document not found in this facility.");
+    // Phase 0: a patient's upload the facility may not see is not found.
+    if (!doc || doc.facilityId !== input.facilityId || !(await staffCanSeeDocument(doc, input.facilityId))) throw new NotFoundError("Document not found in this facility.");
   }
   // Every target this evidence can be hung off is client-supplied. Validating
   // only the document left the parent links open: a reporter in facility A

@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import type { Prisma } from "@prisma/client";
 import { isStaffInFacility } from "@/lib/auth/staffFacility";
+import { staffCanSeeDocument } from "@/lib/person/access";
 
 /**
  * Phase C1 — shared vocabulary, state machines and facility guards for the
@@ -197,8 +198,9 @@ export async function assertEntityInFacility(db: Db, entityType: string, entityI
       return;
     }
     case "DOCUMENT": {
-      const row = await db.clinicalDocument.findUnique({ where: { id: entityId }, select: { facilityId: true } });
-      if (!row || row.facilityId !== facilityId) throw new NotFoundError("Document not found in this facility.");
+      const row = await db.clinicalDocument.findUnique({ where: { id: entityId }, select: { id: true, facilityId: true, patientId: true, uploadedByUserId: true, personId: true } });
+      // Phase 0: a patient's upload the facility may not see is not found.
+      if (!row || row.facilityId !== facilityId || !(await staffCanSeeDocument(row, facilityId))) throw new NotFoundError("Document not found in this facility.");
       return;
     }
     case "PAYER": {

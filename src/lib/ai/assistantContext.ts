@@ -76,8 +76,9 @@ export async function patientAssistantContext(scope: PatientAccessScope): Promis
   ].join("\n\n");
 }
 
-export async function clinicianAssistantContext(patientId: string): Promise<string> {
-  const s = await buildPatientSummary(patientId);
+/** `facilityId`: the clinician's facility; patient uploads appear only under personAccess (Phase 0). */
+export async function clinicianAssistantContext(patientId: string, facilityId: string): Promise<string> {
+  const s = await buildPatientSummary(patientId, { kind: "STAFF", facilityId });
   if (!s.patient) return "No patient chart is open.";
   const p = s.patient;
   const age = ageInYears(p.dob);

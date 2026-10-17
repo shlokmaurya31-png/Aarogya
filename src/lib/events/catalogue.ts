@@ -1287,6 +1287,11 @@ export const EVENT_CONTRACTS: EventContract[] = [
     sensitivity: "SENSITIVE", producer: "person identity (recordActiveLink: self-created at sign-up, phone code, in-person ID, ABHA)",
     payload: z.object({ linkId: id, personId: id, patientId: id, method: personLinkMethod }).strict(),
   }),
+  contract({
+    type: "PersonConsentDecided", version: 1, aggregateType: "PERSON", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "person identity (decidePersonConsent: the person's own choice, e.g. sharing uploads with treating hospitals)",
+    payload: z.object({ personId: id, consentId: id, purpose: z.enum(["SHARE_UPLOADS_WITH_TREATING"]), decision: z.enum(["GRANTED", "DECLINED"]), previous: z.enum(["NONE", "GRANTED", "DECLINED"]) }).strict(),
+  }),
 ];
 
 const KEY = (type: string, version: number) => `${type}@${version}`;

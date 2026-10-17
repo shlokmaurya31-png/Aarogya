@@ -13,6 +13,7 @@ import { buildDocumentBundle, hashBundle, countResources, type DocumentBundleTyp
 import type { FhirBundle, FhirResource } from "./types";
 import { isStaffInFacility, staffAtFacilityWhere } from "@/lib/auth/staffFacility";
 import { activePatientExternalIdentifiers } from "@/lib/patient/identifiers";
+import { staffDocumentVisibility } from "@/lib/person/access";
 
 /**
  * Phase C1 — controlled FHIR export.
@@ -183,8 +184,11 @@ export async function exportPatientToFhir(req: ExportRequest): Promise<ExportRes
   }
 
   if (allow("DOCUMENTS")) {
+    // Phase 0: a patient's uploads leave only if the facility may see them.
+    const uploadsVisible = await staffDocumentVisibility(req.facilityId, [req.patientId]);
     const documents = await prisma.clinicalDocument.findMany({
       where: {
+        AND: [uploadsVisible],
         facilityId: req.facilityId,
         patientId: req.patientId,
         status: "CURRENT",

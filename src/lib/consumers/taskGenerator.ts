@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { createTask, closeTask as closeTaskTx, OPEN_STATUSES } from "@/lib/hospital/task";
 import type { DomainEventConsumer } from "@/lib/events/consumers";
 import { PermanentEventError, type DomainEventEnvelope } from "@/lib/events/types";
+import { staffCanSeeDocument } from "@/lib/person/access";
 
 /**
  * task-generator (workflow spine §2): creates and closes operational tasks in
@@ -147,8 +148,14 @@ export const taskGenerator: DomainEventConsumer = {
         return openCriticalResultTask(event);
       case "CriticalResultAcknowledged":
         return closeTask(event, CRITICAL_RESULT, p.resultId ?? p.reportId);
-      case "PatientDocumentUploaded":
+      case "PatientDocumentUploaded": {
+        // Phase 0: the care team reviews an upload only if they may see it
+        // (the owner's sharing choice + a care relationship, or a pre-Phase-0
+        // upload). Otherwise not even its existence reaches them.
+        const doc = await prisma.clinicalDocument.findUnique({ where: { id: p.documentId }, select: { id: true, patientId: true, uploadedByUserId: true, personId: true } });
+        if (!doc || !event.facilityId || !(await staffCanSeeDocument(doc, event.facilityId))) return;
         return openPatientTask(event, p.patientId, { type: "DOCUMENT_REVIEW", title: "Review a document the patient uploaded", priority: "ROUTINE", sourceId: p.documentId });
+      }
       case "StockBelowReorder":
         return openReorderTask(event, p as unknown as { itemId: string; locationId: string; ledgerEntryId: string; onHandQty: number });
       case "MedicationDoseMissed":

@@ -64,6 +64,20 @@ export type AuditEventType =
   | "patient.account.linkRequested"
   | "patient.account.linked"
   | "patient.account.linkReviewed"
+  // Phase 0 — person identity: the person's own choices, and every step of
+  // linking a facility record to a Person (facility audit; the person's
+  // access log records the same facts).
+  | "person.consent.decided"
+  | "patient.person.link.requested"
+  | "patient.person.link.secondFactorFailed"
+  | "patient.person.link.codeSent"
+  | "patient.person.link.linked"
+  | "patient.person.link.refused"
+  | "patient.person.link.inPersonStarted"
+  | "patient.person.link.inPersonApproved"
+  | "patient.person.link.unlinkRequested"
+  | "patient.person.link.unlinked"
+  | "patient.contact.confirmed"
   | "patient.document.uploaded"
   // Phase D11 — Patient Experience: family/caregiver delegated access lifecycle.
   | "patient.delegation.invited"

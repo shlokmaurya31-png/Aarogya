@@ -40,7 +40,7 @@ export async function buildRecords(scope: PatientAccessScope): Promise<RecordsDT
       take: 100,
     }),
     // Timeline builder is already merge-aware; scope it to the primary id.
-    buildPatientTimeline(scope.patientId),
+    buildPatientTimeline(scope.patientId, { kind: "PATIENT" }),
   ]);
 
   return {

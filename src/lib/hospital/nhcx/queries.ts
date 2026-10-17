@@ -7,6 +7,7 @@ import { QUERY_TRANSITIONS, isTransitionAllowed, type QueryStatus } from "./stat
 import { $Enums, type Prisma } from "@prisma/client";
 import { parseEnum } from "@/lib/enumValue";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+import { staffCanSeeDocument } from "@/lib/person/access";
 
 /**
  * Phase C5 — claim query / clarification lifecycle.
@@ -142,7 +143,8 @@ export async function respondToQuery(input: {
   for (const documentId of [...new Set(input.documentIds ?? [])]) {
     const doc = await prisma.clinicalDocument.findUnique({ where: { id: documentId } });
     // Cross-facility or wrong-patient documents are refused outright.
-    if (!doc || doc.facilityId !== input.facilityId) {
+    // Phase 0: a patient's upload the facility may not see is not found.
+    if (!doc || doc.facilityId !== input.facilityId || !(await staffCanSeeDocument(doc, input.facilityId))) {
       rejected.push({ id: documentId, reason: "Not found." });
       continue;
     }

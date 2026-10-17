@@ -89,7 +89,7 @@ async function main() {
   report("A delegate's context says it is a delegated view", delegated.includes("delegated access"));
 
   // 4. The clinician context is the authorized chart.
-  const chart = await clinicianAssistantContext(target.id);
+  const chart = await clinicianAssistantContext(target.id, target.facilityId);
   report("Clinician context is the real chart", chart.includes(target.uhid) && allergies.every((a) => chart.includes(a)));
 
   // 5. No model configured: the mock provider is honest.

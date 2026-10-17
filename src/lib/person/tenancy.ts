@@ -17,6 +17,7 @@ export const PERSON_SCOPED_MODELS = [
   "PersonContact",
   "PersonIdentifier",
   "PersonAccessLogEntry",
+  "PersonConsent",
 ] as const;
 
 /** Facility-owned models that reference a Person. */
@@ -24,4 +25,8 @@ export const FACILITY_MODELS_WITH_PERSON = [
   "PersonPatientLink",
   "PatientLinkRequest",
   "DomainEventOutbox",
+  // Patient uploads are still ClinicalDocument rows in part 1 (their facility
+  // stores them); personId is the owner, and staff reads go through
+  // staffDocumentVisibility(). Part 2 moves them to a person-level model.
+  "ClinicalDocument",
 ] as const;

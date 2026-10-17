@@ -3940,6 +3940,14 @@ model ClinicalDocument {
   generatedDocumentId String?                      @unique
   createdAt           DateTime                     @default(now())
 
+  /// Phase 0 — the Person who owns a patient upload (uploadedByUserId set).
+  /// Staff see owned uploads only through personAccess() (src/lib/person/access.ts).
+  owner                 Person? @relation(fields: [personId], references: [id])
+  personId              String?
+  /// An upload made before Phase 0 stays visible to the facility it was
+  /// uploaded to until its owner makes the sharing choice (approved reversal).
+  legacyFacilityVisible Boolean @default(false)
+
   @@index([patientId])
   @@index([facilityId])
 }
@@ -10270,6 +10278,9 @@ model Person {
   linkRequests PatientLinkRequest[]
   accessLog    PersonAccessLogEntry[]
 
+  consents  PersonConsent[]
+  documents ClinicalDocument[]
+
   @@index([mergedIntoPersonId])
 }
 
@@ -10371,4 +10382,37 @@ model PersonAccessLogEntry {
   createdAt           DateTime            @default(now())
 
   @@index([personId, createdAt])
+}
+
+enum PersonConsentPurpose {
+  SHARE_UPLOADS_WITH_TREATING
+}
+
+enum PersonConsentDecision {
+  GRANTED
+  DECLINED
+}
+
+enum PersonConsentStatus {
+  ACTIVE
+  SUPERSEDED
+}
+
+/// A choice the person makes about their own data (Phase 0: "share my uploads
+/// with hospitals treating me"). Append-only: a change supersedes the ACTIVE
+/// row and adds a new one; at most one ACTIVE per purpose (partial unique).
+/// No row means the person hasn't chosen, which counts as no.
+model PersonConsent {
+  id              String                @id @default(cuid())
+  person          Person                @relation(fields: [personId], references: [id])
+  personId        String
+  purpose         PersonConsentPurpose
+  decision        PersonConsentDecision
+  status          PersonConsentStatus   @default(ACTIVE)
+  decidedAt       DateTime              @default(now())
+  decidedByUserId String
+  supersededAt    DateTime?
+  createdAt       DateTime              @default(now())
+
+  @@index([personId, purpose, status])
 }
