@@ -19,6 +19,10 @@
  *   5. Procurement: PurchaseOrderStatusChanged (approved, closed after a
  *      partial receipt, cancelled) and SupplierInvoiceStatusChanged (received
  *      with its three-way match flags, reviewed); never the reference or notes.
+ *   6. Serials and requests: SerialUnitStatusChanged (registered, issued; never
+ *      the serial number); SupplyRequestStatusChanged for a department request
+ *      (approved, reserved, issued; correlated by its encounter) and a pharmacy
+ *      request (approved, reserved, issued, received), each with its StockMoved.
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-supply-events.ts
  */
@@ -33,6 +37,8 @@ import { recordSupplierInvoice, reviewSupplierInvoice } from "../src/lib/hospita
 import { recordGoodsReceipt, approveGoodsReceipt, rejectGoodsReceipt } from "../src/lib/hospital/procurement/goodsReceipts";
 import { recordWaste, approveWaste, rejectWaste } from "../src/lib/hospital/inventory/waste";
 import { reconcileBalances } from "../src/lib/hospital/inventory/stockBalance";
+import { registerSerial, transitionSerial, createDepartmentRequest, transitionDepartmentRequest } from "../src/lib/hospital/inventory/inventoryAdvanced";
+import { createPharmacyRequest, transitionPharmacyRequest } from "../src/lib/hospital/pharmacy";
 import { reserveStock, releaseReservation, consumeReservation } from "../src/lib/hospital/inventory/reservation";
 import { initiateTransfer, receiveTransfer, cancelTransfer } from "../src/lib/hospital/inventory/transfer";
 import { issueStock } from "../src/lib/hospital/inventory/issue";
@@ -250,6 +256,36 @@ async function main() {
   const loose = await recordSupplierInvoice({ facilityId, supplierId: supplier.id, invoiceRef: `SINV2-${run}`, totalMinor: 5_000, recordedByStaffId: staff.id, byUserId: by });
   const looseEvents = (await prisma.domainEventOutbox.findMany({ where: { eventType: "SupplierInvoiceStatusChanged", aggregateId: loose.id } })).map((e) => e.payload as Payload);
   report("An invoice with no PO: null>RECEIVED", looseEvents.length === 1 && looseEvents[0].to === "RECEIVED" && !("purchaseOrderId" in looseEvents[0]));
+
+  // 6. Serials and supply requests.
+  const serialNumber = `SN-secret-${run}`;
+  const serial = await registerSerial({ facilityId, itemId: item.id, serialNumber, lotId: lot.id, currentLocationId: store.id, byUserId: by });
+  await transitionSerial({ serialId: serial.id, facilityId, to: "ISSUED", byUserId: by });
+  const sEvents = (await prisma.domainEventOutbox.findMany({ where: { eventType: "SerialUnitStatusChanged", aggregateId: serial.id }, orderBy: { seq: "asc" } })).map((e) => e.payload as Payload);
+  report("A serial: null>IN_STOCK on registration, IN_STOCK>ISSUED; never the serial number",
+    sEvents.map((p) => `${p.from}>${p.to}`).join() === "null>IN_STOCK,IN_STOCK>ISSUED" && !JSON.stringify(sEvents).includes("secret"));
+  const reqMoves = async (id: string) => (await prisma.domainEventOutbox.findMany({ where: { eventType: "SupplyRequestStatusChanged", aggregateId: id }, orderBy: { seq: "asc" } })).map((e) => e.payload as Payload);
+  const { patientId: anyPatient, id: anyEnc } = await prisma.encounter.findFirstOrThrow({ where: { facilityId }, orderBy: { id: "asc" }, select: { id: true, patientId: true } });
+  const dreq = await createDepartmentRequest({ facilityId, itemId: item.id, quantity: 2, requestingLocationId: ward.id, patientId: anyPatient, encounterId: anyEnc, requestedByStaffId: staff.id, reason: `ward secret ${run}`, byUserId: by });
+  for (const to of ["APPROVED", "RESERVED", "ISSUED"] as const) {
+    await transitionDepartmentRequest({ requestId: dreq.id, facilityId, to, actorStaffId: checker.id, fulfillLocationId: store.id, lotId: lot.id, byUserId: checker.userId });
+  }
+  const dEvents = await reqMoves(dreq.id);
+  const dRow = (await prisma.domainEventOutbox.findFirst({ where: { eventType: "SupplyRequestStatusChanged", aggregateId: dreq.id } }))!;
+  report("A department request: REQUESTED>APPROVED, APPROVED>RESERVED, RESERVED>ISSUED (DEPARTMENT), correlated by its encounter; no reason text",
+    dEvents.map((p) => `${p.from}>${p.to}`).join() === "REQUESTED>APPROVED,APPROVED>RESERVED,RESERVED>ISSUED" && dEvents.every((p) => p.requestKind === "DEPARTMENT")
+      && dRow.correlationId === anyEnc && !JSON.stringify(dEvents).includes("secret"), dEvents.map((p) => `${p.from}>${p.to}`).join());
+  const { reservationId } = await prisma.departmentSupplyRequest.findUniqueOrThrow({ where: { id: dreq.id }, select: { reservationId: true } });
+  const movedFor = async (sourceId: string) => (await prisma.domainEventOutbox.findMany({ where: { eventType: "StockMoved", payload: { path: ["sourceId"], equals: sourceId } }, orderBy: { seq: "asc" } })).map((e) => (e.payload as Payload).movementType).join();
+  report("…and its stock moved: the reservation RESERVATION then RELEASE, the request ISSUE",
+    !!reservationId && (await movedFor(reservationId)) === "RESERVATION,RELEASE" && (await movedFor(dreq.id)) === "ISSUE", `${reservationId ? await movedFor(reservationId) : "-"} / ${await movedFor(dreq.id)}`);
+  const preq = await createPharmacyRequest({ facilityId, itemId: item.id, quantity: 1, requestingLocationId: ward.id, requestedByStaffId: staff.id, byUserId: by });
+  for (const to of ["APPROVED", "RESERVED", "ISSUED", "RECEIVED"] as const) {
+    await transitionPharmacyRequest({ requestId: preq.id, facilityId, to, actorStaffId: checker.id, fulfillLocationId: store.id, lotId: lot.id, byUserId: checker.userId });
+  }
+  const pEvents = await reqMoves(preq.id);
+  report("A pharmacy request: APPROVED, RESERVED, ISSUED, RECEIVED (PHARMACY)",
+    pEvents.map((p) => p.to).join() === "APPROVED,RESERVED,ISSUED,RECEIVED" && pEvents.every((p) => p.requestKind === "PHARMACY"), pEvents.map((p) => `${p.from}>${p.to}`).join());
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();

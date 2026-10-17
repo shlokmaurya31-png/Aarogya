@@ -1067,6 +1067,14 @@ per item.
   here: `recordSupplierInvoice` wrote a `notes` field the model doesn't have
   (an `as never` cast hid it), so every invoice recorded with notes failed;
   the notes now go to the audit record.
+- **`SerialUnitStatusChanged`** (registered, every transition; never the
+  serial number) and **`SupplyRequestStatusChanged`** (department and pharmacy
+  requests, told apart by `requestKind`; INTERNAL, correlated by the encounter
+  when the request is for a patient). Creating a request stays a process step;
+  the stock it reserves, issues or transfers moves as `StockMoved`.
+
+Step 9a has no PLANNED entries left, and the cut list is empty
+(`StockBelowReorder`, `GoodsReceived`).
 
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b

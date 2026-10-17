@@ -18,6 +18,7 @@ import { syncOrderStatus } from "./orderEnvelope";
 import { parseOptionalEnum } from "@/lib/enumValue";
 import { $Enums } from "@prisma/client";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+import { emitSupplyRequestStatus } from "@/lib/hospital/inventory/supplyRequestEvent";
 
 /**
  * Enterprise Pharmacy service (Phase B6). An ORCHESTRATION layer over the
@@ -472,6 +473,7 @@ export async function transitionPharmacyRequest(input: { requestId: string; faci
     const r = await tx.pharmacyRequest.updateMany({ where: { id: req.id, status: req.status }, data });
     if (r.count !== 1) throw new BadRequestError("Request changed state concurrently — refresh and try again.");
     await tx.auditEvent.create({ data: { type: "hospital.pharmacy.requestUpdated", userId: input.byUserId, detail: { requestId: req.id, from: req.status, to: input.to }, facilityId: req.facilityId, patientId: req.patientId, encounterId: req.encounterId } });
+    await emitSupplyRequestStatus(tx, req, { requestKind: "PHARMACY", from: req.status, to: input.to, actorUserId: input.byUserId });
     return tx.pharmacyRequest.findUniqueOrThrow({ where: { id: req.id } });
   });
 }

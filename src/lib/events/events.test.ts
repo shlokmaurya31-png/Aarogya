@@ -260,6 +260,11 @@ describe("step-9a payload codes mirror their sources", () => {
     expect(options("StockMoved", "wasteReason")).toEqual(Object.values($Enums.WasteReason).sort());
     expect(options("StockMoved", "adjustmentReason")).toEqual(Object.values($Enums.AdjustmentReason).sort());
   });
+  it("SerialUnitStatusChanged and SupplyRequestStatusChanged statuses mirror their enums (both request kinds share one set)", () => {
+    expect(options("SerialUnitStatusChanged", "to")).toEqual(Object.values($Enums.InventorySerialStatus).sort());
+    expect(options("SupplyRequestStatusChanged", "to")).toEqual(Object.values($Enums.DepartmentSupplyRequestStatus).sort());
+    expect(Object.values($Enums.PharmacyRequestStatus).sort()).toEqual(Object.values($Enums.DepartmentSupplyRequestStatus).sort());
+  });
   it("PurchaseOrderStatusChanged and SupplierInvoiceStatusChanged statuses mirror their enums", () => {
     expect(options("PurchaseOrderStatusChanged", "to")).toEqual(Object.values($Enums.PurchaseOrderStatus).sort());
     expect(options("SupplierInvoiceStatusChanged", "to")).toEqual(Object.values($Enums.SupplierInvoiceStatus).sort());

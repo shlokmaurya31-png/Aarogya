@@ -534,6 +534,28 @@ export const EVENT_CONTRACTS: EventContract[] = [
     }).strict(),
   }),
   contract({
+    type: "SerialUnitStatusChanged", version: 1, aggregateType: "SERIAL_UNIT", scope: "FACILITY",
+    sensitivity: "LOW", producer: "inventory serials (registerSerial, transitionSerial); never the serial number",
+    payload: z.object({
+      serialId: id, itemId: id, lotId: optId, locationId: optId,
+      from: z.enum(["IN_STOCK", "RESERVED", "ISSUED", "RETURNED", "DISPOSED"]).nullable(),
+      to: z.enum(["IN_STOCK", "RESERVED", "ISSUED", "RETURNED", "DISPOSED"]),
+    }).strict(),
+  }),
+  contract({
+    type: "SupplyRequestStatusChanged", version: 1, aggregateType: "SUPPLY_REQUEST", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "department supply requests (transitionDepartmentRequest), pharmacy requests (transitionPharmacyRequest); stock moves are their own StockMoved",
+    payload: z.object({
+      /** Which request model: the two share one status set. */
+      requestKind: z.enum(["DEPARTMENT", "PHARMACY"]),
+      requestId: id, itemId: id, quantity: z.number().positive(),
+      from: z.enum(["REQUESTED", "APPROVED", "RESERVED", "ISSUED", "RECEIVED", "CANCELLED", "REJECTED"]),
+      to: z.enum(["REQUESTED", "APPROVED", "RESERVED", "ISSUED", "RECEIVED", "CANCELLED", "REJECTED"]),
+      /** A request for a patient (so INTERNAL). */
+      patientId: optId, encounterId: optId,
+    }).strict(),
+  }),
+  contract({
     type: "StockLotStatusChanged", version: 1, aggregateType: "ITEM_LOT", scope: "FACILITY",
     sensitivity: "LOW", producer: "inventory lots (quarantineLot, releaseLotFromQuarantine), pharmacy recalls",
     payload: z.object({ lotId: id, itemId: id, from: lotStatus, to: lotStatus, cause: z.enum(["QUARANTINE", "RELEASE", "RECALL"]), recallId: optId }).strict(),

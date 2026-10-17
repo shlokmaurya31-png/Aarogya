@@ -6,6 +6,8 @@ import { reserveStock, releaseReservation } from "@/lib/hospital/inventory/reser
 import { issueStock } from "@/lib/hospital/inventory/issue";
 import type { Prisma, DepartmentSupplyRequestStatus, InventorySerialStatus } from "@prisma/client";
 import { parseEnum } from "@/lib/enumValue";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+import { emitSupplyRequestStatus } from "./supplyRequestEvent";
 
 /**
  * Enterprise inventory depth (Phase B8) — valuation, the GENERIC department
@@ -120,6 +122,7 @@ export async function transitionDepartmentRequest(input: { requestId: string; fa
     const r = await tx.departmentSupplyRequest.updateMany({ where: { id: req.id, status: req.status }, data });
     if (r.count !== 1) throw new BadRequestError("Request changed state concurrently — refresh and try again.");
     await tx.auditEvent.create({ data: { type: "hospital.inventory.deptRequestUpdated", userId: input.byUserId, detail: { requestId: req.id, from: req.status, to: input.to }, facilityId: req.facilityId, patientId: req.patientId, encounterId: req.encounterId } });
+    await emitSupplyRequestStatus(tx, req, { requestKind: "DEPARTMENT", from: req.status, to: input.to, actorUserId: input.byUserId });
     return tx.departmentSupplyRequest.findUniqueOrThrow({ where: { id: req.id } });
   });
 }
@@ -133,11 +136,30 @@ const SERIAL_TRANSITIONS: Record<InventorySerialStatus, InventorySerialStatus[]>
   DISPOSED: [],
 };
 
+/** SerialUnitStatusChanged (spine step 9a): never the serial number itself. */
+async function emitSerialStatus(
+  tx: Prisma.TransactionClient,
+  serial: { id: string; facilityId: string; itemId: string; lotId: string | null; currentLocationId: string | null; status: string },
+  from: string | null, actorUserId: string,
+) {
+  await emitFacilityEvent(tx, {
+    type: "SerialUnitStatusChanged", aggregateId: serial.id, facilityId: serial.facilityId, actorUserId,
+    payload: {
+      serialId: serial.id, itemId: serial.itemId, ...(serial.lotId ? { lotId: serial.lotId } : {}),
+      ...(serial.currentLocationId ? { locationId: serial.currentLocationId } : {}), from, to: serial.status,
+    },
+  });
+}
+
 export async function registerSerial(input: { facilityId: string; itemId: string; serialNumber: string; lotId?: string; currentLocationId?: string; byUserId: string }) {
   const item = await prisma.item.findUnique({ where: { id: input.itemId } });
   if (!item || (item.facilityId && item.facilityId !== input.facilityId)) throw new NotFoundError("Item not found in this facility.");
-  const serial = await prisma.inventorySerial.create({
-    data: { facilityId: input.facilityId, itemId: input.itemId, serialNumber: input.serialNumber, lotId: input.lotId, currentLocationId: input.currentLocationId, receivedAt: new Date() },
+  const serial = await prisma.$transaction(async (tx) => {
+    const created = await tx.inventorySerial.create({
+      data: { facilityId: input.facilityId, itemId: input.itemId, serialNumber: input.serialNumber, lotId: input.lotId, currentLocationId: input.currentLocationId, receivedAt: new Date() },
+    });
+    await emitSerialStatus(tx, created, null, input.byUserId);
+    return created;
   }).catch((e: unknown) => {
     if (e instanceof Error && /unique/i.test(e.message)) throw new BadRequestError("A serial with that number already exists in this facility.");
     throw e;
@@ -154,6 +176,8 @@ export async function transitionSerial(input: { serialId: string; facilityId: st
     const r = await tx.inventorySerial.updateMany({ where: { id: serial.id, status: serial.status }, data: { status: input.to, ...(input.currentLocationId ? { currentLocationId: input.currentLocationId } : {}) } });
     if (r.count !== 1) throw new BadRequestError("Serial changed state concurrently — refresh and try again.");
     await tx.auditEvent.create({ data: { type: "hospital.inventory.serialUpdated", userId: input.byUserId, detail: { serialId: serial.id, from: serial.status, to: input.to }, facilityId: serial.facilityId } });
-    return tx.inventorySerial.findUniqueOrThrow({ where: { id: serial.id } });
+    const moved = await tx.inventorySerial.findUniqueOrThrow({ where: { id: serial.id } });
+    await emitSerialStatus(tx, moved, serial.status, input.byUserId);
+    return moved;
   });
 }
