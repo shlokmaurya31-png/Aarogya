@@ -3,8 +3,10 @@ import { BadRequestError, NotFoundError, ConflictError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { recordProvenance } from "./provenance";
 import { getRegistryAdapter } from "./adapters/abdm";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+import type { Prisma, ExternalIdentifier } from "@prisma/client";
 import {
-  EXTERNAL_ENTITY_TYPES, IDENTIFIER_STATUSES, assertOneOf, assertSystemMatchesEntity,
+  EXTERNAL_ENTITY_TYPES, IDENTIFIER_STATUSES, IDENTIFIER_SYSTEMS, assertOneOf, assertSystemMatchesEntity,
   assertEntityInFacility, assertStaffInFacility, maskIdentifier,
 } from "./shared";
 import { parseEnum } from "@/lib/enumValue";
@@ -33,6 +35,22 @@ export class ExternalIdentityConflictError extends ConflictError {
  * Uniqueness is enforced by the database, so two patients in the same facility
  * cannot end up sharing one national identifier even under a concurrent race.
  */
+/** The registry as a code (an IDENTIFIER_SYSTEMS key), or OTHER for a partner system. */
+function systemCode(system: string): string {
+  return (Object.entries(IDENTIFIER_SYSTEMS).find(([, url]) => url === system)?.[0]) ?? "OTHER";
+}
+
+/** ExternalIdentifierStatusChanged (step 9c): never the identifier value. */
+async function emitIdentifier(tx: Prisma.TransactionClient, row: ExternalIdentifier, change: "LINKED" | "UNLINKED" | "VERIFIED" | "VERIFICATION_FAILED", byUserId: string) {
+  await emitFacilityEvent(tx, {
+    type: "ExternalIdentifierStatusChanged", aggregateId: row.id, facilityId: row.facilityId, actorUserId: byUserId,
+    payload: {
+      identifierId: row.id, entityType: row.entityType, entityId: row.entityId, system: systemCode(row.system), change,
+      status: row.status, verificationStatus: row.verificationStatus,
+    },
+  });
+}
+
 export async function linkExternalIdentifier(input: {
   facilityId: string;
   entityType: string;
@@ -85,23 +103,27 @@ export async function linkExternalIdentifier(input: {
     );
   }
 
-  const identifier = await prisma.externalIdentifier
-    .create({
-      data: {
-        facilityId: input.facilityId,
-        entityType: input.entityType,
-        entityId: input.entityId,
-        system,
-        value,
-        use: parseEnum($Enums.ExternalIdentifierUse, input.use ?? "OFFICIAL", "use"),
-        // A newly linked identifier is ALWAYS unverified. Only a genuine
-        // registry response may change this.
-        verificationStatus: "UNVERIFIED",
-        source: input.source ?? "LOCAL_ENTRY",
-        periodStart: input.periodStart,
-        periodEnd: input.periodEnd,
-        createdByStaffId: input.createdByStaffId,
-      },
+  const identifier = await prisma
+    .$transaction(async (tx) => {
+      const created = await tx.externalIdentifier.create({
+        data: {
+          facilityId: input.facilityId,
+          entityType: input.entityType,
+          entityId: input.entityId,
+          system,
+          value,
+          use: parseEnum($Enums.ExternalIdentifierUse, input.use ?? "OFFICIAL", "use"),
+          // A newly linked identifier is ALWAYS unverified. Only a genuine
+          // registry response may change this.
+          verificationStatus: "UNVERIFIED",
+          source: input.source ?? "LOCAL_ENTRY",
+          periodStart: input.periodStart,
+          periodEnd: input.periodEnd,
+          createdByStaffId: input.createdByStaffId,
+        },
+      });
+      await emitIdentifier(tx, created, "LINKED", input.byUserId);
+      return created;
     })
     .catch((e: unknown) => {
       // Lost the race against a concurrent link of the same identifier.
@@ -164,7 +186,9 @@ export async function unlinkExternalIdentifier(input: {
         patientId: existing.entityType === "PATIENT" ? existing.entityId : null,
       },
     });
-    return tx.externalIdentifier.findUniqueOrThrow({ where: { id: existing.id } });
+    const unlinked = await tx.externalIdentifier.findUniqueOrThrow({ where: { id: existing.id } });
+    await emitIdentifier(tx, unlinked, "UNLINKED", input.byUserId);
+    return unlinked;
   });
 }
 
@@ -208,17 +232,22 @@ export async function verifyExternalIdentifier(input: {
   }
 
   const verified = result.data?.verified === true;
-  const updated = await prisma.externalIdentifier.update({
-    where: { id: existing.id },
-    data: {
-      verificationStatus: verified ? "VERIFIED" : "FAILED",
-      verifiedAt: verified ? new Date() : null,
-      lastSyncedAt: new Date(),
-      syncStatus: "SYNCED",
-      syncError: null,
-      retryCount: 0,
-      externalUpdatedAt: result.data?.externalUpdatedAt ? new Date(result.data.externalUpdatedAt) : null,
-    },
+  // The registry's answer and its event commit together (a transport failure above is sync bookkeeping, no event).
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.externalIdentifier.update({
+      where: { id: existing.id },
+      data: {
+        verificationStatus: verified ? "VERIFIED" : "FAILED",
+        verifiedAt: verified ? new Date() : null,
+        lastSyncedAt: new Date(),
+        syncStatus: "SYNCED",
+        syncError: null,
+        retryCount: 0,
+        externalUpdatedAt: result.data?.externalUpdatedAt ? new Date(result.data.externalUpdatedAt) : null,
+      },
+    });
+    await emitIdentifier(tx, row, verified ? "VERIFIED" : "VERIFICATION_FAILED", input.byUserId);
+    return row;
   });
 
   await recordProvenance(prisma, {

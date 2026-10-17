@@ -1119,6 +1119,25 @@ result) are reported as their code, or OTHER, never their text. Fixed here:
 transactional; `setEquipmentStatus` and `setMeasureStatus` were unguarded
 updates (now compare-and-set). Gate `verify-postgres-quality-ops-events`.
 
+**As built: step 9c (batch 7, item 4).** Access, identity, interoperability and
+workforce, 26 functions: `BreakGlassStatusChanged`, `PrivacyRequestStatusChanged`
+and `LegalHoldSet` (all SENSITIVE; never the reason or decision note),
+`HealthInformationExchangeRequested` and `HealthInformationExchangeStatusChanged`
+(every transition goes through the exchange's one transition helper; never the
+error or the bundle), `ExternalIdentifierStatusChanged` (LINKED, UNLINKED,
+VERIFIED or VERIFICATION_FAILED; the registry as a code from
+`IDENTIFIER_SYSTEMS` or OTHER; never the identifier value; a registry transport
+failure is sync bookkeeping and emits nothing), `ImportedResourceReviewed`,
+`StaffAuthorizationChanged` (changeType DEPARTMENT | CREDENTIAL | PRIVILEGE and
+`subjectStaffId`, per approved change 2). External identifiers emit here, not as
+`PatientDemographicsUpdated`. Fixed here: `expireLapsedBreakGlass` was one bulk
+update (now per window, compare-and-set, with its event); `setLegalHold`
+bumped the version without checking it; `reviewImportedResource` was an
+unguarded update, so a review could be re-decided (now once, guarded on
+`reviewedAt`). Gate `verify-postgres-access-identity-events`.
+
+With 9b and 9c, no PLANNED exemption and no OWED event remains.
+
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b
 (quality, safety, operations) and 9c (access, identity, interoperability,

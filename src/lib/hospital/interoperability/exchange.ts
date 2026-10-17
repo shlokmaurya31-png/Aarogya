@@ -2,6 +2,7 @@ import { createHash } from "crypto";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError, ConflictError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 import { assertExchangeAuthorized } from "@/lib/consent";
 import { recordProvenance } from "./provenance";
 import { getExchangeAdapter } from "./adapters/abdm";
@@ -114,21 +115,31 @@ export async function createExchange(input: CreateExchangeInput) {
     return { exchange: existing, deduplicated: true };
   }
 
-  const exchange = await prisma.healthInformationExchange
-    .create({
-      data: {
-        facilityId: input.facilityId,
-        patientId: input.patientId ?? null,
-        direction: parseEnum($Enums.ExchangeDirection, input.direction, "direction"),
-        purpose: input.purpose,
-        consentId,
-        destinationSystem: input.destinationSystem.trim(),
-        destinationEndpoint: input.destinationEndpoint ?? null,
-        requestedScopes: scopes.join(","),
-        idempotencyKey,
-        correlationId: input.correlationId ?? null,
-        requestedByStaffId: input.requestedByStaffId ?? null,
-      },
+  const exchange = await prisma
+    .$transaction(async (tx) => {
+      const created = await tx.healthInformationExchange.create({
+        data: {
+          facilityId: input.facilityId,
+          patientId: input.patientId ?? null,
+          direction: parseEnum($Enums.ExchangeDirection, input.direction, "direction"),
+          purpose: input.purpose,
+          consentId,
+          destinationSystem: input.destinationSystem.trim(),
+          destinationEndpoint: input.destinationEndpoint ?? null,
+          requestedScopes: scopes.join(","),
+          idempotencyKey,
+          correlationId: input.correlationId ?? null,
+          requestedByStaffId: input.requestedByStaffId ?? null,
+        },
+      });
+      await emitFacilityEvent(tx, {
+        type: "HealthInformationExchangeRequested", aggregateId: created.id, facilityId: created.facilityId, actorUserId: input.byUserId,
+        payload: {
+          exchangeId: created.id, ...(created.patientId ? { patientId: created.patientId } : {}), direction: created.direction, purpose: created.purpose,
+          scopes, ...(created.consentId ? { consentId: created.consentId } : {}),
+        },
+      });
+      return created;
     })
     .catch(async (e: unknown) => {
       if ((e as { code?: string })?.code === "P2002") {
@@ -173,7 +184,16 @@ async function transition(
         facilityId: ex.facilityId, patientId: ex.patientId,
       },
     });
-    return tx.healthInformationExchange.findUniqueOrThrow({ where: { id: ex.id } });
+    const moved = await tx.healthInformationExchange.findUniqueOrThrow({ where: { id: ex.id } });
+    // HealthInformationExchangeStatusChanged (step 9c): every transition goes through here; never the error or the bundle.
+    await emitFacilityEvent(tx, {
+      type: "HealthInformationExchangeStatusChanged", aggregateId: ex.id, facilityId: ex.facilityId, actorUserId: audit.byUserId,
+      payload: {
+        exchangeId: ex.id, ...(ex.patientId ? { patientId: ex.patientId } : {}), direction: moved.direction, from: ex.status, to: moved.status,
+        ...(moved.resourceCount !== null && moved.resourceCount !== undefined ? { resourceCount: moved.resourceCount } : {}),
+      },
+    });
+    return moved;
   });
 }
 

@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 import { recordProvenance, hashPayload } from "../provenance";
 import { resolveEntityByIdentifier } from "../externalIdentity";
 import { assertPatientInFacility } from "../shared";
@@ -322,15 +323,25 @@ export async function reviewImportedResource(input: {
   const row = await prisma.importedResource.findUnique({ where: { id: input.importedResourceId } });
   if (!row || row.facilityId !== input.facilityId) throw new NotFoundError("Imported resource not found.");
 
-  const updated = await prisma.importedResource.update({
-    where: { id: row.id },
-    data: {
-      status: input.decision,
-      reviewedAt: new Date(),
-      reviewedByStaffId: input.reviewedByStaffId,
-      rejectionReason: input.decision === "REJECTED" ? input.note ?? row.rejectionReason : null,
-      version: { increment: 1 },
-    },
+  // Decided once (step 9c: a plain update let a review be re-decided), with its event.
+  if (row.reviewedAt) throw new BadRequestError(`This resource has already been reviewed (${row.status}).`);
+  const updated = await prisma.$transaction(async (tx) => {
+    const r = await tx.importedResource.updateMany({
+      where: { id: row.id, version: row.version, reviewedAt: null },
+      data: {
+        status: input.decision,
+        reviewedAt: new Date(),
+        reviewedByStaffId: input.reviewedByStaffId,
+        rejectionReason: input.decision === "REJECTED" ? input.note ?? row.rejectionReason : null,
+        version: { increment: 1 },
+      },
+    });
+    if (r.count !== 1) throw new BadRequestError("This resource was reviewed concurrently. Refresh and try again.");
+    await emitFacilityEvent(tx, {
+      type: "ImportedResourceReviewed", aggregateId: row.id, facilityId: row.facilityId, actorUserId: input.byUserId,
+      payload: { importedResourceId: row.id, from: row.status, decision: input.decision },
+    });
+    return tx.importedResource.findUniqueOrThrow({ where: { id: row.id } });
   });
   await recordAuditEvent(
     "hospital.interop.externalResourceMapped",

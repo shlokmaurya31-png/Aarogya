@@ -304,3 +304,34 @@ describe("step-9b payload codes mirror their sources", () => {
     expect(options("QualityIncidentStatusChanged", "category")).toEqual([...INCIDENT_CATEGORIES].sort());
   });
 });
+
+describe("step-9c payload codes mirror their sources", () => {
+  const options = (type: string, key: string) => {
+    const shape = (getEventContract(type, 1)!.payload as unknown as { shape: Record<string, { options?: string[]; unwrap?: () => unknown; element?: unknown }> }).shape;
+    let f = shape[key] as { options?: string[]; unwrap?: () => unknown; element?: unknown };
+    while (!f.options && (f.unwrap || f.element)) f = (f.element ?? f.unwrap!()) as typeof f;
+    return [...(f.options ?? [])].sort();
+  };
+  it("statuses mirror their Prisma enums", () => {
+    expect(options("BreakGlassStatusChanged", "to")).toEqual(Object.values($Enums.BreakGlassAccessStatus).sort());
+    expect(options("PrivacyRequestStatusChanged", "to")).toEqual(Object.values($Enums.PrivacyRequestStatus).sort());
+    expect(options("HealthInformationExchangeStatusChanged", "to")).toEqual(Object.values($Enums.HealthInformationExchangeStatus).sort());
+    expect(options("ExternalIdentifierStatusChanged", "status")).toEqual(Object.values($Enums.ExternalIdentifierStatus).sort());
+    expect(options("ExternalIdentifierStatusChanged", "verificationStatus")).toEqual(Object.values($Enums.ExternalIdentifierVerificationStatus).sort());
+    expect(options("ImportedResourceReviewed", "from")).toEqual(Object.values($Enums.ImportedResourceStatus).sort());
+    const authz = [...new Set([...Object.values($Enums.WorkforceAssignmentStatus), ...Object.values($Enums.CredentialStatus), ...Object.values($Enums.StaffPrivilegeStatus)])].sort();
+    expect(options("StaffAuthorizationChanged", "to")).toEqual(authz);
+  });
+  it("codes mirror their source lists", async () => {
+    const { EMERGENCY_CONTEXTS } = await import("@/lib/auth/authorize/breakGlass");
+    const { PRIVACY_REQUEST_TYPES, REQUESTER_TYPES } = await import("@/lib/auth/authorize/privacy");
+    const { CONSENT_PURPOSES, CONSENT_SCOPES, EXTERNAL_ENTITY_TYPES, IDENTIFIER_SYSTEMS } = await import("@/lib/hospital/interoperability/shared");
+    expect(options("BreakGlassStatusChanged", "emergencyContext")).toEqual([...EMERGENCY_CONTEXTS].sort());
+    expect(options("PrivacyRequestStatusChanged", "requestType")).toEqual([...PRIVACY_REQUEST_TYPES].sort());
+    expect(options("PrivacyRequestStatusChanged", "requesterType")).toEqual([...REQUESTER_TYPES].sort());
+    expect(options("HealthInformationExchangeRequested", "purpose")).toEqual([...CONSENT_PURPOSES].sort());
+    expect(options("HealthInformationExchangeRequested", "scopes")).toEqual([...CONSENT_SCOPES].sort());
+    expect(options("ExternalIdentifierStatusChanged", "entityType")).toEqual([...EXTERNAL_ENTITY_TYPES].sort());
+    expect(options("ExternalIdentifierStatusChanged", "system")).toEqual([...Object.keys(IDENTIFIER_SYSTEMS), "OTHER"].sort());
+  });
+});

@@ -859,6 +859,82 @@ export const EVENT_CONTRACTS: EventContract[] = [
     }).strict(),
   }),
 
+  // ── Access, identity, interoperability and workforce (spine §9 step 9c) ──
+  contract({
+    type: "BreakGlassStatusChanged", version: 1, aggregateType: "BREAK_GLASS", scope: "FACILITY",
+    sensitivity: "SENSITIVE", producer: "break-glass (activateBreakGlass, completeBreakGlass, revokeBreakGlass, expireLapsedBreakGlass); never the reason",
+    payload: z.object({
+      breakGlassId: id, patientId: id, actorUserId: id, encounterId: optId,
+      from: z.enum(["ACTIVE", "EXPIRED", "REVOKED", "COMPLETED"]).nullable(), to: z.enum(["ACTIVE", "EXPIRED", "REVOKED", "COMPLETED"]),
+      emergencyContext: z.enum(["LIFE_THREATENING", "UNCONSCIOUS_PATIENT", "MASS_CASUALTY", "URGENT_TRANSFER", "CLINICAL_HANDOVER", "OTHER_URGENT"]),
+    }).strict(),
+  }),
+  contract({
+    type: "PrivacyRequestStatusChanged", version: 1, aggregateType: "PRIVACY_REQUEST", scope: "FACILITY",
+    sensitivity: "SENSITIVE", producer: "privacy (createPrivacyRequest, transitionPrivacyRequest): a DPDP data-subject request; never the reason or decision note",
+    payload: z.object({
+      privacyRequestId: id, patientId: id,
+      requestType: z.enum(["ACCESS", "CORRECTION", "RESTRICTION", "WITHDRAW_CONSENT", "DELETION_REQUEST"]),
+      requesterType: z.enum(["PATIENT", "STAFF_ON_BEHALF", "GUARDIAN"]),
+      from: z.enum(["REQUESTED", "UNDER_REVIEW", "APPROVED", "REJECTED", "ACTIONED", "CANCELLED"]).nullable(),
+      to: z.enum(["REQUESTED", "UNDER_REVIEW", "APPROVED", "REJECTED", "ACTIONED", "CANCELLED"]),
+    }).strict(),
+  }),
+  contract({
+    type: "LegalHoldSet", version: 1, aggregateType: "PRIVACY_REQUEST", scope: "FACILITY",
+    sensitivity: "SENSITIVE", producer: "privacy (setLegalHold): changes how the record may be erased; never the reason",
+    payload: z.object({ privacyRequestId: id, patientId: id, hold: z.boolean() }).strict(),
+  }),
+  contract({
+    type: "HealthInformationExchangeRequested", version: 1, aggregateType: "HEALTH_EXCHANGE", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "interoperability (createExchange): a disclosure of the record to another party",
+    payload: z.object({
+      exchangeId: id, patientId: optId, direction: z.enum(["OUTBOUND", "INBOUND"]),
+      purpose: z.enum(["TREATMENT", "REFERRAL", "SECOND_OPINION", "INSURANCE", "PATIENT_ACCESS", "RESEARCH", "OTHER"]),
+      scopes: z.array(z.enum(["ALL_CLINICAL", "DIAGNOSIS", "LAB", "IMAGING", "MEDICATION", "DOCUMENTS", "ENCOUNTER", "ALLERGY", "VITALS", "CARE_PLAN", "BILLING"])),
+      consentId: optId,
+    }).strict(),
+  }),
+  contract({
+    type: "HealthInformationExchangeStatusChanged", version: 1, aggregateType: "HEALTH_EXCHANGE", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "interoperability (authorize, reject, cancel, dispatch: processing, completed, failed); never the error text or the bundle",
+    payload: z.object({
+      exchangeId: id, patientId: optId, direction: z.enum(["OUTBOUND", "INBOUND"]),
+      from: z.enum(["REQUESTED", "AUTHORIZED", "PROCESSING", "COMPLETED", "REJECTED", "FAILED", "CANCELLED"]),
+      to: z.enum(["REQUESTED", "AUTHORIZED", "PROCESSING", "COMPLETED", "REJECTED", "FAILED", "CANCELLED"]),
+      resourceCount: z.number().int().min(0).optional(),
+    }).strict(),
+  }),
+  contract({
+    type: "ExternalIdentifierStatusChanged", version: 1, aggregateType: "EXTERNAL_IDENTIFIER", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "interoperability (linkExternalIdentifier, unlinkExternalIdentifier, verifyExternalIdentifier); never the identifier value",
+    payload: z.object({
+      identifierId: id, entityType: z.enum(["PATIENT", "FACILITY", "STAFF", "ENCOUNTER", "ORGANIZATION", "DOCUMENT", "PAYER"]), entityId: id,
+      /** The registry, as a code (IDENTIFIER_SYSTEMS key); a partner system is OTHER. */
+      system: z.enum(["ABHA_NUMBER", "ABHA_ADDRESS", "HFR", "HPR", "LOCAL_UHID", "LOCAL_MRN", "OTHER"]),
+      change: z.enum(["LINKED", "UNLINKED", "VERIFIED", "VERIFICATION_FAILED"]),
+      status: z.enum(["ACTIVE", "SUPERSEDED", "REVOKED", "INVALID"]),
+      verificationStatus: z.enum(["UNVERIFIED", "VERIFIED", "FAILED"]),
+    }).strict(),
+  }),
+  contract({
+    type: "ImportedResourceReviewed", version: 1, aggregateType: "IMPORTED_RESOURCE", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "FHIR import (reviewImportedResource): accepted imports enter the record; never the resource or the note",
+    payload: z.object({ importedResourceId: id, from: z.enum(["RECEIVED", "MAPPED", "IMPORTED", "REJECTED", "CONFLICT"]), decision: z.enum(["MAPPED", "REJECTED"]) }).strict(),
+  }),
+  contract({
+    type: "StaffAuthorizationChanged", version: 1, aggregateType: "STAFF_AUTHORIZATION", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "workforce (assignments, credentials, privileges): what staff may act on, prescribe or sign off",
+    payload: z.object({
+      /** Triage approved change 2: the closed code for the merged kinds, and whose authorization changed. */
+      changeType: z.enum(["DEPARTMENT", "CREDENTIAL", "PRIVILEGE"]), subjectStaffId: id, recordId: id,
+      from: z.enum(["ACTIVE", "ENDED", "PENDING", "VERIFIED", "EXPIRED", "SUSPENDED", "REVOKED"]).nullable(),
+      to: z.enum(["ACTIVE", "ENDED", "PENDING", "VERIFIED", "EXPIRED", "SUSPENDED", "REVOKED"]),
+      departmentId: optId,
+      credentialType: z.enum(["REGISTRATION", "QUALIFICATION", "CERTIFICATION", "LICENSE", "SPECIALTY", "TRAINING"]).optional(),
+    }).strict(),
+  }),
+
   // ── Hospital billing: pricing of charges posted without a tariff (batch 5) ──
   contract({
     type: "ChargeRepriced", version: 1, aggregateType: "CHARGE", scope: "FACILITY",
