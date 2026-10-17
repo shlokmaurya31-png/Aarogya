@@ -1,7 +1,7 @@
 # Aarogya product spec
 
 - **Status:** Product direction, set 2026-10-17. Designs follow from it, phase by phase (see *Build order*); no feature here is built until its design is approved.
-- **Designs so far:** `docs/RAG_DESIGN.md` (4b), `docs/DOCUMENT_PIPELINE_DESIGN.md` (4a).
+- **Designs so far:** `docs/PERSON_IDENTITY_DESIGN.md` (Phase 0), `docs/DOCUMENT_PIPELINE_DESIGN.md` (4a), `docs/RAG_DESIGN.md` (4b).
 
 ## Vision
 
@@ -154,6 +154,7 @@ Each phase ends with its own gates and end-to-end tests.
 
 | Phase | Scope |
 |---|---|
+| 0 | Person identity: a platform-level Person the patient owns, not tied to any facility. Facility records link to it only after verification (a code to a contact on the facility's record, or ABHA); never on a fuzzy match. Uploads, patient-provided facts, patient-given consents and household membership belong to the Person. Facilities see person-level data only through consent or an active care relationship. Comes first because 4a–5b store their patient-owned data on it. |
 | 4a | Document pipeline (A) |
 | 4b | RAG and the AI modes (E) |
 | 4c | Consent sharing upgrade (B) |
