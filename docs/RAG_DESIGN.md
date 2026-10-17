@@ -330,6 +330,20 @@ interface EmbeddingProvider {
 
 ### 7.1 Filters first, in SQL
 
+**One access resolver (decided 2026-10-18).** The AI index has no access
+rules of its own. Every retrieval asks the same resolver every other read uses
+(`src/lib/person/access.ts`: `personAccess()` and the staff document
+visibility), so the AI can never see more than the same actor could open in
+the app:
+- the person's sharing choice;
+- the active care relationship, with the facility's OPD and IPD windows
+  (`identity.care_window_{opd,ipd}_days`, capped at 90);
+- links, unlinks and account closure.
+
+The SQL filters below are that resolver's decision expressed as a
+pre-filter. The leak gate checks that retrieval and the resolver agree, case
+by case.
+
 Every query starts from a CTE built only from server-side values:
 
 1. **Access path:**
