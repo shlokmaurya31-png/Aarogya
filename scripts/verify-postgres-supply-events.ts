@@ -12,6 +12,10 @@
  *      adjustment approved or rejected, a stock take completed (variance
  *      lines counted; each variance posts StockMoved) and a goods receipt
  *      rejected; GoodsReceived when one is approved (its lines post RECEIPT).
+ *   4. Waste HOLD (approved change 4): a waste awaiting approval holds its
+ *      quantity (unavailable, not written off); record → reject restores the
+ *      stock fully; record → approve writes it off exactly once; approve and
+ *      reject racing: one wins; the ledger still reconciles with the balances.
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-supply-events.ts
  */
@@ -23,6 +27,8 @@ import { startStockTake, addStockTakeLine, completeStockTake } from "../src/lib/
 import { createSupplier } from "../src/lib/hospital/procurement/suppliers";
 import { createPurchaseOrderDraft, addPurchaseOrderLine, submitForApproval, approvePurchaseOrder } from "../src/lib/hospital/procurement/purchaseOrders";
 import { recordGoodsReceipt, approveGoodsReceipt, rejectGoodsReceipt } from "../src/lib/hospital/procurement/goodsReceipts";
+import { recordWaste, approveWaste, rejectWaste } from "../src/lib/hospital/inventory/waste";
+import { reconcileBalances } from "../src/lib/hospital/inventory/stockBalance";
 import { reserveStock, releaseReservation, consumeReservation } from "../src/lib/hospital/inventory/reservation";
 import { initiateTransfer, receiveTransfer, cancelTransfer } from "../src/lib/hospital/inventory/transfer";
 import { issueStock } from "../src/lib/hospital/inventory/issue";
@@ -176,6 +182,47 @@ async function main() {
   report("Rejecting one → GOODS_RECEIPT RECORDED>REJECTED (no reason text), and no GoodsReceived",
     g2e.length === 1 && g2e[0].documentType === "GOODS_RECEIPT" && g2e[0].to === "REJECTED" && !JSON.stringify(g2e).includes("secret")
       && (await prisma.domainEventOutbox.count({ where: { eventType: "GoodsReceived", aggregateId: g2.receipt.id } })) === 0);
+
+  // 4. Waste HOLD, on a fresh lot of 100 at the ward.
+  const wlot = await prisma.itemLot.create({ data: { itemId: item.id, facilityId, lotNumber: `SUP-WASTE-${run}`, status: "ACTIVE", expiresAt: new Date("2030-01-01") } });
+  await tx((t) => createAdjustment(t, { facilityId, itemId: item.id, lotId: wlot.id, locationId: ward.id, quantityDelta: 49, reason: "FOUND", requestedByStaffId: staff.id, actorUserId: by, idempotencyKey: `sup-w1-${run}` }));
+  await tx((t) => createAdjustment(t, { facilityId, itemId: item.id, lotId: wlot.id, locationId: ward.id, quantityDelta: 49, reason: "FOUND", requestedByStaffId: staff.id, actorUserId: by, idempotencyKey: `sup-w2-${run}` }));
+  await tx((t) => createAdjustment(t, { facilityId, itemId: item.id, lotId: wlot.id, locationId: ward.id, quantityDelta: 2, reason: "FOUND", requestedByStaffId: staff.id, actorUserId: by, idempotencyKey: `sup-w3-${run}` }));
+  const bal = async () => { const b = await prisma.stockBalance.findFirstOrThrow({ where: { lotId: wlot.id, locationId: ward.id } }); return `${b.onHandQty}/${b.reservedQty}`; };
+  const wasteMoves = async (id: string) => (await prisma.domainEventOutbox.findMany({ where: { eventType: "StockMoved", aggregateId: wlot.id, payload: { path: ["sourceId"], equals: id } }, orderBy: { seq: "asc" } })).map((e) => { const p = e.payload as Payload; return `${p.movementType}:${p.onHandDelta}/${p.reservedDelta}`; }).join();
+  const waste = (key: string) => tx((t) => recordWaste(t, { facilityId, itemId: item.id, lotId: wlot.id, locationId: ward.id, quantity: 60, reason: "DAMAGED", notes: `crushed secret ${run}`, requestedByStaffId: staff.id, actorUserId: by, idempotencyKey: `sup-waste-${key}-${run}` }));
+  const w1 = await waste("a");
+  report("A high-value waste awaits approval with its 60 HELD: on hand 100, reserved 60 (unavailable, not written off); StockMoved RESERVATION",
+    w1.waste.status === "PENDING_APPROVAL" && (await bal()) === "100/60" && (await wasteMoves(w1.waste.id)) === "RESERVATION:0/60", `${await bal()} ${await wasteMoves(w1.waste.id)}`);
+  report("…the held quantity can't be issued meanwhile (only 40 available)",
+    await tx((t) => issueStock(t, { ...issue, lotId: wlot.id, locationId: ward.id, quantity: 50, sourceId: `sup-w-issue-${run}` })).then(() => false, () => true));
+  await tx((t) => rejectWaste(t, w1.waste.id, { actorUserId: checker.userId, rejectedByStaffId: checker.id }));
+  const w1e = await docEvents(w1.waste.id);
+  report("record → reject: the stock is fully restored (100/0); WASTE PENDING_APPROVAL>REJECTED and a RELEASE StockMoved; nothing written off",
+    (await bal()) === "100/0" && w1e.length === 1 && w1e[0].documentType === "WASTE" && w1e[0].to === "REJECTED" && (await wasteMoves(w1.waste.id)) === "RESERVATION:0/60,RELEASE:0/-60", `${await bal()} ${await wasteMoves(w1.waste.id)}`);
+  const w2 = await waste("b");
+  await tx((t) => approveWaste(t, w2.waste.id, { approvedByStaffId: checker.id, actorUserId: checker.userId }));
+  const w2e = await docEvents(w2.waste.id);
+  report("record → approve: written off from the hold exactly once (40/0); WASTE PENDING_APPROVAL>APPROVED and one WASTE StockMoved",
+    (await bal()) === "40/0" && w2e.length === 1 && w2e[0].to === "APPROVED" && (await wasteMoves(w2.waste.id)) === "RESERVATION:0/60,WASTE:-60/-60"
+      && (await prisma.stockLedgerEntry.count({ where: { sourceType: "WasteRecord", sourceId: w2.waste.id, movementType: "WASTE" } })) === 1, `${await bal()} ${await wasteMoves(w2.waste.id)}`);
+  report("An approved waste can't be approved or rejected again",
+    await tx((t) => approveWaste(t, w2.waste.id, { approvedByStaffId: checker.id, actorUserId: checker.userId })).then(() => false, () => true)
+      && await tx((t) => rejectWaste(t, w2.waste.id, { actorUserId: checker.userId })).then(() => false, () => true));
+  await tx((t) => createAdjustment(t, { facilityId, itemId: item.id, lotId: wlot.id, locationId: ward.id, quantityDelta: 30, reason: "FOUND", requestedByStaffId: staff.id, actorUserId: by, idempotencyKey: `sup-w4-${run}` }));
+  const w3 = await waste("c"); // 70/60
+  const [ap, rj] = await Promise.allSettled([
+    tx((t) => approveWaste(t, w3.waste.id, { approvedByStaffId: checker.id, actorUserId: checker.userId })),
+    tx((t) => rejectWaste(t, w3.waste.id, { actorUserId: checker.userId })),
+  ]);
+  const raced = await bal();
+  report("Approve and reject racing: exactly one wins, and the stock matches the winner",
+    [ap, rj].filter((r) => r.status === "fulfilled").length === 1 && (ap.status === "fulfilled" ? raced === "10/0" : raced === "70/0"), `${ap.status}/${rj.status} ${raced}`);
+  const rec = await tx((t) => reconcileBalances(t, facilityId));
+  // Scoped to this gate's item: older gates' fixtures write StockBalance rows directly, without ledger entries.
+  const mine = rec.discrepancies.filter((d) => d.itemId === item.id);
+  report("The ledger still reconciles with every balance of this item (all its lots and locations)", mine.length === 0, JSON.stringify(mine));
+  report("No waste payload carries its notes", !JSON.stringify([...w1e, ...w2e]).includes("secret") && !(await wasteMoves(w2.waste.id)).includes("secret"));
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();

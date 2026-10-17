@@ -1046,6 +1046,19 @@ per item.
   list) when a receipt is approved: purchase order, supplier, line counts; each
   accepted line posts a RECEIPT `StockMoved`. Recording a receipt stays a
   process step. Rejection reasons are never in a payload.
+- **Waste HOLD (approved change 4).** A waste awaiting approval (high-value,
+  ≥ 50) now HOLDS its quantity: a RESERVATION against the waste record
+  (`StockMoved`), unavailable but not written off, so it can't be issued
+  meanwhile. `approveWaste` writes it off from the hold (WASTE, on-hand and
+  reserved both down); `rejectWaste` releases it (RELEASE); both emit
+  `StockDocumentStatusChanged` (WASTE). Every step is a new ledger entry.
+  Low-value waste needs no approval and is still written off at once. A
+  pending waste recorded before this change held nothing: approving it writes
+  off from available stock as before, rejecting returns nothing (detected from
+  the ledger, not guessed). New route `…/stock/waste/[id]/reject`. (The
+  triage's "a rejected waste stays written off" was not quite right: a
+  pending waste was never written off before approval; the defect was that
+  its stock stayed available.)
 
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b

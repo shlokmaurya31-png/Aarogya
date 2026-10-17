@@ -207,6 +207,7 @@ export type AuditEventType =
   | "hospital.inventory.adjustmentRejected"
   | "hospital.inventory.wasteRecorded"
   | "hospital.inventory.wasteApproved"
+  | "hospital.inventory.wasteRejected"
   | "hospital.inventory.lotQuarantined"
   | "hospital.inventory.lotReleased"
   | "hospital.inventory.stocktakeStarted"

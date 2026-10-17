@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { Prisma, type WasteReason } from "@prisma/client";
 import { BadRequestError } from "@/lib/auth/rbac";
-import { getOrCreateStockBalance, atomicDecrementOnHand } from "./stockBalance";
+import { getOrCreateStockBalance, atomicDecrementOnHand, atomicIncrementReserved, atomicDecrementReserved, atomicConvertReservedToIssued } from "./stockBalance";
 import { postLedgerEntry } from "./ledger";
+import { emitStockDocumentStatus } from "./stockDocumentEvent";
 import { assertItemInFacility, assertLocationInFacility, assertLotInFacility, assertReplayInFacility } from "./facilityScope";
 
 type Tx = Prisma.TransactionClient;
@@ -60,12 +61,45 @@ export async function recordWaste(tx: Tx, input: RecordWasteInput) {
 
   if (!isHighValue) {
     await applyWasteToStock(tx, waste, input.actorUserId, input.requestedByStaffId);
+  } else {
+    // Approved change 4 (step 9a): awaiting approval, the quantity is HELD
+    // (reserved against this waste record: unavailable, not written off).
+    await moveHold(tx, waste, "HOLD", input.actorUserId, input.requestedByStaffId);
   }
 
   return { waste, alreadyExisted: false as const };
 }
 
-async function applyWasteToStock(tx: Tx, waste: { id: string; facilityId: string; itemId: string; lotId: string; locationId: string; quantity: number; reason: WasteReason; patientId: string | null; encounterId: string | null }, actorUserId: string, actorStaffId?: string) {
+type WasteRow = { id: string; facilityId: string; itemId: string; lotId: string; locationId: string; quantity: number; reason: WasteReason; patientId: string | null; encounterId: string | null };
+
+/** Whether this waste's quantity was put on HOLD when it was recorded (records from before step 9a were not). */
+async function isHeld(tx: Tx, wasteId: string) {
+  return (await tx.stockLedgerEntry.count({ where: { sourceType: "WasteRecord", sourceId: wasteId, movementType: "RESERVATION" } })) > 0;
+}
+
+/**
+ * The HOLD's three moves, each a new ledger entry (never an edit): HOLD
+ * reserves the quantity, WRITE_OFF takes it from the hold off the books,
+ * RETURN releases it back to available stock.
+ */
+async function moveHold(tx: Tx, waste: WasteRow, move: "HOLD" | "WRITE_OFF" | "RETURN", actorUserId: string, actorStaffId?: string) {
+  const item = await tx.item.findUniqueOrThrow({ where: { id: waste.itemId } });
+  const balance = await getOrCreateStockBalance(tx, { facilityId: waste.facilityId, itemId: waste.itemId, lotId: waste.lotId, locationId: waste.locationId });
+  const q = waste.quantity;
+  if (move === "HOLD") await atomicIncrementReserved(tx, balance.id, q);
+  else if (move === "WRITE_OFF") await atomicConvertReservedToIssued(tx, balance.id, q);
+  else await atomicDecrementReserved(tx, balance.id, q);
+  await postLedgerEntry(tx, {
+    facilityId: waste.facilityId, itemId: waste.itemId, lotId: waste.lotId, locationId: waste.locationId,
+    movementType: move === "HOLD" ? "RESERVATION" : move === "WRITE_OFF" ? "WASTE" : "RELEASE",
+    onHandDelta: move === "WRITE_OFF" ? -q : 0, reservedDelta: move === "HOLD" ? q : -q,
+    unit: item.baseUnit, wasteReason: move === "RETURN" ? null : waste.reason,
+    patientId: waste.patientId ?? undefined, encounterId: waste.encounterId ?? undefined,
+    sourceType: "WasteRecord", sourceId: waste.id, actorUserId, actorStaffId,
+  });
+}
+
+async function applyWasteToStock(tx: Tx, waste: WasteRow, actorUserId: string, actorStaffId?: string) {
   const item = await tx.item.findUniqueOrThrow({ where: { id: waste.itemId } });
   const balance = await getOrCreateStockBalance(tx, { facilityId: waste.facilityId, itemId: waste.itemId, lotId: waste.lotId, locationId: waste.locationId });
   await atomicDecrementOnHand(tx, balance.id, waste.quantity);
@@ -97,12 +131,26 @@ export async function approveWaste(tx: Tx, wasteId: string, input: { approvedByS
   });
   if (result.count !== 1) throw new WasteConcurrencyError(wasteId);
 
-  await applyWasteToStock(tx, waste, input.actorUserId, input.approvedByStaffId);
+  // Written off from the HOLD; a pending waste recorded before step 9a has no
+  // hold and is written off from available stock, as it always was.
+  if (await isHeld(tx, waste.id)) await moveHold(tx, waste, "WRITE_OFF", input.actorUserId, input.approvedByStaffId);
+  else await applyWasteToStock(tx, waste, input.actorUserId, input.approvedByStaffId);
+  await emitStockDocumentStatus(tx, {
+    documentType: "WASTE", documentId: waste.id, facilityId: waste.facilityId, from: "PENDING_APPROVAL", to: "APPROVED",
+    itemId: waste.itemId, locationId: waste.locationId, actorUserId: input.actorUserId,
+  });
   return tx.wasteRecord.findUniqueOrThrow({ where: { id: wasteId } });
 }
 
-export async function rejectWaste(tx: Tx, wasteId: string) {
+/** A rejected waste returns its HOLD to available stock (a pre-9a record held nothing, so nothing returns). */
+export async function rejectWaste(tx: Tx, wasteId: string, input: { actorUserId: string; rejectedByStaffId?: string }) {
+  const waste = await tx.wasteRecord.findUniqueOrThrow({ where: { id: wasteId } });
   const result = await tx.wasteRecord.updateMany({ where: { id: wasteId, status: "PENDING_APPROVAL" }, data: { status: "REJECTED" } });
   if (result.count !== 1) throw new WasteConcurrencyError(wasteId);
+  if (await isHeld(tx, waste.id)) await moveHold(tx, waste, "RETURN", input.actorUserId, input.rejectedByStaffId);
+  await emitStockDocumentStatus(tx, {
+    documentType: "WASTE", documentId: waste.id, facilityId: waste.facilityId, from: "PENDING_APPROVAL", to: "REJECTED",
+    itemId: waste.itemId, locationId: waste.locationId, actorUserId: input.actorUserId,
+  });
   return tx.wasteRecord.findUniqueOrThrow({ where: { id: wasteId } });
 }

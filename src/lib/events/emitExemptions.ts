@@ -240,8 +240,6 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/hospital/inventory/stockBalance.ts#getOrCreateStockBalance": { category: "BOOKKEEPING", reason: "derived balance / get-or-create helper called inside a larger operation" },
   "src/lib/hospital/inventory/stocktake.ts#addStockTakeLine": { category: "PROCESS_STEP", reason: "count in progress", boundary: ["StockDocumentStatusChanged"] },
   "src/lib/hospital/inventory/stocktake.ts#startStockTake": { category: "PROCESS_STEP", reason: "count in progress; variances move stock on completion", boundary: ["StockDocumentStatusChanged"] },
-  "src/lib/hospital/inventory/waste.ts#approveWaste": { category: "PLANNED", reason: "(b) money or stock: will emit StockDocumentStatusChanged; at 9a: posts the write-off from HOLD (approved change 4)", step: "9a", events: ["StockDocumentStatusChanged"] },
-  "src/lib/hospital/inventory/waste.ts#rejectWaste": { category: "PLANNED", reason: "(b) money or stock: will emit StockDocumentStatusChanged; at 9a: posts a return from HOLD to available stock (approved change 4)", step: "9a", events: ["StockDocumentStatusChanged"] },
   "src/lib/hospital/labOrder.ts#markEncounterInvestigating": { category: "BOOKKEEPING", reason: "encounter status step taken inside the order's own transaction; the order event covers it" },
   "src/lib/hospital/labResultLifecycle.ts#enterResult": { category: "PROCESS_STEP", reason: "unverified entry; LabResultReleased is the event", boundary: ["LabResultReleased"] },
   "src/lib/hospital/medicationSchedule.ts#generateAdministrationSchedule": { category: "CONSUMER_OUTPUT", reason: "becomes the mar-scheduler consumer's write (reacting to MedicationVerified)" },
