@@ -1059,6 +1059,14 @@ per item.
   triage's "a rejected waste stays written off" was not quite right: a
   pending waste was never written off before approval; the defect was that
   its stock stayed available.)
+- **`PurchaseOrderStatusChanged`** on approval (it commits money to a
+  supplier), cancellation and closure (draft, edits, submission and sending
+  are process steps); **`SupplierInvoiceStatusChanged`** when an invoice is
+  recorded (RECEIVED, or MATCHED / DISCREPANCY with the three-way match flags)
+  and reviewed. Never the invoice reference, notes or match notes. Bug fixed
+  here: `recordSupplierInvoice` wrote a `notes` field the model doesn't have
+  (an `as never` cast hid it), so every invoice recorded with notes failed;
+  the notes now go to the audit record.
 
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b

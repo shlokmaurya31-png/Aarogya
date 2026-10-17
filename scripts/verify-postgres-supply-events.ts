@@ -16,6 +16,9 @@
  *      quantity (unavailable, not written off); record → reject restores the
  *      stock fully; record → approve writes it off exactly once; approve and
  *      reject racing: one wins; the ledger still reconciles with the balances.
+ *   5. Procurement: PurchaseOrderStatusChanged (approved, closed after a
+ *      partial receipt, cancelled) and SupplierInvoiceStatusChanged (received
+ *      with its three-way match flags, reviewed); never the reference or notes.
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-supply-events.ts
  */
@@ -25,7 +28,8 @@ import { createStockLocation } from "../src/lib/hospital/inventory/locations";
 import { createAdjustment, approveAdjustment, rejectAdjustment } from "../src/lib/hospital/inventory/adjustment";
 import { startStockTake, addStockTakeLine, completeStockTake } from "../src/lib/hospital/inventory/stocktake";
 import { createSupplier } from "../src/lib/hospital/procurement/suppliers";
-import { createPurchaseOrderDraft, addPurchaseOrderLine, submitForApproval, approvePurchaseOrder } from "../src/lib/hospital/procurement/purchaseOrders";
+import { createPurchaseOrderDraft, addPurchaseOrderLine, submitForApproval, approvePurchaseOrder, cancelPurchaseOrder, closePurchaseOrder } from "../src/lib/hospital/procurement/purchaseOrders";
+import { recordSupplierInvoice, reviewSupplierInvoice } from "../src/lib/hospital/procurement/procurementAdvanced";
 import { recordGoodsReceipt, approveGoodsReceipt, rejectGoodsReceipt } from "../src/lib/hospital/procurement/goodsReceipts";
 import { recordWaste, approveWaste, rejectWaste } from "../src/lib/hospital/inventory/waste";
 import { reconcileBalances } from "../src/lib/hospital/inventory/stockBalance";
@@ -160,7 +164,7 @@ async function main() {
   const po = await tx(async (t) => {
     const d = await createPurchaseOrderDraft(t, { facilityId, supplierId: supplier.id, createdByStaffId: staff.id });
     await addPurchaseOrderLine(t, d.id, { itemId: item.id, orderedQuantity: 30, unit: "PIECE", unitPriceMinor: 500, taxPercent: 5 });
-    return approvePurchaseOrder(t, (await submitForApproval(t, d.id)).id, { approvedByStaffId: checker.id });
+    return approvePurchaseOrder(t, (await submitForApproval(t, d.id)).id, { approvedByStaffId: checker.id, actorUserId: checker.userId });
   });
   const poLine = await prisma.purchaseOrderLine.findFirstOrThrow({ where: { purchaseOrderId: po.id } });
   const grn = (key: string, qty: number) => tx((t) => recordGoodsReceipt(t, {
@@ -223,6 +227,29 @@ async function main() {
   const mine = rec.discrepancies.filter((d) => d.itemId === item.id);
   report("The ledger still reconciles with every balance of this item (all its lots and locations)", mine.length === 0, JSON.stringify(mine));
   report("No waste payload carries its notes", !JSON.stringify([...w1e, ...w2e]).includes("secret") && !(await wasteMoves(w2.waste.id)).includes("secret"));
+
+  // 5. Procurement.
+  const poMoves = async (id: string) => (await prisma.domainEventOutbox.findMany({ where: { eventType: "PurchaseOrderStatusChanged", aggregateId: id }, orderBy: { seq: "asc" } })).map((e) => { const p = e.payload as Payload; return `${p.from}>${p.to}`; }).join();
+  await tx((t) => closePurchaseOrder(t, po.id, { actorUserId: checker.userId })); // 20 of 30 received
+  report("A purchase order: PENDING_APPROVAL>APPROVED on approval, PARTIALLY_RECEIVED>CLOSED when closed after a partial receipt",
+    (await poMoves(po.id)) === "PENDING_APPROVAL>APPROVED,PARTIALLY_RECEIVED>CLOSED", await poMoves(po.id));
+  const po2 = await tx(async (t) => {
+    const d = await createPurchaseOrderDraft(t, { facilityId, supplierId: supplier.id, createdByStaffId: staff.id });
+    await addPurchaseOrderLine(t, d.id, { itemId: item.id, orderedQuantity: 5, unit: "PIECE", unitPriceMinor: 500, taxPercent: 0 });
+    return cancelPurchaseOrder(t, d.id, { reason: `budget secret ${run}`, actorUserId: by });
+  });
+  const po2e = await prisma.domainEventOutbox.findMany({ where: { eventType: "PurchaseOrderStatusChanged", aggregateId: po2.id } });
+  report("A draft cancelled: DRAFT>CANCELLED, no reason text; creating, editing and submitting emit nothing",
+    (await poMoves(po2.id)) === "DRAFT>CANCELLED" && !JSON.stringify(po2e.map((e) => e.payload)).includes("secret"));
+  const inv = await recordSupplierInvoice({ facilityId, supplierId: supplier.id, invoiceRef: `SINV-secret-${run}`, totalMinor: 1, purchaseOrderId: po.id, recordedByStaffId: staff.id, notes: `notes secret ${run}`, byUserId: by });
+  await reviewSupplierInvoice({ invoiceId: inv.id, facilityId, to: "APPROVED", reviewedByStaffId: checker.id, byUserId: checker.userId });
+  const invEvents = (await prisma.domainEventOutbox.findMany({ where: { eventType: "SupplierInvoiceStatusChanged", aggregateId: inv.id }, orderBy: { seq: "asc" } })).map((e) => e.payload as Payload);
+  report("A supplier invoice against the PO: null>DISCREPANCY with its match flags (price and quantity), then DISCREPANCY>APPROVED; never the reference or notes",
+    invEvents.map((p) => `${p.from}>${p.to}`).join() === "null>DISCREPANCY,DISCREPANCY>APPROVED" && invEvents[0].priceMismatch === true && invEvents[0].quantityMismatch === true
+      && invEvents[0].missingReceipt === false && invEvents[0].purchaseOrderId === po.id && !JSON.stringify(invEvents).includes("secret"), invEvents.map((p) => `${p.from}>${p.to}`).join());
+  const loose = await recordSupplierInvoice({ facilityId, supplierId: supplier.id, invoiceRef: `SINV2-${run}`, totalMinor: 5_000, recordedByStaffId: staff.id, byUserId: by });
+  const looseEvents = (await prisma.domainEventOutbox.findMany({ where: { eventType: "SupplierInvoiceStatusChanged", aggregateId: loose.id } })).map((e) => e.payload as Payload);
+  report("An invoice with no PO: null>RECEIVED", looseEvents.length === 1 && looseEvents[0].to === "RECEIVED" && !("purchaseOrderId" in looseEvents[0]));
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();

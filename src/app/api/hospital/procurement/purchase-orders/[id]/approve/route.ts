@@ -15,7 +15,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const po = await prisma.purchaseOrder.findUnique({ where: { id } });
     if (!po || po.facilityId !== facilityId) throw new NotFoundError("Purchase order not found.");
 
-    const updated = await prisma.$transaction((tx) => approvePurchaseOrder(tx, id, { approvedByStaffId: staff.id }));
+    const updated = await prisma.$transaction((tx) => approvePurchaseOrder(tx, id, { approvedByStaffId: staff.id, actorUserId: session.userId }));
     await recordAuditEvent("hospital.procurement.poApproved", session.userId, { purchaseOrderId: id }, { facilityId });
     return { purchaseOrder: updated };
   });

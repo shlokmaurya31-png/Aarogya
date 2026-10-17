@@ -512,6 +512,28 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({ goodsReceiptId: id, purchaseOrderId: id, supplierId: id, lineCount: z.number().int().positive(), acceptedLineCount: z.number().int().min(0) }).strict(),
   }),
   contract({
+    type: "PurchaseOrderStatusChanged", version: 1, aggregateType: "PURCHASE_ORDER", scope: "FACILITY",
+    sensitivity: "LOW", producer: "procurement (approvePurchaseOrder: commits money to a supplier; cancelPurchaseOrder; closePurchaseOrder)",
+    payload: z.object({
+      purchaseOrderId: id, supplierId: id,
+      from: z.enum(["DRAFT", "PENDING_APPROVAL", "APPROVED", "SENT", "PARTIALLY_RECEIVED", "RECEIVED", "CANCELLED", "CLOSED"]),
+      to: z.enum(["DRAFT", "PENDING_APPROVAL", "APPROVED", "SENT", "PARTIALLY_RECEIVED", "RECEIVED", "CANCELLED", "CLOSED"]),
+      totalMinor: minor, currency,
+    }).strict(),
+  }),
+  contract({
+    type: "SupplierInvoiceStatusChanged", version: 1, aggregateType: "SUPPLIER_INVOICE", scope: "FACILITY",
+    sensitivity: "LOW", producer: "procurement (recordSupplierInvoice: received and three-way matched; reviewSupplierInvoice)",
+    payload: z.object({
+      invoiceId: id, supplierId: id, purchaseOrderId: optId,
+      from: z.enum(["RECEIVED", "MATCHED", "DISCREPANCY", "APPROVED", "REJECTED"]).nullable(),
+      to: z.enum(["RECEIVED", "MATCHED", "DISCREPANCY", "APPROVED", "REJECTED"]),
+      totalMinor: minor,
+      /** The three-way match's findings, as flags (never the match notes). */
+      quantityMismatch: z.boolean(), priceMismatch: z.boolean(), missingReceipt: z.boolean(),
+    }).strict(),
+  }),
+  contract({
     type: "StockLotStatusChanged", version: 1, aggregateType: "ITEM_LOT", scope: "FACILITY",
     sensitivity: "LOW", producer: "inventory lots (quarantineLot, releaseLotFromQuarantine), pharmacy recalls",
     payload: z.object({ lotId: id, itemId: id, from: lotStatus, to: lotStatus, cause: z.enum(["QUARANTINE", "RELEASE", "RECALL"]), recallId: optId }).strict(),

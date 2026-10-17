@@ -260,6 +260,10 @@ describe("step-9a payload codes mirror their sources", () => {
     expect(options("StockMoved", "wasteReason")).toEqual(Object.values($Enums.WasteReason).sort());
     expect(options("StockMoved", "adjustmentReason")).toEqual(Object.values($Enums.AdjustmentReason).sort());
   });
+  it("PurchaseOrderStatusChanged and SupplierInvoiceStatusChanged statuses mirror their enums", () => {
+    expect(options("PurchaseOrderStatusChanged", "to")).toEqual(Object.values($Enums.PurchaseOrderStatus).sort());
+    expect(options("SupplierInvoiceStatusChanged", "to")).toEqual(Object.values($Enums.SupplierInvoiceStatus).sort());
+  });
   it("StockDocumentStatusChanged statuses are exactly the union of the four documents' status enums", () => {
     const union = [...new Set([...Object.values($Enums.StockAdjustmentStatus), ...Object.values($Enums.WasteRecordStatus), ...Object.values($Enums.GoodsReceiptStatus), ...Object.values($Enums.StockTakeStatus)])].sort();
     expect(options("StockDocumentStatusChanged", "from")).toEqual(union);
