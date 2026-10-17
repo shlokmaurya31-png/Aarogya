@@ -9,3 +9,13 @@ export const prisma =
   });
 
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+
+/**
+ * Options for an interactive transaction whose callers queue on a lock (a
+ * per-key pg_advisory_xact_lock). Prisma's defaults (maxWait 2s to start,
+ * timeout 5s to finish) turned a momentary stall into a spurious failure: a
+ * contender that couldn't start within 2s failed with P2028 instead of waiting
+ * its turn (verify:all, appointment race, batch 8). The same budgets the
+ * serializable billing transactions use.
+ */
+export const CONTENDED_TX = { maxWait: 10_000, timeout: 20_000 } as const;

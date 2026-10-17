@@ -27,6 +27,13 @@ function report(name: string, ok: boolean, detail?: string) {
   else fail += 1;
 }
 
+/** An unexpected loser's error, so an unclean round says why (class, code, last message line). */
+function describe(err: unknown): string {
+  const e = err as { constructor?: { name?: string }; code?: string; message?: string };
+  const last = String(e?.message ?? err).split("\n").map((l) => l.trim()).filter(Boolean).pop() ?? "";
+  return `${e?.constructor?.name ?? typeof err}${e?.code ? `[${e.code}]` : ""}: ${last.slice(0, 240)}`;
+}
+
 async function main() {
   const facility = await prisma.facility.findFirstOrThrow({ where: { name: "Aarogya Medical Centre" } });
   const patient1 = await prisma.patient.findFirstOrThrow({ where: { facilityId: facility.id } });
@@ -101,6 +108,7 @@ async function main() {
     const rounds = 10;
     let cleanRounds = 0;
     let maxWinners = 0;
+    const unexpected: string[] = [];
     for (let round = 0; round < rounds; round++) {
       const start = at(6, round * 30);
       const end = at(6, round * 30 + 30);
@@ -109,11 +117,12 @@ async function main() {
       const conflicts = results.filter((r) => !r.ok && r.err instanceof SlotConflictError).length;
       maxWinners = Math.max(maxWinners, winners);
       if (winners === 1 && conflicts === contenders.length - 1) cleanRounds += 1;
+      else unexpected.push(`round ${round}: winners=${winners} conflicts=${conflicts} ${results.filter((r) => !r.ok && !(r.err instanceof SlotConflictError)).map((r) => (r.ok ? "" : describe(r.err))).join(" | ")}`);
     }
     report(
       `Genuine parallel race: exactly one of ${contenders.length} concurrent overlapping bookings commits, in every one of ${rounds} rounds`,
       contenders.length === 5 && cleanRounds === rounds,
-      `cleanRounds=${cleanRounds}/${rounds} maxWinners=${maxWinners}`
+      `cleanRounds=${cleanRounds}/${rounds} maxWinners=${maxWinners}${unexpected.length ? `; ${unexpected.join("; ")}` : ""}`
     );
   }
 

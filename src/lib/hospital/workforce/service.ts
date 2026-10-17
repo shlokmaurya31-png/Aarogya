@@ -1,5 +1,5 @@
 import { $Enums } from "@prisma/client";
-import { prisma } from "@/lib/db";
+import { prisma, CONTENDED_TX } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { deriveExpiryState } from "@/lib/hospital/workforce/authorization";
@@ -88,7 +88,8 @@ export async function endAssignment(input: { facilityId: string; assignmentId: s
  * Set a staff member's operational availability from now. AVAILABLE ends any
  * open-ended absence; anything else starts an absence (until effectiveTo, or
  * until further notice). Serialized per staff member with a transaction-scoped
- * advisory lock, so two concurrent changes apply one after the other.
+ * advisory lock, so two concurrent changes apply one after the other (with
+ * CONTENDED_TX budgets, so the second waits rather than timing out).
  */
 export async function setAvailability(input: { facilityId: string; staffId: string; availability: string; reason?: string; effectiveTo?: Date; setByStaffId: string; byUserId: string }) {
   const kinds: Record<string, string | null> = { AVAILABLE: null, UNAVAILABLE: "UNAVAILABLE", ON_LEAVE: "LEAVE", SUSPENDED: "SUSPENDED", OFF_DUTY: "OFF_DUTY" };
@@ -111,7 +112,7 @@ export async function setAvailability(input: { facilityId: string; staffId: stri
       : null;
     await tx.auditEvent.create({ data: { type: "hospital.workforce.availabilityChanged", userId: input.byUserId, detail: { staffId: input.staffId, availability: input.availability }, facilityId: input.facilityId } });
     return { staffId: input.staffId, availability: input.availability, absence };
-  });
+  }, CONTENDED_TX);
 }
 
 // ══ SHIFTS / ROSTER ════════════════════════════════════════════════════════════

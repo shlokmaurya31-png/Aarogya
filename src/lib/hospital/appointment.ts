@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/db";
+import { prisma, CONTENDED_TX } from "@/lib/db";
 import type { AppointmentType, AccessSource, RequestPriority, Prisma } from "@prisma/client";
 import { emitDomainEvent } from "@/lib/events/emit";
 import { facilityOrganizationId } from "@/lib/events/tenant";
@@ -65,6 +65,8 @@ export function appointmentsOverlap(aStart: Date, aEnd: Date, bStart: Date, bEnd
  * The lock is unconditional: it used to be skipped unless DATABASE_URL
  * started with "postgres" (a SQLite-era check), which would have silently
  * reopened the race under any other URL form, e.g. prisma://.
+ * Contenders queue on that lock, so the transaction gets CONTENDED_TX budgets:
+ * a loser must wait its turn and get SlotConflictError, never time out.
  */
 export async function bookAppointment(input: {
   facilityId: string;
@@ -136,7 +138,7 @@ export async function bookAppointment(input: {
       payload: { appointmentId: appointment.id, patientId: input.patientId, doctorStaffId: input.doctorStaffId, scheduledStart: input.scheduledStart.toISOString() },
     });
     return appointment;
-  });
+  }, CONTENDED_TX);
 }
 
 export class AppointmentNotConfirmableError extends Error {
