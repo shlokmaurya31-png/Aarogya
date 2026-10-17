@@ -178,7 +178,7 @@ Forcing uploads into them would invent encounters and orders and blur verified w
 | `MEDICATION` | `PatientProvidedRecord` (MEDICATION_HISTORY) | Offered to clinicians as a source at medication reconciliation, as `ReconciliationSource` "patient-provided document". |
 | `LAB_VALUE` | `PatientProvidedRecord` (LAB_RESULT) | Trended alongside verified results, visibly labelled. |
 | `PROCEDURE` | `PatientProvidedRecord` (PROCEDURE) | |
-| `ALLERGY` | `PatientProvidedRecord` (ALLERGY). It is **also bridged** to an `Allergy` row (`verification = UNCONFIRMED`, `source = PATIENT_PROVIDED`, a new column defaulting to `CLINICIAN`, and `patientProvidedRecordId`) at each facility where the person has an ACTIVE link **and** has opted in to sharing uploads with treating hospitals | For safety: allergy checks at prescribing read `Allergy`, so a shared patient-reported allergy must reach them. A clinician can confirm it (`CONFIRMED`) or mark it entered in error. When the opt-in is withdrawn or the link ends, bridged rows that no clinician confirmed go to `INACTIVE`. Rows a clinician confirmed are now the facility's own and stay. |
+| `ALLERGY` | `PatientProvidedRecord` (ALLERGY). It is **also bridged** to an `Allergy` row (`verification = UNCONFIRMED`, `source = PATIENT_PROVIDED`, a new column defaulting to `CLINICIAN`, and `patientProvidedRecordId`) at each facility where the person has an ACTIVE link **and** has opted in to sharing uploads with treating hospitals | For safety: allergy checks at prescribing read `Allergy`, so a shared patient-reported allergy must reach them. A clinician can confirm it (`CONFIRMED`) or mark it entered in error. When the opt-in is withdrawn or the link ends, bridged rows that no clinician confirmed go to `INACTIVE`, and the facility record gets a content-free flag in their place: **"Allergy information withdrawn by the patient — ask about allergies"**. The flag has no substance and no reaction. Rows a clinician confirmed are now the facility's own and stay. Before withdrawal, the patient is warned that hospitals treating them will no longer see these allergies. Clinicians are prompted to confirm allergies at the point of care (prescribing, admission, pre-op) whenever an unconfirmed patient-provided allergy or a withdrawal flag is present. |
 | `DOCUMENT_META` | Fields on the processing run, shown on the timeline (document date, doctor, hospital) | Never a record entry. |
 
 Visibility (decision 3; Person design §8.3):
@@ -254,11 +254,11 @@ Before translation, a deterministic tokenizer marks protected spans in the OCR t
 - **Dose and frequency notations:** `1-0-1`, `OD`, `BD`, `TDS`, `QID`, `HS`, `SOS`, `PRN`, `stat`, `x 5 days`.
 - **Medicine names (decision 2):** three sources, combined. Any one of them is enough to protect a span; none can remove another's protection.
   - **NLEM 2022.** The repository had the list as `src/lib/essential-medicines.ts` (406 entries, including 21 combinations written "A (A) + B (B)"). It was removed with the retired prototype in `18bedce` and is restored as seed reference data (`prisma/seedData/medicines/nlem2022.ts`). The restore drops the NLEM section headings that sit in the old array (e.g. "Vitamins and Minerals", "Medicines for COVID-19 Management") and splits combinations into their components, keeping the combination too.
-  - **WHO INN generics.** The recommended International Nonproprietary Names, imported as reference data with their source list and version recorded.
+  - **WHO INN generics.** A one-time curated, versioned import of the recommended International Nonproprietary Names (with the list number and import date recorded), refreshed yearly.
   - **Model tagging.** Claude Haiku 5.5 (`ai.model.tagging`) tags medicine spans in the OCR text, which catches Indian brand names and misspellings the lists miss. A tagged span is protected like a dictionary match. The tag never changes the text, and a span the model didn't tag but a list matched stays protected.
   - **Matching:** case-insensitive, in Latin script and in transliterated Devanagari.
   - **Unknown capitalised tokens** next to a dose are also protected.
-  - **No commercial brand list yet.** Licensing one is a later decision (§14).
+  - **No commercial brand list until after the pilot.** Licensing it is a decision for then.
 - **Lab analytes:** from a closed analyte list (with LOINC display names), plus their common abbreviations.
 
 ### 5.2 Translation with placeholders
@@ -509,6 +509,7 @@ Revision 1's six questions are answered:
 
 What remains:
 
-1. **WHO INN import.** The INN lists are published as PDFs and cumulative lists. Is a one-time curated import (with the list number recorded) acceptable, or do you want a maintained feed?
-2. **Commercial brand list.** When and which (licensing)? Until then, brands depend on model tagging.
-3. **Bridged allergies after the opt-in ends.** Is INACTIVE right for unconfirmed rows, or should they stay visible, marked "no longer shared"?
+None. The three raised in revision 2 are answered (2026-10-17):
+- WHO INN is a curated, versioned import refreshed yearly;
+- brands come after the pilot;
+- withdrawn allergies get the content-free flag, the warning and the point-of-care prompt (§3).

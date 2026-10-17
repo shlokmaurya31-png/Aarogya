@@ -1,6 +1,6 @@
 # Person identity: design (Phase 0)
 
-- **Status:** Design for review. No code yet.
+- **Status:** Approved 2026-10-17, with the answers in §15 (one reversal: pre-Phase-0 uploads stay visible to their facility; §10.3). Part 1 (models, resolver, linking, migration, gates) is being built.
 - **Date:** 2026-10-17
 - **Branch:** `foundation/w4-intelligence`
 - **Spec:** `docs/PRODUCT_SPEC.md`:
@@ -58,8 +58,16 @@ Facility records stay the facility's: their clinical record, their UHID, their l
 
 1. **A Person belongs to no facility.** Person-level rows have no `facilityId`.
 2. **A link needs verification.** A facility `Patient` links to a Person only after one of:
-   - (a) a one-time code sent to a contact **on the facility's record** (not one the person typed in) is entered by the person;
-   - (b) ABHA verified on both sides (§4.3).
+   - (a) **a phone code with a second factor:**
+     - a one-time code is sent to the phone **on the facility's record** (not one the person typed in) and entered by the person;
+     - the person's date of birth **or** the record's UHID matches the record exactly;
+     - the record's phone was confirmed within the last 12 months (§4.1).
+   - (b) **ABHA** verified on both sides (§4.3; behind a disabled flag).
+   - (c) **In-person ID verification at the facility** (§4.5):
+     - two staff members;
+     - a reason code;
+     - full audit, and the person is notified;
+     - only the ID type and its last 4 digits are stored, **never a full Aadhaar number**.
 3. **Never auto-link on a fuzzy match.** Duplicate detection may *suggest* a candidate, but nothing links until rule 2 is met.
 4. **Each facility record links to at most one Person.** A Person may link to many facility records: one per facility, or more where the facility has unmerged duplicates.
 5. **Facilities see person-level data only through consent or an active care relationship** (§8), and uploads only with the person's opt-in.
@@ -120,7 +128,9 @@ Unique on `(system, valueHash)` where verified: one ABHA, one Person.
 |---|---|
 | `id`, `personId`, `patientId`, `facilityId` | `facilityId` is copied from the patient; a CHECK trigger enforces equality. |
 | `status` | `PENDING_VERIFICATION`, `ACTIVE`, `UNLINKED`, `SUPERSEDED` (by a facility merge) or `REVERIFICATION_REQUIRED` (migration, §10) |
-| `method` | `OTP_RECORD_CONTACT`, `ABHA_BOTH_VERIFIED` or `SELF_CREATED` (the person's own registration created the facility record) |
+| `method` | `OTP_RECORD_CONTACT`, `ABHA_BOTH_VERIFIED`, `IN_PERSON_ID` or `SELF_CREATED` (the person's own registration created the facility record) |
+| `idType?`, `idLast4?` | `IN_PERSON_ID` only. `idType` is closed: `AADHAAR`, `PAN`, `PASSPORT`, `VOTER_ID`, `DRIVING_LICENCE`, `OTHER_GOVT`. A CHECK makes `idLast4` exactly 4 characters. A full number is never accepted by the API and never stored. |
+| `verifiedByStaffId?`, `approvedByStaffId?`, `reasonCode?` | `IN_PERSON_ID` only. A CHECK requires two different staff members. |
 | `linkRequestId?` | The request that verified it. |
 | `linkedAt?`, `linkedByUserId?` | |
 | `unlinkedAt?`, `unlinkedBy?`, `unlinkedReason?` | `unlinkedBy` is `PERSON`, `FACILITY` or `PLATFORM`. The reason is a closed code: `PERSON_REQUEST`, `WRONG_PERSON`, `FACILITY_MERGE`, `PERSON_MERGE`, `SECURITY`. |
@@ -133,16 +143,22 @@ Unique on `(system, valueHash)` where verified: one ABHA, one Person.
 
 The existing model already does what rule 2 needs: a code sent to the phone on the matched record, hashed, with expiry and an attempt limit. It gains:
 - `personId`;
-- `method`: `OTP_RECORD_CONTACT` or `ABHA_BOTH_VERIFIED`;
+- `method`: `OTP_RECORD_CONTACT`, `ABHA_BOTH_VERIFIED` or `IN_PERSON_ID`;
+- `secondFactor` (`DOB` or `UHID`) and `secondFactorOk`, for the phone method;
 - `initiatedBy`: `PERSON` (from the portal) or `FACILITY` (front desk starts it; the person still completes it).
 
-**The front desk can no longer complete a link** (today `decideLinkRequest` LINK does). It can:
+**The front desk can no longer complete a link by deciding a review** (today `decideLinkRequest` LINK does). It can:
 - start a request;
-- update the contact on the record after an in-person identity check (audited as a demographic change);
+- confirm or update the contact on the record with the patient present (this sets `Patient.phoneConfirmedAt`);
+- run the in-person ID verification (§4.5), which needs two staff members;
 - reject a request;
 - create a new facility record.
 
-The person always completes the link themselves (§14 Q1).
+**`Patient.phoneConfirmedAt`** (new) is set only:
+- when staff confirm or enter the phone with the patient present (registration at the desk, check-in "confirm contact", a demographic phone update);
+- when a code sent to that phone is entered correctly.
+
+Self-registration's typed-in phone never sets it. Existing rows start null, so they need a fresh confirmation or in-person verification.
 
 ### 3.7 `PersonMergeRecord`
 
@@ -167,13 +183,10 @@ Readers move to `PersonAccount` → `PersonPatientLink`. The column is kept, rea
 2. **The facility's duplicate detection** runs within that facility only, as today.
    - **No likely match:** nothing to link. The person may ask the facility to register them (as today's self-registration does), which creates the record with a `SELF_CREATED` link.
    - **Already linked:** a match already linked to another Person goes to front-desk review. Nothing is revealed to the requester beyond "we couldn't verify this automatically".
-   - **A likely match with a phone on record:** a code is sent to **that** phone, and the person sees the masked number.
-   - **A likely match with no phone on record:** go to step 3.
-3. **Without a phone on record:**
-   - the person is told to visit the front desk;
-   - the front desk verifies them in person, records the contact on the facility record (audited), and re-sends a code to it;
-   - the person enters it.
-4. **The correct code → link `ACTIVE` (`OTP_RECORD_CONTACT`).**
+   - **A likely match whose phone was confirmed within 12 months:** the person must first give a second factor that matches the record exactly: their date of birth, or the UHID printed on a bill or card. Only then is a code sent to **the record's** phone, and the person sees the masked number. A wrong second factor counts as a failed attempt, and the person isn't told which part failed.
+   - **A likely match with no phone, or one not confirmed within 12 months:** go to step 3.
+3. **Fallback, in-person verification (§4.5):** the person is told to visit the front desk.
+4. **The correct code, with the second factor matched → link `ACTIVE` (`OTP_RECORD_CONTACT`).** It also sets `phoneConfirmedAt`.
    - It emits `PersonPatientLinked`.
    - It is audited at the facility (`patient.person.linked`) and in the person's access log.
 5. **Wrong codes:** expired or too many wrong attempts send the request to `FRONT_DESK_REVIEW` (as today), where only a re-send can follow, never a staff link.
@@ -197,12 +210,25 @@ Every request, code sent (masked destination only), attempt, link and refusal is
 - the facility audit (`patient.person.link.*`), with `facilityId` and `patientId`;
 - the person's access log (`PersonAccessLogEntry`, shown in the app): "Your record at Aarogya Medical Centre, Pune was connected on …".
 
+### 4.5 In-person ID verification
+
+The person is present at the facility, signed in to their app (or signing up there).
+1. **Staff member A** checks a government ID against the record and the person, and enters:
+   - the ID type and its last 4 digits (the API rejects anything longer than 4 characters, and any 12-digit Aadhaar-shaped input);
+   - a reason code: `NO_PHONE_ON_RECORD`, `PHONE_NOT_CONFIRMED`, `PHONE_UNREACHABLE` or `SECOND_FACTOR_UNAVAILABLE`.
+2. **Staff member B**, a different staff member with `patient:identity:verify`, approves.
+3. **The person confirms** in their app ("Connect your record at …?").
+4. **The link becomes `ACTIVE` (`IN_PERSON_ID`).**
+   - It emits `PersonPatientLinked` with `method`.
+   - It is audited with both staff ids and the reason code.
+   - The person is notified, and it appears in their access log.
+
 ## 5. Unlinking
 
 | Who | When | Effect |
 |---|---|---|
 | Person | Any time, from the app | The link → `UNLINKED` (`PERSON_REQUEST`). The facility keeps its records, unchanged. The facility loses person-level access through this link (uploads, person-level consents). The person no longer sees that facility's records in the portal. |
-| Facility | Wrong person (`WRONG_PERSON`), or a security incident | Requires `patient:identity:unlink`, a reason code and a second staff member's approval (two-person rule). The person is notified. Person-level data derived from that facility's records (index chunks, conflicts) is withdrawn. The person's own uploads are untouched. |
+| Facility | Wrong person (`WRONG_PERSON`), or a security incident | Requires `patient:identity:unlink`, a reason code and a second, different staff member's approval (two-person rule). The person is notified. Person-level data derived from that facility's records (index chunks, conflicts) is withdrawn. The person's own uploads are untouched. |
 | Platform | `SECURITY` (account takeover), `PERSON_MERGE` | Through the safety-officer role, audited. |
 
 - Unlinking never deletes clinical data on either side.
@@ -294,7 +320,10 @@ Routes and services never query person-scoped tables by `personId` from a reques
 
 **An active care relationship** means all three hold:
 - an ACTIVE link at the staff member's facility;
-- an open encounter, or an encounter within `identity.care_relationship_days` (default 30);
+- an encounter in the window:
+  - **OPD:** up to 30 days after the last encounter ended (or began, if it has no end);
+  - **IPD:** the whole admission, plus 30 days after discharge;
+  - both windows are configurable per facility (`identity.care_window_opd_days`, `identity.care_window_ipd_days`), with a platform maximum of 90 days enforced by the config registry;
 - the staff member's chart permission for that patient.
 
 Break-glass (existing, audited, time-limited) can open person-level data in an emergency. It is shown to the person.
@@ -367,7 +396,11 @@ For each patient-uploaded `ClinicalDocument`:
 - **The uploader's link is ACTIVE and the uploader is that patient's OWNER:** create a `PersonDocument` with the same `storageRef` and `sha256` (no byte copy), and mark the old row `migratedToPersonDocumentId`.
 - **Otherwise:** leave it, report it, and retry after re-verification.
 
-Visibility then follows §8.3. The care team, who saw these uploads until now, see them only after the person opts in (§13, §14 Q2).
+**Visibility of old uploads (the reversal):** an upload made before Phase 0 stays visible to the facility it was uploaded to, under the old rule (its care team), because that was the patient's expectation at upload.
+- The `PersonDocument` records `legacyVisibleToFacilityId`.
+- On the person's next login, the app asks them to choose the sharing setting (§8.3), with no pre-selected answer.
+- From then on, their choice governs every upload, old ones included.
+- Until they choose, the old uploads keep their old visibility. New uploads are hidden from facilities.
 
 ### 10.4 Report
 
@@ -435,7 +468,7 @@ All take the more conservative option and can be reversed.
 
 - **The front desk can no longer complete a link.** It can start one and update the contact on record after an in-person check, but the person enters the code. The current `decideLinkRequest` LINK path goes.
 - **Unverified existing links are not trusted:** front-desk-linked, seeded or of unknown origin. They become `REVERIFICATION_REQUIRED`, with no person-level access until the person verifies.
-- **Existing uploads become hidden from the care team** until the person opts in to sharing with treating hospitals. This applies decision 3 to past uploads as well as new ones.
+- **Old uploads after the person's choice.** Old uploads keep their facility visibility until the person makes the sharing choice, and that choice then covers old uploads too (§10.3). The reversal says old uploads "stay visible"; I read that as until the person decides, since the next-login prompt exists to let them decide.
 - **A facility unlink needs two staff members** and a reason code, and the person is notified.
 - **A Person merge needs proof of control of both accounts.** Staff can never merge Persons.
 - **Person demographics never sync with facility demographics** in either direction. Differences are shown.
@@ -443,7 +476,7 @@ All take the more conservative option and can be reversed.
 - **The care-relationship window defaults to 30 days** after the last encounter.
 - **ABHA linking is designed but unavailable** until ABDM verification exists. A typed-in ABHA never counts.
 
-## 14. Open questions
+## 14. Open questions (answered 2026-10-17; see §15)
 
 1. **Patients with no phone on record (or none that works).** A code can't reach them. The design makes the front desk update the contact after an in-person identity check and then send a code. Is a documented in-person ID check at the front desk acceptable as a link method in its own right, without a code? For example for elderly patients without phones, audited and two-person. That would add a third method beyond decision 1.
 2. **Existing uploads and the care team.** Hiding past uploads from clinicians until opt-in is the strict reading of decision 3. Do you want that, or should uploads made before Phase 0 stay visible to the facility they were uploaded to (the old rule) until the person chooses?
@@ -451,3 +484,19 @@ All take the more conservative option and can be reversed.
 4. **The care-relationship window.** Is 30 days after the last encounter right for "treating hospital"? Should it differ for inpatient and outpatient?
 5. **Minors before households.** Phase 0 covers adults with their own account. Do minors' facility records wait for 5b (guardian-managed Persons), or should Phase 0 let a parent create a child's Person now?
 6. **Account deletion.** When a person closes their account (`CLOSED`), what happens to their uploads and patient-provided facts? Delete after the retention period, or keep under records retention because a clinician may have relied on them?
+
+## 15. Answers (2026-10-17)
+
+| # | Answer | Where |
+|---|---|---|
+| 1 | In-person ID verification is a link method: two staff members, a reason code, full audit, the person notified; only the ID type and its last 4 digits are stored, never a full Aadhaar number | §2, §3.5, §4.5 |
+| 2 | Reversal: pre-Phase-0 uploads stay visible to the facility they were uploaded to; the person is asked to choose at next login | §10.3 |
+| 3 | Phone codes need a second factor (DOB or UHID exactly) **and** a phone confirmed within 12 months; otherwise in-person verification | §2, §3.6, §4.1 |
+| 4 | Care relationship: OPD 30 days after the last encounter; IPD the admission plus 30 days after discharge; per facility, platform maximum 90 days | §8.2 |
+| 5 | Minors' Persons wait for households (5b) | — |
+| 6 | Account closure: patient-provided data deleted after a 30-day grace period; whatever a clinician confirmed into a facility record follows records retention | §3.1 (`CLOSED`) |
+| 7 | WHO INN: a one-time curated, versioned import, refreshed yearly; brand list after the pilot | pipeline §5.1 |
+| 8 | Withdrawn shared allergies: unconfirmed copies go inactive with a content-free flag; warn the patient first; prompt clinicians at the point of care | pipeline §3 |
+| 9 | 90-day lapse window; reviewers read staff text, and patient text only where the opt-in explicitly allowed safety review | RAG §4.3 |
+| 10 | p95 < 150 ms at 20,000 chunks, enforced by a latency gate | RAG §12 |
+

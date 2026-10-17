@@ -200,6 +200,7 @@ A share expiring, a proxy permission removed, or family access revoked deletes n
   - It is kept for `ai.staff_text_retention_days` (default **90**), then purged by the runner's sweep.
   - Decryption needs the `ai:interaction:text:read` permission. It is held only by the **clinical-advisor** role and a **platform safety-officer** role (decision 7), both new and platform-level.
   - Every read is audited (who, which interaction, why: a closed reason code plus a ticket reference) and appears in a monthly review report.
+  - Reviewers read staff text, and patient text only where the patient's `AI_TEXT_RETENTION` opt-in explicitly included safety review (scope `SAFETY_REVIEW`). Text kept under an opt-in without that scope is never decryptable by reviewers.
 - **Patient and proxy modes:** no text is kept unless the person opts in. The opt-in is its own consent purpose, `AI_TEXT_RETENTION`, with its own DPDP notice. With the opt-in, the same encryption and retention apply. Without it, only metadata is kept.
 - **Metadata** (ids, scores, outcome, counts) is kept for 1 year.
 
@@ -556,7 +557,7 @@ Each step is its own commit. `verify:all`, `npm test`, lint and build stay green
 |---|---|---|
 | 1 | The real-data switch: `Facility.dataClassification`, `ai.enabled`, the `AI_ASSISTANCE` and `AI_TEXT_RETENTION` consent purposes | Unit tests and `verify-postgres-ai-switch`: a REAL facility is refused everywhere while the switch is off. |
 | 2 | Model config per mode, and the provider boundary extended (`answerFromRecord`) with the mock | Unit tests: the model is chosen from config; no real provider without a key. |
-| 3 | Models and migration: `RagDocument` (owner CHECKs), `RagChunk` (tsvector, GIN), `RagEmbedding` (untyped vector with the dimension CHECK), `AiInteraction` with encrypted text fields; the reviewer roles and permission | Migration on a fresh database; drift check; constraint tests; tenancy sweep with the PERSON segment; a latency test: exact-scan retrieval over a 20,000-chunk patient within the budget. |
+| 3 | Models and migration: `RagDocument` (owner CHECKs), `RagChunk` (tsvector, GIN), `RagEmbedding` (untyped vector with the dimension CHECK), `AiInteraction` with encrypted text fields; the reviewer roles and permission | Migration on a fresh database; drift check; constraint tests; tenancy sweep with the PERSON segment; a **latency gate**: exact-scan retrieval over a 20,000-chunk patient at **p95 < 150 ms** (accepted 2026-10-17); a failure blocks the step. |
 | 4 | Embeddings adapter (Voyage, the mock, the deferred India-hosted slot) and the re-embed job (§5.8) | Unit tests: determinism, similar texts closer than unrelated ones. Gate: a re-embed to a mock model of another dimension reaches 100% coverage; the switch changes rankings; no schema change. |
 | 5 | Renderers, categories and the sensitivity mapping (the placeholder list), chunker | Golden-file tests per source type; every source type maps to a category. |
 | 6 | The `rag-indexer` (§5.1) and backfill; `EXPECTED_CONSUMERS` gains it; the catalogue doc regenerates | `verify-postgres-rag-indexer`: one document per version; replay creates nothing; supersede on amendment; consent withdrawal removes everything; REAL facility skipped; backfill matches consumption. The core journey covers the indexer. |
@@ -616,6 +617,7 @@ All take the more conservative option and can be reversed.
 
 Revision 2's questions are settled: decisions 7, 8, 9 and 10, and decision 5 of revision 2 (the sensitive list is pending the clinical advisor). What remains:
 
-1. **Lapsed-consent index window.** Is 90 days right before deleting a newly adult member's index if they don't confirm?
-2. **Reviewer access to patient opt-in text.** Should the clinical advisor and safety officer also be able to read patient text that the patient opted to keep, or staff text only?
-3. **The exact-scan latency budget.** Proposed: p95 under 150 ms at 20,000 chunks for one patient. Is that acceptable before an ANN index becomes necessary?
+None open. Answered 2026-10-17:
+- the lapse window is 90 days;
+- reviewers read staff text, and patient text only with an explicit safety-review opt-in (§4.3);
+- the latency budget is p95 < 150 ms at 20,000 chunks, enforced by a gate (§12).
