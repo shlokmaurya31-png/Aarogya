@@ -13,6 +13,7 @@
  */
 import { Prisma } from "@prisma/client";
 import { prisma } from "../src/lib/db";
+import { PERSON_SCOPED_MODELS } from "../src/lib/person/tenancy";
 
 let pass = 0;
 let fail = 0;
@@ -83,6 +84,38 @@ async function main() {
     throw Object.assign(new Error("rollback"), { bad: Number(r[0].bad) });
   }).catch((e: { bad?: number; message: string }) => (e.bad !== undefined ? e.bad : e.message));
   report("A planted mismatch is detected (then rolled back)", typeof planted === "number" && planted >= 1, String(planted));
+
+  // ── Phase 0: the PERSON segment ────────────────────────────────────────────
+  const tenantCols = PERSON_SCOPED_MODELS.filter((m) => Prisma.dmmf.datamodel.models.find((x) => x.name === m)!.fields.some((f) => f.name === "facilityId" || f.name === "organizationId"));
+  report("Person-scoped models carry no facility or organization", tenantCols.length === 0, tenantCols.join(", "));
+  // A link's facility is its record's (also enforced by a trigger).
+  const linkMismatch = await prisma.$queryRawUnsafe<{ n: bigint }[]>(
+    `SELECT count(*) AS n FROM "PersonPatientLink" l JOIN "Patient" p ON p."id" = l."patientId" WHERE l."facilityId" <> p."facilityId"`);
+  report("Every PersonPatientLink sits in its record's facility", Number(linkMismatch[0].n) === 0, String(linkMismatch[0].n));
+  // A FACILITY event that names a person is about a record linked to that person.
+  const orphanEvents = await prisma.$queryRawUnsafe<{ n: bigint; sample: string | null }[]>(
+    `SELECT count(*) AS n, min(o."eventType") AS sample FROM "DomainEventOutbox" o
+      WHERE o."personId" IS NOT NULL AND o."facilityId" IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM "PersonPatientLink" l WHERE l."personId" = o."personId" AND l."patientId" = o."payload"->>'patientId' AND l."facilityId" = o."facilityId")`);
+  report("Every FACILITY event carrying a personId concerns a record linked to that person, in that facility", Number(orphanEvents[0].n) === 0, `${orphanEvents[0].n} ${orphanEvents[0].sample ?? ""}`);
+  // An upload's owner is (or was) linked to the record it sits on.
+  const strayUploads = await prisma.$queryRawUnsafe<{ n: bigint }[]>(
+    `SELECT count(*) AS n FROM "ClinicalDocument" d WHERE d."personId" IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM "PersonPatientLink" l WHERE l."personId" = d."personId" AND l."patientId" = d."patientId")`);
+  report("Every person-owned upload sits on a record its owner is or was linked to", Number(strayUploads[0].n) === 0, String(strayUploads[0].n));
+  const plantedPerson = await prisma.$transaction(async (tx) => {
+    const org = await tx.facility.findUniqueOrThrow({ where: { id: "fac-amc-pune" }, select: { organizationId: true } });
+    await tx.domainEventOutbox.create({ data: {
+      eventId: `fc-probe-${Date.now()}`, eventType: "PatientDocumentUploaded", eventVersion: 1, aggregateType: "CLINICAL_DOCUMENT", aggregateId: "fc-probe",
+      organizationId: org.organizationId, facilityId: "fac-amc-pune", personId: "fc-probe-person", correlationId: "fc-probe",
+      payload: { documentId: "fc-probe", patientId: "fc-probe-patient", documentType: "REPORT", uploadedBy: "PATIENT" }, occurredAt: new Date(), status: "PROCESSED",
+    } });
+    const r = await tx.$queryRawUnsafe<{ n: bigint }[]>(
+      `SELECT count(*) AS n FROM "DomainEventOutbox" o WHERE o."personId" IS NOT NULL AND o."facilityId" IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM "PersonPatientLink" l WHERE l."personId" = o."personId" AND l."patientId" = o."payload"->>'patientId' AND l."facilityId" = o."facilityId")`);
+    throw Object.assign(new Error("rollback"), { bad: Number(r[0].n) });
+  }).catch((e: { bad?: number; message: string }) => (e.bad !== undefined ? e.bad : e.message));
+  report("A planted person event with no link is detected (then rolled back)", typeof plantedPerson === "number" && plantedPerson >= 1, String(plantedPerson));
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();

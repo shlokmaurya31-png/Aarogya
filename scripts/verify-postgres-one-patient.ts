@@ -7,6 +7,8 @@
  *      the phone on the hospital record, and entering it links the record to
  *      their Person. No second Patient is created.
  *   3. The front desk opens an encounter; the patient uploads a document.
+ *   5. Phase 0: the person connects a second facility; the portal shows both
+ *      records labelled by facility; the other facility's staff can't reach it.
  *   4. The portal, the Hospital OS chart and the hospital API all return the
  *      same patient ID, the same demographics, the same encounter and the
  *      same document (Phase 0: the hospital sees the patient's upload only
@@ -149,6 +151,22 @@ async function main() {
     const search = await call(frontDesk, "GET", `/api/hospital/patients?q=${encodeURIComponent(hospitalPatient.uhid)}`);
     const found = ((search.json.patients as { id: string }[]) ?? []).map((p) => p.id);
     report("API: searching the UHID finds exactly this patient", found.length === 1 && found[0] === P, found.join(","));
+
+    // Phase 0: one Person, records at two facilities. The person connects
+    // Noida (no match there: a record is created and linked); the portal shows
+    // both, each labelled with its facility; Pune staff still can't reach the
+    // Noida record.
+    const connect = await call(patientCookie, "POST", "/api/patient/person/links", { facilityId: "fac-amc-noida", fullName: person.fullName, sex: person.sex });
+    const N = connect.json.patientId as string | undefined;
+    report("Person: connecting the Noida facility creates and links a record there", connect.status === 200 && connect.json.status === "LINKED_NEW" && Boolean(N), JSON.stringify(connect.json).slice(0, 200));
+    const overview2 = await call(patientCookie, "GET", "/api/patient/person");
+    const links = ((overview2.json.links as { status: string; facility: { id: string; name: string } }[]) ?? []).filter((l) => l.status === "ACTIVE");
+    report("Person: the portal lists both records, each labelled by facility",
+      links.length === 2 && new Set(links.map((l) => l.facility.id)).size === 2 && links.every((l) => Boolean(l.facility.name)));
+    const noidaReports = await call(patientCookie, "GET", `/api/patient/reports?patientId=${N}`);
+    report("Person: the Noida record is the person's own in the portal", noidaReports.status === 200);
+    const crossChart = await call(doctor, "GET", `/api/hospital/patients/${N}/chart`);
+    report("Person: Pune staff can't reach the person's Noida record", crossChart.status === 404, `HTTP ${crossChart.status}`);
 
     // D1: an ABHA added through the patient API is an ExternalIdentifier, and the API reads it back from there.
     const abha = `91-${run}-${phone.slice(-4)}`;

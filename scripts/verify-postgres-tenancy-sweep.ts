@@ -33,6 +33,9 @@
  *   5. Organization-level rows (facilityId NULL, organizationId set; D6
  *      workflow tasks) count as the organization's: a facility user of another
  *      organization never receives one, and the task route answers 404.
+ *   6. Phase 0 — the PERSON segment: person-scoped rows (Person, accounts,
+ *      contacts, identifiers, consents, access log) belong to no tenant; no
+ *      hospital route returns one to any staff or organization actor.
  * A route that is not probed and not on the documented allowlist fails the
  * gate.
  *
@@ -51,6 +54,7 @@ import { listRegistry } from "../src/lib/config/registry";
 import { ensureFixture, ownershipWhere, type Tenant } from "../prisma/seedData/tenancyFixtures";
 import { startServer, loginAs } from "./lib/appServer";
 import { ensurePrimaryMembership } from "../prisma/seedData/staffMembership";
+import { PERSON_SCOPED_MODELS } from "../src/lib/person/tenancy";
 
 const ROOT = path.resolve(__dirname, "..");
 const API_ROOT = path.join(ROOT, "src", "app", "api", "hospital");
@@ -573,6 +577,26 @@ interface Actor {
 }
 
 const merge = (...maps: Map<string, string>[]) => new Map(maps.flatMap((m) => [...m]));
+
+/** Two Persons with a row of every person-scoped model; returns every person-scoped row id (all Persons). */
+async function seedPersonSegment(): Promise<Map<string, string>> {
+  for (const tag of ["a", "b"]) {
+    const email = `tenancy-sweep-person-${tag}@sweep.aarogya`;
+    const user = await prisma.user.upsert({ where: { email }, update: {}, create: { email, passwordHash: "x", role: Role.PATIENT, displayName: `${MARKER} person ${tag}` } });
+    const acct = await prisma.personAccount.findUnique({ where: { userId: user.id } });
+    const personId = acct?.personId ?? (await prisma.person.create({ data: { displayName: `${MARKER} person ${tag}`, accounts: { create: { userId: user.id, role: "OWNER" } } } })).id;
+    if (!(await prisma.personContact.count({ where: { personId } }))) await prisma.personContact.create({ data: { personId, kind: "EMAIL", value: email } });
+    if (!(await prisma.personIdentifier.count({ where: { personId } }))) await prisma.personIdentifier.create({ data: { personId, system: "ABHA_ADDRESS", valueHash: `sweep-${tag}`, valueLast4: "abcd" } });
+    if (!(await prisma.personConsent.count({ where: { personId } }))) await prisma.personConsent.create({ data: { personId, purpose: "SHARE_UPLOADS_WITH_TREATING", decision: "DECLINED", decidedByUserId: user.id } });
+    if (!(await prisma.personAccessLogEntry.count({ where: { personId } }))) await prisma.personAccessLogEntry.create({ data: { personId, kind: "PERSON_CREATED" } });
+  }
+  const rows = new Map<string, string>();
+  for (const model of PERSON_SCOPED_MODELS) {
+    const found: { id: string }[] = await delegate(model).findMany({ select: { id: true } });
+    for (const r of found) rows.set(r.id, model);
+  }
+  return rows;
+}
 const isFacilityLevel = (model: string, t: Tenant) => {
   const w = ownershipWhere(model, t);
   return w !== null && !("organizationId" in w) && model !== "Facility" && model !== "Organization";
@@ -642,17 +666,22 @@ async function main() {
   const recordStatuses: Record<string, number> = {};
   try {
     // ── actors ──
+    // Phase 0 — the PERSON segment: person-scoped rows belong to no facility or
+    // organization, so no hospital route may ever return one, to any staff
+    // actor of any tenant. Two Persons with every person-scoped row are seeded.
+    const personRows = await seedPersonSegment();
+    console.log(`Person-scoped rows (never returned by a hospital route): ${personRows.size}`);
     const actors: Actor[] = [];
     for (const site of ["pune", "noida"] as Site[]) {
       const other: Site = site === "pune" ? "noida" : "pune";
       for (const role of HOSPITAL_ROLES) {
         actors.push({
           name: `${site}/${role}`, cookie: await login(base, site, role), home: site, foreignTenant: other,
-          foreign: merge(owned[other].facility, owned.other.facility, owned.other.org),
+          foreign: merge(owned[other].facility, owned.other.facility, owned.other.org, personRows),
         });
       }
     }
-    actors.push({ name: "org admin", cookie: await loginEmail(base, ORG_ADMIN_EMAIL), home: "pune", foreignTenant: "other", foreign: merge(owned.other.facility, owned.other.org) });
+    actors.push({ name: "org admin", cookie: await loginEmail(base, ORG_ADMIN_EMAIL), home: "pune", foreignTenant: "other", foreign: merge(owned.other.facility, owned.other.org, personRows) });
     actors.push({ name: "platform admin", cookie: await loginEmail(base, PLATFORM_ADMIN_EMAIL), home: "pune", foreignTenant: null, foreign: null, facilityParam: FACILITIES.pune });
 
     const send = async (actor: Actor, method: string, url: string) => {
