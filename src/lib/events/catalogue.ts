@@ -1165,7 +1165,10 @@ export const EVENT_CONTRACTS: EventContract[] = [
   }),
   contract({
     type: "PatientAccountLinked", version: 1, aggregateType: "PATIENT", scope: "FACILITY",
-    sensitivity: "INTERNAL", producer: "self-registration (verifyLinkOtp, decideLinkRequest LINK)",
+    sensitivity: "INTERNAL", producer: "self-registration (verifyLinkOtp, decideLinkRequest LINK) until Phase 0",
+    // Phase 0: accounts no longer link to facility records; Persons do, through
+    // a verified link, and the front desk can no longer link (part 1c).
+    retired: { since: "Phase 0 (2026-10-19)", replacedBy: "PersonPatientLinked" },
     payload: z.object({ patientId: id, linkRequestId: id, portalUserId: id, via: z.enum(["OTP", "FRONT_DESK"]) }).strict(),
   }),
   contract({
@@ -1286,6 +1289,16 @@ export const EVENT_CONTRACTS: EventContract[] = [
     type: "PersonPatientLinked", version: 1, aggregateType: "PERSON_PATIENT_LINK", scope: "FACILITY",
     sensitivity: "SENSITIVE", producer: "person identity (recordActiveLink: self-created at sign-up, phone code, in-person ID, ABHA)",
     payload: z.object({ linkId: id, personId: id, patientId: id, method: personLinkMethod }).strict(),
+  }),
+  contract({
+    type: "PersonPatientUnlinked", version: 1, aggregateType: "PERSON_PATIENT_LINK", scope: "FACILITY",
+    sensitivity: "SENSITIVE", producer: "person identity (unlinkByPerson; approveFacilityUnlink with two staff members)",
+    payload: z.object({ linkId: id, personId: id, patientId: id, by: z.enum(["PERSON", "FACILITY", "PLATFORM"]), reason: z.enum(["PERSON_REQUEST", "WRONG_PERSON", "FACILITY_MERGE", "PERSON_MERGE", "SECURITY"]) }).strict(),
+  }),
+  contract({
+    type: "PatientContactConfirmed", version: 1, aggregateType: "PATIENT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "person identity (confirmPatientContact: staff confirm the record's phone with the patient present)",
+    payload: z.object({ patientId: id, contact: z.enum(["PHONE"]), via: z.enum(["STAFF_IN_PERSON"]) }).strict(),
   }),
   contract({
     type: "PersonConsentDecided", version: 1, aggregateType: "PERSON", scope: "PERSON",

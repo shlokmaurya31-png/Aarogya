@@ -21,6 +21,7 @@ import { getStorageAdapter, StorageValidationError } from "../src/lib/storage";
 import type { PatientAccessScope } from "../src/lib/patient/context";
 import { uploadPatientDocument } from "../src/lib/patient/experience/documents";
 import { listReports, getDocumentForDownload } from "../src/lib/patient/experience/reports";
+import { linkAccountForGate } from "./lib/personFixture";
 
 let pass = 0;
 let fail = 0;
@@ -37,7 +38,8 @@ const scopeFor = (p: { id: string; facilityId: string }, isSelf = true): Patient
 async function main() {
   const run = Date.now().toString(36);
   const user = await prisma.user.create({ data: { email: `patient-docs-${run}@verify.aarogya`, passwordHash: "x", role: "PATIENT", displayName: "Docs patient" } });
-  const patient = await prisma.patient.create({ data: { uhid: `PDOC-${run}`, facilityId: "fac-amc-pune", fullName: `Docs Patient ${run}`, sex: "F", userId: user.id } });
+  const patient = await prisma.patient.create({ data: { uhid: `PDOC-${run}`, facilityId: "fac-amc-pune", fullName: `Docs Patient ${run}`, sex: "F" } });
+  await linkAccountForGate(prisma, user.id, patient.id);
   const other = await prisma.patient.findFirstOrThrow({ where: { facilityId: "fac-amc-pune", id: { not: patient.id } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
   const scope = scopeFor(patient);
 

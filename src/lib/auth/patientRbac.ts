@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { requirePermission, UnauthorizedError, ForbiddenError } from "./rbac";
+import { selfPatientIds } from "@/lib/person/self";
 
 /**
  * Self-service boundary for Role.PATIENT accounts (Phase 1 — see
@@ -9,9 +10,14 @@ import { requirePermission, UnauthorizedError, ForbiddenError } from "./rbac";
  * organization), so it gets its own function rather than being folded
  * into hospitalRbac.ts.
  */
-export async function requirePatientSelf() {
+export async function requirePatientSelf(requestedPatientId?: string | null) {
   const session = await requirePermission("patient:self:read");
-  const patient = await prisma.patient.findUnique({ where: { userId: session.userId } });
+  // Phase 0: the caller's records are their Person's ACTIVE links. With no
+  // record asked for, the oldest link (a person usually has one).
+  const own = await selfPatientIds(session.userId);
+  const id = requestedPatientId ? own.find((p) => p === requestedPatientId) : own[0];
+  if (!id) throw new UnauthorizedError();
+  const patient = await prisma.patient.findUnique({ where: { id } });
   if (!patient) throw new UnauthorizedError();
   if (patient.mergedIntoId) {
     // A merged (superseded) patient record's own login, if it somehow still exists,

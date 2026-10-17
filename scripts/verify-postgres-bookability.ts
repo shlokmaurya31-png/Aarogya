@@ -28,6 +28,7 @@ import { isStaffAvailable } from "../src/lib/hospital/workforce/authorization";
 import { requestAppointment } from "../src/lib/patient/experience/appointments";
 import type { PatientAccessScope } from "../src/lib/patient/context";
 import { ensurePrimaryMembership } from "../prisma/seedData/staffMembership";
+import { linkAccountForGate } from "./lib/personFixture";
 
 let pass = 0;
 let fail = 0;
@@ -59,7 +60,8 @@ async function main() {
     await prisma.doctorScheduleBlock.create({ data: { staffId: doctor.id, facilityId, dayOfWeek: dow, startMinute: 540, endMinute: 780, slotDurationMinutes: 15 } }); // 09:00–13:00
   }
   const patientUser = await prisma.user.create({ data: { email: `d7-patient-${run}@verify.aarogya`, passwordHash: "x", role: "PATIENT", displayName: "D7 patient" } });
-  const patient = await prisma.patient.create({ data: { uhid: `D7-${run}`, facilityId, fullName: `D7 Patient ${run}`, sex: "F", userId: patientUser.id } });
+  const patient = await prisma.patient.create({ data: { uhid: `D7-${run}`, facilityId, fullName: `D7 Patient ${run}`, sex: "F" } });
+  await linkAccountForGate(prisma, patientUser.id, patient.id);
   const scope: PatientAccessScope = { patientId: patient.id, patientIds: [patient.id], facilityId, isSelf: true, allowedClasses: new Set(ALL) };
 
   const book = (start: Date, minutes = 15) =>

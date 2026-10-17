@@ -354,6 +354,7 @@ const SEGMENT_MODELS: Record<string, string> = {
   "beds/[id]": "Bed",
   "consents/[id]": "InteropConsent",
   "patient-link-requests/[id]": "PatientLinkRequest",
+  "person-links/[id]": "PersonPatientLink",
 };
 
 type SegmentTarget = { kind: "record"; model: string } | { kind: "static"; values: string[] } | { kind: "unmapped" };

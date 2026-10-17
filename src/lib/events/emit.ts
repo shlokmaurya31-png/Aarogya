@@ -40,6 +40,10 @@ export async function emitDomainEvent(client: EmitClient, input: EmitEventInput)
     throw new PermanentEventError(`Unknown event contract ${input.type}@${version}.`, "UNKNOWN_VERSION");
   }
 
+  if (c.retired) {
+    throw new PermanentEventError(`Event ${input.type} is retired${c.retired.replacedBy ? `; emit ${c.retired.replacedBy}` : ""}.`, "RETIRED");
+  }
+
   const aggregateType = input.aggregateType ?? c.aggregateType;
   if (aggregateType !== c.aggregateType && !c.alternateAggregateTypes?.includes(aggregateType)) {
     throw new PermanentEventError(`Event ${input.type} is not about a ${aggregateType} aggregate.`, "AGGREGATE_MISMATCH");

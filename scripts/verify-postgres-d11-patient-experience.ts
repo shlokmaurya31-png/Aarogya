@@ -25,6 +25,7 @@ import { inviteDelegate, acceptDelegation, revokeDelegation, listGrantedDelegati
 import { updateProfile } from "../src/lib/patient/experience/profile";
 import { getAbhaStatus } from "../src/lib/patient/experience/abha";
 import { ensurePrimaryMembership } from "../prisma/seedData/staffMembership";
+import { linkAccountForGate } from "./lib/personFixture";
 
 let pass = 0, fail = 0; const failures: string[] = [];
 const ok = (l: string) => { pass++; console.log(`  ✓ ${l}`); };
@@ -46,7 +47,7 @@ const ID = {
 };
 
 function pctx(userId: string, selfPatientId: string | null): PatientContext {
-  return { session: { userId, role: "PATIENT" as any, exp: Date.now() + 1e9 }, userId, selfPatientId };
+  return { session: { userId, role: "PATIENT" as any, exp: Date.now() + 1e9 }, userId, selfPatientId, selfPatientIds: selfPatientId ? [selfPatientId] : [] };
 }
 
 async function cleanup() {
@@ -70,6 +71,15 @@ async function cleanup() {
   await prisma.encounter.deleteMany({ where: { facilityId: { in: [ID.fac, ID.facOther] } } });
   await prisma.hospitalStaffProfile.deleteMany({ where: { user: { facilityMemberships: { some: { facilityId: { in: [ID.fac, ID.facOther] } } } } } });
   await prisma.facilityMembership.deleteMany({ where: { facilityId: { in: [ID.fac, ID.facOther] } } });
+  // Phase 0: the gate's accounts own Persons, and links reference its patients.
+  const gateUsers = [ID.uA, ID.uB, ID.uDel, ID.uStaff];
+  const persons = (await prisma.personAccount.findMany({ where: { userId: { in: gateUsers } }, select: { personId: true } })).map((p) => p.personId);
+  await prisma.personPatientLink.deleteMany({ where: { OR: [{ facilityId: { in: [ID.fac, ID.facOther] } }, { personId: { in: persons } }] } });
+  await prisma.personAccessLogEntry.deleteMany({ where: { personId: { in: persons } } });
+  await prisma.personConsent.deleteMany({ where: { personId: { in: persons } } });
+  await prisma.personContact.deleteMany({ where: { personId: { in: persons } } });
+  await prisma.personAccount.deleteMany({ where: { personId: { in: persons } } });
+  await prisma.person.deleteMany({ where: { id: { in: persons } } });
   await prisma.patient.deleteMany({ where: { facilityId: { in: [ID.fac, ID.facOther] } } });
   await prisma.facility.deleteMany({ where: { id: { in: [ID.fac, ID.facOther] } } });
   await prisma.organization.deleteMany({ where: { id: ID.org } });
@@ -86,9 +96,12 @@ async function seed() {
   }
   await prisma.user.update({ where: { id: ID.uStaff }, data: { role: "DOCTOR" } });
 
-  await prisma.patient.create({ data: { id: ID.patA, uhid: "D11-A", facilityId: ID.fac, fullName: "Patient A", sex: "female", userId: ID.uA, phone: "111" } });
-  await prisma.patient.create({ data: { id: ID.patB, uhid: "D11-B", facilityId: ID.fac, fullName: "Patient B", sex: "male", userId: ID.uB } });
-  await prisma.patient.create({ data: { id: ID.patDel, uhid: "D11-D", facilityId: ID.fac, fullName: "Delegate D", sex: "male", userId: ID.uDel } });
+  await prisma.patient.create({ data: { id: ID.patA, uhid: "D11-A", facilityId: ID.fac, fullName: "Patient A", sex: "female", phone: "111" } });
+  await prisma.patient.create({ data: { id: ID.patB, uhid: "D11-B", facilityId: ID.fac, fullName: "Patient B", sex: "male" } });
+  await prisma.patient.create({ data: { id: ID.patDel, uhid: "D11-D", facilityId: ID.fac, fullName: "Delegate D", sex: "male" } });
+  await linkAccountForGate(prisma, ID.uA, ID.patA);
+  await linkAccountForGate(prisma, ID.uB, ID.patB);
+  await linkAccountForGate(prisma, ID.uDel, ID.patDel);
 
   await prisma.hospitalStaffProfile.create({ data: { id: ID.staff, userId: ID.uStaff, displayRole: "Physician", status: "ACTIVE" } });
   await ensurePrimaryMembership(prisma, ID.uStaff, ID.fac);

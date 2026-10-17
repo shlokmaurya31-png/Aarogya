@@ -24,6 +24,7 @@ import { IDENTIFIER_SYSTEMS } from "../src/lib/hospital/interoperability/shared"
 import { exportPatientToFhir } from "../src/lib/hospital/interoperability/fhir/export";
 import { createSharingRequest } from "../src/lib/patient/experience/consent";
 import type { PatientAccessScope } from "../src/lib/patient/context";
+import { linkAccountForGate } from "./lib/personFixture";
 
 let pass = 0;
 let fail = 0;
@@ -40,7 +41,8 @@ async function main() {
   const facilityId = "fac-amc-pune";
   const staff = await prisma.user.findFirstOrThrow({ where: { email: "admin@amc-demo.aarogya" } });
   const owner = await prisma.user.create({ data: { email: `ids-${run}@verify.aarogya`, passwordHash: "x", role: "PATIENT", displayName: "Ids" } });
-  const patient = await prisma.patient.create({ data: { uhid: `IDS-${run}`, facilityId, fullName: `Identifier Patient ${run}`, sex: "M", userId: owner.id } });
+  const patient = await prisma.patient.create({ data: { uhid: `IDS-${run}`, facilityId, fullName: `Identifier Patient ${run}`, sex: "M" } });
+  await linkAccountForGate(prisma, owner.id, patient.id);
   const other = await prisma.patient.create({ data: { uhid: `IDS2-${run}`, facilityId, fullName: `Identifier Other ${run}`, sex: "F" } });
 
   // 1. The CHECK constraint.

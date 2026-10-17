@@ -363,6 +363,8 @@ describe("Phase 0 person payload codes mirror their sources", () => {
   };
   it("link methods mirror the Prisma enum", () => {
     expect(options("PersonPatientLinked", "method")).toEqual(Object.values($Enums.PersonLinkMethod).sort());
+    expect(options("PersonPatientUnlinked", "by")).toEqual(Object.values($Enums.PersonUnlinkActor).sort());
+    expect(options("PersonPatientUnlinked", "reason")).toEqual(Object.values($Enums.PersonUnlinkReason).sort());
     expect(options("PersonConsentDecided", "purpose")).toEqual(Object.values($Enums.PersonConsentPurpose).sort());
     expect(options("PersonConsentDecided", "decision")).toEqual(Object.values($Enums.PersonConsentDecision).sort());
   });

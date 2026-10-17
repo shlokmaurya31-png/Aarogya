@@ -20,7 +20,9 @@ export async function updatePatientRecord(input: {
     const before = await tx.patient.findUnique({ where: { id: input.patientId } });
     if (!before || before.facilityId !== input.facilityId) throw new NotFoundError("Patient not found.");
     const data = Object.fromEntries(Object.entries(input.changes).filter(([, v]) => v !== undefined));
-    const patient = await tx.patient.update({ where: { id: before.id }, data });
+    // Phase 0: staff entering a (new) phone with the patient present confirms it.
+    const phoneChanged = "phone" in data && String(data.phone ?? "") !== String(before.phone ?? "");
+    const patient = await tx.patient.update({ where: { id: before.id }, data: { ...data, ...(phoneChanged ? { phoneConfirmedAt: data.phone ? new Date() : null } : {}) } });
     const fields = (Object.keys(FIELD_CODES) as (keyof typeof FIELD_CODES)[])
       .filter((k) => k in data && String(data[k] ?? "") !== String((before as Record<string, unknown>)[k] ?? ""))
       .map((k) => FIELD_CODES[k]);

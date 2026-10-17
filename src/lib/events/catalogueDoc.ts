@@ -106,6 +106,10 @@ export function renderEventCatalogue(contracts: readonly EventContract[], consum
       out.push(`**v${c.version}**${c.version === current.get(t) ? " (current)" : ""} · aggregate ${[c.aggregateType, ...(c.alternateAggregateTypes ?? [])].join(" / ")} · ${c.scope} · ${c.sensitivity}`);
       out.push("");
       out.push(`Producer: ${esc(c.producer)}`);
+      if (c.retired) {
+        out.push("");
+        out.push(`**Retired** since ${c.retired.since}${c.retired.replacedBy ? `; replaced by ${c.retired.replacedBy}` : ""}. Emit refuses it; events already recorded still dispatch and replay.`);
+      }
       out.push("");
       out.push("| Field | Type |");
       out.push("|---|---|");

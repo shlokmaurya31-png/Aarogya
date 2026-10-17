@@ -24,6 +24,7 @@ import { createSharingRequest, revokePatientConsent } from "../src/lib/patient/e
 import { revokeDelegation } from "../src/lib/patient/experience/family";
 import { resolveReadScope, type PatientAccessScope, type PatientContext } from "../src/lib/patient/context";
 import { patientAssistantContext } from "../src/lib/ai/assistantContext";
+import { linkAccountForGate } from "./lib/personFixture";
 
 let pass = 0;
 let fail = 0;
@@ -42,7 +43,8 @@ async function main() {
 
   const facilityId = "fac-amc-pune";
   const owner = await prisma.user.create({ data: { email: `consent-owner-${run}@verify.aarogya`, passwordHash: "x", role: "PATIENT", displayName: "Consent owner" } });
-  const patient = await prisma.patient.create({ data: { uhid: `CONSENT-${run}`, facilityId, fullName: `Consent Patient ${run}`, sex: "F", userId: owner.id } });
+  const patient = await prisma.patient.create({ data: { uhid: `CONSENT-${run}`, facilityId, fullName: `Consent Patient ${run}`, sex: "F" } });
+  await linkAccountForGate(prisma, owner.id, patient.id);
   const self: PatientAccessScope = { patientId: patient.id, patientIds: [patient.id], facilityId, isSelf: true, allowedClasses: new Set(ALL) };
   const staffUser = await prisma.user.findFirstOrThrow({ where: { email: "admin@amc-demo.aarogya" } });
 
@@ -80,7 +82,7 @@ async function main() {
   const delegation = await prisma.patientDelegation.create({
     data: { patientId: patient.id, delegateUserId: delegateUser.id, relationship: "CAREGIVER", status: "ACTIVE", acceptedAt: new Date(), createdByUserId: owner.id, scopes: { create: [{ scope: "RECORDS" }, { scope: "APPOINTMENTS" }] } },
   });
-  const delegateCtx: PatientContext = { session: { userId: delegateUser.id, role: "PATIENT" } as PatientContext["session"], userId: delegateUser.id, selfPatientId: null };
+  const delegateCtx: PatientContext = { session: { userId: delegateUser.id, role: "PATIENT" } as PatientContext["session"], userId: delegateUser.id, selfPatientId: null, selfPatientIds: [] };
   const live = await resolveReadScope(delegateCtx, patient.id).catch(() => null);
   report("Live delegation: the delegate can read the record", live !== null && live.allowedClasses.has("RECORDS"));
   report("Live delegation: the AI assistant gets context", live !== null && (await patientAssistantContext(live)).includes("delegated access"));

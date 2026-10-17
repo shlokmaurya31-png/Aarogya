@@ -132,13 +132,12 @@ export async function acceptDelegation(ctx: PatientContext, token: string) {
   const inviteTokenHash = hashInviteToken(token);
   const delegation = await prisma.patientDelegation.findUnique({
     where: { inviteTokenHash },
-    include: { patient: { select: { userId: true } } },
   });
   // Anti-enumeration: any failure looks identical.
   if (!delegation || delegation.status !== "INVITED") throw new NotFoundError();
   if (delegation.inviteExpiresAt && delegation.inviteExpiresAt.getTime() <= Date.now()) throw new NotFoundError();
   // You cannot become a delegate over a record that is your own.
-  if (delegation.patient.userId && delegation.patient.userId === ctx.userId) throw new BadRequestError("This is your own record.");
+  if (ctx.selfPatientIds.includes(delegation.patientId)) throw new BadRequestError("This is your own record.");
 
   await prisma.$transaction(async (tx) => {
     const result = await tx.patientDelegation.updateMany({

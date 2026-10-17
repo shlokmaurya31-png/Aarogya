@@ -9308,6 +9308,12 @@ model GeneratedDocument {
 enum PatientLinkStatus {
   OTP_SENT
   FRONT_DESK_REVIEW
+  /// Phase 0: the record's phone was confirmed within 12 months; the person
+  /// must give their date of birth or the UHID before a code is sent.
+  SECOND_FACTOR_REQUIRED
+  /// Phase 0: no usable phone on the record (or the second factor failed):
+  /// the person verifies in person at the front desk.
+  IN_PERSON_REQUIRED
   LINKED
   CREATED_NEW
   REJECTED
@@ -10363,6 +10369,11 @@ model PersonPatientLink {
   version                Int                     @default(1)
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
+
+  /// A facility unlink waits for a second, different staff member's approval.
+  unlinkRequestedByUserId String?
+  unlinkRequestedAt       DateTime?
+  unlinkRequestedReason   PersonUnlinkReason?
 
   @@index([personId, status])
   @@index([facilityId, status])

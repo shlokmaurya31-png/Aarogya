@@ -77,6 +77,9 @@ export async function updateProfile(scope: PatientAccessScope, body: unknown): P
         address: data.address ?? undefined,
         language: data.language ?? undefined,
         communicationPreference: data.communicationPreference ?? undefined,
+        // Phase 0: a phone the patient changes here is not confirmed by anyone,
+        // so it can't receive a link code until staff confirm it.
+        ...(data.phone != null && data.phone !== before.phone ? { phoneConfirmedAt: null } : {}),
       },
     });
     // Which fields changed (codes), never the values.

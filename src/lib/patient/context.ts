@@ -5,6 +5,7 @@ import { requireSession, ForbiddenError, NotFoundError } from "@/lib/auth/rbac";
 import { roleHasPermission } from "@/lib/auth/permissions";
 import type { SessionPayload } from "@/lib/auth/session";
 import { resolvePatientIdsForRead } from "./merge";
+import { selfPatientIds as selfPatientIdsFor } from "@/lib/person/self";
 
 /**
  * Phase D11 — the patient identity boundary.
@@ -72,8 +73,10 @@ export interface PatientAccessScope {
 export interface PatientContext {
   session: SessionPayload;
   userId: string;
-  /** The caller's own linked patient, if any (a pure caregiver may have none). */
+  /** The caller's own record, if any (a pure caregiver may have none): the oldest ACTIVE link. */
   selfPatientId: string | null;
+  /** Every facility record linked to the caller's Person (Phase 0: one per facility). */
+  selfPatientIds: string[];
 }
 
 /**
@@ -87,15 +90,11 @@ export async function requirePatientContext(): Promise<PatientContext> {
   if (!roleHasPermission(session.role, "patient:self:read")) {
     throw new ForbiddenError("patient:self:read");
   }
-  const self = await prisma.patient.findUnique({
-    where: { userId: session.userId },
-    select: { id: true, mergedIntoId: true },
-  });
-  // A merged (superseded) own-record must not present as live (matches
-  // requirePatientSelf) — the caller should be re-pointed at the merge target,
-  // which we do not auto-follow here to avoid silently switching identities.
-  const selfPatientId = self && !self.mergedIntoId ? self.id : null;
-  return { session, userId: session.userId, selfPatientId };
+  // Phase 0: the caller's own records are their Person's ACTIVE, verified
+  // links. A merged (superseded) record is not presented as live; we do not
+  // auto-follow the merge, to avoid silently switching identities.
+  const selfPatientIds = await selfPatientIdsFor(session.userId);
+  return { session, userId: session.userId, selfPatientId: selfPatientIds[0] ?? null, selfPatientIds };
 }
 
 /** Requires the caller additionally hold the self-service action permission. */
@@ -123,14 +122,14 @@ interface AccessiblePatient {
  */
 export async function listAccessiblePatients(ctx: PatientContext): Promise<AccessiblePatient[]> {
   const out: AccessiblePatient[] = [];
-  if (ctx.selfPatientId) {
-    out.push({ patientId: ctx.selfPatientId, isSelf: true, relationship: "SELF", scopes: [] });
+  for (const id of ctx.selfPatientIds) {
+    out.push({ patientId: id, isSelf: true, relationship: "SELF", scopes: [] });
   }
   // Delegation is consent: the consent service decides which ones are live.
   const delegations = await activeDelegationsTo(ctx.userId);
   for (const d of delegations) {
     // Never let a delegate observe their own record via the delegate path.
-    if (d.patientId === ctx.selfPatientId) continue;
+    if (ctx.selfPatientIds.includes(d.patientId)) continue;
     out.push({
       patientId: d.patientId,
       isSelf: false,

@@ -22,6 +22,7 @@ import { listMedications } from "../src/lib/patient/experience/medications";
 import { patientAssistantContext, clinicianAssistantContext } from "../src/lib/ai/assistantContext";
 import { MockAIProvider } from "../src/lib/ai/mockProvider";
 import { landingStoryTimeline } from "../src/content/marketing/landingDemo";
+import { linkAccountForGate } from "./lib/personFixture";
 
 // Mirrors src/lib/patient/experience/medications.ts (what the portal calls "active").
 const ACTIVE_MED_STATUSES = ["ORDERED", "VERIFIED", "DISPENSED", "ACTIVE"] as const;
@@ -40,6 +41,8 @@ async function main() {
   const target = await prisma.patient.findFirstOrThrow({
     where: {
       facilityId: "fac-amc-pune", userId: null, mergedIntoId: null,
+      // Phase 0: not already connected to another Person.
+      personLinks: { none: { status: { in: ["ACTIVE", "PENDING_VERIFICATION", "REVERIFICATION_REQUIRED"] } } },
       allergies: { some: { status: "ACTIVE" } },
       medicationOrders: { some: { status: { in: [...ACTIVE_MED_STATUSES] } } },
     },
@@ -51,9 +54,8 @@ async function main() {
     update: {},
     create: { email: "ai-assistant-patient@verify.aarogya", displayName: "AI assistant patient", role: Role.PATIENT, passwordHash: "x" },
   });
-  await prisma.patient.updateMany({ where: { userId: user.id, id: { not: target.id } }, data: { userId: null } });
-  await prisma.patient.update({ where: { id: target.id }, data: { userId: user.id } });
-  const ctx: PatientContext = { session: { userId: user.id, role: Role.PATIENT } as PatientContext["session"], userId: user.id, selfPatientId: target.id };
+  await linkAccountForGate(prisma, user.id, target.id);
+  const ctx: PatientContext = { session: { userId: user.id, role: Role.PATIENT } as PatientContext["session"], userId: user.id, selfPatientId: target.id, selfPatientIds: [target.id] };
 
   // 1. The patient's own record.
   const scope = await resolveReadScope(ctx);

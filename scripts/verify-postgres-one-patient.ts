@@ -2,9 +2,10 @@
  * Gate 2: one patient, one record, everywhere. Over real HTTP:
  *
  *   1. The front desk registers a patient in Hospital OS.
- *   2. The same person self-registers in the patient portal: a likely match,
- *      so a code goes to the phone on the hospital record; entering it links
- *      the account to that record. No second Patient is created.
+ *   2. The same person self-registers in the patient portal: a likely match.
+ *      They give the record's UHID (Phase 0's second factor), a code goes to
+ *      the phone on the hospital record, and entering it links the record to
+ *      their Person. No second Patient is created.
  *   3. The front desk opens an encounter; the patient uploads a document.
  *   4. The portal, the Hospital OS chart and the hospital API all return the
  *      same patient ID, the same demographics, the same encounter and the
@@ -77,6 +78,11 @@ async function main() {
     report("Self-registration finds the record and asks for the code", self.status === 200 && self.json.status === "VERIFICATION_REQUIRED", String(self.json.status));
     report("…without revealing the record's ID", !JSON.stringify(self.json).includes(P));
     const patientCookie = self.setCookie;
+    // Phase 0: the record's phone was entered by the front desk (confirmed), so
+    // the person first gives a second factor that matches the record exactly:
+    // the UHID here (the desk recorded an age, not a date of birth).
+    const factor = await call(patientCookie, "POST", "/api/patient/link/second-factor", { kind: "UHID", value: hospitalPatient.uhid });
+    report("The second factor (the record's UHID) sends the code", factor.status === 200 && factor.json.status === "CODE_SENT", JSON.stringify(factor.json));
     const sent = (await readFile(OUTBOX, "utf8").catch(() => "")).trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as { to: string; text: string });
     const code = sent.reverse().find((m) => m.to.replace(/\D/g, "").endsWith(phone))?.text.match(/\b(\d{6})\b/)?.[1];
     report("The code went to the phone on the hospital record", Boolean(code));

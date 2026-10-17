@@ -5,6 +5,7 @@ import { recordAuditEvent } from "../audit";
 import { parseEnum } from "@/lib/enumValue";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 import type { Prisma, PrivacyRequest } from "@prisma/client";
+import { isPatientSelf } from "@/lib/person/self";
 
 /** PrivacyRequestStatusChanged (step 9c; SENSITIVE): never the reason, scope or decision note. */
 async function emitPrivacy(tx: Prisma.TransactionClient, r: PrivacyRequest, from: string | null, byUserId: string) {
@@ -84,7 +85,7 @@ export async function createPrivacyRequest(input: {
 
   const patient = await prisma.patient.findUnique({
     where: { id: input.patientId },
-    select: { id: true, facilityId: true, userId: true },
+    select: { id: true, facilityId: true },
   });
   // Not-found shaped: a privacy request must not become a way to discover that
   // a patient exists in another facility.
@@ -93,7 +94,7 @@ export async function createPrivacyRequest(input: {
   // A patient raising a request for THEMSELVES must actually be that patient.
   // Without this check, any patient account could raise requests against any
   // other patient — the exact IDOR this workflow would otherwise introduce.
-  if (input.requesterType === "PATIENT" && patient.userId !== input.requesterUserId) {
+  if (input.requesterType === "PATIENT" && !(await isPatientSelf(input.requesterUserId, patient.id))) {
     throw new NotFoundError("Patient not found.");
   }
 

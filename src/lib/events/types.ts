@@ -153,6 +153,11 @@ export interface EventContract<P extends z.ZodTypeAny = z.ZodTypeAny> {
   producer: string;
   /** Zod schema for the payload — `.strict()` so unknown keys are rejected. */
   payload: P;
+  /**
+   * A retired type: nothing emits it any more (emit refuses it), but events
+   * already in the outbox still dispatch and replay against this contract.
+   */
+  retired?: { since: string; replacedBy?: string };
 }
 
 /** Input to emitDomainEvent — the caller supplies the business fields only. */

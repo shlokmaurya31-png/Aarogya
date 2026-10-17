@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { isPatientSelf } from "@/lib/person/self";
 import { roleHasPermission } from "../permissions";
 import { recordAuditEvent } from "../audit";
 import { getActionPolicy, relationshipSatisfies, DEFAULT_STEP_UP_MAX_AGE_MS } from "./policies";
@@ -67,13 +68,14 @@ export async function resolveRelationship(args: {
 
   const patient = await prisma.patient.findUnique({
     where: { id: args.patientId },
-    select: { id: true, facilityId: true, userId: true },
+    select: { id: true, facilityId: true },
   });
   if (!patient) return "NONE";
 
-  // The patient themselves. Checked first: a patient account must never be
-  // mistaken for staff, and staff relationships must never satisfy self access.
-  if (patient.userId && patient.userId === args.actorUserId) return "PATIENT_SELF";
+  // The patient themselves (Phase 0: an ACTIVE link from the actor's Person).
+  // Checked first: a patient account must never be mistaken for staff, and
+  // staff relationships must never satisfy self access.
+  if (await isPatientSelf(args.actorUserId, patient.id)) return "PATIENT_SELF";
 
   if (args.role === "AAROGYA_ADMIN") return "PLATFORM_ADMIN";
 

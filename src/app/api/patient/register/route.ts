@@ -58,12 +58,18 @@ export async function POST(req: NextRequest) {
   if (outcome.status === "LINKED_NEW") return NextResponse.json({ ok: true, status: outcome.status, patientId: outcome.patientId });
   if (outcome.status === "VERIFICATION_REQUIRED") {
     return NextResponse.json({
-      ok: true, status: outcome.status, maskedPhone: outcome.maskedPhone,
-      message: `It looks like you already have a record with us. Enter the code we sent to ${outcome.maskedPhone} to connect it to your account.`,
+      ok: true, status: outcome.status, maskedPhone: outcome.maskedPhone, next: outcome.next,
+      message: `It looks like you already have a record with us. Confirm your date of birth or the UHID on your hospital card, and we'll send a code to ${outcome.maskedPhone} to connect it to your account.`,
+    });
+  }
+  if (outcome.status === "IN_PERSON_REQUIRED") {
+    return NextResponse.json({
+      ok: true, status: outcome.status,
+      message: "It looks like you may already have a record with us. To connect it, show a photo ID at the hospital's front desk.",
     });
   }
   return NextResponse.json({
     ok: true, status: outcome.status,
-    message: "It looks like you may already have a record with us. Our front desk will confirm it and connect it to your account.",
+    message: "It looks like you may already have a record with us. The hospital will review it; you may be asked to show a photo ID at the front desk.",
   });
 }

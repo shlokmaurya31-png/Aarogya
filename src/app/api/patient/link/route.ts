@@ -14,7 +14,7 @@ export async function GET() {
   });
 }
 
-/** Body: { code }. Links the account to the matched record when the code is right. */
+/** Body: { code }. Phase 0: accepted only after the second factor matched; links the record to the caller's Person. */
 export async function POST(req: NextRequest) {
   return withApiErrors(async () => {
     const session = await requireSession();
