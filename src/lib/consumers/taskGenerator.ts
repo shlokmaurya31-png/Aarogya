@@ -91,11 +91,36 @@ async function openCriticalResultTask(event: DomainEventEnvelope) {
   });
 }
 
+/**
+ * StockBelowReorder → one STOCK_REORDER task for procurement per item and
+ * location while one is open (a later crossing, after stock was replenished
+ * and fell again, opens a new one). URGENT when the location is out.
+ */
+async function openReorderTask(event: DomainEventEnvelope, p: { itemId: string; locationId: string; ledgerEntryId: string; onHandQty: number }) {
+  const [item, location] = await Promise.all([
+    prisma.item.findUnique({ where: { id: p.itemId }, select: { facilityId: true, name: true } }),
+    prisma.stockLocation.findUnique({ where: { id: p.locationId }, select: { facilityId: true, name: true } }),
+  ]);
+  if (!item || !location || location.facilityId !== event.facilityId || (item.facilityId && item.facilityId !== event.facilityId)) {
+    throw new PermanentEventError(`Item ${p.itemId} or location ${p.locationId} is not in the event's facility.`, "TENANT_MISMATCH");
+  }
+  const prefix = `STOCK_REORDER:${p.itemId}:${p.locationId}:`;
+  await prisma.$transaction(async (tx) => {
+    if (await tx.task.findFirst({ where: { facilityId: event.facilityId!, source: "EVENT", idempotencyKey: { startsWith: prefix }, status: { in: OPEN_STATUSES } }, select: { id: true } })) return;
+    await createTask(tx, {
+      facilityId: event.facilityId!, type: "STOCK_REORDER", title: `Reorder ${item.name} for ${location.name}`,
+      priority: p.onHandQty <= 0 ? "URGENT" : "ROUTINE", assignedRole: "PROCUREMENT_OFFICER",
+      source: "EVENT", idempotencyKey: `${prefix}${p.ledgerEntryId}`,
+    });
+  });
+}
+
 export const taskGenerator: DomainEventConsumer = {
   name: "task-generator",
   handles: [
     "AdmissionRequested", "BedReserved", "AdmissionRequestStatusChanged", "EdDispositionDecided", "DischargeInitiated", "PatientDischarged",
     "LabResultReleased", "ImagingReportReleased", "CriticalResultAcknowledged", "MedicationDoseMissed", "PatientDocumentUploaded",
+    "StockBelowReorder",
   ],
   async handle(event) {
     const p = event.payload as Record<string, string>;
@@ -124,6 +149,8 @@ export const taskGenerator: DomainEventConsumer = {
         return closeTask(event, CRITICAL_RESULT, p.resultId ?? p.reportId);
       case "PatientDocumentUploaded":
         return openPatientTask(event, p.patientId, { type: "DOCUMENT_REVIEW", title: "Review a document the patient uploaded", priority: "ROUTINE", sourceId: p.documentId });
+      case "StockBelowReorder":
+        return openReorderTask(event, p as unknown as { itemId: string; locationId: string; ledgerEntryId: string; onHandQty: number });
       case "MedicationDoseMissed":
         if (!p.encounterId) return;
         return openTask(event, p.encounterId, { type: "MISSED_DOSE_REVIEW", title: "Review a dose that was not recorded", priority: "URGENT", sourceId: p.administrationId });

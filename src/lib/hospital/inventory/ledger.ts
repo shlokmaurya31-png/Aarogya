@@ -63,6 +63,7 @@ export async function postLedgerEntry(tx: Tx, input: PostLedgerEntryInput): Prom
     `;
     if (rowsInserted === 0) return { alreadyExisted: true };
     await emitStockMoved(tx, id, input);
+    await emitIfBelowReorder(tx, id, input);
     return { alreadyExisted: false };
   }
 
@@ -92,7 +93,32 @@ export async function postLedgerEntry(tx: Tx, input: PostLedgerEntryInput): Prom
     },
   });
   await emitStockMoved(tx, id, input);
+  await emitIfBelowReorder(tx, id, input);
   return { alreadyExisted: false };
+}
+
+/**
+ * StockBelowReorder (design #63): this entry took the item's on-hand balance
+ * at the location from at-or-above its reorder point to below it. The balance
+ * is the ledger's own sum for (item, location), which includes this entry, so
+ * it doesn't depend on whether the caller updated StockBalance before or after
+ * posting. Only a decrease can cross downwards; one event per crossing.
+ */
+async function emitIfBelowReorder(tx: Tx, ledgerEntryId: string, input: PostLedgerEntryInput) {
+  const delta = input.onHandDelta ?? 0;
+  if (delta >= 0) return;
+  const item = await tx.item.findUnique({ where: { id: input.itemId }, select: { reorderPoint: true, reorderQuantity: true } });
+  if (item?.reorderPoint === null || item?.reorderPoint === undefined) return;
+  const after = (await tx.stockLedgerEntry.aggregate({ where: { itemId: input.itemId, locationId: input.locationId }, _sum: { onHandDelta: true } }))._sum.onHandDelta ?? 0;
+  const before = after - delta;
+  if (!(before >= item.reorderPoint && after < item.reorderPoint)) return;
+  await emitFacilityEvent(tx, {
+    type: "StockBelowReorder", aggregateId: input.itemId, facilityId: input.facilityId, actorUserId: input.actorUserId,
+    payload: {
+      itemId: input.itemId, locationId: input.locationId, ledgerEntryId, onHandQty: after, reorderPoint: item.reorderPoint,
+      ...(item.reorderQuantity !== null ? { reorderQuantity: item.reorderQuantity } : {}),
+    },
+  });
 }
 
 async function emitStockMoved(tx: Tx, ledgerEntryId: string, input: PostLedgerEntryInput) {

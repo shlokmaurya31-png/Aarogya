@@ -1031,6 +1031,13 @@ per item.
   source document, patient and encounter (so INTERNAL, not LOW); never the
   reason text or notes. Aggregate ITEM_LOT; correlated by the encounter when
   there is one. A cancelled transfer posts RETURN at the source.
+- **`StockBelowReorder`** (off the cut list): `postLedgerEntry` emits it when
+  the entry takes the item's on-hand balance at the location from at-or-above
+  `reorderPoint` to below it (exactly at the point is not below). The balance
+  is the ledger's sum for (item, location), so it does not depend on whether
+  the caller updated `StockBalance` first. task-generator opens one
+  STOCK_REORDER task for PROCUREMENT_OFFICER (URGENT at zero) while none is
+  open for that item and location; a person completes it.
 
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b

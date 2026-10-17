@@ -488,6 +488,11 @@ export const EVENT_CONTRACTS: EventContract[] = [
     }).strict(),
   }),
   contract({
+    type: "StockBelowReorder", version: 1, aggregateType: "ITEM", scope: "FACILITY",
+    sensitivity: "LOW", producer: "inventory ledger (postLedgerEntry): an entry takes the item's balance at a location from at-or-above its reorder point to below it",
+    payload: z.object({ itemId: id, locationId: id, ledgerEntryId: id, onHandQty: z.number(), reorderPoint: z.number(), reorderQuantity: z.number().optional() }).strict(),
+  }),
+  contract({
     type: "StockLotStatusChanged", version: 1, aggregateType: "ITEM_LOT", scope: "FACILITY",
     sensitivity: "LOW", producer: "inventory lots (quarantineLot, releaseLotFromQuarantine), pharmacy recalls",
     payload: z.object({ lotId: id, itemId: id, from: lotStatus, to: lotStatus, cause: z.enum(["QUARANTINE", "RELEASE", "RECALL"]), recallId: optId }).strict(),

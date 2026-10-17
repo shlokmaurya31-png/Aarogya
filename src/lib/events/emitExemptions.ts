@@ -99,7 +99,7 @@ export const EMITTING_HELPERS: Record<string, string[]> = {
   "src/lib/patient/registration.ts#createRegisteredPatient": ["PatientRegistered"],
   "src/lib/hospital/inventory/lots.ts#quarantineLot": ["StockLotStatusChanged"],
   "src/lib/hospital/billing/claims.ts#emitClaimSettled": ["ClaimSettled"],
-  "src/lib/hospital/inventory/ledger.ts#postLedgerEntry": ["StockMoved"],
+  "src/lib/hospital/inventory/ledger.ts#postLedgerEntry": ["StockMoved", "StockBelowReorder"],
   "src/lib/hospital/billing/claims.ts#emitClaimSubmitted": ["ClaimSubmitted"],
   "src/lib/hospital/inventory/lots.ts#releaseLotFromQuarantine": ["StockLotStatusChanged"],
 };
@@ -230,7 +230,6 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/hospital/inventory/itemMedicationLink.ts#linkMedicationToItem": { category: "REFERENCE_DATA", reason: "catalogue / master data; no runtime reaction depends on it" },
   "src/lib/hospital/inventory/items.ts#createItem": { category: "REFERENCE_DATA", reason: "catalogue / master data; no runtime reaction depends on it" },
   "src/lib/hospital/inventory/items.ts#updateItem": { category: "REFERENCE_DATA", reason: "catalogue / master data; no runtime reaction depends on it" },
-  "src/lib/hospital/inventory/ledger.ts#postLedgerEntry": { category: "PLANNED", reason: "will emit StockBelowReorder (cut list)", step: 0, events: ["StockBelowReorder"] },
   "src/lib/hospital/inventory/locations.ts#createStockLocation": { category: "REFERENCE_DATA", reason: "catalogue / master data; no runtime reaction depends on it" },
   "src/lib/hospital/inventory/locations.ts#updateStockLocation": { category: "REFERENCE_DATA", reason: "catalogue / master data; no runtime reaction depends on it" },
   "src/lib/hospital/inventory/lots.ts#ensureLotExpiryState": { category: "BOOKKEEPING", reason: "derived status, decision log or provenance written as part of another operation" },

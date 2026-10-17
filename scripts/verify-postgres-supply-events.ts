@@ -5,6 +5,9 @@
  *      reservation, release, consumption, transfer out/in, cancelled
  *      transfer, issue), with the movement type and deltas, never the reason
  *      text or notes; an idempotent replay posts nothing and emits nothing.
+ *   2. StockBelowReorder: only the entry that takes the location's balance from
+ *      at-or-above the reorder point to below it; task-generator opens one
+ *      STOCK_REORDER task for procurement while one is open, a new one after.
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-supply-events.ts
  */
@@ -16,6 +19,8 @@ import { reserveStock, releaseReservation, consumeReservation } from "../src/lib
 import { initiateTransfer, receiveTransfer, cancelTransfer } from "../src/lib/hospital/inventory/transfer";
 import { issueStock } from "../src/lib/hospital/inventory/issue";
 import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
+import { runTick } from "../src/lib/runner/tick";
+import { completeTask } from "../src/lib/hospital/task";
 
 let pass = 0;
 let fail = 0;
@@ -81,6 +86,35 @@ async function main() {
   const events = await prisma.domainEventOutbox.count({ where: { eventType: "StockMoved", aggregateId: lot.id } });
   report("One StockMoved per ledger entry of the lot, each naming its entry", ledger === events && all.every((p) => typeof p.ledgerEntryId === "string"), `${ledger} entries, ${events} events`);
   report("No StockMoved payload carries reason text or notes", !JSON.stringify(all).includes("secret"));
+
+  // 2. Reorder point (10) at the store, which holds 31 after section 1.
+  const drain = async () => { for (let i = 0; i < 6; i++) if (!(await runTick({ budgetMs: 20_000 })).moreWork) break; };
+  const below = () => prisma.domainEventOutbox.findMany({ where: { eventType: "StockBelowReorder", aggregateId: item.id }, orderBy: { seq: "asc" } });
+  const reorderTasks = () => prisma.task.findMany({ where: { facilityId, type: "STOCK_REORDER", idempotencyKey: { startsWith: `STOCK_REORDER:${item.id}:${store.id}:` } }, orderBy: { createdAt: "asc" } });
+  let n = 0;
+  const take = (quantity: number) => tx((t) => issueStock(t, { ...issue, locationId: store.id, quantity, sourceId: `sup-take-${run}-${++n}` }));
+  await take(21); // 31 → 10: at the point, not below
+  report("Down to exactly the reorder point: no StockBelowReorder", (await below()).length === 0);
+  await take(1); // 10 → 9: crosses
+  await take(1); // 9 → 8: already below
+  const b1 = await below();
+  const bp = b1[0]?.payload as Payload | undefined;
+  report("The entry that crosses below emits StockBelowReorder once (balance 9, point 10); a further decrease emits nothing",
+    b1.length === 1 && bp?.onHandQty === 9 && bp.reorderPoint === 10 && bp.locationId === store.id && bp.reorderQuantity === 50);
+  await drain();
+  let tasks = await reorderTasks();
+  report("task-generator opens one STOCK_REORDER task for procurement", tasks.length === 1 && tasks[0].status === "OPEN" && tasks[0].assignedRole === "PROCUREMENT_OFFICER");
+  await tx((t) => createAdjustment(t, { facilityId, itemId: item.id, lotId: lot.id, locationId: store.id, quantityDelta: 20, reason: "FOUND", requestedByStaffId: staff.id, actorUserId: by, idempotencyKey: `sup-adj2-${run}` }));
+  await take(20); // 28 → 8: crosses again
+  await drain();
+  tasks = await reorderTasks();
+  report("Replenished and crossing again while the task is open: a second event, no second task", (await below()).length === 2 && tasks.length === 1);
+  await completeTask({ taskId: tasks[0].id, facilityId, byUserId: by });
+  await tx((t) => createAdjustment(t, { facilityId, itemId: item.id, lotId: lot.id, locationId: store.id, quantityDelta: 20, reason: "FOUND", requestedByStaffId: staff.id, actorUserId: by, idempotencyKey: `sup-adj3-${run}` }));
+  await take(20); // 28 → 8
+  await drain();
+  tasks = await reorderTasks();
+  report("…once that task is done, the next crossing opens a new one", tasks.length === 2 && tasks[1].status === "OPEN");
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();
