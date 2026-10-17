@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { emitDomainEvent } from "./emit";
 import { getEventContract, currentVersion, ALL_EVENT_TYPES, EVENT_CONTRACTS } from "./catalogue";
 import { assertNoSensitiveData } from "./sensitiveGuard";
-import { classifyEventError, PermanentEventError, RetryableEventError } from "./types";
+import { classifyEventError, PermanentEventError, RetryableEventError, isDataIntegrityCode, DATA_ERROR_ATTEMPTS } from "./types";
+import { $Enums } from "@prisma/client";
 
 /**
  * Phase D6 — event CONTRACT tests (pure). DB-backed behaviour (transactional
@@ -102,6 +103,19 @@ describe("sensitive-data guard", () => {
     expect(() => assertNoSensitiveData({ note: "x".repeat(600) })).toThrow();
     expect(() => assertNoSensitiveData({ patientId: "x".repeat(600) })).toThrow();
   });
+  it("accepts every key every catalogued contract declares (a contract the guard refuses can never be emitted)", () => {
+    /** A skeleton of the schema's keys at every depth, leaves "x". */
+    const skeleton = (schema: unknown): unknown => {
+      const s = schema as { shape?: Record<string, unknown>; unwrap?: () => unknown; element?: unknown };
+      if (s.shape) return Object.fromEntries(Object.entries(s.shape).map(([k, v]) => [k, skeleton(v)]));
+      if (s.element) return [skeleton(s.element)];
+      if (typeof s.unwrap === "function") return skeleton(s.unwrap());
+      return "x";
+    };
+    for (const c of EVENT_CONTRACTS) {
+      expect(() => assertNoSensitiveData(skeleton(c.payload)), `${c.type} v${c.version}`).not.toThrow();
+    }
+  });
 });
 
 describe("error classification", () => {
@@ -110,5 +124,214 @@ describe("error classification", () => {
     expect(classifyEventError(new RetryableEventError("later", "Y")).retryable).toBe(true);
     expect(classifyEventError({ status: 403 }).retryable).toBe(false);
     expect(classifyEventError(new Error("boom")).retryable).toBe(true);
+  });
+  it("gives data-integrity errors (missing parent, row gone) a short, bounded budget", () => {
+    for (const code of ["P2003", "P2014", "P2018", "P2025"]) {
+      const c = classifyEventError(Object.assign(new Error("fk"), { code }));
+      expect(c.code).toBe(`DATA_${code}`);
+      expect(isDataIntegrityCode(c.code)).toBe(true);
+    }
+    expect(isDataIntegrityCode(classifyEventError(Object.assign(new Error("dup"), { code: "P2002" })).code)).toBe(false);
+    expect(DATA_ERROR_ATTEMPTS).toBeLessThan(8);
+  });
+});
+
+describe("payload codes mirror the Prisma enums they describe", () => {
+  // A contract's closed set must not drift from the column it reports: a new
+  // database value would otherwise be rejected at emit (and roll the write back).
+  const field = (type: string, key: string) => {
+    const shape = (getEventContract(type, 1)!.payload as unknown as { shape: Record<string, { unwrap?: () => unknown; options?: string[] }> }).shape;
+    let f = shape[key] as { options?: string[]; unwrap?: () => unknown };
+    while (!f.options && f.unwrap) f = f.unwrap() as typeof f;
+    return [...(f.options ?? [])].sort();
+  };
+  const values = (e: Record<string, string>) => Object.values(e).sort();
+  it.each([
+    ["MedicationOrderStatusChanged", "to", $Enums.MedicationOrderStatus],
+    ["ExternalLabReferralStatusChanged", "to", $Enums.ExternalLabStatus],
+    ["StockLotStatusChanged", "to", $Enums.LotStatus],
+    ["IcuDeviceStatusChanged", "to", $Enums.IcuDeviceStatus],
+    ["IcuInfusionStatusChanged", "to", $Enums.IcuInfusionStatus],
+    ["LabOrderPlaced", "priority", $Enums.Priority],
+    ["SpecimenStatusChanged", "rejectionReason", $Enums.SpecimenRejectionReason],
+    ["MedicationReconciliationRecorded", "source", $Enums.ReconciliationSource],
+    ["MedicationReconciliationRecorded", "decision", $Enums.ReconciliationDecision],
+    ["MedicationSafetyWarningOverridden", "severity", $Enums.SafetySeverity],
+    ["CarePlanUpdated", "status", $Enums.CarePlanStatus],
+    ["ClinicalHandoffStatusChanged", "handoffType", $Enums.HandoffType],
+    ["ClinicalHandoffStatusChanged", "urgency", $Enums.RequestPriority],
+  ] as const)("%s.%s", (type, key, prismaEnum) => {
+    expect(field(type, key)).toEqual(values(prismaEnum as Record<string, string>));
+  });
+});
+
+describe("step-7 payload codes mirror their sources", () => {
+  const options = (type: string, key: string) => {
+    const shape = (getEventContract(type, 1)!.payload as unknown as { shape: Record<string, { options?: string[]; unwrap?: () => unknown; element?: unknown }> }).shape;
+    let f = shape[key] as { options?: string[]; unwrap?: () => unknown; element?: unknown };
+    while (!f.options && (f.unwrap || f.element)) f = (f.element ?? f.unwrap!()) as typeof f;
+    return [...(f.options ?? [])].sort();
+  };
+  it("DocumentGenerated.documentType = DOCUMENT_TYPES", async () => {
+    const { DOCUMENT_TYPES } = await import("@/lib/documents/templates");
+    expect(options("DocumentGenerated", "documentType")).toEqual([...DOCUMENT_TYPES].sort());
+  });
+  it("PatientDocumentUploaded.documentType = PATIENT_DOCUMENT_TYPES", async () => {
+    const { PATIENT_DOCUMENT_TYPES } = await import("@/lib/patient/experience/documents");
+    expect(options("PatientDocumentUploaded", "documentType")).toEqual([...PATIENT_DOCUMENT_TYPES].sort());
+  });
+  it("FamilyAccessGranted.scopes = DELEGATION_SCOPES", async () => {
+    const { DELEGATION_SCOPES } = await import("@/lib/patient/context");
+    expect(options("FamilyAccessGranted", "scopes")).toEqual([...DELEGATION_SCOPES].sort());
+  });
+  it("PatientAccessSessionStatusChanged.to = PatientAccessSessionStatus", () => {
+    expect(options("PatientAccessSessionStatusChanged", "to")).toEqual(Object.values($Enums.PatientAccessSessionStatus).sort());
+  });
+});
+
+describe("step-9 payload codes mirror their sources", () => {
+  const options = (type: string, key: string) => {
+    const shape = (getEventContract(type, 1)!.payload as unknown as { shape: Record<string, { options?: string[]; unwrap?: () => unknown }> }).shape;
+    let f = shape[key] as { options?: string[]; unwrap?: () => unknown };
+    while (!f.options && f.unwrap) f = f.unwrap() as typeof f;
+    return [...(f.options ?? [])].sort();
+  };
+  const cases: [string, string, readonly string[]][] = [
+    ["HospitalInvoiceVoided", "from", Object.values($Enums.InvoiceStatus)],
+    ["HospitalInvoiceIssued", "documentType", Object.values($Enums.InvoiceDocumentType)],
+    ["HospitalPaymentRecorded", "method", Object.values($Enums.PaymentMethod)],
+    ["HospitalPaymentStatusChanged", "status", Object.values($Enums.PaymentStatus)],
+    ["HospitalRefundStatusChanged", "to", Object.values($Enums.RefundStatus)],
+    ["BillingAdjustmentStatusChanged", "to", Object.values($Enums.AdjustmentStatus)],
+    ["BillingAdjustmentStatusChanged", "adjustmentType", Object.values($Enums.AdjustmentType)],
+    ["CoverageStatusChanged", "to", Object.values($Enums.CoverageStatus)],
+    ["PreauthStatusChanged", "to", Object.values($Enums.PreAuthStatus)],
+    ["ClaimStatusChanged", "to", Object.values($Enums.ClaimStatus)],
+    ["ClaimQueryStatusChanged", "to", Object.values($Enums.ClaimQueryStatus)],
+    ["ClaimReconciliationStatusChanged", "to", Object.values($Enums.ReconciliationExceptionStatus)],
+    ["ClaimReconciliationStatusChanged", "severity", Object.values($Enums.AlertSeverity)],
+    ["CreditStatusChanged", "status", Object.values($Enums.BillingCreditStatus)],
+    ["CreditStatusChanged", "creditType", Object.values($Enums.BillingCreditType)],
+    ["InvoiceVoided", "from", Object.values($Enums.BillingInvoiceStatus)],
+    ["SubscriptionStatusChanged", "to", Object.values($Enums.SubscriptionStatus)],
+  ];
+  for (const [type, key, source] of cases) {
+    it(`${type}.${key} mirrors its Prisma enum`, () => expect(options(type, key)).toEqual([...source].sort()));
+  }
+  it("ChargePosted.category = CHARGE_CATEGORIES", async () => {
+    const { CHARGE_CATEGORIES } = await import("@/lib/hospital/billing/chargeCapture");
+    expect(options("ChargePosted", "category")).toEqual([...CHARGE_CATEGORIES].sort());
+  });
+  it("ClaimReconciliationStatusChanged.exceptionType = EXCEPTION_TYPES", async () => {
+    const { EXCEPTION_TYPES } = await import("@/lib/hospital/nhcx/stateMachines");
+    expect(options("ClaimReconciliationStatusChanged", "exceptionType")).toEqual([...EXCEPTION_TYPES].sort());
+  });
+});
+
+describe("batch 6 payload codes mirror their sources", () => {
+  const options = (type: string, key: string) => {
+    const shape = (getEventContract(type, 1)!.payload as unknown as { shape: Record<string, { options?: string[]; unwrap?: () => unknown }> }).shape;
+    let f = shape[key] as { options?: string[]; unwrap?: () => unknown };
+    while (!f.options && f.unwrap) f = f.unwrap() as typeof f;
+    return [...(f.options ?? [])].sort();
+  };
+  it("ClinicalDocumentRecorded.documentType = CLINICAL_DOCUMENT_TYPE_CODES", async () => {
+    const { CLINICAL_DOCUMENT_TYPE_CODES } = await import("@/lib/documents/staffDocuments");
+    expect(options("ClinicalDocumentRecorded", "documentType")).toEqual([...CLINICAL_DOCUMENT_TYPE_CODES].sort());
+  });
+  it("ClinicalDocumentRecorded.accessPolicy = ClinicalDocumentAccessPolicy", () => {
+    expect(options("ClinicalDocumentRecorded", "accessPolicy")).toEqual(Object.values($Enums.ClinicalDocumentAccessPolicy).sort());
+  });
+  it("DischargeHoldChanged.reasonCode = DischargeHoldReason", () => {
+    expect(options("DischargeHoldChanged", "reasonCode")).toEqual(Object.values($Enums.DischargeHoldReason).sort());
+  });
+});
+
+describe("step-9a payload codes mirror their sources", () => {
+  const options = (type: string, key: string) => {
+    const shape = (getEventContract(type, 1)!.payload as unknown as { shape: Record<string, { options?: string[]; unwrap?: () => unknown }> }).shape;
+    let f = shape[key] as { options?: string[]; unwrap?: () => unknown };
+    while (!f.options && f.unwrap) f = f.unwrap() as typeof f;
+    return [...(f.options ?? [])].sort();
+  };
+  it("StockMoved codes mirror StockMovementType, UnitOfMeasure, WasteReason and AdjustmentReason", () => {
+    expect(options("StockMoved", "movementType")).toEqual(Object.values($Enums.StockMovementType).sort());
+    expect(options("StockMoved", "unit")).toEqual(Object.values($Enums.UnitOfMeasure).sort());
+    expect(options("StockMoved", "wasteReason")).toEqual(Object.values($Enums.WasteReason).sort());
+    expect(options("StockMoved", "adjustmentReason")).toEqual(Object.values($Enums.AdjustmentReason).sort());
+  });
+  it("SerialUnitStatusChanged and SupplyRequestStatusChanged statuses mirror their enums (both request kinds share one set)", () => {
+    expect(options("SerialUnitStatusChanged", "to")).toEqual(Object.values($Enums.InventorySerialStatus).sort());
+    expect(options("SupplyRequestStatusChanged", "to")).toEqual(Object.values($Enums.DepartmentSupplyRequestStatus).sort());
+    expect(Object.values($Enums.PharmacyRequestStatus).sort()).toEqual(Object.values($Enums.DepartmentSupplyRequestStatus).sort());
+  });
+  it("PurchaseOrderStatusChanged and SupplierInvoiceStatusChanged statuses mirror their enums", () => {
+    expect(options("PurchaseOrderStatusChanged", "to")).toEqual(Object.values($Enums.PurchaseOrderStatus).sort());
+    expect(options("SupplierInvoiceStatusChanged", "to")).toEqual(Object.values($Enums.SupplierInvoiceStatus).sort());
+  });
+  it("StockDocumentStatusChanged statuses are exactly the union of the four documents' status enums", () => {
+    const union = [...new Set([...Object.values($Enums.StockAdjustmentStatus), ...Object.values($Enums.WasteRecordStatus), ...Object.values($Enums.GoodsReceiptStatus), ...Object.values($Enums.StockTakeStatus)])].sort();
+    expect(options("StockDocumentStatusChanged", "from")).toEqual(union);
+    expect(options("StockDocumentStatusChanged", "to")).toEqual(union);
+  });
+});
+
+describe("step-9b payload codes mirror their sources", () => {
+  const options = (type: string, key: string) => {
+    const shape = (getEventContract(type, 1)!.payload as unknown as { shape: Record<string, { options?: string[]; unwrap?: () => unknown }> }).shape;
+    let f = shape[key] as { options?: string[]; unwrap?: () => unknown };
+    while (!f.options && f.unwrap) f = f.unwrap() as typeof f;
+    return [...(f.options ?? [])].sort();
+  };
+  const cases: [string, string, readonly string[]][] = [
+    ["QualityIncidentStatusChanged", "to", Object.values($Enums.QualityIncidentStatus)],
+    ["QualityIncidentStatusChanged", "severity", Object.values($Enums.IncidentSeverity)],
+    ["QualityIncidentStatusChanged", "confidentiality", Object.values($Enums.QualityIncidentConfidentiality)],
+    ["CapaStatusChanged", "to", Object.values($Enums.CapaActionStatus)],
+    ["CapaStatusChanged", "actionType", Object.values($Enums.CapaActionActionType)],
+    ["QualityFindingStatusChanged", "to", Object.values($Enums.QualityFindingStatus)],
+    ["QualityMeasureStatusChanged", "to", Object.values($Enums.QualityMeasureStatus)],
+    ["DietOrderStatusChanged", "to", Object.values($Enums.DietOrderStatus)],
+    ["EquipmentStatusChanged", "to", Object.values($Enums.BiomedicalEquipmentStatus)],
+    ["InfectionIncidentStatusChanged", "to", Object.values($Enums.InfectionIncidentStatus)],
+    ["MaintenanceRequestStatusChanged", "to", Object.values($Enums.MaintenanceRequestStatus)],
+  ];
+  for (const [type, key, source] of cases) {
+    it(`${type}.${key} mirrors its Prisma enum`, () => expect(options(type, key)).toEqual([...source].sort()));
+  }
+  it("QualityIncidentStatusChanged.category = INCIDENT_CATEGORIES", async () => {
+    const { INCIDENT_CATEGORIES } = await import("@/lib/hospital/quality/shared");
+    expect(options("QualityIncidentStatusChanged", "category")).toEqual([...INCIDENT_CATEGORIES].sort());
+  });
+});
+
+describe("step-9c payload codes mirror their sources", () => {
+  const options = (type: string, key: string) => {
+    const shape = (getEventContract(type, 1)!.payload as unknown as { shape: Record<string, { options?: string[]; unwrap?: () => unknown; element?: unknown }> }).shape;
+    let f = shape[key] as { options?: string[]; unwrap?: () => unknown; element?: unknown };
+    while (!f.options && (f.unwrap || f.element)) f = (f.element ?? f.unwrap!()) as typeof f;
+    return [...(f.options ?? [])].sort();
+  };
+  it("statuses mirror their Prisma enums", () => {
+    expect(options("BreakGlassStatusChanged", "to")).toEqual(Object.values($Enums.BreakGlassAccessStatus).sort());
+    expect(options("PrivacyRequestStatusChanged", "to")).toEqual(Object.values($Enums.PrivacyRequestStatus).sort());
+    expect(options("HealthInformationExchangeStatusChanged", "to")).toEqual(Object.values($Enums.HealthInformationExchangeStatus).sort());
+    expect(options("ExternalIdentifierStatusChanged", "status")).toEqual(Object.values($Enums.ExternalIdentifierStatus).sort());
+    expect(options("ExternalIdentifierStatusChanged", "verificationStatus")).toEqual(Object.values($Enums.ExternalIdentifierVerificationStatus).sort());
+    expect(options("ImportedResourceReviewed", "from")).toEqual(Object.values($Enums.ImportedResourceStatus).sort());
+    const authz = [...new Set([...Object.values($Enums.WorkforceAssignmentStatus), ...Object.values($Enums.CredentialStatus), ...Object.values($Enums.StaffPrivilegeStatus)])].sort();
+    expect(options("StaffAuthorizationChanged", "to")).toEqual(authz);
+  });
+  it("codes mirror their source lists", async () => {
+    const { EMERGENCY_CONTEXTS } = await import("@/lib/auth/authorize/breakGlass");
+    const { PRIVACY_REQUEST_TYPES, REQUESTER_TYPES } = await import("@/lib/auth/authorize/privacy");
+    const { CONSENT_PURPOSES, CONSENT_SCOPES, EXTERNAL_ENTITY_TYPES, IDENTIFIER_SYSTEMS } = await import("@/lib/hospital/interoperability/shared");
+    expect(options("BreakGlassStatusChanged", "emergencyContext")).toEqual([...EMERGENCY_CONTEXTS].sort());
+    expect(options("PrivacyRequestStatusChanged", "requestType")).toEqual([...PRIVACY_REQUEST_TYPES].sort());
+    expect(options("PrivacyRequestStatusChanged", "requesterType")).toEqual([...REQUESTER_TYPES].sort());
+    expect(options("HealthInformationExchangeRequested", "purpose")).toEqual([...CONSENT_PURPOSES].sort());
+    expect(options("HealthInformationExchangeRequested", "scopes")).toEqual([...CONSENT_SCOPES].sort());
+    expect(options("ExternalIdentifierStatusChanged", "entityType")).toEqual([...EXTERNAL_ENTITY_TYPES].sort());
+    expect(options("ExternalIdentifierStatusChanged", "system")).toEqual([...Object.keys(IDENTIFIER_SYSTEMS), "OTHER"].sort());
   });
 });

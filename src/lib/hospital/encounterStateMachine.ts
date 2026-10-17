@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { EncounterStatus } from "@prisma/client";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 /**
  * Controlled encounter lifecycle (brief §13). Uses the existing
@@ -44,6 +45,9 @@ export function isEncounterTransitionAllowed(from: EncounterStatus, to: Encounte
 }
 
 /** Validates + applies + audits a status change. Used by every route that moves an encounter forward. */
+/** Statuses that end an encounter (EncounterClosed is emitted on entering one). */
+const TERMINAL_STATUSES: EncounterStatus[] = [EncounterStatus.DISCHARGED, EncounterStatus.CLOSED, EncounterStatus.CANCELLED];
+
 export async function transitionEncounter(
   encounterId: string,
   toStatus: EncounterStatus,
@@ -55,14 +59,26 @@ export async function transitionEncounter(
     throw new InvalidEncounterTransitionError(encounter.status, toStatus);
   }
 
-  const updated = await prisma.encounter.update({
-    where: { id: encounterId },
-    data: {
-      status: toStatus,
-      ...(toStatus === EncounterStatus.CANCELLED ? { cancelledReason: opts.reason, closedAt: new Date() } : {}),
-      ...(toStatus === EncounterStatus.CLOSED && !encounter.closedAt ? { closedAt: new Date() } : {}),
-      ...opts.extraData,
-    },
+  const updated = await prisma.$transaction(async (tx) => {
+    // Compare-and-set on the status read above, so a concurrent transition can't be overwritten.
+    const r = await tx.encounter.updateMany({
+      where: { id: encounterId, status: encounter.status },
+      data: {
+        status: toStatus,
+        ...(toStatus === EncounterStatus.CANCELLED ? { cancelledReason: opts.reason, closedAt: new Date() } : {}),
+        ...(toStatus === EncounterStatus.CLOSED && !encounter.closedAt ? { closedAt: new Date() } : {}),
+        ...opts.extraData,
+      },
+    });
+    if (r.count !== 1) throw new InvalidEncounterTransitionError(encounter.status, toStatus);
+    if (TERMINAL_STATUSES.includes(toStatus)) {
+      await emitFacilityEvent(tx, {
+        type: "EncounterClosed", aggregateId: encounterId, facilityId: encounter.facilityId,
+        actorUserId: opts.byUserId === "system" ? null : opts.byUserId, encounterId,
+        payload: { encounterId, patientId: encounter.patientId, toStatus },
+      });
+    }
+    return tx.encounter.findUniqueOrThrow({ where: { id: encounterId } });
   });
 
   await recordAuditEvent(

@@ -1,4 +1,4 @@
-import { $Enums } from "@prisma/client";
+import { $Enums, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
@@ -7,6 +7,60 @@ import {
   MAINTENANCE_TRANSITIONS, INFECTION_TRANSITIONS, isTransitionAllowed, assertStaffActiveInFacility,
 } from "@/lib/hospital/operations/shared";
 import { parseEnum } from "@/lib/enumValue";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+
+type Tx = Prisma.TransactionClient;
+
+/** A stored free-text code reported as its documented code, or OTHER (never the text). */
+const codeOrOther = <T extends string>(value: string, codes: readonly T[]): T | "OTHER" => ((codes as readonly string[]).includes(value) ? (value as T) : "OTHER");
+const DIET_TYPES = ["REGULAR", "LIQUID", "SOFT", "CLEAR_LIQUID", "NPO", "THERAPEUTIC", "OTHER"] as const;
+const INFECTION_TYPES = ["HAI", "CLABSI", "CAUTI", "SSI", "MDRO", "OTHER"] as const;
+const ISSUE_TYPES = ["ELECTRICAL", "PLUMBING", "HVAC", "STRUCTURAL", "EQUIPMENT", "OTHER"] as const;
+
+async function emitDiet(tx: Tx, o: { id: string; facilityId: string; encounterId: string; patientId: string; status: string; dietType: string }, from: string | null, byUserId: string) {
+  await emitFacilityEvent(tx, {
+    type: "DietOrderStatusChanged", aggregateId: o.id, facilityId: o.facilityId, encounterId: o.encounterId, actorUserId: byUserId,
+    payload: { dietOrderId: o.id, encounterId: o.encounterId, patientId: o.patientId, from, to: o.status, dietType: codeOrOther(o.dietType, DIET_TYPES) },
+  });
+}
+
+async function emitService(tx: Tx, facilityId: string, rec: { recordId: string; equipmentId: string | null; serviceKind: "CALIBRATION" | "MAINTENANCE" | "PREVENTIVE"; nextDueAt?: Date | null }, byUserId: string) {
+  await emitFacilityEvent(tx, {
+    type: "EquipmentServiceRecorded", aggregateId: rec.equipmentId ?? rec.recordId, facilityId, actorUserId: byUserId,
+    payload: { recordId: rec.recordId, ...(rec.equipmentId ? { equipmentId: rec.equipmentId } : {}), serviceKind: rec.serviceKind, ...(rec.nextDueAt ? { nextDueAt: rec.nextDueAt.toISOString() } : {}) },
+  });
+}
+
+async function emitEquipmentStatus(tx: Tx, facilityId: string, e: { cause: "MANUAL" | "DOWNTIME_STARTED" | "DOWNTIME_ENDED"; equipmentId?: string | null; downtimeId?: string; from?: string; to?: string }, byUserId: string) {
+  await emitFacilityEvent(tx, {
+    type: "EquipmentStatusChanged", aggregateId: e.equipmentId ?? e.downtimeId!, facilityId, actorUserId: byUserId,
+    payload: {
+      cause: e.cause, ...(e.equipmentId ? { equipmentId: e.equipmentId } : {}), ...(e.downtimeId ? { downtimeId: e.downtimeId } : {}),
+      ...(e.from && e.to ? { from: e.from, to: e.to } : {}),
+    },
+  });
+}
+
+async function emitInfection(
+  tx: Tx,
+  inc: { id: string; facilityId: string; status: string; incidentType: string; isolationRequired: boolean; patientId: string | null; encounterId: string | null },
+  change: "REPORTED" | "TRANSITION" | "INVESTIGATION_RECORDED", from: string | null, byUserId: string, investigationId?: string,
+) {
+  await emitFacilityEvent(tx, {
+    type: "InfectionIncidentStatusChanged", aggregateId: inc.id, facilityId: inc.facilityId, encounterId: inc.encounterId, actorUserId: byUserId,
+    payload: {
+      incidentId: inc.id, change, from, to: inc.status, incidentType: codeOrOther(inc.incidentType, INFECTION_TYPES), isolationRequired: inc.isolationRequired,
+      ...(investigationId ? { investigationId } : {}), ...(inc.patientId ? { patientId: inc.patientId } : {}), ...(inc.encounterId ? { encounterId: inc.encounterId } : {}),
+    },
+  });
+}
+
+async function emitMaintenance(tx: Tx, r: { id: string; facilityId: string; status: string; issueType: string; priority: string; equipmentId: string | null }, from: string | null, byUserId: string) {
+  await emitFacilityEvent(tx, {
+    type: "MaintenanceRequestStatusChanged", aggregateId: r.id, facilityId: r.facilityId, actorUserId: byUserId,
+    payload: { requestId: r.id, from, to: r.status, issueType: codeOrOther(r.issueType, ISSUE_TYPES), priority: r.priority, ...(r.equipmentId ? { equipmentId: r.equipmentId } : {}) },
+  });
+}
 
 /**
  * Phase B9 Hospital Operations service — housekeeping, dietary, transport,
@@ -73,7 +127,11 @@ export async function transitionHousekeeping(input: { requestId: string; facilit
 export async function createDietOrder(input: { facilityId: string; patientId: string; encounterId: string; dietType: string; restrictions?: string; effectiveFrom?: Date; effectiveTo?: Date; orderedByStaffId: string; notes?: string; byUserId: string }) {
   const enc = await prisma.encounter.findUnique({ where: { id: input.encounterId } });
   if (!enc || enc.facilityId !== input.facilityId || enc.patientId !== input.patientId) throw new NotFoundError("Encounter not found for this patient/facility.");
-  const order = await prisma.dietOrder.create({ data: { facilityId: input.facilityId, patientId: input.patientId, encounterId: input.encounterId, dietType: input.dietType, restrictions: input.restrictions, effectiveFrom: input.effectiveFrom ?? new Date(), effectiveTo: input.effectiveTo, orderedByStaffId: input.orderedByStaffId, notes: input.notes } });
+  const order = await prisma.$transaction(async (tx) => {
+    const created = await tx.dietOrder.create({ data: { facilityId: input.facilityId, patientId: input.patientId, encounterId: input.encounterId, dietType: input.dietType, restrictions: input.restrictions, effectiveFrom: input.effectiveFrom ?? new Date(), effectiveTo: input.effectiveTo, orderedByStaffId: input.orderedByStaffId, notes: input.notes } });
+    await emitDiet(tx, created, null, input.byUserId);
+    return created;
+  });
   await recordAuditEvent("hospital.ops.dietOrderCreated", input.byUserId, { dietOrderId: order.id, dietType: order.dietType }, { facilityId: input.facilityId, patientId: input.patientId, encounterId: input.encounterId });
   return order;
 }
@@ -85,7 +143,9 @@ export async function setDietOrderStatus(input: { dietOrderId: string; facilityI
     const r = await tx.dietOrder.updateMany({ where: { id: order.id, status: "ACTIVE" }, data: { status: input.to, effectiveTo: new Date() } });
     if (r.count !== 1) throw new BadRequestError("Diet order is not active.");
     await tx.auditEvent.create({ data: { type: "hospital.ops.dietOrderUpdated", userId: input.byUserId, detail: { dietOrderId: order.id, to: input.to }, facilityId: order.facilityId, patientId: order.patientId, encounterId: order.encounterId } });
-    return tx.dietOrder.findUniqueOrThrow({ where: { id: order.id } });
+    const moved = await tx.dietOrder.findUniqueOrThrow({ where: { id: order.id } });
+    await emitDiet(tx, moved, "ACTIVE", input.byUserId);
+    return moved;
   });
 }
 
@@ -213,7 +273,11 @@ export async function transitionAmbulanceTrip(input: { tripId: string; facilityI
 // ══ MAINTENANCE ══════════════════════════════════════════════════════════════
 export async function createMaintenanceRequest(input: { facilityId: string; issueType: string; description: string; locationLabel?: string; wardId?: string; equipmentId?: string; priority?: string; requestedByStaffId: string; byUserId: string }) {
   if (input.equipmentId) { const eq = await prisma.biomedicalEquipment.findUnique({ where: { id: input.equipmentId } }); if (!eq || eq.facilityId !== input.facilityId) throw new NotFoundError("Equipment not found in this facility."); }
-  const req = await prisma.maintenanceRequest.create({ data: { facilityId: input.facilityId, issueType: input.issueType, description: input.description, locationLabel: input.locationLabel, wardId: input.wardId, equipmentId: input.equipmentId, priority: parseEnum($Enums.Priority, input.priority ?? "ROUTINE", "priority"), requestedByStaffId: input.requestedByStaffId } });
+  const req = await prisma.$transaction(async (tx) => {
+    const created = await tx.maintenanceRequest.create({ data: { facilityId: input.facilityId, issueType: input.issueType, description: input.description, locationLabel: input.locationLabel, wardId: input.wardId, equipmentId: input.equipmentId, priority: parseEnum($Enums.Priority, input.priority ?? "ROUTINE", "priority"), requestedByStaffId: input.requestedByStaffId } });
+    await emitMaintenance(tx, created, null, input.byUserId);
+    return created;
+  });
   await recordAuditEvent("hospital.ops.maintenanceCreated", input.byUserId, { requestId: req.id, issueType: req.issueType }, { facilityId: input.facilityId });
   return req;
 }
@@ -233,7 +297,9 @@ export async function transitionMaintenance(input: { requestId: string; facility
     const r = await tx.maintenanceRequest.updateMany({ where: { id: req.id, status: req.status }, data });
     if (r.count !== 1) throw new OperationsConcurrencyError();
     await tx.auditEvent.create({ data: { type: "hospital.ops.maintenanceUpdated", userId: input.byUserId, detail: { requestId: req.id, from: req.status, to: input.to }, facilityId: req.facilityId } });
-    return tx.maintenanceRequest.findUniqueOrThrow({ where: { id: req.id } });
+    const moved = await tx.maintenanceRequest.findUniqueOrThrow({ where: { id: req.id } });
+    await emitMaintenance(tx, moved, req.status, input.byUserId);
+    return moved;
   });
 }
 
@@ -250,13 +316,23 @@ export async function completePreventiveMaintenance(input: { pmId: string; facil
     const r = await tx.preventiveMaintenance.updateMany({ where: { id: pm.id, status: "SCHEDULED" }, data: { status: "DONE", performedAt: new Date(), performedByStaffId: input.performedByStaffId, result: input.result, nextDueAt: input.nextDueAt } });
     if (r.count !== 1) throw new BadRequestError("Preventive maintenance is not scheduled.");
     await tx.auditEvent.create({ data: { type: "hospital.ops.preventiveCompleted", userId: input.byUserId, detail: { pmId: pm.id }, facilityId: pm.facilityId } });
+    await emitService(tx, pm.facilityId, { recordId: pm.id, equipmentId: pm.equipmentId, serviceKind: "PREVENTIVE", nextDueAt: input.nextDueAt }, input.byUserId);
     return tx.preventiveMaintenance.findUniqueOrThrow({ where: { id: pm.id } });
   });
 }
 
 export async function startDowntime(input: { facilityId: string; reason: string; equipmentId?: string; assetLabel?: string; locationLabel?: string; byStaffId: string; byUserId: string }) {
-  const dt = await prisma.assetDowntime.create({ data: { facilityId: input.facilityId, reason: input.reason, equipmentId: input.equipmentId, assetLabel: input.assetLabel, locationLabel: input.locationLabel, byStaffId: input.byStaffId } });
-  if (input.equipmentId) await prisma.biomedicalEquipment.updateMany({ where: { id: input.equipmentId, facilityId: input.facilityId }, data: { status: "OUT_OF_SERVICE" } });
+  // Batch 7: the equipment must be this facility's (a foreign id was linked unchecked), and the
+  // downtime and the device's status change commit together with their event.
+  const eq = input.equipmentId ? await prisma.biomedicalEquipment.findUnique({ where: { id: input.equipmentId } }) : null;
+  if (input.equipmentId && (!eq || eq.facilityId !== input.facilityId)) throw new NotFoundError("Equipment not found in this facility.");
+  const dt = await prisma.$transaction(async (tx) => {
+    const created = await tx.assetDowntime.create({ data: { facilityId: input.facilityId, reason: input.reason, equipmentId: input.equipmentId, assetLabel: input.assetLabel, locationLabel: input.locationLabel, byStaffId: input.byStaffId } });
+    const down = eq ? await tx.biomedicalEquipment.updateMany({ where: { id: eq.id, status: eq.status }, data: { status: "OUT_OF_SERVICE" } }) : { count: 0 };
+    if (eq && down.count !== 1) throw new OperationsConcurrencyError();
+    await emitEquipmentStatus(tx, input.facilityId, { cause: "DOWNTIME_STARTED", equipmentId: eq?.id, downtimeId: created.id, ...(eq ? { from: eq.status, to: "OUT_OF_SERVICE" } : {}) }, input.byUserId);
+    return created;
+  });
   await recordAuditEvent("hospital.ops.downtimeStarted", input.byUserId, { downtimeId: dt.id, equipmentId: input.equipmentId }, { facilityId: input.facilityId });
   return dt;
 }
@@ -267,7 +343,8 @@ export async function endDowntime(input: { downtimeId: string; facilityId: strin
     if (!dt || dt.facilityId !== input.facilityId) throw new NotFoundError("Downtime not found.");
     const r = await tx.assetDowntime.updateMany({ where: { id: dt.id, status: "ACTIVE" }, data: { status: "RESOLVED", endedAt: new Date() } });
     if (r.count !== 1) throw new BadRequestError("Downtime is not active.");
-    if (dt.equipmentId) await tx.biomedicalEquipment.updateMany({ where: { id: dt.equipmentId, facilityId: input.facilityId, status: "OUT_OF_SERVICE" }, data: { status: "IN_SERVICE" } });
+    const back = dt.equipmentId ? await tx.biomedicalEquipment.updateMany({ where: { id: dt.equipmentId, facilityId: input.facilityId, status: "OUT_OF_SERVICE" }, data: { status: "IN_SERVICE" } }) : { count: 0 };
+    await emitEquipmentStatus(tx, dt.facilityId, { cause: "DOWNTIME_ENDED", equipmentId: dt.equipmentId, downtimeId: dt.id, ...(back.count === 1 ? { from: "OUT_OF_SERVICE", to: "IN_SERVICE" } : {}) }, input.byUserId);
     await tx.auditEvent.create({ data: { type: "hospital.ops.downtimeEnded", userId: input.byUserId, detail: { downtimeId: dt.id }, facilityId: dt.facilityId } });
     return tx.assetDowntime.findUniqueOrThrow({ where: { id: dt.id } });
   });
@@ -286,7 +363,14 @@ export async function setEquipmentStatus(input: { equipmentId: string; facilityI
   if (!valid.includes(input.to)) throw new BadRequestError("Invalid equipment status.");
   const eq = await prisma.biomedicalEquipment.findUnique({ where: { id: input.equipmentId } });
   if (!eq || eq.facilityId !== input.facilityId) throw new NotFoundError("Equipment not found.");
-  const updated = await prisma.biomedicalEquipment.update({ where: { id: eq.id }, data: { status: parseEnum($Enums.BiomedicalEquipmentStatus, input.to, "status") } });
+  // Compare-and-set on the status read (batch 7: it was a plain update), with its event.
+  const updated = await prisma.$transaction(async (tx) => {
+    const r = await tx.biomedicalEquipment.updateMany({ where: { id: eq.id, status: eq.status }, data: { status: parseEnum($Enums.BiomedicalEquipmentStatus, input.to, "status") } });
+    if (r.count !== 1) throw new OperationsConcurrencyError();
+    const moved = await tx.biomedicalEquipment.findUniqueOrThrow({ where: { id: eq.id } });
+    await emitEquipmentStatus(tx, eq.facilityId, { cause: "MANUAL", equipmentId: eq.id, from: eq.status, to: moved.status }, input.byUserId);
+    return moved;
+  });
   await recordAuditEvent("hospital.ops.equipmentStatusChanged", input.byUserId, { equipmentId: eq.id, to: input.to }, { facilityId: input.facilityId });
   return updated;
 }
@@ -298,6 +382,7 @@ export async function recordEquipmentCalibration(input: { equipmentId: string; f
     const rec = await tx.biomedicalCalibrationRecord.create({ data: { facilityId: input.facilityId, equipmentId: eq.id, performedByStaffId: input.performedByStaffId, result: input.result, certificateRef: input.certificateRef, nextDueAt: input.nextDueAt } });
     await tx.biomedicalEquipment.update({ where: { id: eq.id }, data: { calibrationStatus: "CALIBRATED", nextServiceAt: input.nextDueAt ?? eq.nextServiceAt } });
     await tx.auditEvent.create({ data: { type: "hospital.ops.calibrationRecorded", userId: input.byUserId, detail: { equipmentId: eq.id, calibrationId: rec.id }, facilityId: eq.facilityId } });
+    await emitService(tx, eq.facilityId, { recordId: rec.id, equipmentId: eq.id, serviceKind: "CALIBRATION", nextDueAt: input.nextDueAt }, input.byUserId);
     return rec;
   });
 }
@@ -305,7 +390,11 @@ export async function recordEquipmentCalibration(input: { equipmentId: string; f
 export async function recordEquipmentMaintenance(input: { equipmentId: string; facilityId: string; maintenanceType: string; performedByStaffId: string; result?: string; notes?: string; byUserId: string }) {
   const eq = await prisma.biomedicalEquipment.findUnique({ where: { id: input.equipmentId } });
   if (!eq || eq.facilityId !== input.facilityId) throw new NotFoundError("Equipment not found.");
-  const rec = await prisma.biomedicalMaintenanceRecord.create({ data: { facilityId: input.facilityId, equipmentId: eq.id, maintenanceType: input.maintenanceType, performedByStaffId: input.performedByStaffId, result: input.result, notes: input.notes } });
+  const rec = await prisma.$transaction(async (tx) => {
+    const created = await tx.biomedicalMaintenanceRecord.create({ data: { facilityId: input.facilityId, equipmentId: eq.id, maintenanceType: input.maintenanceType, performedByStaffId: input.performedByStaffId, result: input.result, notes: input.notes } });
+    await emitService(tx, input.facilityId, { recordId: created.id, equipmentId: eq.id, serviceKind: "MAINTENANCE" }, input.byUserId);
+    return created;
+  });
   await recordAuditEvent("hospital.ops.biomedMaintenanceRecorded", input.byUserId, { equipmentId: eq.id, recordId: rec.id }, { facilityId: input.facilityId });
   return rec;
 }
@@ -326,7 +415,11 @@ export async function moveEquipment(input: { equipmentId: string; facilityId: st
 // ══ INFECTION CONTROL ════════════════════════════════════════════════════════
 export async function createInfectionIncident(input: { facilityId: string; incidentType: string; patientId?: string; encounterId?: string; wardId?: string; locationLabel?: string; onsetAt?: Date; isolationRequired?: boolean; reportedByStaffId: string; notes?: string; byUserId: string }) {
   if (input.patientId) await assertPatientInFacility(input.patientId, input.facilityId);
-  const inc = await prisma.infectionIncident.create({ data: { facilityId: input.facilityId, incidentType: input.incidentType, patientId: input.patientId, encounterId: input.encounterId, wardId: input.wardId, locationLabel: input.locationLabel, onsetAt: input.onsetAt, isolationRequired: input.isolationRequired ?? false, reportedByStaffId: input.reportedByStaffId, notes: input.notes } });
+  const inc = await prisma.$transaction(async (tx) => {
+    const created = await tx.infectionIncident.create({ data: { facilityId: input.facilityId, incidentType: input.incidentType, patientId: input.patientId, encounterId: input.encounterId, wardId: input.wardId, locationLabel: input.locationLabel, onsetAt: input.onsetAt, isolationRequired: input.isolationRequired ?? false, reportedByStaffId: input.reportedByStaffId, notes: input.notes } });
+    await emitInfection(tx, created, "REPORTED", null, input.byUserId);
+    return created;
+  });
   await recordAuditEvent("hospital.ops.infectionReported", input.byUserId, { incidentId: inc.id, incidentType: inc.incidentType, isolationRequired: inc.isolationRequired }, { facilityId: input.facilityId, patientId: input.patientId, encounterId: input.encounterId });
   return inc;
 }
@@ -344,14 +437,20 @@ export async function transitionInfectionIncident(input: { incidentId: string; f
     const r = await tx.infectionIncident.updateMany({ where: { id: inc.id, status: inc.status }, data });
     if (r.count !== 1) throw new OperationsConcurrencyError();
     await tx.auditEvent.create({ data: { type: "hospital.ops.infectionUpdated", userId: input.byUserId, detail: { incidentId: inc.id, from: inc.status, to: input.to }, facilityId: inc.facilityId, patientId: inc.patientId, encounterId: inc.encounterId } });
-    return tx.infectionIncident.findUniqueOrThrow({ where: { id: inc.id } });
+    const moved = await tx.infectionIncident.findUniqueOrThrow({ where: { id: inc.id } });
+    await emitInfection(tx, moved, "TRANSITION", inc.status, input.byUserId);
+    return moved;
   });
 }
 
 export async function createInfectionInvestigation(input: { incidentId: string; facilityId: string; investigatorStaffId: string; findings?: string; actionTaken?: string; byUserId: string }) {
   const inc = await prisma.infectionIncident.findUnique({ where: { id: input.incidentId } });
   if (!inc || inc.facilityId !== input.facilityId) throw new NotFoundError("Incident not found.");
-  const inv = await prisma.infectionInvestigation.create({ data: { facilityId: input.facilityId, incidentId: inc.id, investigatorStaffId: input.investigatorStaffId, findings: input.findings, actionTaken: input.actionTaken } });
+  const inv = await prisma.$transaction(async (tx) => {
+    const created = await tx.infectionInvestigation.create({ data: { facilityId: input.facilityId, incidentId: inc.id, investigatorStaffId: input.investigatorStaffId, findings: input.findings, actionTaken: input.actionTaken } });
+    await emitInfection(tx, inc, "INVESTIGATION_RECORDED", inc.status, input.byUserId, created.id);
+    return created;
+  });
   await recordAuditEvent("hospital.ops.infectionInvestigationCreated", input.byUserId, { investigationId: inv.id, incidentId: inc.id }, { facilityId: input.facilityId });
   return inv;
 }
@@ -359,7 +458,11 @@ export async function createInfectionInvestigation(input: { incidentId: string; 
 export async function recordExposure(input: { incidentId: string; facilityId: string; affectedPersonRef: string; locationLabel?: string; exposureAt?: Date; notes?: string; byUserId: string }) {
   const inc = await prisma.infectionIncident.findUnique({ where: { id: input.incidentId } });
   if (!inc || inc.facilityId !== input.facilityId) throw new NotFoundError("Incident not found.");
-  const exp = await prisma.exposureRecord.create({ data: { facilityId: input.facilityId, incidentId: inc.id, affectedPersonRef: input.affectedPersonRef, locationLabel: input.locationLabel, exposureAt: input.exposureAt, notes: input.notes } });
+  const exp = await prisma.$transaction(async (tx) => {
+    const created = await tx.exposureRecord.create({ data: { facilityId: input.facilityId, incidentId: inc.id, affectedPersonRef: input.affectedPersonRef, locationLabel: input.locationLabel, exposureAt: input.exposureAt, notes: input.notes } });
+    await emitFacilityEvent(tx, { type: "InfectionExposureRecorded", aggregateId: inc.id, facilityId: input.facilityId, actorUserId: input.byUserId, payload: { exposureId: created.id, incidentId: inc.id } });
+    return created;
+  });
   await recordAuditEvent("hospital.ops.exposureRecorded", input.byUserId, { exposureId: exp.id, incidentId: inc.id }, { facilityId: input.facilityId });
   return exp;
 }

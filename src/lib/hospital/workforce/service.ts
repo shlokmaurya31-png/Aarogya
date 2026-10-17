@@ -1,11 +1,27 @@
 import { $Enums } from "@prisma/client";
-import { prisma } from "@/lib/db";
+import { prisma, CONTENDED_TX } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { deriveExpiryState } from "@/lib/hospital/workforce/authorization";
 import type { Prisma } from "@prisma/client";
 import { isStaffInFacility } from "@/lib/auth/staffFacility";
 import { parseEnum } from "@/lib/enumValue";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+
+/** StaffAuthorizationChanged (step 9c; triage approved change 2): changeType and whose authorization changed. */
+async function emitAuthorization(
+  tx: Prisma.TransactionClient, facilityId: string,
+  e: { changeType: "DEPARTMENT" | "CREDENTIAL" | "PRIVILEGE"; subjectStaffId: string; recordId: string; from: string | null; to: string; departmentId?: string | null; credentialType?: string },
+  byUserId: string,
+) {
+  await emitFacilityEvent(tx, {
+    type: "StaffAuthorizationChanged", aggregateId: e.subjectStaffId, facilityId, actorUserId: byUserId,
+    payload: {
+      changeType: e.changeType, subjectStaffId: e.subjectStaffId, recordId: e.recordId, from: e.from, to: e.to,
+      ...(e.departmentId ? { departmentId: e.departmentId } : {}), ...(e.credentialType ? { credentialType: e.credentialType } : {}),
+    },
+  });
+}
 
 /**
  * Phase B10 Workforce foundation — operational assignments, availability, shift/
@@ -40,12 +56,16 @@ export async function createAssignment(input: {
     if (input.supervisorStaffId === input.staffId) throw new BadRequestError("A staff member cannot supervise themselves.");
     await assertStaffInFacility(prisma, input.supervisorStaffId, input.facilityId); // cross-facility supervisor rejected
   }
-  const assignment = await prisma.workforceAssignment.create({
-    data: {
-      facilityId: input.facilityId, staffId: input.staffId, departmentId: input.departmentId,
-      operationalRole: input.operationalRole, assignmentType: parseEnum($Enums.WorkforceAssignmentAssignmentType, input.assignmentType ?? "PRIMARY", "assignmentType"),
-      supervisorStaffId: input.supervisorStaffId, startAt: input.startAt ?? new Date(), createdByStaffId: input.createdByStaffId,
-    },
+  const assignment = await prisma.$transaction(async (tx) => {
+    const created = await tx.workforceAssignment.create({
+      data: {
+        facilityId: input.facilityId, staffId: input.staffId, departmentId: input.departmentId,
+        operationalRole: input.operationalRole, assignmentType: parseEnum($Enums.WorkforceAssignmentAssignmentType, input.assignmentType ?? "PRIMARY", "assignmentType"),
+        supervisorStaffId: input.supervisorStaffId, startAt: input.startAt ?? new Date(), createdByStaffId: input.createdByStaffId,
+      },
+    });
+    await emitAuthorization(tx, input.facilityId, { changeType: "DEPARTMENT", subjectStaffId: created.staffId, recordId: created.id, from: null, to: created.status, departmentId: created.departmentId }, input.byUserId);
+    return created;
   });
   await recordAuditEvent("hospital.workforce.assignmentCreated", input.byUserId, { assignmentId: assignment.id, staffId: input.staffId, departmentId: input.departmentId }, { facilityId: input.facilityId });
   return assignment;
@@ -58,6 +78,7 @@ export async function endAssignment(input: { facilityId: string; assignmentId: s
     const r = await tx.workforceAssignment.updateMany({ where: { id: a.id, status: "ACTIVE" }, data: { status: "ENDED", endAt: new Date() } });
     if (r.count !== 1) throw new BadRequestError("Assignment is already ended.");
     await tx.auditEvent.create({ data: { type: "hospital.workforce.assignmentEnded", userId: input.byUserId, detail: { assignmentId: a.id }, facilityId: a.facilityId } });
+    await emitAuthorization(tx, a.facilityId, { changeType: "DEPARTMENT", subjectStaffId: a.staffId, recordId: a.id, from: "ACTIVE", to: "ENDED", departmentId: a.departmentId }, input.byUserId);
     return tx.workforceAssignment.findUniqueOrThrow({ where: { id: a.id } });
   });
 }
@@ -67,7 +88,8 @@ export async function endAssignment(input: { facilityId: string; assignmentId: s
  * Set a staff member's operational availability from now. AVAILABLE ends any
  * open-ended absence; anything else starts an absence (until effectiveTo, or
  * until further notice). Serialized per staff member with a transaction-scoped
- * advisory lock, so two concurrent changes apply one after the other.
+ * advisory lock, so two concurrent changes apply one after the other (with
+ * CONTENDED_TX budgets, so the second waits rather than timing out).
  */
 export async function setAvailability(input: { facilityId: string; staffId: string; availability: string; reason?: string; effectiveTo?: Date; setByStaffId: string; byUserId: string }) {
   const kinds: Record<string, string | null> = { AVAILABLE: null, UNAVAILABLE: "UNAVAILABLE", ON_LEAVE: "LEAVE", SUSPENDED: "SUSPENDED", OFF_DUTY: "OFF_DUTY" };
@@ -90,7 +112,7 @@ export async function setAvailability(input: { facilityId: string; staffId: stri
       : null;
     await tx.auditEvent.create({ data: { type: "hospital.workforce.availabilityChanged", userId: input.byUserId, detail: { staffId: input.staffId, availability: input.availability }, facilityId: input.facilityId } });
     return { staffId: input.staffId, availability: input.availability, absence };
-  });
+  }, CONTENDED_TX);
 }
 
 // ══ SHIFTS / ROSTER ════════════════════════════════════════════════════════════
@@ -184,8 +206,12 @@ export async function createCredential(input: {
     const doc = await prisma.clinicalDocument.findUnique({ where: { id: input.documentId } });
     if (!doc || doc.facilityId !== input.facilityId) throw new NotFoundError("Document not found in this facility.");
   }
-  const cred = await prisma.credential.create({
+  const cred = await prisma.$transaction(async (tx) => {
+    const created = await tx.credential.create({
     data: { facilityId: input.facilityId, staffId: input.staffId, credentialType: input.credentialType, name: input.name, category: input.category, issuingAuthority: input.issuingAuthority, credentialNumber: input.credentialNumber, issuedAt: input.issuedAt, expiresAt: input.expiresAt, documentId: input.documentId, notes: input.notes, createdByStaffId: input.createdByStaffId },
+    });
+    await emitAuthorization(tx, input.facilityId, { changeType: "CREDENTIAL", subjectStaffId: created.staffId, recordId: created.id, from: null, to: created.status, credentialType: created.credentialType }, input.byUserId);
+    return created;
   });
   await recordAuditEvent("hospital.workforce.credentialCreated", input.byUserId, { credentialId: cred.id, staffId: input.staffId, credentialType: cred.credentialType }, { facilityId: input.facilityId });
   return cred;
@@ -199,6 +225,7 @@ async function guardedCredentialStatus(input: { facilityId: string; credentialId
     const r = await tx.credential.updateMany({ where: { id: cred.id, version: cred.version }, data: { status: parseEnum($Enums.CredentialStatus, input.to, "status"), version: { increment: 1 }, ...(input.extra ?? {}) } });
     if (r.count !== 1) throw new WorkforceConcurrencyError();
     await tx.auditEvent.create({ data: { type: input.audit, userId: input.byUserId, detail: { credentialId: cred.id, from: cred.status, to: input.to }, facilityId: cred.facilityId } });
+    await emitAuthorization(tx, cred.facilityId, { changeType: "CREDENTIAL", subjectStaffId: cred.staffId, recordId: cred.id, from: cred.status, to: input.to, credentialType: cred.credentialType }, input.byUserId);
     return tx.credential.findUniqueOrThrow({ where: { id: cred.id } });
   });
 }
@@ -246,8 +273,12 @@ export async function grantPrivilege(input: {
     const doc = await prisma.clinicalDocument.findUnique({ where: { id: input.documentId } });
     if (!doc || doc.facilityId !== input.facilityId) throw new NotFoundError("Document not found in this facility.");
   }
-  const priv = await prisma.staffPrivilege.create({
-    data: { facilityId: input.facilityId, staffId: input.staffId, privilegeType: input.privilegeType, scope: input.scope, expiresAt: input.expiresAt, documentId: input.documentId, notes: input.notes, grantedByStaffId: input.grantedByStaffId },
+  const priv = await prisma.$transaction(async (tx) => {
+    const created = await tx.staffPrivilege.create({
+      data: { facilityId: input.facilityId, staffId: input.staffId, privilegeType: input.privilegeType, scope: input.scope, expiresAt: input.expiresAt, documentId: input.documentId, notes: input.notes, grantedByStaffId: input.grantedByStaffId },
+    });
+    await emitAuthorization(tx, input.facilityId, { changeType: "PRIVILEGE", subjectStaffId: created.staffId, recordId: created.id, from: null, to: created.status }, input.byUserId);
+    return created;
   });
   await recordAuditEvent("hospital.workforce.privilegeGranted", input.byUserId, { privilegeId: priv.id, staffId: input.staffId, privilegeType: priv.privilegeType }, { facilityId: input.facilityId });
   return priv;
@@ -261,6 +292,7 @@ async function guardedPrivilegeStatus(input: { facilityId: string; privilegeId: 
     const r = await tx.staffPrivilege.updateMany({ where: { id: priv.id, version: priv.version }, data: { status: parseEnum($Enums.StaffPrivilegeStatus, input.to, "status"), version: { increment: 1 }, ...(input.extra ?? {}) } });
     if (r.count !== 1) throw new WorkforceConcurrencyError();
     await tx.auditEvent.create({ data: { type: input.audit, userId: input.byUserId, detail: { privilegeId: priv.id, from: priv.status, to: input.to }, facilityId: priv.facilityId } });
+    await emitAuthorization(tx, priv.facilityId, { changeType: "PRIVILEGE", subjectStaffId: priv.staffId, recordId: priv.id, from: priv.status, to: input.to }, input.byUserId);
     return tx.staffPrivilege.findUniqueOrThrow({ where: { id: priv.id } });
   });
 }

@@ -190,6 +190,9 @@ async function main() {
   await expectOk("profile update applies only allowed fields", async () => {
     const s = await resolveActScope(ctxA);
     await updateProfile(s, { phone: "222", communicationPreference: "EMAIL" });
+    const ev = await prisma.domainEventOutbox.findFirst({ where: { eventType: "PatientDemographicsUpdated", aggregateId: s.patientId }, orderBy: { seq: "desc" } });
+    const fields = (ev?.payload as { fields?: string[] } | undefined)?.fields ?? [];
+    if (!fields.includes("PHONE") || JSON.stringify(ev?.payload).includes("222")) throw new Error(`PatientDemographicsUpdated must name PHONE and carry no value: ${JSON.stringify(ev?.payload)}`);
     const p = await prisma.patient.findUniqueOrThrow({ where: { id: ID.patA } });
     if (p.phone !== "222" || p.facilityId !== ID.fac || p.uhid !== "D11-A") throw new Error("field integrity violated");
   });
@@ -259,6 +262,12 @@ async function main() {
   await expectThrow("delegate cannot access A before accepting", () => resolveReadScope(ctxDel, ID.patA));
   await expectOk("delegate accepts the invitation", () => acceptDelegation(ctxDel, inviteToken));
   await expectThrow("the invite token cannot be replayed after acceptance", () => acceptDelegation(ctxDel, inviteToken));
+  await expectOk("acceptance emits FamilyAccessGranted once (SENSITIVE), with the delegate and scope codes", async () => {
+    const d = await prisma.patientDelegation.findFirstOrThrow({ where: { patientId: ID.patA, status: "ACTIVE" }, orderBy: { acceptedAt: "desc" } });
+    const evs = await prisma.domainEventOutbox.findMany({ where: { eventType: "FamilyAccessGranted", aggregateId: d.id } });
+    const p = evs[0]?.payload as { delegateUserId?: string; scopes?: string[] } | undefined;
+    if (evs.length !== 1 || p?.delegateUserId !== ID.uDel || p.scopes?.join() !== "APPOINTMENTS") throw new Error(`granted events: ${JSON.stringify(evs.map((e) => e.payload))}`);
+  });
   await expectOk("delegate can now READ A's appointments (in-scope)", async () => {
     const s = await resolveReadScope(ctxDel, ID.patA);
     await listAppointments(s); // must not throw
@@ -281,6 +290,11 @@ async function main() {
     await revokeDelegation(s, ID.uA, active.id);
   });
   await expectThrow("revoked delegate loses access immediately", () => resolveReadScope(ctxDel, ID.patA));
+  await expectOk("revocation emits FamilyAccessRevoked (reason REVOKED) once", async () => {
+    const d = await prisma.patientDelegation.findFirstOrThrow({ where: { patientId: ID.patA, status: "REVOKED" }, orderBy: { revokedAt: "desc" } });
+    const evs = await prisma.domainEventOutbox.findMany({ where: { eventType: "FamilyAccessRevoked", aggregateId: d.id } });
+    if (evs.length !== 1 || (evs[0].payload as { reason?: string }).reason !== "REVOKED") throw new Error(`revoked events: ${evs.length}`);
+  });
   await expectOk("expired delegation grants no access", async () => {
     const del = await prisma.patientDelegation.create({ data: { patientId: ID.patA, delegateUserId: ID.uDel, relationship: "OTHER", status: "ACTIVE", expiresAt: new Date(Date.now() - 1000), scopes: { create: [{ scope: "RECORDS" }] } } });
     const accessible = await listAccessiblePatients(ctxDel);

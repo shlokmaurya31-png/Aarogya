@@ -3,6 +3,16 @@ import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError, ConflictError } from "../rbac";
 import { recordAuditEvent } from "../audit";
 import { parseEnum } from "@/lib/enumValue";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+import type { Prisma, PrivacyRequest } from "@prisma/client";
+
+/** PrivacyRequestStatusChanged (step 9c; SENSITIVE): never the reason, scope or decision note. */
+async function emitPrivacy(tx: Prisma.TransactionClient, r: PrivacyRequest, from: string | null, byUserId: string) {
+  await emitFacilityEvent(tx, {
+    type: "PrivacyRequestStatusChanged", aggregateId: r.id, facilityId: r.facilityId, actorUserId: byUserId,
+    payload: { privacyRequestId: r.id, patientId: r.patientId, requestType: r.requestType, requesterType: r.requesterType, from, to: r.status },
+  });
+}
 
 /**
  * Phase C4 — privacy request workflow.
@@ -87,17 +97,21 @@ export async function createPrivacyRequest(input: {
     throw new NotFoundError("Patient not found.");
   }
 
-  const request = await prisma.privacyRequest.create({
-    data: {
-      facilityId: input.facilityId,
-      patientId: input.patientId,
-      requestType: input.requestType,
-      requesterType: input.requesterType,
-      requesterUserId: input.requesterUserId,
-      scope: input.scope,
-      reason: input.reason,
-      status: "REQUESTED",
-    },
+  const request = await prisma.$transaction(async (tx) => {
+    const created = await tx.privacyRequest.create({
+      data: {
+        facilityId: input.facilityId,
+        patientId: input.patientId,
+        requestType: input.requestType,
+        requesterType: input.requesterType,
+        requesterUserId: input.requesterUserId,
+        scope: input.scope,
+        reason: input.reason,
+        status: "REQUESTED",
+      },
+    });
+    await emitPrivacy(tx, created, null, input.requesterUserId);
+    return created;
   });
 
   await recordAuditEvent(
@@ -166,7 +180,9 @@ export async function transitionPrivacyRequest(input: {
         patientId: request.patientId,
       },
     });
-    return tx.privacyRequest.findUniqueOrThrow({ where: { id: request.id } });
+    const moved = await tx.privacyRequest.findUniqueOrThrow({ where: { id: request.id } });
+    await emitPrivacy(tx, moved, request.status, input.byUserId);
+    return moved;
   });
 }
 
@@ -180,13 +196,18 @@ export async function setLegalHold(input: {
     throw new BadRequestError("A reason is required when placing a legal hold.");
   }
 
-  const updated = await prisma.privacyRequest.update({
-    where: { id: request.id },
-    data: {
-      legalHold: input.hold,
-      legalHoldReason: input.hold ? input.reason : null,
-      version: { increment: 1 },
-    },
+  // Compare-and-set on the version read (step 9c: it bumped the version without checking it), with its event.
+  const updated = await prisma.$transaction(async (tx) => {
+    const r = await tx.privacyRequest.updateMany({
+      where: { id: request.id, version: request.version },
+      data: { legalHold: input.hold, legalHoldReason: input.hold ? input.reason : null, version: { increment: 1 } },
+    });
+    if (r.count !== 1) throw new ConflictError("That privacy request changed concurrently.");
+    await emitFacilityEvent(tx, {
+      type: "LegalHoldSet", aggregateId: request.id, facilityId: request.facilityId, actorUserId: input.byUserId,
+      payload: { privacyRequestId: request.id, patientId: request.patientId, hold: input.hold },
+    });
+    return tx.privacyRequest.findUniqueOrThrow({ where: { id: request.id } });
   });
   await recordAuditEvent(
     "security.privacy.requestReviewed",

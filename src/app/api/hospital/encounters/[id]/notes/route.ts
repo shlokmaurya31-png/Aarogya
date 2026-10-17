@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
-import { signNote, amendNote } from "@/lib/hospital/clinicalNote";
+import { createNote, signNote, amendNote } from "@/lib/hospital/clinicalNote";
 
 /**
  * Clinical documentation (brief §18/§185): signed notes are never mutated —
@@ -49,17 +49,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return { note };
     }
 
-    const note = await prisma.clinicalNote.create({
-      data: {
-        encounterId: id,
-        authorStaffId: staff.id,
-        authorRole: session.role,
-        type,
-        content,
-        status: sign ? "SIGNED" : "DRAFT",
-        signedAt: sign ? new Date() : undefined,
-      },
-    });
+    const note = await createNote({ encounterId: id, authorStaffId: staff.id, authorRole: session.role, type, content, sign, byUserId: session.userId });
 
     await recordAuditEvent(
       "hospital.note.created",

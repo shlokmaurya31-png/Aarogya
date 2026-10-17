@@ -19,7 +19,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const rejected = await prisma.specimen.findFirst({ where: { labOrderId: id, status: "REJECTED" }, orderBy: { createdAt: "desc" } });
     if (!rejected) throw new NotFoundError("No rejected specimen awaiting recollection for this order.");
 
-    const created = await prisma.$transaction((tx) => recollectSpecimen(tx, rejected.id, body?.specimenType));
+    const created = await prisma.$transaction((tx) => recollectSpecimen(tx, rejected.id, body?.specimenType, session.userId));
 
     await recordAuditEvent(
       "hospital.lab.specimenRecollected",

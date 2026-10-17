@@ -1,6 +1,8 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 /**
  * D3: Problem (the longitudinal problem list) and Diagnosis (per encounter)
@@ -60,6 +62,10 @@ export async function addDiagnosisToProblemList(input: { facilityId: string; dia
     // Compare-and-set so two concurrent adds can't link twice.
     const cas = await tx.diagnosis.updateMany({ where: { id: dx.id, problemId: null }, data: { problemId: problem.id } });
     if (cas.count !== 1) throw new BadRequestError("This diagnosis was added to the problem list concurrently. Refresh and try again.");
+    await emitFacilityEvent(tx, {
+      type: "ProblemListUpdated", aggregateId: problem.id, facilityId: input.facilityId, actorUserId: input.byUserId, encounterId: dx.encounterId,
+      payload: { problemId: problem.id, patientId: dx.patientId, source: "DIAGNOSIS", diagnosisId: dx.id, encounterId: dx.encounterId, created: !match },
+    });
     return { problem, created: !match, linked: true, patientId: dx.patientId, encounterId: dx.encounterId };
   });
 
@@ -72,4 +78,28 @@ export async function addDiagnosisToProblemList(input: { facilityId: string; dia
     );
   }
   return { problem: result.problem, created: result.created };
+}
+
+/**
+ * A problem added by hand (batch 6, fix 2): created ACTIVE, so the create is
+ * the fact. ProblemListUpdated (v2, source MANUAL) in the same transaction;
+ * the diagnosis text and codes stay in the record.
+ */
+export async function addProblem(input: {
+  facilityId: string; patientId: string; diagnosis: string; severity?: Prisma.ProblemCreateInput["severity"]; onsetDate?: Date;
+  codeSystem?: string | null; code?: string | null; codeDisplay?: string | null; byUserId: string;
+}) {
+  return prisma.$transaction(async (tx) => {
+    const problem = await tx.problem.create({
+      data: {
+        patientId: input.patientId, diagnosis: input.diagnosis, status: "ACTIVE", severity: input.severity, onsetDate: input.onsetDate,
+        codeSystem: input.codeSystem, code: input.code, codeDisplay: input.codeDisplay,
+      },
+    });
+    await emitFacilityEvent(tx, {
+      type: "ProblemListUpdated", aggregateId: problem.id, facilityId: input.facilityId, actorUserId: input.byUserId,
+      payload: { problemId: problem.id, patientId: input.patientId, source: "MANUAL", created: true },
+    });
+    return problem;
+  });
 }

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { BadRequestError, ConflictError, NotFoundError } from "@/lib/auth/rbac";
 
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 type Tx = Prisma.TransactionClient;
 
 export class RefundConcurrencyError extends BadRequestError {
@@ -42,6 +43,20 @@ export function isRefundTransitionAllowed(from: string, to: string): boolean {
  * phase; documented in docs/PHASE_5_SCOPE_AND_DEFERRALS.md). Idempotent on
  * idempotencyKey, same pattern as recordPayment.
  */
+/** HospitalRefundStatusChanged (spine §9 step 9), in the transition's transaction. */
+async function emitRefundStatus(tx: Tx, refundId: string, from: string, byUserId: string | null) {
+  const r = await tx.refund.findUniqueOrThrow({ where: { id: refundId }, include: { payment: { select: { patientId: true, currency: true, billingAccount: { select: { encounterId: true } } } } } });
+  await emitFacilityEvent(tx, {
+    type: "HospitalRefundStatusChanged", aggregateId: r.id, facilityId: r.facilityId, encounterId: r.payment.billingAccount.encounterId,
+    actorUserId: byUserId,
+    payload: {
+      refundId: r.id, paymentId: r.paymentId, encounterId: r.payment.billingAccount.encounterId, patientId: r.payment.patientId,
+      from, to: r.status, amountMinor: r.amountMinor, currency: r.payment.currency,
+    },
+  });
+  return r;
+}
+
 export async function requestRefund(
   tx: Tx,
   input: { paymentId: string; amountMinor: number; reason: string; requestedByUserId: string; idempotencyKey: string }
@@ -92,9 +107,10 @@ export async function approveRefund(tx: Tx, refundId: string, input: { approvedB
   return tx.refund.findUniqueOrThrow({ where: { id: refundId } });
 }
 
-export async function rejectRefund(tx: Tx, refundId: string) {
+export async function rejectRefund(tx: Tx, refundId: string, input: { byUserId?: string | null } = {}) {
   const result = await tx.refund.updateMany({ where: { id: refundId, status: "REQUESTED" }, data: { status: "REJECTED" } });
   if (result.count !== 1) throw new RefundConcurrencyError("rejected");
+  await emitRefundStatus(tx, refundId, "REQUESTED", input.byUserId ?? null);
   return tx.refund.findUniqueOrThrow({ where: { id: refundId } });
 }
 
@@ -104,7 +120,7 @@ export async function rejectRefund(tx: Tx, refundId: string) {
  * amountMinor - allocatedMinor even under genuine concurrent completion
  * attempts on two different refunds against the same payment.
  */
-export async function completeRefund(tx: Tx, refundId: string) {
+export async function completeRefund(tx: Tx, refundId: string, input: { byUserId?: string | null } = {}) {
   const refund = await tx.refund.findUniqueOrThrow({ where: { id: refundId } });
   if (refund.status !== "APPROVED") throw new BadRequestError(`Cannot complete a refund in status ${refund.status}.`);
 
@@ -120,6 +136,7 @@ export async function completeRefund(tx: Tx, refundId: string) {
     if (paymentUpdate.count === 1) {
       const refundUpdate = await tx.refund.updateMany({ where: { id: refundId, status: "APPROVED" }, data: { status: "COMPLETED", completedAt: new Date() } });
       if (refundUpdate.count !== 1) throw new RefundConcurrencyError("completed");
+      await emitRefundStatus(tx, refundId, "APPROVED", input.byUserId ?? null);
       return tx.refund.findUniqueOrThrow({ where: { id: refundId } });
     }
   }

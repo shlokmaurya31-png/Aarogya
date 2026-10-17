@@ -40,6 +40,10 @@ export async function computeDischargeBarriers(dischargeId: string): Promise<Dis
 
   const encounterId = discharge.admission.encounterId;
 
+  // Batch 6: each active manual hold is a blocking barrier of its own, listed first (it is the reason).
+  const holds = await prisma.dischargeHold.findMany({ where: { dischargeId, clearedAt: null }, orderBy: { placedAt: "asc" }, select: { reasonCode: true } });
+  for (const h of [...holds].reverse()) barriers.unshift({ code: "HOLD", label: "Discharge hold", blocked: true, detail: `On hold: ${h.reasonCode}.` });
+
   const [pendingLabs, pendingImaging, unacknowledgedCritical, openReferrals] = await Promise.all([
     prisma.labOrder.count({ where: { encounterId, status: { notIn: ["RESULTED", "CANCELLED"] } } }),
     prisma.imagingOrder.count({ where: { encounterId, status: { notIn: ["REPORTED", "CANCELLED"] } } }),
@@ -90,6 +94,7 @@ export function bucketDischarge(barriers: DischargeBarrier[]): { bucket: string;
     PENDING_IMAGING: "Pending result",
     CRITICAL_RESULT: "Pending result",
     CONSULT: "Pending result",
+    HOLD: "On hold",
   };
   return { bucket: blocking.code, label: labelByCode[blocking.code] ?? blocking.label };
 }

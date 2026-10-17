@@ -27,7 +27,7 @@ interface DraftLeaf { field?: string; operator?: string; value?: string | number
 type DraftCondition = { all?: DraftLeaf[]; any?: DraftLeaf[] } | DraftLeaf;
 type StepFields<T extends StepConfig["type"]> = Partial<Omit<Extract<StepConfig, { type: T }>, "type" | "key" | "condition">>;
 type Step = { type: StepConfig["type"]; key: string; condition?: DraftCondition }
-  & StepFields<"TASK"> & StepFields<"TIMER"> & StepFields<"CONDITION"> & StepFields<"ACTION">;
+  & StepFields<"TASK"> & StepFields<"TIMER"> & StepFields<"CONDITION"> & StepFields<"ACTION"> & StepFields<"ESCALATE">;
 type StepPatch = Partial<Omit<Step, "type" | "key">>;
 interface Trigger { eventType: string; eventVersion: number; condition?: DraftCondition }
 
@@ -104,6 +104,7 @@ export function WorkflowBuilderWorkspace() {
     const base: Step = { type, key: k };
     if (type === "TASK") Object.assign(base, { taskType: "TASK", title: "New task", priority: "ROUTINE" });
     if (type === "TIMER") Object.assign(base, { dueAfterSeconds: 3600 });
+    if (type === "ESCALATE") Object.assign(base, { target: { taskType: "CRITICAL_RESULT_FOLLOW_UP", sourceField: "payload.resultId" }, afterSeconds: 900, reassignToRole: "HOSPITAL_ADMIN" });
     if (type === "CONDITION") Object.assign(base, { condition: { all: [{ field: "payload.critical", operator: "equals", value: true }] } });
     if (type === "ACTION") Object.assign(base, { action: { name: meta!.actions[0] ?? "UPDATE_WORKFLOW_STATE", params: {} } });
     setSteps((s) => [...s, base]);
@@ -328,6 +329,15 @@ function StepProperties({ meta, step, onChange }: { meta: Meta; step: Step; onCh
         <input type="checkbox" checked={!!step.sla} onChange={(e) => onChange({ sla: e.target.checked ? { dueAfterSeconds: 900, escalation: { taskType: "ESCALATION", title: "SLA breached", priority: "STAT" } } : undefined })} /> SLA + escalation
       </label>
       {step.sla && <Field label="SLA seconds"><input type="number" className={inp} value={step.sla.dueAfterSeconds} onChange={(e) => step.sla && onChange({ sla: { ...step.sla, dueAfterSeconds: Number(e.target.value) } })} /></Field>}
+    </div>
+  );
+  if (step.type === "ESCALATE") return (
+    <div>
+      <Field label="Escalates the open task of type"><input className={inp} value={step.target?.taskType ?? ""} onChange={(e) => onChange({ target: { sourceField: step.target?.sourceField ?? "payload.resultId", taskType: e.target.value } })} /></Field>
+      <Field label="Source id field"><input className={inp} value={step.target?.sourceField ?? ""} onChange={(e) => onChange({ target: { taskType: step.target?.taskType ?? "", sourceField: e.target.value } })} /></Field>
+      <Field label="After seconds"><input type="number" className={inp} value={step.afterSeconds ?? 900} onChange={(e) => onChange({ afterSeconds: Number(e.target.value) })} /></Field>
+      <Field label="Raise priority to"><select className={inp} value={step.raisePriorityTo ?? ""} onChange={(e) => onChange({ raisePriorityTo: (e.target.value || undefined) as Step["raisePriorityTo"] })}><option value="">(unchanged)</option>{meta.priorities.map((p) => <option key={p}>{p}</option>)}</select></Field>
+      <Field label="Reassign to role"><input className={inp} value={step.reassignToRole ?? ""} onChange={(e) => onChange({ reassignToRole: e.target.value || undefined })} /></Field>
     </div>
   );
   if (step.type === "TIMER") return <Field label="Delay seconds"><input type="number" className={inp} value={step.dueAfterSeconds} onChange={(e) => onChange({ dueAfterSeconds: Number(e.target.value) })} /></Field>;

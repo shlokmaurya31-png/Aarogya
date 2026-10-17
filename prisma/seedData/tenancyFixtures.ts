@@ -34,6 +34,22 @@ const MAX_DEPTH = 8;
  * can't see CHECK constraints): ClinicalDocument needs exactly one source (an
  * uploader here).
  */
+/**
+ * Fixture rows of the background machinery are created already finished, so
+ * the runner never picks them up: a RUNNABLE instance or a PENDING event left
+ * by a tenancy sweep would otherwise sit in (or churn through) the queues.
+ */
+const INERT: Record<string, Record<string, unknown>> = {
+  // A cleared hold: Discharge has no tenant column, so every tenant's fixture
+  // shares a discharge, and only active holds are unique per reason.
+  DischargeHold: { clearedAt: new Date(), clearedByUserId: "tsw-fixture" },
+  WorkflowInstance: { status: "COMPLETED" },
+  WorkflowStep: { status: "COMPLETED" },
+  WorkflowTimer: { status: "COMPLETED" },
+  DomainEventOutbox: { status: "PROCESSED" },
+  DomainEventDelivery: { status: "PROCESSED" },
+};
+
 const FILL_OPTIONAL: Record<string, string[]> = {
   ClinicalDocument: ["uploadedBy"],
 };
@@ -136,6 +152,7 @@ export async function ensureFixture(db: PrismaClient, model: string, tenant: Ten
     const allowed = f.type === "String" ? (await loadCheckedValues(db)).get(`${model}.${f.name}`) : undefined;
     data[f.name] = allowed ? allowed[0] : scalarValue(model, f);
   }
+  Object.assign(data, INERT[model] ?? {});
   try {
     const row = await delegate(db, model).create({ data, select: { id: true } });
     return row.id;

@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { recordStaffDocument } from "@/lib/documents/staffDocuments";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
@@ -78,19 +79,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const document = await prisma.clinicalDocument.create({
-      data: {
-        facilityId,
-        patientId,
-        encounterId,
-        type,
-        title,
-        storageRef,
-        accessPolicy: accessPolicy ?? "CLINICAL_STAFF",
-        authorStaffId: staff.id,
-        uploadedByStaffId: staff.id,
-      },
-    });
+    const document = await recordStaffDocument({ facilityId, patientId, encounterId, type, title, accessPolicy, storageRef, staffId: staff.id, byUserId: session.userId });
 
     await recordAuditEvent(
       "hospital.document.created",

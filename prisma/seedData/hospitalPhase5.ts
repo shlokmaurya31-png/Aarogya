@@ -159,3 +159,38 @@ export async function seedPhase5Billing(prisma: PrismaClient) {
     }
   }
 }
+
+/**
+ * Batch 5, decision 1: tariffs for the charges the charge-capture consumer
+ * posts (OT, blood, ICU), so seeded environments price them instead of
+ * posting "needs pricing". No procedures or blood products are seeded, so
+ * those get their generic codes; each seeded consumable, surgical supply and
+ * implant gets its own ITEM:<sku> code. Consultation and triage stay
+ * tariff-only (no ED:TRIAGE here). Idempotent: a code with an active tariff is
+ * skipped, so this also fills in environments seeded before it existed.
+ */
+export async function seedChargeCaptureTariffs(prisma: PrismaClient) {
+  const effectiveFrom = new Date("2026-01-01");
+  const cashPayer = await prisma.payer.findUnique({ where: { id: "payer-cash-selfpay" } });
+  if (!cashPayer) return;
+  const ITEM_RATE: Record<string, number> = { CONSUMABLE: 20000, SURGICAL_SUPPLY: 50000, IMPLANT: 2500000 };
+  let created = 0;
+  for (const facility of await prisma.facility.findMany({ orderBy: [{ createdAt: "asc" }, { id: "asc" }] })) {
+    const actor = await prisma.hospitalStaffProfile.findFirst({ where: { ...staffAtFacilityWhere(facility.id), user: { role: { in: ["BILLING_STAFF", "HOSPITAL_ADMIN"] } } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+    if (!actor) continue;
+    const items = await prisma.item.findMany({ where: { facilityId: facility.id, category: { in: ["CONSUMABLE", "SURGICAL_SUPPLY", "IMPLANT"] } }, orderBy: { sku: "asc" } });
+    const wanted = [
+      { chargeCode: "PROCEDURE:GENERIC", description: "Surgical procedure (generic rate)", category: "PROCEDURE", unitPriceMinor: 2500000 },
+      { chargeCode: "BLOOD:GENERIC", description: "Blood component (generic rate)", category: "OTHER", unitPriceMinor: 150000 },
+      { chargeCode: "ICU:ADMISSION", description: "ICU admission", category: "OTHER", unitPriceMinor: 500000 },
+      ...items.map((i) => ({ chargeCode: `ITEM:${i.sku}`, description: i.name, category: "OTHER", unitPriceMinor: ITEM_RATE[i.category] ?? 20000 })),
+    ];
+    for (const t of wanted) {
+      const live = await prisma.tariff.count({ where: { facilityId: facility.id, payerId: cashPayer.id, chargeCode: t.chargeCode, active: true } });
+      if (live > 0) continue;
+      await prisma.$transaction((tx) => createTariff(tx, { facilityId: facility.id, payerId: cashPayer.id, effectiveFrom, createdByUserId: actor.userId, ...t }));
+      created++;
+    }
+  }
+  console.log(`Charge-capture tariffs: ${created} created.`);
+}

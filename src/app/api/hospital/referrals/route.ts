@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
+import { createReferral } from "@/lib/hospital/referral";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
-import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
+import { withApiErrors, BadRequestError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 
 export async function GET(req: NextRequest) {
@@ -33,22 +34,8 @@ export async function POST(req: NextRequest) {
     const { encounterId, toDepartmentId, toStaffId, reason, priority } = body ?? {};
     if (!encounterId || !reason) throw new BadRequestError("encounterId and reason are required.");
 
-    const encounter = await prisma.encounter.findUnique({ where: { id: encounterId } });
-    if (!encounter || encounter.facilityId !== facilityId) throw new NotFoundError("Encounter not found.");
-
-    const referral = await prisma.referral.create({
-      data: {
-        patientId: encounter.patientId,
-        encounterId,
-        fromDepartmentId: encounter.departmentId,
-        toDepartmentId,
-        fromStaffId: staff.id,
-        toStaffId,
-        reason,
-        priority: priority ?? "ROUTINE",
-        status: "PLACED",
-      },
-    });
+    const referral = await createReferral({ encounterId, facilityId, fromStaffId: staff.id, toDepartmentId, toStaffId, reason, priority, byUserId: session.userId });
+    const encounter = { patientId: referral.patientId };
 
     await recordAuditEvent(
       "hospital.referral.created",

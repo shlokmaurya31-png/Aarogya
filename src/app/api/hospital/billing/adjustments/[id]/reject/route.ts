@@ -14,7 +14,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const adjustment = await prisma.financialAdjustment.findUnique({ where: { id }, include: { invoice: true } });
     if (!adjustment || adjustment.invoice.facilityId !== facilityId) throw new NotFoundError("Adjustment not found.");
 
-    const updated = await prisma.$transaction((tx) => rejectAdjustment(tx, id));
+    const updated = await prisma.$transaction((tx) => rejectAdjustment(tx, id, { byUserId: session.userId }));
 
     await recordAuditEvent(
       "hospital.adjustment.rejected",

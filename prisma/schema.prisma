@@ -533,6 +533,9 @@ model DomainEventOutbox {
   id               String                  @id @default(cuid())
   /// Globally-unique public event identifier (distinct from the row `id`).
   eventId          String                  @unique
+  /// Monotonic insert order (BIGINT identity). Claims order by this, never by
+  /// occurredAt, which is identical for every event in one transaction.
+  seq              BigInt                  @default(autoincrement())
   eventType        String
   eventVersion     Int
   aggregateType    String
@@ -696,7 +699,7 @@ model WorkflowInstance {
   updatedAt            DateTime               @updatedAt
 
   steps  WorkflowStep[]
-  tasks  WorkflowTask[]
+  tasks  Task[]
   timers WorkflowTimer[]
 
   @@index([status])
@@ -714,7 +717,7 @@ model WorkflowStep {
   instance           WorkflowInstance   @relation(fields: [workflowInstanceId], references: [id], onDelete: Cascade)
   nodeKey            String
   stepIndex          Int
-  stepType           String // CONDITION | ACTION | TASK | TIMER
+  stepType           String // CONDITION | ACTION | TASK | TIMER | ESCALATE
   status             WorkflowStepStatus @default(PENDING) // PENDING | RUNNING | WAITING | COMPLETED | SKIPPED | FAILED
   attemptCount       Int                @default(0)
   maxAttempts        Int                @default(5)
@@ -737,35 +740,6 @@ model WorkflowStep {
 // An orchestration to-do created by a workflow. Distinct from the clinical `Task`
 // (which requires a staff creator + facility and is clinically coupled): a workflow
 // task is system-created, may be org-scoped, and carries NO clinical authority.
-model WorkflowTask {
-  id                 String             @id @default(cuid())
-  workflowInstanceId String
-  instance           WorkflowInstance   @relation(fields: [workflowInstanceId], references: [id], onDelete: Cascade)
-  workflowStepId     String?
-  organizationId     String?
-  facilityId         String?
-  patientId          String?
-  encounterId        String?
-  taskType           String
-  title              String
-  description        String?
-  priority           Priority           @default(ROUTINE) // ROUTINE | URGENT | STAT
-  status             WorkflowTaskStatus @default(OPEN) // OPEN | IN_PROGRESS | COMPLETED | CANCELLED | EXPIRED
-  assignedRole       String?
-  assignedUserId     String?
-  dueAt              DateTime?
-  completedByUserId  String?
-  completedAt        DateTime?
-  cancelledAt        DateTime?
-  /// Idempotency: a step creating a task twice yields one task.
-  idempotencyKey     String             @unique
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime           @updatedAt
-
-  @@index([organizationId, status])
-  @@index([status, dueAt])
-  @@index([workflowInstanceId])
-}
 
 // A durable timer (delay / SLA breach / escalation). Fired by a bounded, guarded
 // claim so it is correct under concurrent workers and process restarts, with no
@@ -777,7 +751,7 @@ model WorkflowTimer {
   workflowStepId     String?
   kind               String // DELAY | SLA
   availableAt        DateTime
-  status             WorkflowTimerStatus @default(PENDING) // PENDING | CLAIMED | COMPLETED | CANCELLED
+  status             WorkflowTimerStatus @default(PENDING) // PENDING | CLAIMED | COMPLETED | CANCELLED | FAILED
   claimToken         String?
   claimedAt          DateTime?
   completedAt        DateTime?
@@ -2513,6 +2487,39 @@ model Discharge {
   initiatedByStaffId      String?
   expectedDischargeAt     DateTime?
   expectedDischargeReason String?
+  holds                   DischargeHold[]
+}
+
+/// Batch 6 fix 1: why a discharge is held.
+enum DischargeHoldReason {
+  BILLING
+  INSURANCE
+  CLINICAL
+  DOCUMENTATION
+  PHARMACY
+  TRANSPORT
+  PATIENT_REQUEST
+  LEGAL
+  OTHER
+}
+
+/// A manual hold on a discharge (batch 6 fix 1): who placed it, why (a code),
+/// when; cleared by a person. While any hold is active (clearedAt null),
+/// finalizeDischarge refuses, whatever the readiness flags say. At most one
+/// active hold per reason (partial unique index in the migration).
+model DischargeHold {
+  id              String              @id @default(cuid())
+  discharge       Discharge           @relation(fields: [dischargeId], references: [id])
+  dischargeId     String
+  facilityId      String
+  reasonCode      DischargeHoldReason
+  placedByUserId  String
+  placedAt        DateTime            @default(now())
+  clearedByUserId String?
+  clearedAt       DateTime?
+
+  @@index([dischargeId])
+  @@index([facilityId, clearedAt])
 }
 
 model ClinicalNote {
@@ -2649,22 +2656,29 @@ model MedicationOrder {
 }
 
 model MedicationAdministration {
-  id                    String                         @id @default(cuid())
-  medicationOrder       MedicationOrder                @relation(fields: [medicationOrderId], references: [id])
-  medicationOrderId     String
-  administeredBy        HospitalStaffProfile?          @relation("MedicationAdministrator", fields: [administeredByStaffId], references: [id])
-  administeredByStaffId String?
-  scheduledAt           DateTime
-  administeredAt        DateTime?
-  status                MedicationAdministrationStatus @default(DUE)
-  notes                 String?
+  id                      String                         @id @default(cuid())
+  medicationOrder         MedicationOrder                @relation(fields: [medicationOrderId], references: [id])
+  medicationOrderId       String
+  administeredBy          HospitalStaffProfile?          @relation("MedicationAdministrator", fields: [administeredByStaffId], references: [id])
+  administeredByStaffId   String?
+  scheduledAt             DateTime
+  administeredAt          DateTime?
+  status                  MedicationAdministrationStatus @default(DUE)
+  notes                   String?
   // Phase 3 additions — REFUSED/CANCELLED are new capability (brief §20); GIVEN kept
   // as-is rather than renamed to ADMINISTERED, matching the existing working
   // vocabulary every current route/seed/UI reads (docs/PHASE_3_ARCHITECTURE.md §5).
-  reasonCode            String? // category for HELD/REFUSED/MISSED, e.g. "patient-declined" | "npo" | "unavailable"
-  witnessStaffId        String? // controlled-medication co-sign (brief §25)
-  witness               HospitalStaffProfile?          @relation("AdministrationWitness", fields: [witnessStaffId], references: [id])
-  safetyChecksConfirmed Boolean                        @default(false)
+  reasonCode              String? // category for HELD/REFUSED/MISSED, e.g. "patient-declined" | "npo" | "unavailable"
+  witnessStaffId          String? // controlled-medication co-sign (brief §25)
+  witness                 HospitalStaffProfile?          @relation("AdministrationWitness", fields: [witnessStaffId], references: [id])
+  safetyChecksConfirmed   Boolean                        @default(false)
+  // A late recording of a dose the MAR sweep marked MISSED (reasonCode
+  // "not-recorded"): a new row linked to the missed one, which stays as it is.
+  // (medicationOrderId, scheduledAt) is unique for scheduled rows (those with
+  // no link) by a partial index in migration SQL.
+  lateForAdministrationId String?                        @unique
+  lateFor                 MedicationAdministration?      @relation("LateAdministration", fields: [lateForAdministrationId], references: [id], onDelete: Restrict)
+  lateRecording           MedicationAdministration?      @relation("LateAdministration")
 
   @@index([medicationOrderId])
   @@index([status])
@@ -3249,6 +3263,19 @@ model Charge {
   sourceId   String?
 
   postedByUserId String? // null = system/automatic (order-creation/dispense/discharge hooks)
+
+  // Batch 5: NEEDS_PRICING when posted with no tariff (amount 0); billing
+  // prices it or waives it (with a reason) before its invoice can be issued.
+  // Batch 5: posted after the encounter's invoice was issued; collected on a
+  // supplementary invoice (or debit note) linked to the original.
+  isLate         Boolean             @default(false)
+  pricingStatus  ChargePricingStatus @default(PRICED)
+  waiverReason   ChargeWaiverReason?
+  pricedAt       DateTime?
+  pricedByUserId String?
+  waivedAt       DateTime?
+  waivedByUserId String?
+
   voidedAt       DateTime?
   voidedByUserId String?
   voidReason     String?
@@ -3502,40 +3529,48 @@ enum InvoiceStatus {
  * never a void of a paid invoice).
  */
 model Invoice {
-  id                String         @id @default(cuid())
-  invoiceNumber     String?        @unique // null while DRAFT; assigned atomically at ISSUED
-  billingAccount    BillingAccount @relation(fields: [billingAccountId], references: [id])
-  billingAccountId  String
-  encounter         Encounter      @relation(fields: [encounterId], references: [id])
-  encounterId       String
-  patient           Patient        @relation(fields: [patientId], references: [id])
-  patientId         String
-  facility          Facility       @relation(fields: [facilityId], references: [id])
-  facilityId        String
-  payer             Payer?         @relation(fields: [payerId], references: [id]) // null = self-pay
-  payerId           String?
-  status            InvoiceStatus  @default(DRAFT)
-  subtotalMinor     Int            @default(0)
-  discountMinor     Int            @default(0)
-  taxMinor          Int            @default(0)
-  totalMinor        Int            @default(0) // frozen at ISSUED
-  allocatedMinor    Int            @default(0) // guarded running total, atomically maintained by allocatePayment — never exceeds totalMinor
-  currency          String         @default("INR")
-  issuedAt          DateTime?
-  dueAt             DateTime?
-  voidedAt          DateTime?
-  voidedByUserId    String?
-  voidReason        String?
-  generatedByUserId String
-  createdAt         DateTime       @default(now())
+  id                   String              @id @default(cuid())
+  invoiceNumber        String? // null while DRAFT; assigned atomically at ISSUED; unique per facility (its sequence is per facility)
+  billingAccount       BillingAccount      @relation(fields: [billingAccountId], references: [id])
+  billingAccountId     String
+  encounter            Encounter           @relation(fields: [encounterId], references: [id])
+  encounterId          String
+  patient              Patient             @relation(fields: [patientId], references: [id])
+  patientId            String
+  facility             Facility            @relation(fields: [facilityId], references: [id])
+  facilityId           String
+  payer                Payer?              @relation(fields: [payerId], references: [id]) // null = self-pay
+  payerId              String?
+  status               InvoiceStatus       @default(DRAFT)
+  subtotalMinor        Int                 @default(0)
+  discountMinor        Int                 @default(0)
+  taxMinor             Int                 @default(0)
+  totalMinor           Int                 @default(0) // frozen at ISSUED
+  allocatedMinor       Int                 @default(0) // guarded running total, atomically maintained by allocatePayment — never exceeds totalMinor
+  currency             String              @default("INR")
+  issuedAt             DateTime?
+  dueAt                DateTime?
+  voidedAt             DateTime?
+  voidedByUserId       String?
+  voidReason           String?
+  generatedByUserId    String
+  createdAt            DateTime            @default(now())
+  // Batch 5: a supplementary invoice or debit note collects late charges and
+  // links to the original INVOICE (CHECK: linked exactly when not an INVOICE).
+  documentType         InvoiceDocumentType @default(INVOICE)
+  supplementsInvoiceId String?
+  supplements          Invoice?            @relation("InvoiceSupplements", fields: [supplementsInvoiceId], references: [id], onDelete: Restrict)
+  supplementary        Invoice[]           @relation("InvoiceSupplements")
 
   lines       InvoiceLine[]
   allocations PaymentAllocation[]
   adjustments FinancialAdjustment[]
   claim       Claim?
 
+  @@unique([facilityId, invoiceNumber])
   @@index([billingAccountId])
   @@index([facilityId, status])
+  @@index([supplementsInvoiceId])
 }
 
 model InvoiceLine {
@@ -3733,7 +3768,7 @@ model Claim {
   preAuthorizationId   String?           @unique
   facility             Facility          @relation(fields: [facilityId], references: [id])
   facilityId           String
-  claimNumber          String?           @unique // assigned at SUBMITTED, same InvoiceSequence mechanism
+  claimNumber          String? // assigned at SUBMITTED, same InvoiceSequence mechanism; unique per facility
   status               ClaimStatus       @default(DRAFT)
   submittedAmountMinor Int
   approvedAmountMinor  Int?
@@ -3749,6 +3784,7 @@ model Claim {
   submissions ClaimSubmission[]
   lines       ClaimLine[]
 
+  @@unique([facilityId, claimNumber])
   @@index([facilityId, status])
 }
 
@@ -3781,28 +3817,45 @@ model ClaimLine {
  */
 model Task {
   id                 String                @id @default(cuid())
-  facility           Facility              @relation(fields: [facilityId], references: [id])
-  facilityId         String
+  /// Null only for an organization-level workflow task (source WORKFLOW with
+  /// organizationId set); a CHECK constraint enforces it (spine §4).
+  facility           Facility?             @relation(fields: [facilityId], references: [id], onDelete: Restrict)
+  facilityId         String?
+  organizationId     String?
   department         Department?           @relation(fields: [departmentId], references: [id])
   departmentId       String?
   title              String
   description        String?
   type               String // "DISCHARGE_PREP" | "PATIENT_EDUCATION" | "WOUND_CARE" | "FOLLOW_UP" | "GENERAL" | ...
   priority           Priority              @default(ROUTINE) // "ROUTINE" | "URGENT" | "STAT"
-  status             TaskStatus            @default(OPEN) // OPEN | ASSIGNED | IN_PROGRESS | COMPLETED | CANCELLED | OVERDUE
+  /// "Overdue" is derived (open and dueAt < now), not a status (spine §4).
+  status             TaskStatus            @default(OPEN)
   dueAt              DateTime?
-  source             String? // what created this task, e.g. "manual" | "discharge-workflow"
+  source             TaskSource
+  /// Set for source WORKFLOW (the former WorkflowTask, D6).
+  workflowInstance   WorkflowInstance?     @relation(fields: [workflowInstanceId], references: [id], onDelete: Restrict)
+  workflowInstanceId String?
+  workflowStepId     String?
+  /// Role-based assignment (workflow tasks); ownerStaffId names a person.
+  assignedRole       String?
+  assignedUserId     String?
   patient            Patient?              @relation(fields: [patientId], references: [id])
   patientId          String?
   encounterId        String?
   owner              HospitalStaffProfile? @relation("TaskOwner", fields: [ownerStaffId], references: [id])
   ownerStaffId       String?
-  createdBy          HospitalStaffProfile  @relation("TaskCreatedBy", fields: [createdByStaffId], references: [id])
-  createdByStaffId   String
+  /// Null for a task created by the system (an event consumer); see source.
+  createdBy          HospitalStaffProfile? @relation("TaskCreatedBy", fields: [createdByStaffId], references: [id], onDelete: Restrict)
+  createdByStaffId   String?
+  /// Set by event consumers (workflow spine §2): one task per key per facility.
+  idempotencyKey     String?
   completedBy        HospitalStaffProfile? @relation("TaskCompletedBy", fields: [completedByStaffId], references: [id])
   completedByStaffId String?
+  completedByUserId  String?
   completedAt        DateTime?
+  cancelledAt        DateTime?
   createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @default(now()) @updatedAt
   // Phase 3 (brief §12) — deepens the existing engine without a new model.
   // A "nursing order" a doctor places is an Order (orderType=NURSING) whose
   // detail lives right here in Task, reusing the existing engine rather
@@ -3818,12 +3871,16 @@ model Task {
   // this task (brief §12). Nullable: most interventions never create a task.
   carePlanInterventions CarePlanIntervention[] @relation("InterventionTask")
 
+  @@unique([facilityId, idempotencyKey])
   @@index([facilityId])
   @@index([status])
   @@index([orderId])
   @@index([ownerStaffId])
   @@index([patientId])
   @@index([facilityId, status])
+  @@index([workflowInstanceId])
+  @@index([organizationId, status])
+  @@index([status, dueAt])
 }
 
 /**
@@ -9172,9 +9229,13 @@ model Notification {
   sourceId         String?
   // Who/what raised it. Nullable: system-generated notifications have no staff author.
   createdByStaffId String?
+  // The domain event a consumer created it from (notification-dispatch);
+  // unique per recipient so redelivery creates nothing.
+  sourceEventId    String?
   readAt           DateTime?
   createdAt        DateTime             @default(now())
 
+  @@unique([sourceEventId, recipientStaffId])
   @@index([recipientStaffId])
   @@index([facilityId])
   @@index([recipientStaffId, readAt])
@@ -9322,7 +9383,16 @@ enum TaskStatus {
   IN_PROGRESS
   COMPLETED
   CANCELLED
-  OVERDUE
+  EXPIRED
+}
+
+/// What created a task (spine §4, D6).
+enum TaskSource {
+  MANUAL
+  CARE_PLAN
+  WORKFLOW
+  EVENT
+  ORDER
 }
 
 enum ClinicalDocumentStatus {
@@ -9838,19 +9908,12 @@ enum WorkflowStepStatus {
   FAILED
 }
 
-enum WorkflowTaskStatus {
-  OPEN
-  IN_PROGRESS
-  COMPLETED
-  CANCELLED
-  EXPIRED
-}
-
 enum WorkflowTimerStatus {
   PENDING
   CLAIMED
   COMPLETED
   CANCELLED
+  FAILED
 }
 
 enum ConfigurationOverrideScope {
@@ -10041,4 +10104,25 @@ enum PregnancyStatus {
   PREGNANT
   UNKNOWN
   NOT_APPLICABLE
+}
+
+enum ChargePricingStatus {
+  PRICED
+  NEEDS_PRICING
+  WAIVED
+}
+
+enum ChargeWaiverReason {
+  PACKAGE_INCLUDED
+  GOODWILL
+  CHARITY
+  CLINICAL_ERROR
+  NOT_BILLABLE
+  OTHER
+}
+
+enum InvoiceDocumentType {
+  INVOICE
+  SUPPLEMENTARY_INVOICE
+  DEBIT_NOTE
 }

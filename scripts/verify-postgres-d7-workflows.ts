@@ -39,7 +39,9 @@ const KEY_PREFIX = "d7gate-";
 
 async function cleanup() {
   await prisma.workflowTimer.deleteMany({ where: { instance: { definition: { key: { startsWith: KEY_PREFIX } } } } });
-  await prisma.workflowTask.deleteMany({ where: { instance: { definition: { key: { startsWith: KEY_PREFIX } } } } });
+  await prisma.task.deleteMany({ where: { workflowInstance: { definition: { key: { startsWith: KEY_PREFIX } } } } });
+  // Tasks the seeded platform workflows open for this gate's events (D6: Task rows now reference the facility).
+  await prisma.task.deleteMany({ where: { OR: [{ organizationId: { in: [ID.orgA, ID.orgB] } }, { facility: { organizationId: { in: [ID.orgA, ID.orgB] } } }] } });
   await prisma.workflowStep.deleteMany({ where: { instance: { definition: { key: { startsWith: KEY_PREFIX } } } } });
   await prisma.workflowInstance.deleteMany({ where: { definition: { key: { startsWith: KEY_PREFIX } } } });
   await prisma.workflowVersion.deleteMany({ where: { definition: { key: { startsWith: KEY_PREFIX } } } });
@@ -48,6 +50,9 @@ async function cleanup() {
   const userIds = Object.values(ID);
   await prisma.auditEvent.deleteMany({ where: { organizationId: { in: [ID.orgA, ID.orgB] } } });
   await prisma.organizationMembership.deleteMany({ where: { OR: [{ organizationId: { in: [ID.orgA, ID.orgB] } }, { userId: { in: userIds } }] } });
+  await prisma.domainEventOutbox.deleteMany({ where: { organizationId: { in: [ID.orgA, ID.orgB] } } });
+  await prisma.encounter.deleteMany({ where: { facilityId: { in: [ID.facA, ID.facB] } } });
+  await prisma.patient.deleteMany({ where: { facilityId: { in: [ID.facA, ID.facB] } } });
   await prisma.facility.deleteMany({ where: { organizationId: { in: [ID.orgA, ID.orgB] } } });
   await prisma.organization.deleteMany({ where: { id: { in: [ID.orgA, ID.orgB] } } });
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });
@@ -59,7 +64,9 @@ async function seed() {
   for (const [org, fac, admin] of [[ID.orgA, ID.facA, ID.uAdminA], [ID.orgB, ID.facB, ID.uAdminB]] as const) {
     await prisma.organization.create({ data: { id: org, slug: org, name: org, status: "ACTIVE" } });
     await prisma.facility.create({ data: { id: fac, slug: fac, name: fac, organizationId: org, status: "ACTIVE" } });
-    await prisma.organizationMembership.create({ data: { organizationId: org, userId: admin, isAdmin: true, status: "ACTIVE" } });
+    await prisma.organizationMembership.create({ data: { organizationId: org, userId: admin, isAdmin: true, status: "ACTIVE" } });    // D6: a workflow task about a patient must name a real patient of its facility.
+    await prisma.patient.create({ data: { id: `${fac}-pt`, uhid: `${fac}-pt`, facilityId: fac, fullName: "Workflow Gate Patient", sex: "F" } });
+    await prisma.encounter.create({ data: { id: `${fac}-enc`, facilityId: fac, patientId: `${fac}-pt`, type: "IPD" } });
   }
 }
 
@@ -110,7 +117,7 @@ async function run() {
     const env = await fireEvent("PaymentReceived", { organizationId: ID.orgA, aggregateId: "pay-int-1", payload: { paymentId: "pay-int-1", invoiceId: "i1", amountMinor: 100, currency: "INR" } });
     await dispatchPendingDomainEvents({ now: new Date() });
     const inst = await prisma.workflowInstance.findFirst({ where: { workflowDefinitionId: simple, triggerEventId: env.eventId } });
-    const task = inst ? await prisma.workflowTask.findFirst({ where: { workflowInstanceId: inst.id } }) : null;
+    const task = inst ? await prisma.task.findFirst({ where: { workflowInstanceId: inst.id } }) : null;
     if (inst?.status === "COMPLETED" && task && task.status === "OPEN") ok("committed event → dispatcher → workflow instance + task (COMPLETED)"); else bad("event→workflow", `inst=${inst?.status} task=${task?.status}`);
     if (inst && inst.correlationId === env.correlationId && inst.triggerEventId === env.eventId) ok("instance preserves triggerEventId + correlationId"); else bad("correlation", "not preserved");
   }
@@ -130,32 +137,32 @@ async function run() {
     const inst = await prisma.workflowInstance.findFirstOrThrow({ where: { workflowDefinitionId: critical, triggerEventId: env.eventId } });
     // Not completed → tick in the future → escalation created.
     await tickWorkflows({ now: new Date(Date.now() + 3600_000) });
-    const esc = await prisma.workflowTask.count({ where: { workflowInstanceId: inst.id, taskType: "ESCALATION" } });
+    const esc = await prisma.task.count({ where: { workflowInstanceId: inst.id, type: "ESCALATION" } });
     if (esc === 1) ok("SLA breach (task not completed) → exactly one escalation task"); else bad("escalation", `escalations=${esc}`);
   }
   {
     const env = await fireEvent("LabResultReleased", { organizationId: ID.orgA, facilityId: ID.facA, aggregateId: "lab-crit-2", payload: { resultId: "lab-crit-2", critical: true } });
     await startWorkflowsForEvent(env);
     const inst = await prisma.workflowInstance.findFirstOrThrow({ where: { workflowDefinitionId: critical, triggerEventId: env.eventId } });
-    const reviewTask = await prisma.workflowTask.findFirstOrThrow({ where: { workflowInstanceId: inst.id, taskType: "REVIEW" } });
+    const reviewTask = await prisma.task.findFirstOrThrow({ where: { workflowInstanceId: inst.id, type: "REVIEW" } });
     await completeWorkflowTask(reviewTask.id, ID.uPlatform); // meet SLA before breach
     await tickWorkflows({ now: new Date(Date.now() + 3600_000) });
-    const esc = await prisma.workflowTask.count({ where: { workflowInstanceId: inst.id, taskType: "ESCALATION" } });
+    const esc = await prisma.task.count({ where: { workflowInstanceId: inst.id, type: "ESCALATION" } });
     if (esc === 0) ok("SLA met (task completed) → no escalation"); else bad("no-escalation", `escalations=${esc}`);
   }
 
   // ── TIMER delay → resume ───────────────────────────────────────────────────
   console.log("[timer delay resume]");
   {
-    const env = await fireEvent("AdmissionCreated", { organizationId: ID.orgA, facilityId: ID.facA, aggregateId: "adm-1", payload: { admissionId: "adm-1", encounterId: "e1", patientId: "p1" } });
+    const env = await fireEvent("AdmissionCreated", { organizationId: ID.orgA, facilityId: ID.facA, aggregateId: "adm-1", payload: { admissionId: "adm-1", encounterId: `${ID.facA}-enc`, patientId: `${ID.facA}-pt` } });
     await startWorkflowsForEvent(env);
     const inst = await prisma.workflowInstance.findFirstOrThrow({ where: { workflowDefinitionId: delay, triggerEventId: env.eventId } });
     const afterFirst = await prisma.workflowInstance.findUniqueOrThrow({ where: { id: inst.id } });
-    const t1 = await prisma.workflowTask.count({ where: { workflowInstanceId: inst.id, taskType: "FIRST" } });
+    const t1 = await prisma.task.count({ where: { workflowInstanceId: inst.id, type: "FIRST" } });
     if (afterFirst.status === "WAITING" && t1 === 1) ok("TIMER step parks the instance WAITING after the first task"); else bad("timer wait", `status=${afterFirst.status} t1=${t1}`);
     await tickWorkflows({ now: new Date(Date.now() + 3600_000) });
     const done = await prisma.workflowInstance.findUniqueOrThrow({ where: { id: inst.id } });
-    const t2 = await prisma.workflowTask.count({ where: { workflowInstanceId: inst.id, taskType: "SECOND" } });
+    const t2 = await prisma.task.count({ where: { workflowInstanceId: inst.id, type: "SECOND" } });
     if (done.status === "COMPLETED" && t2 === 1) ok("timer fires → instance resumes → second task → COMPLETED"); else bad("timer resume", `status=${done.status} t2=${t2}`);
   }
 
@@ -183,7 +190,7 @@ async function run() {
   // ── Cancellation ───────────────────────────────────────────────────────────
   console.log("[cancellation]");
   {
-    const env = await fireEvent("AdmissionCreated", { organizationId: ID.orgA, facilityId: ID.facA, aggregateId: "adm-cancel", payload: { admissionId: "adm-cancel", encounterId: "e2", patientId: "p2" } });
+    const env = await fireEvent("AdmissionCreated", { organizationId: ID.orgA, facilityId: ID.facA, aggregateId: "adm-cancel", payload: { admissionId: "adm-cancel", encounterId: `${ID.facA}-enc`, patientId: `${ID.facA}-pt` } });
     await startWorkflowsForEvent(env); // parks WAITING on the timer
     const inst = await prisma.workflowInstance.findFirstOrThrow({ where: { workflowDefinitionId: delay, triggerEventId: env.eventId } });
     await cancelInstance(P, inst.id, "operator cancel");
@@ -193,7 +200,7 @@ async function run() {
     // Ticking after cancel must not resume it.
     await tickWorkflows({ now: new Date(Date.now() + 3600_000) });
     const after = await prisma.workflowInstance.findUniqueOrThrow({ where: { id: inst.id } });
-    const t2 = await prisma.workflowTask.count({ where: { workflowInstanceId: inst.id, taskType: "SECOND" } });
+    const t2 = await prisma.task.count({ where: { workflowInstanceId: inst.id, type: "SECOND" } });
     if (after.status === "CANCELLED" && t2 === 0) ok("no post-cancellation execution (tick does not resume a cancelled instance)"); else bad("post-cancel", `status=${after.status} t2=${t2}`);
   }
 
@@ -204,7 +211,7 @@ async function run() {
     await startWorkflowsForEvent(env);
     await startWorkflowsForEvent(env); // duplicate delivery
     const n = await prisma.workflowInstance.count({ where: { workflowDefinitionId: simple, triggerEventId: env.eventId } });
-    const tasks = await prisma.workflowTask.count({ where: { instance: { triggerEventId: env.eventId } } });
+    const tasks = await prisma.task.count({ where: { workflowInstance: { triggerEventId: env.eventId } } });
     if (n === 1 && tasks === 1) ok("duplicate delivery → one instance + one task (idempotent)"); else bad("idempotent dup", `instances=${n} tasks=${tasks}`);
   }
 
@@ -329,7 +336,7 @@ async function concurrency(P: ActorMemberships) {
     const env = await fireEvent("PaymentReceived", { organizationId: ID.orgA, aggregateId: "race1", payload: { paymentId: "race1", invoiceId: "i", amountMinor: 1, currency: "INR" } });
     await Promise.allSettled([startWorkflowsForEvent(env), startWorkflowsForEvent(env), startWorkflowsForEvent(env)]);
     const n = await prisma.workflowInstance.count({ where: { workflowDefinitionId: simple.id, triggerEventId: env.eventId } });
-    const t = await prisma.workflowTask.count({ where: { instance: { triggerEventId: env.eventId } } });
+    const t = await prisma.task.count({ where: { workflowInstance: { triggerEventId: env.eventId } } });
     if (n === 1 && t === 1) ok("Race 1: concurrent event delivery → one instance + one task"); else bad("Race 1", `instances=${n} tasks=${t}`);
   }
 
@@ -339,7 +346,7 @@ async function concurrency(P: ActorMemberships) {
     const version = await prisma.workflowDefinition.findUniqueOrThrow({ where: { id: simple.id }, select: { currentVersionId: true } });
     const instId = await seedRunnable(simple.id, version.currentVersionId!, env, ["TASK"]);
     await Promise.all([runInstance(instId), runInstance(instId), runInstance(instId)]);
-    const t = await prisma.workflowTask.count({ where: { workflowInstanceId: instId } });
+    const t = await prisma.task.count({ where: { workflowInstanceId: instId } });
     const inst = await prisma.workflowInstance.findUniqueOrThrow({ where: { id: instId } });
     if (t === 1 && inst.status === "COMPLETED") ok("Race 2: concurrent runInstance → one effective execution (one task, COMPLETED)"); else bad("Race 2", `tasks=${t} status=${inst.status}`);
   }
@@ -351,7 +358,7 @@ async function concurrency(P: ActorMemberships) {
     const inst = await prisma.workflowInstance.findFirstOrThrow({ where: { workflowDefinitionId: critical.id, triggerEventId: env.eventId } });
     const now = new Date(Date.now() + 3600_000);
     await Promise.all([tickWorkflows({ now }), tickWorkflows({ now }), tickWorkflows({ now })]);
-    const esc = await prisma.workflowTask.count({ where: { workflowInstanceId: inst.id, taskType: "ESCALATION" } });
+    const esc = await prisma.task.count({ where: { workflowInstanceId: inst.id, type: "ESCALATION" } });
     if (esc === 1) ok("Race 3: concurrent timer ticks → one effective escalation"); else bad("Race 3", `escalations=${esc}`);
   }
 
@@ -374,7 +381,7 @@ async function concurrency(P: ActorMemberships) {
     await Promise.allSettled([cancelInstance(P, instId, "race"), runInstance(instId)]);
     const inst = await prisma.workflowInstance.findUniqueOrThrow({ where: { id: instId } });
     const terminal = inst.status === "CANCELLED" || inst.status === "COMPLETED";
-    const tasks = await prisma.workflowTask.count({ where: { workflowInstanceId: instId } });
+    const tasks = await prisma.task.count({ where: { workflowInstanceId: instId } });
     if (terminal && tasks <= 1) ok(`Race 5: cancel vs execution → deterministic terminal (${inst.status}), no duplicate effect`); else bad("Race 5", `status=${inst.status} tasks=${tasks}`);
   }
 
@@ -393,10 +400,10 @@ async function concurrency(P: ActorMemberships) {
     const env = await fireEvent("PaymentReceived", { organizationId: ID.orgA, aggregateId: "race7", payload: { paymentId: "race7", invoiceId: "i", amountMinor: 1, currency: "INR" } });
     await startWorkflowsForEvent(env);
     const inst = await prisma.workflowInstance.findFirstOrThrow({ where: { workflowDefinitionId: simple.id, triggerEventId: env.eventId } });
-    const task = await prisma.workflowTask.findFirstOrThrow({ where: { workflowInstanceId: inst.id } });
+    const task = await prisma.task.findFirstOrThrow({ where: { workflowInstanceId: inst.id } });
     const results = await Promise.allSettled([completeWorkflowTask(task.id, ID.uAdminA), completeWorkflowTask(task.id, ID.uAdminB), completeWorkflowTask(task.id, ID.uPlatform)]);
     const okCount = results.filter((r) => r.status === "fulfilled").length;
-    const after = await prisma.workflowTask.findUniqueOrThrow({ where: { id: task.id } });
+    const after = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
     // Completion is idempotent: an already-COMPLETED call returns success too, so
     // assert exactly one COMPLETED task with a single completedByUserId.
     if (after.status === "COMPLETED" && after.completedByUserId && okCount >= 1) ok(`Race 7: concurrent completion → one COMPLETED task (single completer ${after.completedByUserId?.slice(0, 12)})`); else bad("Race 7", `status=${after.status} ok=${okCount}`);

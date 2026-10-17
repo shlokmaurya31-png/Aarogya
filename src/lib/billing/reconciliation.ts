@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
-import { NotFoundError } from "@/lib/auth/rbac";
+import { ConflictError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { emitDomainEvent } from "@/lib/events/emit";
 import { type ActorMemberships } from "@/lib/auth/tenantContext";
 import { requirePlatform } from "./authz";
 import { getProvider } from "./provider";
@@ -30,12 +31,23 @@ async function flag(kind: "STATE_MISMATCH" | "STUCK_PAYMENT" | "REFUND_MISMATCH"
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
   if (existing) return existing;
-  const row = await prisma.billingReconciliationException.create({
-    data: {
-      kind, organizationId: opts.organizationId ?? null, providerKind: opts.providerKind ?? "NONE",
-      severity: SEVERITY[kind] ?? "MEDIUM", entityType: opts.entityType, entityId: opts.entityId,
-      providerRef: opts.providerRef ?? null, detail: opts.detail ? JSON.parse(JSON.stringify(opts.detail)) : undefined,
-    },
+  const row = await prisma.$transaction(async (tx) => {
+    const created = await tx.billingReconciliationException.create({
+      data: {
+        kind, organizationId: opts.organizationId ?? null, providerKind: opts.providerKind ?? "NONE",
+        severity: SEVERITY[kind] ?? "MEDIUM", entityType: opts.entityType, entityId: opts.entityId,
+        providerRef: opts.providerRef ?? null, detail: opts.detail ? JSON.parse(JSON.stringify(opts.detail)) : undefined,
+      },
+    });
+    // Organization-scoped, like the leakage findings: an exception with no
+    // organization is still recorded but emits no tenant-scoped event.
+    if (created.organizationId) {
+      await emitDomainEvent(tx, {
+        type: "ReconciliationExceptionCreated", aggregateId: created.id, organizationId: created.organizationId,
+        payload: { exceptionId: created.id, kind, severity: created.severity, source: created.source },
+      });
+    }
+    return created;
   });
   await recordAuditEvent("commercial.billing.reconciliationFlagged", null, { kind, severity: SEVERITY[kind] ?? "MEDIUM", providerRef: opts.providerRef ?? null }, { organizationId: opts.organizationId ?? undefined });
   return row;
@@ -98,7 +110,18 @@ export async function resolveException(m: ActorMemberships, id: string) {
   requirePlatform(m);
   const ex = await prisma.billingReconciliationException.findUnique({ where: { id } });
   if (!ex) throw new NotFoundError();
-  const updated = await prisma.billingReconciliationException.update({ where: { id }, data: { resolved: true, resolvedAt: new Date(), resolvedByUserId: m.userId } });
+  const updated = await prisma.$transaction(async (tx) => {
+    // Compare-and-set: resolving twice emits once.
+    const r = await tx.billingReconciliationException.updateMany({ where: { id, resolved: false }, data: { resolved: true, status: "RESOLVED", resolvedAt: new Date(), resolvedByUserId: m.userId, findingKey: null } });
+    if (r.count !== 1) throw new ConflictError("This exception is already resolved.");
+    if (ex.organizationId) {
+      await emitDomainEvent(tx, {
+        type: "ReconciliationExceptionResolved", aggregateId: id, organizationId: ex.organizationId, actorUserId: m.userId,
+        payload: { exceptionId: id, status: "RESOLVED" },
+      });
+    }
+    return tx.billingReconciliationException.findUniqueOrThrow({ where: { id } });
+  });
   await recordAuditEvent("commercial.billing.reconciliationResolved", m.userId, { id, kind: ex.kind }, { organizationId: ex.organizationId ?? undefined });
   return updated;
 }

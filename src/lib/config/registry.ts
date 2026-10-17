@@ -99,7 +99,11 @@ const EXACT: Record<string, KeySpec> = {
   "sla.critical_result_ack": duration({ default: 900, description: "SLA to acknowledge a critical result (default 15m)." }),
   "sla.admission_assessment": duration({ default: 3600, description: "SLA to complete an admission assessment (default 60m)." }),
   "queue.triage.max_wait": duration({ default: 1800, description: "Max triage queue wait before attention (default 30m)." }),
+  // Workflow spine §3.4: the MAR sweep marks a DUE dose MISSED this long after its time.
+  "mar.missed_grace": duration({ default: 3600, description: "How long after its scheduled time a dose may still be recorded before the MAR sweep marks it missed (default 60m)." }),
   "billing.auto_write_off.enabled": boolean({ default: false, description: "Whether small-balance auto write-off is enabled." }),
+  // Batch 5: how charges posted after the invoice is issued are collected.
+  "billing.late_charge.document_type": enumSpec(["SUPPLEMENTARY_INVOICE", "DEBIT_NOTE"], { scopes: ["ORGANIZATION", "FACILITY"], default: "SUPPLEMENTARY_INVOICE", description: "Document that collects charges posted after the encounter's invoice is issued, linked to the original." }),
 };
 
 // ── Templated families ───────────────────────────────────────────────────────

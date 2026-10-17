@@ -4,7 +4,7 @@ import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, NotFoundError, BadRequestError } from "@/lib/auth/rbac";
 import { completeTask, skipTask, updateTask } from "@/lib/hospital/task";
 
-const VALID_STATUSES = ["OPEN", "ASSIGNED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "OVERDUE"];
+const VALID_STATUSES = ["OPEN", "ASSIGNED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "EXPIRED"];
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return withApiErrors(async () => {
@@ -31,6 +31,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         status: status && status !== "COMPLETED" ? status : undefined,
         ownerStaffId,
         startedAt: Boolean(startedAt),
+        byUserId: session.userId,
       });
     }
 

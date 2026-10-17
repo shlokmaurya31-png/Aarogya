@@ -1,3 +1,4 @@
+import { createEpisodeOfCare } from "@/lib/hospital/encounterRecords";
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
@@ -30,14 +31,7 @@ export async function POST(req: NextRequest) {
     const { session, facilityId } = await requireFacilityStaff("episode:manage", body?.facilityId);
 
     const { patientId, title, type, reason } = body ?? {};
-    if (!patientId || !title || !type) throw new BadRequestError("patientId, title and type are required.");
-
-    const patient = await prisma.patient.findUnique({ where: { id: patientId } });
-    if (!patient || patient.facilityId !== facilityId) throw new NotFoundError("Patient not found.");
-
-    const episode = await prisma.episodeOfCare.create({
-      data: { patientId, facilityId, title, type, reason },
-    });
+    const episode = await createEpisodeOfCare({ patientId, facilityId, title, type, reason });
 
     await recordAuditEvent(
       "hospital.episode.created",

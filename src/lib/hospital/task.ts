@@ -1,10 +1,73 @@
 import { prisma } from "@/lib/db";
 import { BadRequestError } from "@/lib/auth/rbac";
-import { $Enums, type TaskStatus } from "@prisma/client";
+import { $Enums, type Prisma, type Task, type TaskStatus } from "@prisma/client";
 import { parseOptionalEnum } from "@/lib/enumValue";
+import { emitDomainEvent } from "@/lib/events/emit";
+import { facilityOrganizationId } from "@/lib/events/tenant";
 
-const TERMINAL_STATUSES: TaskStatus[] = ["COMPLETED", "CANCELLED"];
+type Tx = Prisma.TransactionClient;
+
+export const TERMINAL_STATUSES: TaskStatus[] = ["COMPLETED", "CANCELLED", "EXPIRED"];
+export const OPEN_STATUSES: TaskStatus[] = ["OPEN", "ASSIGNED", "IN_PROGRESS"];
 const NOT_TERMINAL = { notIn: TERMINAL_STATUSES };
+
+/**
+ * D6 (workflow spine §4): every task, whatever created it (a clinician, a care
+ * plan, an order, an event consumer, a workflow), is a Task row created and
+ * closed here, so TaskCreated / TaskCompleted are emitted exactly once, in the
+ * writer's transaction.
+ */
+async function taskEvent(tx: Tx, task: Task, type: "TaskCreated" | "TaskCompleted" | "TaskUpdated", payload: Record<string, unknown>, actorUserId?: string | null) {
+  const organizationId = task.facilityId ? await facilityOrganizationId(tx, task.facilityId) : task.organizationId;
+  return {
+    type, aggregateId: task.id, organizationId, facilityId: task.facilityId, actorUserId: actorUserId ?? null,
+    correlationId: task.encounterId ?? undefined, payload,
+  };
+}
+
+/**
+ * Create a task and emit TaskCreated. With an idempotencyKey, a second call is a
+ * no-op that returns the existing task and emits nothing (keys are unique per
+ * facility; workflow keys are global).
+ */
+export async function createTask(tx: Tx, data: Prisma.TaskUncheckedCreateInput, actorUserId?: string | null): Promise<Task> {
+  let task: Task;
+  if (data.idempotencyKey) {
+    const { count } = await tx.task.createMany({ data: [data], skipDuplicates: true });
+    task = await tx.task.findFirstOrThrow({
+      where: { idempotencyKey: data.idempotencyKey, source: data.source, ...(data.source === "WORKFLOW" ? {} : { facilityId: data.facilityId ?? null }) },
+    });
+    if (count === 0) return task;
+  } else {
+    task = await tx.task.create({ data });
+  }
+  await emitDomainEvent(tx, await taskEvent(tx, task, "TaskCreated", {
+    taskId: task.id, source: task.source, taskType: task.type, priority: task.priority,
+    ...(task.patientId ? { patientId: task.patientId } : {}),
+    ...(task.encounterId ? { encounterId: task.encounterId } : {}),
+    ...(task.dueAt ? { dueAt: task.dueAt.toISOString() } : {}),
+  }, actorUserId));
+  return task;
+}
+
+/**
+ * Move an open task to COMPLETED or CANCELLED (guarded: only from an open
+ * status) and emit TaskCompleted. Returns the task, or null when it was not
+ * open (already closed, or closed concurrently) — nothing is emitted then.
+ */
+export async function closeTask(
+  tx: Tx,
+  taskId: string,
+  outcome: "COMPLETED" | "CANCELLED",
+  data: Omit<Prisma.TaskUncheckedUpdateManyInput, "status">,
+  actorUserId?: string | null,
+): Promise<Task | null> {
+  const res = await tx.task.updateMany({ where: { id: taskId, status: { in: OPEN_STATUSES } }, data: { ...data, status: outcome } });
+  if (res.count !== 1) return null;
+  const task = await tx.task.findUniqueOrThrow({ where: { id: taskId } });
+  await emitDomainEvent(tx, await taskEvent(tx, task, "TaskCompleted", { taskId: task.id, source: task.source, outcome }, actorUserId));
+  return task;
+}
 
 export class TaskConcurrencyError extends BadRequestError {
   constructor(status: string) {
@@ -29,12 +92,8 @@ export async function completeTask(input: {
     const task = await tx.task.findUniqueOrThrow({ where: { id: input.taskId } });
     if (TERMINAL_STATUSES.includes(task.status)) throw new TaskConcurrencyError(task.status);
 
-    const result = await tx.task.updateMany({
-      where: { id: input.taskId, status: NOT_TERMINAL },
-      data: { status: "COMPLETED", completedByStaffId: input.completedByStaffId, completedAt: new Date() },
-    });
-    if (result.count !== 1) throw new TaskConcurrencyError(task.status);
-    const updated = await tx.task.findUniqueOrThrow({ where: { id: input.taskId } });
+    const updated = await closeTask(tx, input.taskId, "COMPLETED", { completedByStaffId: input.completedByStaffId, completedByUserId: input.byUserId, completedAt: new Date() }, input.byUserId);
+    if (!updated) throw new TaskConcurrencyError(task.status);
 
     await tx.auditEvent.create({
       data: {
@@ -61,12 +120,9 @@ export async function skipTask(input: {
     const task = await tx.task.findUniqueOrThrow({ where: { id: input.taskId } });
     if (TERMINAL_STATUSES.includes(task.status)) throw new TaskConcurrencyError(task.status);
 
-    const result = await tx.task.updateMany({
-      where: { id: input.taskId, status: NOT_TERMINAL },
-      data: { status: "CANCELLED", skippedAt: new Date(), skipReason: input.skipReason },
-    });
-    if (result.count !== 1) throw new TaskConcurrencyError(task.status);
-    const updated = await tx.task.findUniqueOrThrow({ where: { id: input.taskId } });
+    const now = new Date();
+    const updated = await closeTask(tx, input.taskId, "CANCELLED", { skippedAt: now, cancelledAt: now, skipReason: input.skipReason }, input.byUserId);
+    if (!updated) throw new TaskConcurrencyError(task.status);
 
     await tx.auditEvent.create({
       data: {
@@ -94,6 +150,7 @@ export async function updateTask(input: {
   status?: string;
   ownerStaffId?: string | null;
   startedAt?: boolean;
+  byUserId?: string;
 }) {
   return prisma.$transaction(async (tx) => {
     const task = await tx.task.findUniqueOrThrow({ where: { id: input.taskId } });
@@ -112,6 +169,53 @@ export async function updateTask(input: {
       },
     });
     if (result.count !== 1) throw new TaskConcurrencyError(task.status);
-    return tx.task.findUniqueOrThrow({ where: { id: input.taskId } });
+    const updated = await tx.task.findUniqueOrThrow({ where: { id: input.taskId } });
+
+    // TaskUpdated (triage step 5b): which fields changed, as closed codes. A
+    // call that changes nothing emits nothing.
+    const changes = [
+      ...(updated.status !== task.status ? ["STATUS"] : []),
+      ...(updated.ownerStaffId !== task.ownerStaffId ? ["OWNER"] : []),
+      ...(input.startedAt ? ["STARTED"] : []),
+    ];
+    if (changes.length) {
+      await emitDomainEvent(tx, await taskEvent(tx, updated, "TaskUpdated", {
+        taskId: updated.id, source: updated.source, changes, fromStatus: task.status, toStatus: updated.status,
+        priority: updated.priority, escalated: false,
+        ...(updated.ownerStaffId ? { ownerStaffId: updated.ownerStaffId } : {}),
+      }, input.byUserId));
+    }
+    return updated;
   });
+}
+
+const PRIORITY_RANK: Record<Task["priority"], number> = { ROUTINE: 0, URGENT: 1, STAT: 2 };
+
+/**
+ * Escalate an open task (workflow SLA breach): raise its priority (never
+ * lowers it) and/or reassign it to a role, guarded on the task still being open.
+ * Emits TaskUpdated (escalated) when something changed; returns null when the
+ * task is closed or nothing would change. Used by the workflow engine's
+ * ESCALATE step, so an SLA never creates a second task for the same work.
+ */
+export async function escalateTask(
+  tx: Tx,
+  taskId: string,
+  input: { raisePriorityTo?: Task["priority"]; reassignToRole?: string },
+  actorUserId?: string | null,
+): Promise<Task | null> {
+  const task = await tx.task.findUnique({ where: { id: taskId } });
+  if (!task || !OPEN_STATUSES.includes(task.status)) return null;
+  const priority = input.raisePriorityTo && PRIORITY_RANK[input.raisePriorityTo] > PRIORITY_RANK[task.priority] ? input.raisePriorityTo : task.priority;
+  const assignedRole = input.reassignToRole ?? task.assignedRole;
+  const changes = [...(priority !== task.priority ? ["PRIORITY"] : []), ...(assignedRole !== task.assignedRole ? ["ASSIGNED_ROLE"] : [])];
+  if (!changes.length) return null;
+  const res = await tx.task.updateMany({ where: { id: taskId, status: { in: OPEN_STATUSES } }, data: { priority, assignedRole } });
+  if (res.count !== 1) return null;
+  const updated = await tx.task.findUniqueOrThrow({ where: { id: taskId } });
+  await emitDomainEvent(tx, await taskEvent(tx, updated, "TaskUpdated", {
+    taskId, source: updated.source, changes, fromStatus: task.status, toStatus: updated.status, priority: updated.priority, escalated: true,
+    ...(updated.ownerStaffId ? { ownerStaffId: updated.ownerStaffId } : {}),
+  }, actorUserId));
+  return updated;
 }

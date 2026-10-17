@@ -163,6 +163,13 @@ async function run() {
   await expectAllow("reactivated org regains capability", async () => {
     if (!(await hasEntitlement({ organizationId: ID.orgA, key: "advanced_pharmacy" }))) throw new Error("still off");
   });
+  {
+    // Step 9: each transition emits SubscriptionStatusChanged in its transaction; the refused ones emit nothing.
+    const subA = await prisma.organizationSubscription.findUniqueOrThrow({ where: { organizationId: ID.orgA } });
+    const moves = (await prisma.domainEventOutbox.findMany({ where: { eventType: "SubscriptionStatusChanged", aggregateId: subA.id }, orderBy: { seq: "asc" } }))
+      .map((e) => { const p = e.payload as { from: string; to: string }; return `${p.from}>${p.to}`; });
+    if (moves.join() === "ACTIVE>SUSPENDED,SUSPENDED>ACTIVE") ok("SubscriptionStatusChanged per transition (ACTIVE>SUSPENDED, SUSPENDED>ACTIVE)"); else bad("subscription events", moves.join());
+  }
 
   console.log("[lifecycle & trial]");
   {

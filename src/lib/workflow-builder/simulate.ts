@@ -87,6 +87,11 @@ export async function simulateWorkflow(input: SimulateInput): Promise<Simulation
       continue;
     }
     if (s.type === "TIMER") { steps.push({ key: s.key, type: s.type, outcome: "WOULD_EXECUTE", detail: `wait ${s.dueAfterSeconds}s, then resume` }); continue; }
+    if (s.type === "ESCALATE") {
+      const how = [s.raisePriorityTo && `raise to ${s.raisePriorityTo}`, s.reassignToRole && `reassign to ${s.reassignToRole}`].filter(Boolean).join(", ") || "no change";
+      steps.push({ key: s.key, type: s.type, outcome: "WOULD_EXECUTE", detail: `after ${s.afterSeconds}s, if the ${s.target.taskType} task is still open: ${how} (no new task)` });
+      continue;
+    }
     // ACTION
     steps.push({ key: s.key, type: s.type, outcome: "WOULD_EXECUTE", detail: `action ${s.action.name} (not executed in simulation)` });
   }

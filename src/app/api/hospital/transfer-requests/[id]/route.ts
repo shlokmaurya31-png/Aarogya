@@ -40,7 +40,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         if (!bedId) throw new BadRequestError("bedId is required.");
         return { request: await reserveBedForTransfer(id, bedId, session.userId) };
       }
-      if (action === "markInTransit") return { request: await markPatientInTransit(id) };
+      if (action === "markInTransit") return { request: await markPatientInTransit(id, session.userId) };
       if (action === "complete") {
         const { request: updated, transfer } = await completeTransferRequest(id, session.userId);
         return { request: updated, transfer };

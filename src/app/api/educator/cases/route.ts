@@ -1,3 +1,4 @@
+import { createClinicalCaseDraft } from "@/lib/student/cases";
 import { NextRequest } from "next/server";
 import { Acuity, CaseSourceType, Difficulty } from "@prisma/client";
 import { z } from "zod";
@@ -87,8 +88,7 @@ export async function POST(req: NextRequest) {
     assertSyntheticCaseIsClean(content);
 
     const slug = `EDU-CUSTOM-${Date.now().toString(36).toUpperCase()}`;
-    const created = await prisma.clinicalCase.create({
-      data: {
+    const created = await createClinicalCaseDraft({
         slug,
         title: sanitizedTitle,
         specialty: input.specialty,
@@ -106,8 +106,6 @@ export async function POST(req: NextRequest) {
         rubric: DEFAULT_RUBRIC as object,
         viva: [] as object,
         authorId: session.userId,
-        isPublished: false,
-      },
     });
 
     await recordAuditEvent("educator.case.created", session.userId, { caseId: created.id, slug });

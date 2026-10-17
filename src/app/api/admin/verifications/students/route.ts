@@ -1,3 +1,4 @@
+import { reviewStudentVerification } from "@/lib/student/accounts";
 import { NextRequest } from "next/server";
 import { VerificationStatus } from "@prisma/client";
 import { prisma } from "@/lib/db";
@@ -37,11 +38,8 @@ export async function PATCH(req: NextRequest) {
     const action = body?.action as "approve" | "reject" | undefined;
     if (!id || !action) throw new BadRequestError("id and action are required.");
 
-    const status = action === "approve" ? VerificationStatus.VERIFIED : VerificationStatus.REJECTED;
-    const profile = await prisma.studentProfile.update({
-      where: { id },
-      data: { verificationStatus: status, verifiedAt: status === VerificationStatus.VERIFIED ? new Date() : null },
-    });
+    const status = await reviewStudentVerification({ studentProfileId: id, approve: action === "approve" });
+    const profile = { verificationStatus: status };
 
     await recordAuditEvent(
       status === VerificationStatus.VERIFIED ? "student.verification.approved" : "student.verification.rejected",

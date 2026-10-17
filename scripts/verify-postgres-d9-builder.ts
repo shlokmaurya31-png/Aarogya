@@ -35,7 +35,9 @@ const KP = "d9gate";
 
 async function cleanup() {
   await prisma.workflowTimer.deleteMany({ where: { instance: { definition: { key: { startsWith: KP } } } } });
-  await prisma.workflowTask.deleteMany({ where: { instance: { definition: { key: { startsWith: KP } } } } });
+  await prisma.task.deleteMany({ where: { workflowInstance: { definition: { key: { startsWith: KP } } } } });
+  // Tasks the seeded platform workflows open for this gate's events (D6: Task rows now reference the facility).
+  await prisma.task.deleteMany({ where: { OR: [{ organizationId: { in: [ID.orgA, ID.orgB] } }, { facility: { organizationId: { in: [ID.orgA, ID.orgB] } } }] } });
   await prisma.workflowStep.deleteMany({ where: { instance: { definition: { key: { startsWith: KP } } } } });
   await prisma.workflowInstance.deleteMany({ where: { definition: { key: { startsWith: KP } } } });
   await prisma.workflowVersion.deleteMany({ where: { definition: { key: { startsWith: KP } } } });
@@ -47,6 +49,9 @@ async function cleanup() {
   const userIds = Object.values(ID);
   await prisma.auditEvent.deleteMany({ where: { organizationId: { in: [ID.orgA, ID.orgB] } } });
   await prisma.organizationMembership.deleteMany({ where: { OR: [{ organizationId: { in: [ID.orgA, ID.orgB] } }, { userId: { in: userIds } }] } });
+  await prisma.domainEventOutbox.deleteMany({ where: { organizationId: { in: [ID.orgA, ID.orgB] } } });
+  await prisma.encounter.deleteMany({ where: { facilityId: { in: [ID.facA, ID.facB] } } });
+  await prisma.patient.deleteMany({ where: { facilityId: { in: [ID.facA, ID.facB] } } });
   await prisma.facility.deleteMany({ where: { organizationId: { in: [ID.orgA, ID.orgB] } } });
   await prisma.organization.deleteMany({ where: { id: { in: [ID.orgA, ID.orgB] } } });
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });
@@ -57,7 +62,9 @@ async function seed() {
   for (const [org, fac, admin] of [[ID.orgA, ID.facA, ID.uAdminA], [ID.orgB, ID.facB, ID.uAdminB]] as const) {
     await prisma.organization.create({ data: { id: org, slug: org, name: org, status: "ACTIVE" } });
     await prisma.facility.create({ data: { id: fac, slug: fac, name: fac, organizationId: org, status: "ACTIVE" } });
-    await prisma.organizationMembership.create({ data: { organizationId: org, userId: admin, isAdmin: true, status: "ACTIVE" } });
+    await prisma.organizationMembership.create({ data: { organizationId: org, userId: admin, isAdmin: true, status: "ACTIVE" } });    // D6: a workflow task about a patient must name a real patient of its facility.
+    await prisma.patient.create({ data: { id: `${fac}-pt`, uhid: `${fac}-pt`, facilityId: fac, fullName: "Workflow Gate Patient", sex: "F" } });
+    await prisma.encounter.create({ data: { id: `${fac}-enc`, facilityId: fac, patientId: `${fac}-pt`, type: "IPD" } });
   }
 }
 async function fire(type: string, opts: { organizationId: string; facilityId?: string | null; aggregateId: string; payload: Record<string, unknown> }): Promise<DomainEventEnvelope> {
@@ -89,13 +96,13 @@ async function run() {
     const draft = await saveDraft(A, { organizationId: ID.orgA, facilityId: ID.facA, key: `${KP}-icu`, name: "ICU admission", document: icuDoc() });
     const def = await publishDraft(A, draft.id);
     ok(`builder draft published to a D7 definition (${def.key})`);
-    const env = await fire("AdmissionCreated", { organizationId: ID.orgA, facilityId: ID.facA, aggregateId: "d9-adm-a", payload: { admissionId: "d9-adm-a", encounterId: "e", patientId: "p" } });
+    const env = await fire("AdmissionCreated", { organizationId: ID.orgA, facilityId: ID.facA, aggregateId: "d9-adm-a", payload: { admissionId: "d9-adm-a", encounterId: `${ID.facA}-enc`, patientId: `${ID.facA}-pt` } });
     await startWorkflowsForEvent(env);
     const inst = await prisma.workflowInstance.findFirst({ where: { workflowDefinitionId: def.id, triggerEventId: env.eventId } });
-    const tasks = inst ? await prisma.workflowTask.count({ where: { workflowInstanceId: inst.id } }) : 0;
+    const tasks = inst ? await prisma.task.count({ where: { workflowInstanceId: inst.id } }) : 0;
     if (inst?.status === "COMPLETED" && tasks === 3) ok("D7 executes the builder-authored workflow → 3 tasks created, COMPLETED"); else bad("E2E execute", `status=${inst?.status} tasks=${tasks}`);
     // Org isolation: org B's event must NOT trigger org A's org-scoped workflow.
-    const envB = await fire("AdmissionCreated", { organizationId: ID.orgB, facilityId: ID.facB, aggregateId: "d9-adm-b", payload: { admissionId: "d9-adm-b", encounterId: "e", patientId: "p" } });
+    const envB = await fire("AdmissionCreated", { organizationId: ID.orgB, facilityId: ID.facB, aggregateId: "d9-adm-b", payload: { admissionId: "d9-adm-b", encounterId: `${ID.facB}-enc`, patientId: `${ID.facB}-pt` } });
     await startWorkflowsForEvent(envB);
     const leaked = await prisma.workflowInstance.count({ where: { workflowDefinitionId: def.id, triggerEventId: envB.eventId } });
     if (leaked === 0) ok("org-scoped workflow does not trigger for another org's event"); else bad("org isolation", `leaked=${leaked}`);
@@ -159,12 +166,12 @@ async function run() {
   // ── Simulation is side-effect free (§40) ────────────────────────────────────
   console.log("[simulation safety]");
   {
-    const beforeTasks = await prisma.workflowTask.count();
+    const beforeTasks = await prisma.task.count({ where: { source: "WORKFLOW" } });
     const beforeInst = await prisma.workflowInstance.count();
     const beforeEvents = await prisma.domainEventOutbox.count();
     const cfg = compileBuilderDocument(parseBuilderDocument(labDoc("sim")));
     const res = await simulateWorkflow({ config: cfg, synthetic: { payload: { critical: true }, organizationId: ID.orgA }, workflowKey: `${KP}-lab-a` });
-    const afterTasks = await prisma.workflowTask.count();
+    const afterTasks = await prisma.task.count({ where: { source: "WORKFLOW" } });
     const afterInst = await prisma.workflowInstance.count();
     const afterEvents = await prisma.domainEventOutbox.count();
     if (res.triggerMatched && res.steps[0].outcome === "WOULD_EXECUTE" && afterTasks === beforeTasks && afterInst === beforeInst && afterEvents === beforeEvents) ok("simulation creates no tasks/instances/events (side-effect free) and resolves SLA via D8"); else bad("simulation safety", `tasks ${beforeTasks}->${afterTasks} inst ${beforeInst}->${afterInst} events ${beforeEvents}->${afterEvents}`);
@@ -262,9 +269,9 @@ async function concurrency(A: ActorMemberships) {
   // Race 7 — concurrent simulations produce no production side effects.
   {
     const cfg = compileBuilderDocument(parseBuilderDocument(labDoc()));
-    const beforeTasks = await prisma.workflowTask.count();
+    const beforeTasks = await prisma.task.count({ where: { source: "WORKFLOW" } });
     await Promise.all(Array.from({ length: 5 }, () => simulateWorkflow({ config: cfg, synthetic: { payload: { critical: true }, organizationId: ID.orgA } })));
-    const afterTasks = await prisma.workflowTask.count();
+    const afterTasks = await prisma.task.count({ where: { source: "WORKFLOW" } });
     if (afterTasks === beforeTasks) ok("Race 7: concurrent simulations create no tasks (no production side effects)"); else bad("Race 7", `tasks ${beforeTasks}->${afterTasks}`);
   }
   // Race 3 & 4 — publish vs edit/retire converge deterministically (D7-guarded).

@@ -624,6 +624,10 @@ async function main() {
       retried.idempotencyKey === keyBefore);
     const count = await prisma.nhcxExchange.count({ where: { claimId: claim.id } });
     report("A retry never creates a second exchange", count === 1, `${count} exchanges`);
+    const submitted = await prisma.domainEventOutbox.findMany({ where: { eventType: "ClaimSubmitted", aggregateId: claim.id } });
+    const sp = submitted[0]?.payload as { channel?: string; exchangeId?: string; submissionId?: string } | undefined;
+    report("Dispatch emits ClaimSubmitted (NHCX) once, with the exchange; the retry emits none",
+      submitted.length === 1 && sp?.channel === "NHCX" && sp.exchangeId === d.exchange.id && sp.submissionId === built.submission.id, `${submitted.length} events`);
     await mustReject("Facility B cannot retry a facility A exchange",
       () => retryExchange({ exchangeId: d.exchange.id, facilityId: facB.id, actor: B }), /not found/i);
   }
@@ -673,6 +677,11 @@ async function main() {
     await mustReject("A query cannot skip straight from RESPONSE_SUBMITTED to CLOSED",
       () => transitionQuery({ facilityId: facA.id, queryId: q.id, to: "CLOSED" as never, byUserId: adminA.userId }),
       /illegal query transition/i);
+    const qEvents = await prisma.domainEventOutbox.findMany({ where: { eventType: "ClaimQueryStatusChanged", aggregateId: q.id }, orderBy: { seq: "asc" } });
+    const qMoves = qEvents.map((e) => { const p = e.payload as { from: string | null; to: string }; return `${p.from}>${p.to}`; });
+    report("ClaimQueryStatusChanged per transition (null>RECEIVED first), never the question or the answer",
+      qMoves[0] === "null>RECEIVED" && (!foreignDoc || qMoves[1] === "RECEIVED>RESPONSE_SUBMITTED")
+        && !/script|discharge summary|Attached/i.test(JSON.stringify(qEvents.map((e) => e.payload))), qMoves.join(" "));
   }
 
   // ══ 10. SETTLEMENT AND RECONCILIATION ════════════════════════════════════
@@ -718,6 +727,12 @@ async function main() {
       settlements.length === 1, `${settlements.length} rows`);
     report("Exactly one concurrent notification is treated as new",
       created === 1, `${created} treated as new`);
+    const settled = (stage: string) => prisma.domainEventOutbox.findMany({ where: { eventType: "ClaimSettled", aggregateId: claim.id } })
+      .then((es) => es.filter((e) => (e.payload as { stage?: string }).stage === stage));
+    const notified = await settled("NOTIFIED");
+    report("ClaimSettled (stage NOTIFIED) once for the eight concurrent notifications, with the settlement",
+      notified.length === 1 && (notified[0].payload as { settlementId?: string; settledAmountMinor?: number }).settlementId === settlements[0].id
+        && (notified[0].payload as { settledAmountMinor?: number }).settledAmountMinor === 450_000, `${notified.length} events`);
 
     const paymentsAfter = await prisma.payment.count({ where: { facilityId: facA.id } });
     report("Recording a settlement creates NO canonical Payment — money is not moved",
@@ -739,6 +754,11 @@ async function main() {
         !!ex && ex.severity === "CRITICAL", ex ? ex.severity : "none");
       report("The stored settlement amount is not overwritten by the conflicting notification",
         (await prisma.claimSettlement.findUniqueOrThrow({ where: { id: settlements[0].id } })).settledAmountMinor === 450_000);
+      const exEvents = ex ? await prisma.domainEventOutbox.findMany({ where: { eventType: "ClaimReconciliationStatusChanged", aggregateId: ex.id } }) : [];
+      const exp = exEvents[0]?.payload as { from?: string | null; to?: string; exceptionType?: string; severity?: string; varianceMinor?: number } | undefined;
+      report("…ClaimReconciliationStatusChanged null>OPEN (DUPLICATE_SETTLEMENT, CRITICAL, variance); no second ClaimSettled",
+        exEvents.length === 1 && exp?.from === null && exp.to === "OPEN" && exp.exceptionType === "DUPLICATE_SETTLEMENT" && exp.severity === "CRITICAL"
+          && exp.varianceMinor === 999_999 - 450_000 && (await settled("NOTIFIED")).length === 1 && !JSON.stringify(exp).includes("notified again"));
     }
 
     {
@@ -767,6 +787,9 @@ async function main() {
       await mustReject("A RECONCILED settlement cannot be reconciled again",
         () => reconcileSettlement({ facilityId: facA.id, settlementId: settlements[0].id, byUserId: adminA.userId }),
         /cannot be reconciled/i);
+      const reconciled = await settled("RECONCILED");
+      report("ClaimSettled (stage RECONCILED) exactly once for the five concurrent reconciliations",
+        reconciled.length === 1 && (reconciled[0].payload as { settlementId?: string }).settlementId === settlements[0].id, `${reconciled.length} events`);
     }
 
     {
@@ -798,6 +821,11 @@ async function main() {
       });
       report("A resolved exception records who resolved it and why",
         resolved.status === "RESOLVED" && !!resolved.resolutionNote && resolved.resolvedByUserId === adminA.userId);
+      const resolvedEvents = (await prisma.domainEventOutbox.findMany({ where: { eventType: "ClaimReconciliationStatusChanged", aggregateId: ex.id } }))
+        .map((e) => e.payload as { from: string | null; to: string });
+      report("…ClaimReconciliationStatusChanged OPEN>RESOLVED, without the note; the refused attempts emit nothing",
+        resolvedEvents.filter((p) => p.from === "OPEN").length === 1 && resolvedEvents.some((p) => p.from === "OPEN" && p.to === "RESOLVED")
+          && !JSON.stringify(resolvedEvents).includes("payer advice"));
       await mustReject("A RESOLVED exception is terminal",
         () => resolveException({
           facilityId: facA.id, exceptionId: ex.id, to: "OPEN",

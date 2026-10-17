@@ -25,6 +25,18 @@ function report(name: string, ok: boolean, detail?: string) {
 /** "Model.relation" pairs whose parent may sit in another facility, by design. */
 const CROSS_FACILITY: Record<string, string> = {};
 
+/**
+ * Rows of a relation that may sit in another facility by design, narrowed by a
+ * SQL predicate on the child ("c"): every other row of the relation is still
+ * checked.
+ */
+const CROSS_FACILITY_ROWS: Record<string, { where: string; reason: string }> = {
+  "AuditEvent.patient": {
+    where: `c."type" LIKE 'patient.access.%'`,
+    reason: "a patient-access audit records the facility where the access occurred (the redeeming clinician's), which may differ from the patient's (batch 6, fix 3)",
+  },
+};
+
 async function main() {
   const models = Prisma.dmmf.datamodel.models;
   const hasFacility = new Set(models.filter((m) => m.fields.some((f) => f.name === "facilityId" && f.kind === "scalar")).map((m) => m.name));
@@ -49,9 +61,10 @@ async function main() {
     if (CROSS_FACILITY[`${p.child}.${p.relation}`]) continue;
     const c = dbName(byName.get(p.child)!);
     const t = dbName(byName.get(p.parent)!);
+    const allowed = CROSS_FACILITY_ROWS[`${p.child}.${p.relation}`];
     const rows = await prisma.$queryRawUnsafe<{ total: bigint; bad: bigint }[]>(
       `SELECT count(*) AS total,
-              count(*) FILTER (WHERE c."facilityId" IS NOT NULL AND t."facilityId" IS NOT NULL AND c."facilityId" <> t."facilityId") AS bad
+              count(*) FILTER (WHERE c."facilityId" IS NOT NULL AND t."facilityId" IS NOT NULL AND c."facilityId" <> t."facilityId"${allowed ? ` AND NOT (${allowed.where})` : ""}) AS bad
          FROM "${c}" c JOIN "${t}" t ON t."${p.ref}" = c."${p.fk}"`
     );
     checkedRows += Number(rows[0].total);

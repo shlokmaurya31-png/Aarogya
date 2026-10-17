@@ -20,13 +20,15 @@
     "db:studio": "prisma studio",
     "test": "vitest run",
     "verify:all": "tsx scripts/verify-all.ts",
+    "docs:events": "tsx scripts/generate-event-catalogue.ts",
     "staging:migrate": "tsx scripts/staging.ts migrate",
     "staging:seed": "tsx scripts/staging.ts seed",
     "staging:check": "tsx scripts/staging.ts check",
     "staging:document": "tsx scripts/staging.ts document",
     "storage:init": "tsx scripts/storage.ts init",
     "storage:check": "tsx scripts/storage.ts check",
-    "verification:migrate": "tsx scripts/migrate-verification-uploads.ts"
+    "verification:migrate": "tsx scripts/migrate-verification-uploads.ts",
+    "worker": "tsx scripts/worker.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

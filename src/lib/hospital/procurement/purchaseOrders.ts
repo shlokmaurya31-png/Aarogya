@@ -3,6 +3,7 @@ import { BadRequestError } from "@/lib/auth/rbac";
 import { assertItemInFacility } from "@/lib/hospital/inventory/facilityScope";
 import { nextPurchaseOrderSequence, formatSequenceNumber } from "./sequence";
 import { computeLineTotal, computePurchaseOrderTotals } from "./pricing";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 type Tx = Prisma.TransactionClient;
 
@@ -66,6 +67,16 @@ export async function addPurchaseOrderLine(
 }
 
 /** Assigns orderNumber atomically via the guarded sequence CAS, inside the same guarded status transition. */
+/** PurchaseOrderStatusChanged (spine step 9a), in the transition's transaction. */
+async function emitPurchaseOrderStatus(tx: Tx, purchaseOrderId: string, from: string, actorUserId: string | null) {
+  const po = await tx.purchaseOrder.findUniqueOrThrow({ where: { id: purchaseOrderId } });
+  await emitFacilityEvent(tx, {
+    type: "PurchaseOrderStatusChanged", aggregateId: po.id, facilityId: po.facilityId, actorUserId,
+    payload: { purchaseOrderId: po.id, supplierId: po.supplierId, from, to: po.status, totalMinor: po.totalMinor, currency: po.currency },
+  });
+  return po;
+}
+
 export async function submitForApproval(tx: Tx, purchaseOrderId: string) {
   const po = await tx.purchaseOrder.findUniqueOrThrow({ where: { id: purchaseOrderId }, include: { lines: true } });
   if (po.lines.length === 0) throw new BadRequestError("Cannot submit a purchase order with no lines.");
@@ -80,7 +91,7 @@ export async function submitForApproval(tx: Tx, purchaseOrderId: string) {
 }
 
 /** Guarded status CAS closes the PO-approval race (#7). Same-actor guard prevents silent self-approval. */
-export async function approvePurchaseOrder(tx: Tx, purchaseOrderId: string, input: { approvedByStaffId: string }) {
+export async function approvePurchaseOrder(tx: Tx, purchaseOrderId: string, input: { approvedByStaffId: string; actorUserId?: string | null }) {
   const po = await tx.purchaseOrder.findUniqueOrThrow({ where: { id: purchaseOrderId } });
   if (po.createdByStaffId === input.approvedByStaffId) throw new SameActorApprovalError();
 
@@ -89,7 +100,7 @@ export async function approvePurchaseOrder(tx: Tx, purchaseOrderId: string, inpu
     data: { status: "APPROVED", approvedByStaffId: input.approvedByStaffId, approvedAt: new Date() },
   });
   if (result.count !== 1) throw new PurchaseOrderConcurrencyError(po.status);
-  return tx.purchaseOrder.findUniqueOrThrow({ where: { id: purchaseOrderId } });
+  return emitPurchaseOrderStatus(tx, purchaseOrderId, "PENDING_APPROVAL", input.actorUserId ?? null);
 }
 
 export async function markSent(tx: Tx, purchaseOrderId: string) {
@@ -98,20 +109,20 @@ export async function markSent(tx: Tx, purchaseOrderId: string) {
   return tx.purchaseOrder.findUniqueOrThrow({ where: { id: purchaseOrderId } });
 }
 
-export async function cancelPurchaseOrder(tx: Tx, purchaseOrderId: string, input: { reason: string }) {
+export async function cancelPurchaseOrder(tx: Tx, purchaseOrderId: string, input: { reason: string; actorUserId?: string | null }) {
   const po = await tx.purchaseOrder.findUniqueOrThrow({ where: { id: purchaseOrderId } });
   if (!["DRAFT", "PENDING_APPROVAL", "APPROVED", "SENT"].includes(po.status)) throw new PurchaseOrderConcurrencyError(po.status);
   const result = await tx.purchaseOrder.updateMany({ where: { id: purchaseOrderId, status: po.status }, data: { status: "CANCELLED", cancelledAt: new Date(), cancelledReason: input.reason } });
   if (result.count !== 1) throw new PurchaseOrderConcurrencyError(po.status);
-  return tx.purchaseOrder.findUniqueOrThrow({ where: { id: purchaseOrderId } });
+  return emitPurchaseOrderStatus(tx, purchaseOrderId, po.status, input.actorUserId ?? null);
 }
 
-export async function closePurchaseOrder(tx: Tx, purchaseOrderId: string) {
+export async function closePurchaseOrder(tx: Tx, purchaseOrderId: string, input: { actorUserId?: string | null } = {}) {
   const po = await tx.purchaseOrder.findUniqueOrThrow({ where: { id: purchaseOrderId } });
   if (!["RECEIVED", "PARTIALLY_RECEIVED"].includes(po.status)) throw new PurchaseOrderConcurrencyError(po.status);
   const result = await tx.purchaseOrder.updateMany({ where: { id: purchaseOrderId, status: po.status }, data: { status: "CLOSED", closedAt: new Date() } });
   if (result.count !== 1) throw new PurchaseOrderConcurrencyError(po.status);
-  return tx.purchaseOrder.findUniqueOrThrow({ where: { id: purchaseOrderId } });
+  return emitPurchaseOrderStatus(tx, purchaseOrderId, po.status, input.actorUserId ?? null);
 }
 
 /** Called after each goods-receipt approval — flips SENT/APPROVED -> PARTIALLY_RECEIVED -> RECEIVED purely from the lines' own receivedQuantity totals, never a separately-set flag. */

@@ -4,8 +4,55 @@ import { BadRequestError } from "@/lib/auth/rbac";
 import { computeLineNetAmountMinor } from "./money";
 import { getOrCreateBillingAccount } from "./billingAccount";
 import { priceFor } from "./pricing";
+import { createTask } from "@/lib/hospital/task";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 type Tx = Prisma.TransactionClient;
+
+/** Issued (or paid) invoice statuses: a charge posted after one exists is late (batch 5, decision 2). */
+/** The charge categories (the billing screen offers exactly these); ChargePosted carries the code. */
+export const CHARGE_CATEGORIES = ["CONSULTATION", "BED", "PROCEDURE", "LAB", "IMAGING", "PHARMACY", "NURSING", "PACKAGE", "OTHER"] as const;
+
+function assertChargeCategory(category: string) {
+  if (!(CHARGE_CATEGORIES as readonly string[]).includes(category)) throw new BadRequestError(`Unknown charge category: use one of ${CHARGE_CATEGORIES.join(", ")}.`);
+}
+
+/** The events charge-capture charges from (src/lib/consumers/chargeCapture.ts); invoice drafting waits for them. */
+export const CHARGE_CAPTURE_TRIGGERS = ["ProcedureCompleted", "SurgeryItemUsed", "BloodIssued", "IcuAdmitted", "EncounterOpened", "PatientTriaged"] as const;
+
+const ISSUED_INVOICE_STATUSES = ["ISSUED", "PARTIALLY_PAID", "PAID"] as const;
+
+async function encounterIsInvoiced(tx: Tx, encounterId: string): Promise<boolean> {
+  return (await tx.invoice.count({ where: { encounterId, documentType: "INVOICE", status: { in: [...ISSUED_INVOICE_STATUSES] } } })) > 0;
+}
+
+/**
+ * A late charge is recorded like any other (issued invoices are never edited)
+ * and raises one billing exception task, so billing collects it on a
+ * supplementary invoice or debit note linked to the original.
+ */
+async function raiseLateChargeTask(tx: Tx, charge: { id: string; facilityId: string; patientId: string; encounterId: string }, actorUserId?: string | null) {
+  await createTask(tx, {
+    facilityId: charge.facilityId, patientId: charge.patientId, encounterId: charge.encounterId,
+    type: "LATE_CHARGE", title: "A charge was posted after the invoice was issued: collect it on a supplementary invoice",
+    priority: "URGENT", assignedRole: "BILLING_STAFF", source: "EVENT", idempotencyKey: `LATE_CHARGE:${charge.id}`,
+  }, actorUserId);
+}
+
+/** ChargePosted (spine §9 step 9), in the charge's own transaction, from every charge path. */
+async function emitChargePosted(tx: Tx, charge: {
+  id: string; encounterId: string; patientId: string; facilityId: string; category: string; sourceType: string | null; sourceId: string | null;
+  netAmountMinor: number; currency: string; pricingStatus: string; isLate: boolean; postedByUserId: string | null;
+}) {
+  await emitFacilityEvent(tx, {
+    type: "ChargePosted", aggregateId: charge.id, facilityId: charge.facilityId, encounterId: charge.encounterId, actorUserId: charge.postedByUserId,
+    payload: {
+      chargeId: charge.id, encounterId: charge.encounterId, patientId: charge.patientId, category: charge.category,
+      ...(charge.sourceType ? { sourceType: charge.sourceType } : {}), ...(charge.sourceId ? { sourceId: charge.sourceId } : {}),
+      netAmountMinor: charge.netAmountMinor, currency: charge.currency, pricingStatus: charge.pricingStatus, isLate: charge.isLate,
+    },
+  });
+}
 
 export class ChargeAlreadyInvoicedError extends BadRequestError {
   constructor() {
@@ -18,7 +65,7 @@ interface CreateChargeInput {
   patientId: string;
   facilityId: string;
   description: string;
-  category: string; // CONSULTATION | BED | PROCEDURE | LAB | IMAGING | PHARMACY | NURSING | PACKAGE | OTHER
+  category: string; // one of CHARGE_CATEGORIES
   chargeCode?: string | null;
   quantity?: number;
   unitPriceMinor: number;
@@ -27,6 +74,8 @@ interface CreateChargeInput {
   sourceType?: string;
   sourceId?: string;
   postedByUserId?: string | null;
+  /** NEEDS_PRICING: posted with no tariff (amount 0); billing prices or waives it before invoicing. */
+  pricingStatus?: "PRICED" | "NEEDS_PRICING";
 }
 
 /**
@@ -37,11 +86,13 @@ interface CreateChargeInput {
  * sourceId only.
  */
 export async function createCharge(tx: Tx, input: CreateChargeInput) {
+  assertChargeCategory(input.category);
   const quantity = input.quantity ?? 1;
   const discountMinor = input.discountMinor ?? 0;
   const netAmountMinor = computeLineNetAmountMinor(quantity, input.unitPriceMinor, discountMinor);
 
   await getOrCreateBillingAccount(tx, { encounterId: input.encounterId, patientId: input.patientId, facilityId: input.facilityId });
+  const isLate = await encounterIsInvoiced(tx, input.encounterId);
 
   const charge = await tx.charge.create({
     data: {
@@ -59,8 +110,11 @@ export async function createCharge(tx: Tx, input: CreateChargeInput) {
       sourceType: input.sourceType,
       sourceId: input.sourceId,
       postedByUserId: input.postedByUserId ?? null,
+      isLate,
     },
   });
+  await emitChargePosted(tx, charge);
+  if (isLate) await raiseLateChargeTask(tx, charge, input.postedByUserId);
 
   return { charge };
 }
@@ -81,11 +135,13 @@ export async function createChargeIfNotExists(
 ) {
   const existing = await tx.charge.findFirst({ where: { sourceType: input.sourceType, sourceId: input.sourceId } });
   if (existing) return { charge: existing, alreadyExisted: true as const };
+  assertChargeCategory(input.category);
 
   const quantity = input.quantity ?? 1;
   const discountMinor = input.discountMinor ?? 0;
   const netAmountMinor = computeLineNetAmountMinor(quantity, input.unitPriceMinor, discountMinor);
   await getOrCreateBillingAccount(tx, { encounterId: input.encounterId, patientId: input.patientId, facilityId: input.facilityId });
+  const isLate = await encounterIsInvoiced(tx, input.encounterId);
 
   // Raw INSERT ... ON CONFLICT DO NOTHING, not create-then-catch-P2002 and
   // not Prisma's createMany({skipDuplicates}) — the former aborts the
@@ -98,11 +154,15 @@ export async function createChargeIfNotExists(
   // returned row count tells us who won — verified against both engines
   // under genuine concurrent load (see scripts/verify-postgres-billing-concurrency.ts).
   const rowsInserted = await tx.$executeRaw`
-    INSERT INTO "Charge" (id, "encounterId", "patientId", "facilityId", description, category, "chargeCode", quantity, "unitPriceMinor", "discountMinor", "netAmountMinor", currency, "sourceType", "sourceId", "postedByUserId")
-    VALUES (${randomUUID()}, ${input.encounterId}, ${input.patientId}, ${input.facilityId}, ${input.description}, ${input.category}, ${input.chargeCode ?? null}, ${quantity}, ${input.unitPriceMinor}, ${discountMinor}, ${netAmountMinor}, ${input.currency ?? "INR"}, ${input.sourceType}, ${input.sourceId}, ${input.postedByUserId ?? null})
+    INSERT INTO "Charge" (id, "encounterId", "patientId", "facilityId", description, category, "chargeCode", quantity, "unitPriceMinor", "discountMinor", "netAmountMinor", currency, "sourceType", "sourceId", "postedByUserId", "pricingStatus", "isLate")
+    VALUES (${randomUUID()}, ${input.encounterId}, ${input.patientId}, ${input.facilityId}, ${input.description}, ${input.category}, ${input.chargeCode ?? null}, ${quantity}, ${input.unitPriceMinor}, ${discountMinor}, ${netAmountMinor}, ${input.currency ?? "INR"}, ${input.sourceType}, ${input.sourceId}, ${input.postedByUserId ?? null}, ${input.pricingStatus ?? "PRICED"}::"ChargePricingStatus", ${isLate})
     ON CONFLICT ("sourceType", "sourceId") DO NOTHING
   `;
   const charge = await tx.charge.findFirstOrThrow({ where: { sourceType: input.sourceType, sourceId: input.sourceId } });
+  if (rowsInserted > 0) {
+    await emitChargePosted(tx, charge);
+    if (charge.isLate) await raiseLateChargeTask(tx, charge, input.postedByUserId);
+  }
 
   return { charge, alreadyExisted: rowsInserted === 0 };
 }
@@ -138,5 +198,9 @@ export async function voidCharge(tx: Tx, chargeId: string, input: { reason: stri
     data: { status: "VOIDED", voidedAt: new Date(), voidedByUserId: input.byUserId, voidReason: input.reason },
   });
   if (result.count !== 1) throw new BadRequestError("Charge was already voided or is no longer in the expected state.");
+  await emitFacilityEvent(tx, {
+    type: "ChargeVoided", aggregateId: charge.id, facilityId: charge.facilityId, encounterId: charge.encounterId, actorUserId: input.byUserId,
+    payload: { chargeId: charge.id, encounterId: charge.encounterId, patientId: charge.patientId, netAmountMinor: charge.netAmountMinor, currency: charge.currency },
+  });
   return tx.charge.findUniqueOrThrow({ where: { id: chargeId } });
 }

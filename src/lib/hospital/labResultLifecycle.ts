@@ -1,11 +1,20 @@
 import { Prisma, LabResultType } from "@prisma/client";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
-import { emitDomainEvent } from "@/lib/events/emit";
-import { facilityOrganizationId } from "@/lib/events/tenant";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 import { findApplicableReferenceRange, computeAbnormalFlag } from "./labCatalog";
 import { syncOrderStatus } from "./orderEnvelope";
 
 type Tx = Prisma.TransactionClient;
+
+/** The order's patient, encounter and facility: the tenant and correlation of a result's events. */
+function resultContext(tx: Tx, labOrderId: string) {
+  return tx.labOrder.findUniqueOrThrow({ where: { id: labOrderId }, select: { patientId: true, encounterId: true, encounter: { select: { facilityId: true } } } });
+}
+
+/** Whole minutes from release (verification, else entry) to acknowledgement. */
+export function minutesBetween(from: Date, to: Date): number {
+  return Math.max(0, Math.floor((to.getTime() - from.getTime()) / 60_000));
+}
 
 export class ResultConcurrencyError extends BadRequestError {
   constructor(action: string) {
@@ -114,17 +123,29 @@ export async function enterResult(tx: Tx, input: EnterResultInput) {
  * imagingReportLifecycle.ts's acknowledgeReport, which already used this
  * guarded idiom.
  */
-export async function acknowledgeResult(tx: Tx, resultId: string, acknowledgedByStaffId: string) {
+export async function acknowledgeResult(tx: Tx, resultId: string, acknowledgedByStaffId: string, byUserId?: string) {
   const result = await tx.labResult.updateMany({
     where: { id: resultId, isCritical: true, acknowledgedAt: null },
     data: { acknowledgedByStaffId, acknowledgedAt: new Date() },
   });
   if (result.count !== 1) throw new ResultConcurrencyError("acknowledged");
-  return tx.labResult.findUniqueOrThrow({ where: { id: resultId } });
+  const acked = await tx.labResult.findUniqueOrThrow({ where: { id: resultId } });
+  // CriticalResultAcknowledged (spine §1.2 #57): only critical results reach
+  // here (guarded above). Ordered behind the result's release (same aggregate).
+  const ctx = await resultContext(tx, acked.labOrderId);
+  await emitFacilityEvent(tx, {
+    type: "CriticalResultAcknowledged", aggregateId: acked.id, aggregateType: "LAB_RESULT", facilityId: ctx.encounter.facilityId,
+    actorUserId: byUserId, encounterId: ctx.encounterId,
+    payload: {
+      resultKind: "LAB", resultId: acked.id, patientId: ctx.patientId, acknowledgedByStaffId,
+      minutesToAcknowledge: minutesBetween(acked.verifiedAt ?? acked.resultedAt, acked.acknowledgedAt!),
+    },
+  });
+  return acked;
 }
 
 /** Guarded — a result can only move ENTERED -> VERIFIED once; concurrent double-verify is rejected, not silently accepted twice. */
-export async function verifyResult(tx: Tx, resultId: string, verifiedByStaffId: string) {
+export async function verifyResult(tx: Tx, resultId: string, verifiedByStaffId: string, byUserId?: string) {
   const updateResult = await tx.labResult.updateMany({
     where: { id: resultId, status: "ENTERED", isCurrent: true },
     data: { status: "VERIFIED", verifiedByStaffId, verifiedAt: new Date() },
@@ -132,17 +153,13 @@ export async function verifyResult(tx: Tx, resultId: string, verifiedByStaffId: 
   if (updateResult.count !== 1) throw new ResultConcurrencyError("verified");
   const verified = await tx.labResult.findUniqueOrThrow({ where: { id: resultId } });
   // Phase D6 — verification is the "released" moment: emit LabResultReleased in
-  // the same transaction. Tenant scope is derived from the order's encounter.
-  const order = await tx.labOrder.findUnique({ where: { id: verified.labOrderId }, select: { patientId: true, encounter: { select: { facilityId: true } } } });
-  if (order?.encounter?.facilityId) {
-    await emitDomainEvent(tx, {
-      type: "LabResultReleased",
-      aggregateId: resultId,
-      organizationId: await facilityOrganizationId(tx, order.encounter.facilityId),
-      facilityId: order.encounter.facilityId,
-      payload: { resultId, orderId: verified.labOrderId, patientId: order.patientId, critical: verified.isCritical },
-    });
-  }
+  // the same transaction. Tenant scope from the order's encounter; correlated
+  // by the encounter (spine §1.0).
+  const ctx = await resultContext(tx, verified.labOrderId);
+  await emitFacilityEvent(tx, {
+    type: "LabResultReleased", aggregateId: resultId, facilityId: ctx.encounter.facilityId, actorUserId: byUserId, encounterId: ctx.encounterId,
+    payload: { resultId, orderId: verified.labOrderId, patientId: ctx.patientId, critical: verified.isCritical },
+  });
   return verified;
 }
 
@@ -154,7 +171,8 @@ export async function verifyResult(tx: Tx, resultId: string, verifiedByStaffId: 
 export async function amendResult(
   tx: Tx,
   resultId: string,
-  input: { value: string; unit?: string | null; numericValue?: number | null; isCritical?: boolean; reason: string; amendedByStaffId: string }
+  input: { value: string; unit?: string | null; numericValue?: number | null; isCritical?: boolean; reason: string; amendedByStaffId: string },
+  byUserId?: string,
 ) {
   const original = await tx.labResult.findUnique({ where: { id: resultId } });
   if (!original) throw new NotFoundError("Result not found.");
@@ -201,5 +219,13 @@ export async function amendResult(
     throw err;
   }
 
+  // DiagnosticReportAmended, on the original's aggregate so it is ordered
+  // behind that result's release.
+  const ctx = await resultContext(tx, original.labOrderId);
+  await emitFacilityEvent(tx, {
+    type: "DiagnosticReportAmended", aggregateId: original.id, aggregateType: "LAB_RESULT", facilityId: ctx.encounter.facilityId,
+    actorUserId: byUserId, encounterId: ctx.encounterId,
+    payload: { reportKind: "LAB", amendedId: amended.id, supersedesId: original.id, orderId: original.labOrderId, patientId: ctx.patientId, version: amended.version, critical: amended.isCritical },
+  });
   return { original, amended };
 }

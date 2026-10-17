@@ -2,6 +2,32 @@ import { prisma } from "@/lib/db";
 import { BedStatus } from "@prisma/client";
 import { transitionBed, InvalidBedTransitionError } from "./bed";
 import { admitPatient } from "./admission";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+import type { AdmissionRequest, AdmissionRequestStatus, Prisma } from "@prisma/client";
+
+type Tx = Prisma.TransactionClient;
+
+/**
+ * Move a request from the status read to `to` (compare-and-set: a concurrent
+ * change makes this fail instead of being overwritten) and emit
+ * AdmissionRequestStatusChanged in the same transaction.
+ */
+async function moveRequest(
+  tx: Tx, request: AdmissionRequest, to: "PENDING" | "DEFERRED" | "REJECTED" | "CANCELLED", byUserId: string | undefined,
+  data: Prisma.AdmissionRequestUncheckedUpdateManyInput = {}, releasedBedId?: string | null,
+) {
+  const r = await tx.admissionRequest.updateMany({ where: { id: request.id, status: request.status }, data: { ...data, status: to } });
+  if (r.count !== 1) throw new AdmissionRequestNotPendingError(request.status);
+  await emitFacilityEvent(tx, {
+    type: "AdmissionRequestStatusChanged", aggregateId: request.id, facilityId: request.facilityId, actorUserId: byUserId, encounterId: request.encounterId,
+    payload: {
+      admissionRequestId: request.id, encounterId: request.encounterId, patientId: request.patientId,
+      from: request.status as Exclude<AdmissionRequestStatus, "ADMITTED" | "REJECTED" | "CANCELLED">, to,
+      ...(releasedBedId ? { releasedBedId } : {}),
+    },
+  });
+  return tx.admissionRequest.findUniqueOrThrow({ where: { id: request.id } });
+}
 
 /**
  * Admission-request layer (brief §28-32) — sits ON TOP of the existing
@@ -52,6 +78,10 @@ export async function createAdmissionRequest(input: {
     await tx.auditEvent.create({
       data: { type: "hospital.admissionRequest.created", userId: input.byUserId, detail: { requestId: request.id, patientId: input.patientId } },
     });
+    await emitFacilityEvent(tx, {
+      type: "AdmissionRequested", aggregateId: request.id, facilityId: input.facilityId, actorUserId: input.byUserId, encounterId: input.encounterId,
+      payload: { admissionRequestId: request.id, encounterId: input.encounterId, patientId: input.patientId, priority: request.priority },
+    });
     return request;
   });
 }
@@ -71,6 +101,10 @@ export async function allocateBed(requestId: string, bedId: string, reviewedBySt
     await tx.auditEvent.create({
       data: { type: "hospital.admissionRequest.bedReserved", userId: byUserId, detail: { requestId, bedId } },
     });
+    await emitFacilityEvent(tx, {
+      type: "BedReserved", aggregateId: requestId, facilityId: request.facilityId, actorUserId: byUserId, encounterId: request.encounterId,
+      payload: { admissionRequestId: requestId, bedId, patientId: request.patientId },
+    });
     return updated;
   });
 }
@@ -81,24 +115,23 @@ export async function releaseReservation(requestId: string, byUserId: string) {
     const request = await tx.admissionRequest.findUniqueOrThrow({ where: { id: requestId } });
     if (request.status !== "BED_RESERVED" || !request.reservedBedId) throw new AdmissionRequestNotPendingError(request.status);
     await transitionBed(request.reservedBedId, BedStatus.AVAILABLE, { reason: "Admission request reservation released", byUserId }, tx);
-    return tx.admissionRequest.update({ where: { id: requestId }, data: { status: "PENDING", reservedBedId: null } });
+    return moveRequest(tx, request, "PENDING", byUserId, { reservedBedId: null }, request.reservedBedId);
   });
 }
 
-export async function deferRequest(requestId: string) {
-  const request = await prisma.admissionRequest.findUniqueOrThrow({ where: { id: requestId } });
-  if (request.status !== "PENDING") throw new AdmissionRequestNotPendingError(request.status);
-  return prisma.admissionRequest.update({ where: { id: requestId }, data: { status: "DEFERRED" } });
+export async function deferRequest(requestId: string, byUserId?: string) {
+  return prisma.$transaction(async (tx) => {
+    const request = await tx.admissionRequest.findUniqueOrThrow({ where: { id: requestId } });
+    if (request.status !== "PENDING") throw new AdmissionRequestNotPendingError(request.status);
+    return moveRequest(tx, request, "DEFERRED", byUserId);
+  });
 }
 
 export async function rejectRequest(requestId: string, reason: string, reviewedByStaffId: string, byUserId: string) {
   return prisma.$transaction(async (tx) => {
     const request = await tx.admissionRequest.findUniqueOrThrow({ where: { id: requestId } });
     if (!["PENDING", "DEFERRED"].includes(request.status)) throw new AdmissionRequestNotPendingError(request.status);
-    const updated = await tx.admissionRequest.update({
-      where: { id: requestId },
-      data: { status: "REJECTED", rejectionReason: reason, reviewedByStaffId, reviewedAt: new Date() },
-    });
+    const updated = await moveRequest(tx, request, "REJECTED", byUserId, { rejectionReason: reason, reviewedByStaffId, reviewedAt: new Date() });
     await tx.auditEvent.create({ data: { type: "hospital.admissionRequest.rejected", userId: byUserId, detail: { requestId, reason } } });
     return updated;
   });
@@ -115,7 +148,7 @@ export async function cancelRequest(requestId: string, byUserId: string) {
         if (!(err instanceof InvalidBedTransitionError)) throw err;
       }
     }
-    const updated = await tx.admissionRequest.update({ where: { id: requestId }, data: { status: "CANCELLED" } });
+    const updated = await moveRequest(tx, request, "CANCELLED", byUserId, {}, request.status === "BED_RESERVED" ? request.reservedBedId : null);
     await tx.auditEvent.create({ data: { type: "hospital.admissionRequest.cancelled", userId: byUserId, detail: { requestId } } });
     return updated;
   });

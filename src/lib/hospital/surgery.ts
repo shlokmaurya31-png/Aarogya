@@ -2,10 +2,16 @@ import { $Enums } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
-import { issueStock } from "@/lib/hospital/inventory/issue";
 import type { Prisma, SurgeryStatus, AnesthesiaType } from "@prisma/client";
 import { isStaffInFacility } from "@/lib/auth/staffFacility";
 import { parseEnum } from "@/lib/enumValue";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+
+type SurgeryRef = { id: string; facilityId: string; encounterId: string; patientId: string };
+
+/** The common envelope of a surgery event: the case's facility, correlated by its encounter. */
+const onSurgery = (s: SurgeryRef, byUserId?: string) => ({ aggregateId: s.id, facilityId: s.facilityId, actorUserId: byUserId, encounterId: s.encounterId });
+const ids = (s: SurgeryRef) => ({ surgeryId: s.id, encounterId: s.encounterId, patientId: s.patientId });
 
 /**
  * Operating Theatre & Surgical Workflow service (Phase B3). Composes the
@@ -76,12 +82,19 @@ export async function requestSurgery(input: {
   }
   if (!procedureName) throw new BadRequestError("procedureId or procedureName is required.");
 
-  const surgery = await prisma.surgery.create({
-    data: {
-      facilityId: input.facilityId, patientId: input.patientId, encounterId: input.encounterId,
-      procedureId: input.procedureId, procedureName, indication: input.indication, laterality: input.laterality,
-      urgency: parseEnum($Enums.SurgeryUrgency, input.urgency ?? "ELECTIVE", "urgency"), requestedByStaffId: input.requestedByStaffId, requestedDate: input.requestedDate,
-    },
+  const surgery = await prisma.$transaction(async (tx) => {
+    const created = await tx.surgery.create({
+      data: {
+        facilityId: input.facilityId, patientId: input.patientId, encounterId: input.encounterId,
+        procedureId: input.procedureId, procedureName, indication: input.indication, laterality: input.laterality,
+        urgency: parseEnum($Enums.SurgeryUrgency, input.urgency ?? "ELECTIVE", "urgency"), requestedByStaffId: input.requestedByStaffId, requestedDate: input.requestedDate,
+      },
+    });
+    await emitFacilityEvent(tx, {
+      type: "SurgeryRequested", ...onSurgery(created, input.byUserId),
+      payload: { ...ids(created), urgency: created.urgency, ...(created.procedureId ? { procedureId: created.procedureId } : {}) },
+    });
+    return created;
   });
   await recordAuditEvent("hospital.ot.surgeryRequested", input.byUserId, { surgeryId: surgery.id, procedureName }, { facilityId: input.facilityId, patientId: input.patientId, encounterId: input.encounterId });
   return surgery;
@@ -108,6 +121,7 @@ export async function transitionSurgery(input: { surgeryId: string; facilityId: 
     }
 
     await tx.auditEvent.create({ data: { type: "hospital.ot.surgeryStatusChanged", userId: input.byUserId, detail: { surgeryId: input.surgeryId, from: surgery.status, to: input.to }, facilityId: surgery.facilityId, patientId: surgery.patientId, encounterId: surgery.encounterId } });
+    await emitFacilityEvent(tx, { type: "SurgeryStatusChanged", ...onSurgery(surgery, input.byUserId), payload: { ...ids(surgery), change: "STATUS", from: surgery.status, to: input.to } });
     return tx.surgery.findUniqueOrThrow({ where: { id: input.surgeryId } });
   });
 }
@@ -152,6 +166,10 @@ export async function scheduleSurgery(input: { surgeryId: string; facilityId: st
     }
 
     await tx.auditEvent.create({ data: { type: "hospital.ot.surgeryScheduled", userId: input.byUserId, detail: { surgeryId: input.surgeryId, operatingTheatreId: input.operatingTheatreId, startAt: input.startAt.toISOString(), endAt: input.endAt.toISOString() }, facilityId: surgery.facilityId, patientId: surgery.patientId, encounterId: surgery.encounterId } });
+    await emitFacilityEvent(tx, {
+      type: "SurgeryScheduled", ...onSurgery(surgery, input.byUserId),
+      payload: { ...ids(surgery), scheduleId: schedule.id, operatingTheatreId: input.operatingTheatreId, startAt: input.startAt.toISOString(), endAt: input.endAt.toISOString() },
+    });
     return schedule;
   });
 }
@@ -163,6 +181,11 @@ export async function cancelSchedule(input: { surgeryId: string; facilityId: str
     const result = await tx.surgerySchedule.updateMany({ where: { surgeryId: input.surgeryId, status: "SCHEDULED" }, data: { status: "CANCELLED" } });
     if (result.count !== 1) throw new BadRequestError("Schedule is not active.");
     await tx.auditEvent.create({ data: { type: "hospital.ot.surgeryScheduleCancelled", userId: input.byUserId, detail: { surgeryId: input.surgeryId }, facilityId: input.facilityId, patientId: schedule.surgery.patientId, encounterId: schedule.surgery.encounterId } });
+    // The case keeps its status; its theatre slot is freed.
+    await emitFacilityEvent(tx, {
+      type: "SurgeryStatusChanged", ...onSurgery(schedule.surgery, input.byUserId),
+      payload: { ...ids(schedule.surgery), change: "SCHEDULE_CANCELLED", from: schedule.surgery.status, to: schedule.surgery.status },
+    });
     return tx.surgerySchedule.findUniqueOrThrow({ where: { surgeryId: input.surgeryId } });
   });
 }
@@ -216,9 +239,16 @@ export async function updateChecklistItem(input: { surgeryId: string; facilityId
   if (!surgery || surgery.facilityId !== input.facilityId) throw new NotFoundError("Surgery not found.");
   const item = await prisma.surgeryChecklistItem.findUnique({ where: { surgeryId_itemKey: { surgeryId: input.surgeryId, itemKey: input.itemKey } } });
   if (!item) throw new NotFoundError("Checklist item not found.");
-  const updated = await prisma.surgeryChecklistItem.update({
-    where: { surgeryId_itemKey: { surgeryId: input.surgeryId, itemKey: input.itemKey } },
-    data: { checked: input.checked, checkedByStaffId: input.checked ? input.checkedByStaffId : null, checkedAt: input.checked ? new Date() : null },
+  const updated = await prisma.$transaction(async (tx) => {
+    const u = await tx.surgeryChecklistItem.update({
+      where: { surgeryId_itemKey: { surgeryId: input.surgeryId, itemKey: input.itemKey } },
+      data: { checked: input.checked, checkedByStaffId: input.checked ? input.checkedByStaffId : null, checkedAt: input.checked ? new Date() : null },
+    });
+    await emitFacilityEvent(tx, {
+      type: "PerioperativeRecordRecorded", ...onSurgery(surgery, input.byUserId),
+      payload: { ...ids(surgery), recordId: u.id, kind: "SAFETY_CHECKLIST", checklistPhase: u.phase, checked: u.checked },
+    });
+    return u;
   });
   await recordAuditEvent("hospital.ot.checklistUpdated", input.byUserId, { surgeryId: input.surgeryId, itemKey: input.itemKey, checked: input.checked }, { facilityId: surgery.facilityId, patientId: surgery.patientId, encounterId: surgery.encounterId });
   return updated;
@@ -228,10 +258,18 @@ export async function updateChecklistItem(input: { surgeryId: string; facilityId
 export async function recordAnesthesia(input: { surgeryId: string; facilityId: string; type: AnesthesiaType; anesthetistStaffId: string; status?: string; startAt?: Date; endAt?: Date; intraOpNotes?: string; complications?: string; byUserId: string }) {
   const surgery = await prisma.surgery.findUnique({ where: { id: input.surgeryId } });
   if (!surgery || surgery.facilityId !== input.facilityId) throw new NotFoundError("Surgery not found.");
-  const rec = await prisma.anesthesiaRecord.upsert({
+  const rec = await prisma.$transaction(async (tx) => {
+    const r = await tx.anesthesiaRecord.upsert({
     where: { surgeryId: input.surgeryId },
     create: { surgeryId: input.surgeryId, type: input.type, anesthetistStaffId: input.anesthetistStaffId, status: parseEnum($Enums.AnesthesiaRecordStatus, input.status ?? "PLANNED", "status"), startAt: input.startAt, endAt: input.endAt, intraOpNotes: input.intraOpNotes, complications: input.complications },
     update: { type: input.type, anesthetistStaffId: input.anesthetistStaffId, ...(input.status ? { status: parseEnum($Enums.AnesthesiaRecordStatus, input.status, "status") } : {}), ...(input.startAt ? { startAt: input.startAt } : {}), ...(input.endAt ? { endAt: input.endAt } : {}), ...(input.intraOpNotes !== undefined ? { intraOpNotes: input.intraOpNotes } : {}), ...(input.complications !== undefined ? { complications: input.complications } : {}) },
+    });
+    // The record's status only; notes and complications stay in the record.
+    await emitFacilityEvent(tx, {
+      type: "PerioperativeRecordRecorded", ...onSurgery(surgery, input.byUserId),
+      payload: { ...ids(surgery), recordId: r.id, kind: "ANESTHESIA", anesthesiaStatus: r.status },
+    });
+    return r;
   });
   await recordAuditEvent("hospital.ot.anesthesiaRecorded", input.byUserId, { surgeryId: input.surgeryId, type: input.type, status: rec.status }, { facilityId: surgery.facilityId, patientId: surgery.patientId, encounterId: surgery.encounterId });
   return rec;
@@ -246,6 +284,7 @@ export async function startProcedure(input: { surgeryId: string; facilityId: str
     const result = await tx.surgery.updateMany({ where: { id: input.surgeryId, status: "SCHEDULED" }, data: { status: "IN_PROGRESS", actualStart: new Date(), surgeonStaffId: input.surgeonStaffId ?? surgery.surgeonStaffId } });
     if (result.count !== 1) throw new SurgeryTransitionError(surgery.status, "IN_PROGRESS");
     await tx.auditEvent.create({ data: { type: "hospital.ot.procedureStarted", userId: input.byUserId, detail: { surgeryId: input.surgeryId }, facilityId: surgery.facilityId, patientId: surgery.patientId, encounterId: surgery.encounterId } });
+    await emitFacilityEvent(tx, { type: "ProcedureStarted", ...onSurgery(surgery, input.byUserId), payload: ids(surgery) });
     return tx.surgery.findUniqueOrThrow({ where: { id: input.surgeryId } });
   });
 }
@@ -266,7 +305,13 @@ export async function completeProcedure(input: { surgeryId: string; facilityId: 
       await tx.recoveryRecord.upsert({ where: { surgeryId: input.surgeryId }, create: { surgeryId: input.surgeryId, destination: input.recoveryDestination, status: "PENDING" }, update: { destination: input.recoveryDestination } });
     }
     await tx.auditEvent.create({ data: { type: "hospital.ot.procedureCompleted", userId: input.byUserId, detail: { surgeryId: input.surgeryId }, facilityId: surgery.facilityId, patientId: surgery.patientId, encounterId: surgery.encounterId } });
-    return tx.surgery.findUniqueOrThrow({ where: { id: input.surgeryId } });
+    const done = await tx.surgery.findUniqueOrThrow({ where: { id: input.surgeryId } });
+    const durationMinutes = done.actualStart && done.actualEnd ? Math.max(0, Math.round((done.actualEnd.getTime() - done.actualStart.getTime()) / 60_000)) : 0;
+    await emitFacilityEvent(tx, {
+      type: "ProcedureCompleted", ...onSurgery(done, input.byUserId),
+      payload: { ...ids(done), durationMinutes, ...(done.procedureId ? { procedureId: done.procedureId } : {}) },
+    });
+    return done;
   });
 }
 
@@ -274,8 +319,15 @@ export async function completeProcedure(input: { surgeryId: string; facilityId: 
 export async function collectSpecimen(input: { surgeryId: string; facilityId: string; specimenType: string; site?: string; label?: string; destinationLab?: string; collectedByStaffId: string; notes?: string; byUserId: string }) {
   const surgery = await prisma.surgery.findUnique({ where: { id: input.surgeryId } });
   if (!surgery || surgery.facilityId !== input.facilityId) throw new NotFoundError("Surgery not found.");
-  const specimen = await prisma.surgicalSpecimen.create({
-    data: { surgeryId: surgery.id, facilityId: surgery.facilityId, patientId: surgery.patientId, encounterId: surgery.encounterId, specimenType: input.specimenType, site: input.site, label: input.label, destinationLab: input.destinationLab, collectedByStaffId: input.collectedByStaffId, notes: input.notes },
+  const specimen = await prisma.$transaction(async (tx) => {
+    const created = await tx.surgicalSpecimen.create({
+      data: { surgeryId: surgery.id, facilityId: surgery.facilityId, patientId: surgery.patientId, encounterId: surgery.encounterId, specimenType: input.specimenType, site: input.site, label: input.label, destinationLab: input.destinationLab, collectedByStaffId: input.collectedByStaffId, notes: input.notes },
+    });
+    await emitFacilityEvent(tx, {
+      type: "SpecimenCollected", aggregateId: created.id, facilityId: surgery.facilityId, actorUserId: input.byUserId, encounterId: surgery.encounterId,
+      payload: { specimenId: created.id, patientId: surgery.patientId, encounterId: surgery.encounterId, specimenSource: "SURGICAL", surgeryId: surgery.id },
+    });
+    return created;
   });
   await recordAuditEvent("hospital.ot.specimenCollected", input.byUserId, { surgeryId: surgery.id, specimenId: specimen.id, specimenType: input.specimenType }, { facilityId: surgery.facilityId, patientId: surgery.patientId, encounterId: surgery.encounterId });
   return specimen;
@@ -300,18 +352,25 @@ export async function recordItemUsage(input: {
       },
     });
 
-    // Transactional stock consumption when an issuing location is given.
-    // issueStock validates item/lot/facility, FEFO, expiry/quarantine, and
-    // never over-issues (guarded UPDATE). If it throws, the whole usage row
-    // rolls back — never a falsely-recorded consumption.
+    // Spine §2 / ADR 0004: stock moves through the stock-movement consumer
+    // on SurgeryItemUsed (keyed by (SurgeryItemUsage, usageId) in the ledger),
+    // not a direct call into inventory: what was used in theatre is recorded
+    // even if stock is short, which dead-letters the movement and raises an
+    // inventory exception task instead of rolling the clinical record back.
+    // The consumer sets stockConsumed once the ledger entry is posted.
     if (input.locationId) {
-      await issueStock(tx, {
-        facilityId: surgery.facilityId, itemId: input.itemId, locationId: input.locationId, quantity: input.quantity, lotId: input.itemLotId,
-        requestedByStaffId: input.recordedByStaffId, actorUserId: input.actorUserId, reason: `Surgery ${input.usageType.toLowerCase()}`,
-        patientId: surgery.patientId, encounterId: surgery.encounterId, sourceType: "SurgeryItemUsage", sourceId: created.id,
-      });
-      await tx.surgeryItemUsage.update({ where: { id: created.id }, data: { stockConsumed: true } });
+      const loc = await tx.stockLocation.findUnique({ where: { id: input.locationId }, select: { facilityId: true } });
+      if (!loc || loc.facilityId !== surgery.facilityId) throw new NotFoundError("Stock location not found in this facility.");
     }
+    const item = await tx.item.findUnique({ where: { id: input.itemId }, select: { facilityId: true } });
+    if (!item || (item.facilityId && item.facilityId !== surgery.facilityId)) throw new NotFoundError("Item not found in this facility.");
+    await emitFacilityEvent(tx, {
+      type: "SurgeryItemUsed", ...onSurgery(surgery, input.byUserId),
+      payload: {
+        ...ids(surgery), usageId: created.id, itemId: input.itemId, usageType: input.usageType, quantity: input.quantity,
+        ...(input.itemLotId ? { itemLotId: input.itemLotId } : {}), ...(input.locationId ? { locationId: input.locationId } : {}),
+      },
+    });
 
     await tx.auditEvent.create({
       data: { type: input.usageType === "IMPLANT" ? "hospital.ot.implantRecorded" : "hospital.ot.consumableRecorded", userId: input.byUserId, detail: { surgeryId: surgery.id, usageId: created.id, itemId: input.itemId, quantity: input.quantity, stockConsumed: Boolean(input.locationId) }, facilityId: surgery.facilityId, patientId: surgery.patientId, encounterId: surgery.encounterId },
@@ -358,7 +417,15 @@ export async function updateRecovery(input: { surgeryId: string; facilityId: str
     }
 
     await tx.auditEvent.create({ data: { type: "hospital.ot.recoveryUpdated", userId: input.byUserId, detail: { surgeryId: input.surgeryId, status: input.status }, facilityId: surgery.facilityId, patientId: surgery.patientId, encounterId: surgery.encounterId } });
-    return tx.recoveryRecord.findUniqueOrThrow({ where: { surgeryId: input.surgeryId } });
+    const recovery = await tx.recoveryRecord.findUniqueOrThrow({ where: { surgeryId: input.surgeryId } });
+    // Recovery is a phase of the case (triage round 2); an update that leaves the phase unchanged emits nothing.
+    if (!existing || existing.status !== recovery.status) {
+      await emitFacilityEvent(tx, {
+        type: "SurgeryStatusChanged", ...onSurgery(surgery, input.byUserId),
+        payload: { ...ids(surgery), change: "RECOVERY", from: existing?.status ?? null, to: recovery.status },
+      });
+    }
+    return recovery;
   });
 }
 

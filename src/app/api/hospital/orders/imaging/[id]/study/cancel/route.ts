@@ -21,7 +21,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const study = await prisma.imagingStudy.findFirst({ where: { imagingOrderId: id, status: { in: ["SCHEDULED", "ARRIVED"] } }, orderBy: { createdAt: "desc" } });
     if (!study) throw new NotFoundError("No cancellable study for this order.");
 
-    const updated = await prisma.$transaction((tx) => cancelStudy(tx, study.id, reason));
+    const updated = await prisma.$transaction((tx) => cancelStudy(tx, study.id, reason, session.userId));
 
     await recordAuditEvent(
       "hospital.imaging.studyCancelled",

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 import { BadRequestError } from "@/lib/auth/rbac";
 import { getStorageAdapter } from "@/lib/storage";
 import type { PatientAccessScope } from "../context";
@@ -38,17 +39,26 @@ export async function uploadPatientDocument(
 
   let doc;
   try {
-    doc = await prisma.clinicalDocument.create({
-      data: {
-        facilityId: scope.facilityId,
-        patientId: scope.patientId,
-        type: input.type,
-        title,
-        storageRef: stored.storageRef,
-        sha256: stored.sha256,
-        accessPolicy: "PATIENT_VISIBLE",
-        uploadedByUserId: actorUserId,
-      },
+    doc = await prisma.$transaction(async (tx) => {
+      const created = await tx.clinicalDocument.create({
+        data: {
+          facilityId: scope.facilityId,
+          patientId: scope.patientId,
+          type: input.type,
+          title,
+          storageRef: stored.storageRef,
+          sha256: stored.sha256,
+          accessPolicy: "PATIENT_VISIBLE",
+          uploadedByUserId: actorUserId,
+        },
+      });
+      // In the insert's transaction; the object was stored first, and a rolled-back
+      // insert deletes it below (design §1.2 #55).
+      await emitFacilityEvent(tx, {
+        type: "PatientDocumentUploaded", aggregateId: created.id, facilityId: scope.facilityId, actorUserId,
+        payload: { documentId: created.id, patientId: scope.patientId, documentType: input.type, uploadedBy: "PATIENT" },
+      });
+      return created;
     });
   } catch (err) {
     // Don't leave an orphaned object behind a failed record.
@@ -62,8 +72,5 @@ export async function uploadPatientDocument(
     { documentId: doc.id, type: input.type, sha256: stored.sha256, size: stored.size, contentType: stored.contentType },
     { facilityId: scope.facilityId, patientId: scope.patientId }
   );
-  // TODO(Week 3): emit a PatientDocumentUploaded domain event (ADR 0004) in the
-  // same transaction as the ClinicalDocument insert, so the care team's
-  // consumers (notifications, worklists) react to it. No events yet.
   return { id: doc.id, title: doc.title, type: doc.type, sha256: stored.sha256, createdAt: doc.createdAt.toISOString() };
 }

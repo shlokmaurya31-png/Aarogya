@@ -1,8 +1,9 @@
-import { prisma } from "@/lib/db";
-import type { AppointmentType, AccessSource, RequestPriority } from "@prisma/client";
+import { prisma, CONTENDED_TX } from "@/lib/db";
+import type { AppointmentType, AccessSource, RequestPriority, Prisma } from "@prisma/client";
 import { emitDomainEvent } from "@/lib/events/emit";
 import { facilityOrganizationId } from "@/lib/events/tenant";
 import { assertBookable } from "./bookability";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 export class SlotConflictError extends Error {
   constructor() {
@@ -64,6 +65,8 @@ export function appointmentsOverlap(aStart: Date, aEnd: Date, bStart: Date, bEnd
  * The lock is unconditional: it used to be skipped unless DATABASE_URL
  * started with "postgres" (a SQLite-era check), which would have silently
  * reopened the race under any other URL form, e.g. prisma://.
+ * Contenders queue on that lock, so the transaction gets CONTENDED_TX budgets:
+ * a loser must wait its turn and get SlotConflictError, never time out.
  */
 export async function bookAppointment(input: {
   facilityId: string;
@@ -135,7 +138,7 @@ export async function bookAppointment(input: {
       payload: { appointmentId: appointment.id, patientId: input.patientId, doctorStaffId: input.doctorStaffId, scheduledStart: input.scheduledStart.toISOString() },
     });
     return appointment;
-  });
+  }, CONTENDED_TX);
 }
 
 export class AppointmentNotConfirmableError extends Error {
@@ -150,6 +153,14 @@ export class AppointmentNotConfirmableError extends Error {
  * 5.5: previously the API route bypassed this service layer entirely with
  * a bare, non-transactional, non-audited `prisma.appointment.update()`.
  */
+/** AppointmentStatusChanged (confirm, no-show), in the writer's transaction. */
+function emitAppointmentStatus(tx: Prisma.TransactionClient, appt: { id: string; facilityId: string; patientId: string; doctorStaffId: string; status: string; encounterId: string | null }, to: "CONFIRMED" | "NO_SHOW", byUserId: string) {
+  return emitFacilityEvent(tx, {
+    type: "AppointmentStatusChanged", aggregateId: appt.id, facilityId: appt.facilityId, actorUserId: byUserId, encounterId: appt.encounterId,
+    payload: { appointmentId: appt.id, patientId: appt.patientId, doctorStaffId: appt.doctorStaffId, from: appt.status, to },
+  });
+}
+
 export async function confirmAppointment(appointmentId: string, byUserId: string) {
   return prisma.$transaction(async (tx) => {
     const appt = await tx.appointment.findUniqueOrThrow({ where: { id: appointmentId } });
@@ -157,6 +168,7 @@ export async function confirmAppointment(appointmentId: string, byUserId: string
     const result = await tx.appointment.updateMany({ where: { id: appointmentId, status: appt.status }, data: { status: "CONFIRMED" } });
     if (result.count !== 1) throw new AppointmentNotConfirmableError(appt.status);
     await tx.auditEvent.create({ data: { type: "hospital.appointment.confirmed", userId: byUserId, detail: { appointmentId } } });
+    await emitAppointmentStatus(tx, appt, "CONFIRMED", byUserId);
     return { ...appt, status: "CONFIRMED" };
   });
 }
@@ -176,6 +188,10 @@ export async function cancelAppointment(appointmentId: string, reason: string, c
       data: { status: "CANCELLED", cancelledReason: reason, cancelledAt: new Date(), cancelledByStaffId },
     });
     await tx.auditEvent.create({ data: { type: "hospital.appointment.cancelled", userId: byUserId, detail: { appointmentId, reason } } });
+    await emitFacilityEvent(tx, {
+      type: "AppointmentCancelled", aggregateId: appointmentId, facilityId: appt.facilityId, actorUserId: byUserId, encounterId: appt.encounterId,
+      payload: { appointmentId, patientId: appt.patientId, byPatient: cancelledByStaffId.startsWith("patient:") },
+    });
     return updated;
   });
 }
@@ -191,8 +207,11 @@ export async function markNoShow(appointmentId: string, markedByStaffId: string,
   return prisma.$transaction(async (tx) => {
     const appt = await tx.appointment.findUniqueOrThrow({ where: { id: appointmentId } });
     if (!["REQUESTED", "CONFIRMED", "RESCHEDULED"].includes(appt.status)) throw new AppointmentAlreadyResolvedError();
-    const updated = await tx.appointment.update({ where: { id: appointmentId }, data: { status: "NO_SHOW", noShowAt: new Date() } });
+    const r = await tx.appointment.updateMany({ where: { id: appointmentId, status: appt.status }, data: { status: "NO_SHOW", noShowAt: new Date() } });
+    if (r.count !== 1) throw new AppointmentAlreadyResolvedError();
+    const updated = await tx.appointment.findUniqueOrThrow({ where: { id: appointmentId } });
     await tx.auditEvent.create({ data: { type: "hospital.appointment.noShow", userId: byUserId, detail: { appointmentId, markedByStaffId } } });
+    await emitAppointmentStatus(tx, appt, "NO_SHOW", byUserId);
     return updated;
   });
 }
@@ -221,6 +240,10 @@ export async function checkInAppointment(appointmentId: string, byUserId: string
         },
       });
       encounterId = encounter.id;
+      await emitFacilityEvent(tx, {
+        type: "EncounterOpened", aggregateId: encounter.id, facilityId: appt.facilityId, actorUserId: byUserId, encounterId: encounter.id,
+        payload: { encounterId: encounter.id, patientId: appt.patientId, encounterType: encounter.type, accessSource: encounter.accessSource ?? undefined },
+      });
     }
 
     const updated = await tx.appointment.update({
@@ -228,6 +251,10 @@ export async function checkInAppointment(appointmentId: string, byUserId: string
       data: { status: "CHECKED_IN", encounterId },
     });
     await tx.auditEvent.create({ data: { type: "hospital.appointment.checkedIn", userId: byUserId, detail: { appointmentId, encounterId } } });
+    await emitFacilityEvent(tx, {
+      type: "PatientCheckedIn", aggregateId: appointmentId, facilityId: appt.facilityId, actorUserId: byUserId, encounterId,
+      payload: { appointmentId, patientId: appt.patientId, encounterId: encounterId ?? undefined },
+    });
     return { appointment: updated, encounterId };
   });
 }

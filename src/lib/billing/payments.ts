@@ -65,7 +65,25 @@ export async function markAttempt(tx: Tx, attemptId: string, to: BillingPaymentA
     data: { status: to, providerPaymentRef: extra?.providerPaymentRef ?? undefined, failureReason: extra?.failureReason ?? undefined },
   });
   if (result.count !== 1) throw new ConflictError("Payment attempt was already finalized.");
-  return tx.billingPaymentAttempt.findUniqueOrThrow({ where: { id: attemptId } });
+  const attempt = await tx.billingPaymentAttempt.findUniqueOrThrow({ where: { id: attemptId } });
+  if (to === "FAILED") await emitPaymentFailed(tx, attempt);
+  return attempt;
+}
+
+/**
+ * PaymentFailed, in the transaction that marked the attempt FAILED (only when
+ * the transition happened, so a duplicate webhook emits nothing).
+ */
+export async function emitPaymentFailed(
+  tx: Tx,
+  attempt: { id: string; invoiceId: string | null; organizationId: string; amountMinor: number; currency: string; failureCode?: string | null },
+) {
+  await emitDomainEvent(tx, {
+    type: "PaymentFailed",
+    aggregateId: attempt.id,
+    organizationId: attempt.organizationId,
+    payload: { attemptId: attempt.id, invoiceId: attempt.invoiceId ?? undefined, amountMinor: attempt.amountMinor, currency: attempt.currency, failureCode: attempt.failureCode ?? undefined },
+  });
 }
 
 export interface RecordPaymentInput {

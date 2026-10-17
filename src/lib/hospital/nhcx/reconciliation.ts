@@ -1,9 +1,11 @@
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError, ConflictError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
-import { SETTLEMENT_TRANSITIONS, EXCEPTION_TRANSITIONS, isTransitionAllowed } from "./stateMachines";
-import { $Enums } from "@prisma/client";
+import { SETTLEMENT_TRANSITIONS, EXCEPTION_TRANSITIONS, EXCEPTION_TYPES, isTransitionAllowed } from "./stateMachines";
+import { $Enums, type Prisma } from "@prisma/client";
 import { parseEnum } from "@/lib/enumValue";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+import { emitClaimSettled } from "@/lib/hospital/billing/claims";
 
 /**
  * Phase C5 — settlement and reconciliation.
@@ -53,16 +55,20 @@ export async function recordSettlement(input: RecordSettlementInput) {
   if (!claim || claim.facilityId !== input.facilityId) throw new NotFoundError("Claim not found.");
 
   try {
-    const settlement = await prisma.claimSettlement.create({
-      data: {
-        facilityId: input.facilityId,
-        claimId: input.claimId,
-        externalSettlementRef: input.externalSettlementRef.trim(),
-        settledAmountMinor: input.settledAmountMinor,
-        settlementDate: input.settlementDate ?? null,
-        status: "NOTIFIED",
-        notes: input.notes,
-      },
+    const settlement = await prisma.$transaction(async (tx) => {
+      const created = await tx.claimSettlement.create({
+        data: {
+          facilityId: input.facilityId,
+          claimId: input.claimId,
+          externalSettlementRef: input.externalSettlementRef.trim(),
+          settledAmountMinor: input.settledAmountMinor,
+          settlementDate: input.settlementDate ?? null,
+          status: "NOTIFIED",
+          notes: input.notes,
+        },
+      });
+      await emitClaimSettled(tx, { claimId: input.claimId, stage: "NOTIFIED", settlementId: created.id, settledAmountMinor: created.settledAmountMinor, byUserId: input.byUserId });
+      return created;
     });
 
     await recordAuditEvent(
@@ -147,6 +153,7 @@ export async function reconcileSettlement(input: {
       },
     });
     if (r.count !== 1) throw new ConflictError("That settlement changed concurrently.");
+    await emitClaimSettled(tx, { claimId: settlement.claimId, stage: "RECONCILED", settlementId: settlement.id, settledAmountMinor: settlement.settledAmountMinor, byUserId: input.byUserId });
 
     await tx.auditEvent.create({
       data: {
@@ -163,9 +170,26 @@ export async function reconcileSettlement(input: {
   });
 }
 
+/** ClaimReconciliationStatusChanged (spine §9 step 9): codes and amounts only, never the detail or the note. */
+async function emitExceptionStatus(
+  tx: Prisma.TransactionClient,
+  ex: { id: string; facilityId: string; claimId: string | null; invoiceId: string | null; settlementId: string | null; exceptionType: string; severity: string; status: string; varianceMinor: number | null },
+  from: string | null,
+  byUserId: string | null,
+) {
+  await emitFacilityEvent(tx, {
+    type: "ClaimReconciliationStatusChanged", aggregateId: ex.id, facilityId: ex.facilityId, actorUserId: byUserId,
+    payload: {
+      exceptionId: ex.id, ...(ex.claimId ? { claimId: ex.claimId } : {}), ...(ex.invoiceId ? { invoiceId: ex.invoiceId } : {}),
+      ...(ex.settlementId ? { settlementId: ex.settlementId } : {}), exceptionType: ex.exceptionType, severity: ex.severity,
+      from, to: ex.status, ...(ex.varianceMinor !== null ? { varianceMinor: ex.varianceMinor } : {}),
+    },
+  });
+}
+
 export async function raiseException(input: {
   facilityId: string;
-  exceptionType: string;
+  exceptionType: (typeof EXCEPTION_TYPES)[number];
   detail: string;
   byUserId: string;
   claimId?: string | null;
@@ -182,21 +206,25 @@ export async function raiseException(input: {
       ? input.actualAmountMinor - input.expectedAmountMinor
       : null;
 
-  const exception = await prisma.reconciliationException.create({
-    data: {
-      facilityId: input.facilityId,
-      claimId: input.claimId ?? null,
-      invoiceId: input.invoiceId ?? null,
-      paymentId: input.paymentId ?? null,
-      settlementId: input.settlementId ?? null,
-      exceptionType: input.exceptionType,
-      severity: parseEnum($Enums.AlertSeverity, input.severity ?? "WARNING", "severity"),
-      expectedAmountMinor: input.expectedAmountMinor ?? null,
-      actualAmountMinor: input.actualAmountMinor ?? null,
-      varianceMinor: variance,
-      detail: input.detail,
-      status: "OPEN",
-    },
+  const exception = await prisma.$transaction(async (tx) => {
+    const created = await tx.reconciliationException.create({
+      data: {
+        facilityId: input.facilityId,
+        claimId: input.claimId ?? null,
+        invoiceId: input.invoiceId ?? null,
+        paymentId: input.paymentId ?? null,
+        settlementId: input.settlementId ?? null,
+        exceptionType: input.exceptionType,
+        severity: parseEnum($Enums.AlertSeverity, input.severity ?? "WARNING", "severity"),
+        expectedAmountMinor: input.expectedAmountMinor ?? null,
+        actualAmountMinor: input.actualAmountMinor ?? null,
+        varianceMinor: variance,
+        detail: input.detail,
+        status: "OPEN",
+      },
+    });
+    await emitExceptionStatus(tx, created, null, input.byUserId);
+    return created;
   });
   await recordAuditEvent(
     "hospital.claim.reconciliationException",
@@ -226,7 +254,7 @@ export async function reconcileClaim(input: { facilityId: string; claimId: strin
     .filter((s) => s.status !== "REJECTED")
     .reduce((sum, s) => sum + s.settledAmountMinor, 0);
 
-  const findings: { type: string; detail: string; severity: string }[] = [];
+  const findings: { type: (typeof EXCEPTION_TYPES)[number]; detail: string; severity: string }[] = [];
 
   if (claim.approvedAmountMinor !== null) {
     if (settlements.length === 0 && ["APPROVED", "PARTIALLY_APPROVED"].includes(claim.status)) {
@@ -314,7 +342,9 @@ export async function resolveException(input: {
       },
     });
     if (r.count !== 1) throw new ConflictError("That exception changed concurrently.");
-    return tx.reconciliationException.findUniqueOrThrow({ where: { id: ex.id } });
+    const moved = await tx.reconciliationException.findUniqueOrThrow({ where: { id: ex.id } });
+    await emitExceptionStatus(tx, moved, ex.status, input.byUserId);
+    return moved;
   });
 }
 

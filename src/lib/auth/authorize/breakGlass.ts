@@ -4,6 +4,19 @@ import { BadRequestError, NotFoundError, ConflictError } from "../rbac";
 import { recordAuditEvent } from "../audit";
 import { $Enums } from "@prisma/client";
 import { parseEnum } from "@/lib/enumValue";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+import type { Prisma, BreakGlassAccess } from "@prisma/client";
+
+/** BreakGlassStatusChanged (step 9c; SENSITIVE): never the reason. */
+async function emitBreakGlass(tx: Prisma.TransactionClient, w: BreakGlassAccess, from: string | null, byUserId: string | null) {
+  await emitFacilityEvent(tx, {
+    type: "BreakGlassStatusChanged", aggregateId: w.id, facilityId: w.facilityId, encounterId: w.encounterId, actorUserId: byUserId,
+    payload: {
+      breakGlassId: w.id, patientId: w.patientId, actorUserId: w.actorUserId, ...(w.encounterId ? { encounterId: w.encounterId } : {}),
+      from, to: w.status, emergencyContext: w.emergencyContext,
+    },
+  });
+}
 
 /**
  * Phase C4 — break-glass emergency access.
@@ -113,19 +126,23 @@ export async function activateBreakGlass(input: ActivateBreakGlassInput) {
   if (duration <= 0) throw new BadRequestError("Emergency access duration must be positive.");
 
   const correlationId = randomUUID();
-  const window = await prisma.breakGlassAccess.create({
-    data: {
-      facilityId: input.facilityId,
-      patientId: input.patientId,
-      encounterId: input.encounterId ?? null,
-      actorUserId: input.actorUserId,
-      actorStaffId: input.actorStaffId ?? null,
-      reason,
-      emergencyContext: input.emergencyContext,
-      status: "ACTIVE",
-      expiresAt: new Date(Date.now() + duration),
-      correlationId,
-    },
+  const window = await prisma.$transaction(async (tx) => {
+    const created = await tx.breakGlassAccess.create({
+      data: {
+        facilityId: input.facilityId,
+        patientId: input.patientId,
+        encounterId: input.encounterId ?? null,
+        actorUserId: input.actorUserId,
+        actorStaffId: input.actorStaffId ?? null,
+        reason,
+        emergencyContext: input.emergencyContext,
+        status: "ACTIVE",
+        expiresAt: new Date(Date.now() + duration),
+        correlationId,
+      },
+    });
+    await emitBreakGlass(tx, created, null, input.actorUserId);
+    return created;
   });
 
   await recordAuditEvent(
@@ -203,7 +220,9 @@ async function transitionWindow(input: {
         patientId: window.patientId,
       },
     });
-    return tx.breakGlassAccess.findUniqueOrThrow({ where: { id: window.id } });
+    const moved = await tx.breakGlassAccess.findUniqueOrThrow({ where: { id: window.id } });
+    await emitBreakGlass(tx, moved, "ACTIVE", input.actorUserId);
+    return moved;
   });
 }
 
@@ -215,11 +234,19 @@ async function transitionWindow(input: {
  * and is safe to never run.
  */
 export async function expireLapsedBreakGlass(facilityId: string, now = new Date()) {
-  const result = await prisma.breakGlassAccess.updateMany({
-    where: { facilityId, status: "ACTIVE", expiresAt: { lte: now } },
-    data: { status: "EXPIRED" },
-  });
-  return { expired: result.count };
+  // One window at a time, compare-and-set, each with its event (step 9c; it was one bulk update).
+  const lapsed = await prisma.breakGlassAccess.findMany({ where: { facilityId, status: "ACTIVE", expiresAt: { lte: now } }, select: { id: true, version: true } });
+  let expired = 0;
+  for (const w of lapsed) {
+    const done = await prisma.$transaction(async (tx) => {
+      const r = await tx.breakGlassAccess.updateMany({ where: { id: w.id, status: "ACTIVE", version: w.version }, data: { status: "EXPIRED", version: { increment: 1 } } });
+      if (r.count !== 1) return false;
+      await emitBreakGlass(tx, await tx.breakGlassAccess.findUniqueOrThrow({ where: { id: w.id } }), "ACTIVE", null);
+      return true;
+    });
+    if (done) expired++;
+  }
+  return { expired };
 }
 
 export async function listBreakGlass(args: { facilityId: string; status?: string; patientId?: string }) {

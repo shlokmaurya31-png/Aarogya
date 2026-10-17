@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { recordIntakeOutput } from "@/lib/hospital/clinicalRecords";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
@@ -52,20 +53,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const parsed = IOSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestError("Invalid intake/output data.");
 
-    const encounter = await prisma.encounter.findUnique({ where: { id } });
-    if (!encounter || encounter.facilityId !== facilityId) throw new NotFoundError("Encounter not found.");
-
-    const record = await prisma.intakeOutputRecord.create({
-      data: {
-        encounterId: id,
-        facilityId,
-        ioType: parsed.data.ioType,
-        category: parsed.data.category,
-        quantityMl: parsed.data.quantityMl,
-        recordedByStaffId: staff.id,
-        notes: parsed.data.notes,
-      },
+    const record = await recordIntakeOutput({
+      encounterId: id, facilityId, staffId: staff.id, ioType: parsed.data.ioType, category: parsed.data.category,
+      quantityMl: parsed.data.quantityMl, notes: parsed.data.notes, byUserId: session.userId,
     });
+    const encounter = await prisma.encounter.findUniqueOrThrow({ where: { id }, select: { patientId: true } });
     await recordAuditEvent(
       "hospital.io.recorded",
       session.userId,

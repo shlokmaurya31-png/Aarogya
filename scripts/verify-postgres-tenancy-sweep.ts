@@ -30,6 +30,9 @@
  *   3. Idempotency keys can't replay another facility's payment or refund.
  *   4. Medication-link scopes per role (GLOBAL / ORGANIZATION / FACILITY),
  *      audited.
+ *   5. Organization-level rows (facilityId NULL, organizationId set; D6
+ *      workflow tasks) count as the organization's: a facility user of another
+ *      organization never receives one, and the task route answers 404.
  * A route that is not probed and not on the documented allowlist fails the
  * gate.
  *
@@ -160,6 +163,28 @@ const MODEL_NAMES = Prisma.dmmf.datamodel.models
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const delegate = (model: string): any => (prisma as any)[model[0].toLowerCase() + model.slice(1)];
 
+/** Models with an optional facilityId and an organizationId: a row may belong to the organization only. */
+const ORG_LEVEL_MODELS = new Set(Prisma.dmmf.datamodel.models
+  .filter((m) => m.fields.some((f) => f.name === "facilityId" && !f.isRequired) && m.fields.some((f) => f.name === "organizationId"))
+  .map((m) => m.name));
+const ORG_TASK_ID = "tsw-org-level-task-other";
+
+/** An organization-level workflow task (no facility) in the other organization. */
+async function seedOrgLevelTask() {
+  const def = await prisma.workflowDefinition.findFirstOrThrow({ where: { organizationId: null, currentVersionId: { not: null } }, orderBy: { key: "asc" } });
+  const inst = await prisma.workflowInstance.upsert({
+    where: { idempotencyKey: `${ORG_TASK_ID}:instance` }, update: {},
+    create: {
+      workflowDefinitionId: def.id, workflowVersionId: def.currentVersionId!, triggerEventId: `${ORG_TASK_ID}:event`, idempotencyKey: `${ORG_TASK_ID}:instance`,
+      organizationId: OTHER_ORG_ID, aggregateType: "INVOICE", aggregateId: ORG_TASK_ID, status: "WAITING", correlationId: ORG_TASK_ID,
+    },
+  });
+  await prisma.task.upsert({
+    where: { id: ORG_TASK_ID }, update: {},
+    create: { id: ORG_TASK_ID, source: "WORKFLOW", organizationId: OTHER_ORG_ID, workflowInstanceId: inst.id, type: "COLLECTIONS_FOLLOWUP", title: `${MARKER} org-level task`, idempotencyKey: ORG_TASK_ID },
+  });
+}
+
 interface Owned {
   /** Rows the tenant's FACILITY owns (facilityId, or a facility-owned parent). */
   facility: Map<string, string>;
@@ -179,6 +204,11 @@ async function ownedRows(t: Tenant): Promise<Owned> {
     const orgLevel = "organizationId" in where;
     for (const r of rows) (orgLevel ? out.org : out.facility).set(r.id, model);
     if (rows.length) out.byModel.set(model, rows.map((r) => r.id));
+    // Rows with no facility that belong to the organization (an org-level workflow task).
+    if (!orgLevel && ORG_LEVEL_MODELS.has(model)) {
+      const orgRows: { id: string }[] = await delegate(model).findMany({ where: { facilityId: null, organizationId: t.organizationId }, select: { id: true } });
+      for (const r of orgRows) out.org.set(r.id, model);
+    }
   }
   return out;
 }
@@ -240,6 +270,7 @@ const SEGMENT_MODELS: Record<string, string> = {
   "trace/patient/[patientId]": "Patient",
   "billing/[encounterId]": "Encounter",
   "charges/[chargeId]": "Charge",
+  "holds/[holdId]": "DischargeHold",
   "packages/[id]": "PackageDefinition",
   "adjustments/[id]": "FinancialAdjustment",
   "compatibility/[id]": "BloodCompatibilityTest",
@@ -580,6 +611,7 @@ async function main() {
       }
     }
   }
+  await seedOrgLevelTask();
   const owned: Record<TenantKey, Owned> = { pune: await ownedRows(tenants.pune), noida: await ownedRows(tenants.noida), other: await ownedRows(tenants.other) };
   console.log(`Owned rows: pune=${owned.pune.facility.size} noida=${owned.noida.facility.size} other=${owned.other.facility.size + owned.other.org.size}; routes: ${allRoutes.length}; models probed: ${needed.size}`);
 
@@ -765,6 +797,15 @@ async function main() {
     }
     await pool(recordTasks, 16);
     console.log(`Record routes: ${recordTasks.length} requests`);
+
+    // ── 5. organization-level rows ──
+    if (owned.other.org.get(ORG_TASK_ID) === "Task") ok();
+    else bad("org-level: the other organization's org-level task is not in its owned rows, so the leak checks can't see it");
+    for (const actor of actors.filter((a) => a.foreign)) {
+      const [u, f] = [await send(actor, "PATCH", `/api/hospital/tasks/${UNKNOWN_ID}`), await send(actor, "PATCH", `/api/hospital/tasks/${ORG_TASK_ID}`)];
+      if (f.status === u.status && (f.status === 404 || f.permission)) ok();
+      else bad(`org-level: PATCH tasks/<other org's org-level task> as ${actor.name} → ${f.status} (unknown id → ${u.status}) ${f.text.slice(0, 80)}`);
+    }
 
     await idempotencySection(base, { pune: owned.pune.facility, noida: owned.noida.facility });
     await medicationLinkSection(base);

@@ -94,3 +94,33 @@ describe("retry classification", () => {
     expect(isRetryable(classifyWorkflowError({ status: 409 }).category)).toBe(true); // CONFLICT
   });
 });
+
+describe("ESCALATE step (escalate an existing task, never create one)", () => {
+  const cfg = (sourceField: string) => ({
+    trigger: { eventType: "LabResultReleased", eventVersion: 1 },
+    steps: [{ type: "ESCALATE", key: "esc", target: { taskType: "CRITICAL_RESULT_FOLLOW_UP", sourceField }, afterSeconds: 900, reassignToRole: "HOSPITAL_ADMIN" }],
+  });
+  it("accepts a source field the trigger's contract declares", () => {
+    expect(() => validateWorkflowConfig(cfg("payload.resultId"))).not.toThrow();
+  });
+  it("rejects a source field the trigger does not carry", () => {
+    expect(() => validateWorkflowConfig(cfg("payload.reportId"))).toThrow(/not a field/);
+  });
+  it("rejects a source outside the payload", () => {
+    expect(() => validateWorkflowConfig(cfg("event.aggregateId"))).toThrow();
+  });
+});
+
+describe("workflow failure classification (batch 4, decision 5)", () => {
+  it("treats a missing parent or record as NOT_FOUND, which is terminal", () => {
+    for (const code of ["P2003", "P2025"]) {
+      const c = classifyWorkflowError(Object.assign(new Error("gone"), { code }));
+      expect(c.category).toBe("NOT_FOUND");
+      expect(isRetryable(c.category)).toBe(false);
+    }
+  });
+  it("bounds timers and instances", () => {
+    expect(LIMITS.MAX_TIMER_ATTEMPTS).toBeGreaterThan(0);
+    expect(LIMITS.MAX_INSTANCE_ATTEMPTS).toBeGreaterThan(0);
+  });
+});

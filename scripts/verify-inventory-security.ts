@@ -11,13 +11,13 @@
  *
  * Usage: npx tsx scripts/verify-inventory-security.ts
  */
+import { seedFixtureStock } from "./lib/stockFixture";
 import { PrismaClient } from "@prisma/client";
 import { issueStock } from "../src/lib/hospital/inventory/issue";
 import { ResourceFacilityMismatchError } from "../src/lib/hospital/inventory/facilityScope";
 import { ExpiredLotError, QuarantinedLotError } from "../src/lib/hospital/inventory/fefo";
 import { InsufficientStockError } from "../src/lib/hospital/inventory/stockBalance";
 import { createStockLocation } from "../src/lib/hospital/inventory/locations";
-import { getOrCreateStockBalance } from "../src/lib/hospital/inventory/stockBalance";
 import { addPurchaseOrderLine } from "../src/lib/hospital/procurement/purchaseOrders";
 import { BadRequestError } from "../src/lib/auth/rbac";
 import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
@@ -95,8 +95,7 @@ async function main() {
     const item = await prisma.item.findFirstOrThrow({ where: { facilityId: facilityA.id } });
     const location = await prisma.stockLocation.findFirstOrThrow({ where: { facilityId: facilityA.id } });
     const expiredLot = await prisma.itemLot.create({ data: { itemId: item.id, facilityId: facilityA.id, lotNumber: `SEC-EXPIRED-${runId}`, status: "ACTIVE", expiresAt: new Date(Date.now() - 86_400_000) } });
-    await prisma.$transaction((tx) => getOrCreateStockBalance(tx, { facilityId: facilityA.id, itemId: item.id, lotId: expiredLot.id, locationId: location.id }));
-    await prisma.stockBalance.updateMany({ where: { lotId: expiredLot.id }, data: { onHandQty: 100 } });
+    await seedFixtureStock({ facilityId: facilityA.id, itemId: item.id, lotId: expiredLot.id, locationId: location.id, quantity: 100, actorUserId: staffA.userId, key: `sec-expired-${runId}` });
 
     const result = await prisma
       .$transaction((tx) =>
@@ -112,8 +111,7 @@ async function main() {
     const item = await prisma.item.findFirstOrThrow({ where: { facilityId: facilityA.id } });
     const location = await prisma.stockLocation.findFirstOrThrow({ where: { facilityId: facilityA.id } });
     const quarantinedLot = await prisma.itemLot.create({ data: { itemId: item.id, facilityId: facilityA.id, lotNumber: `SEC-QUARANTINE-${runId}`, status: "QUARANTINED" } });
-    await prisma.$transaction((tx) => getOrCreateStockBalance(tx, { facilityId: facilityA.id, itemId: item.id, lotId: quarantinedLot.id, locationId: location.id }));
-    await prisma.stockBalance.updateMany({ where: { lotId: quarantinedLot.id }, data: { onHandQty: 100 } });
+    await seedFixtureStock({ facilityId: facilityA.id, itemId: item.id, lotId: quarantinedLot.id, locationId: location.id, quantity: 100, actorUserId: staffA.userId, key: `sec-quarantine-${runId}` });
 
     const result = await prisma
       .$transaction((tx) =>
@@ -129,8 +127,7 @@ async function main() {
     const item = await prisma.item.findFirstOrThrow({ where: { facilityId: facilityA.id } });
     const location = await prisma.$transaction((tx) => createStockLocation(tx, { facilityId: facilityA.id, name: `Security-OverIssue-${runId}`, type: "WAREHOUSE" }));
     const lot = await prisma.itemLot.create({ data: { itemId: item.id, facilityId: facilityA.id, lotNumber: `SEC-OVERISSUE-${runId}`, status: "ACTIVE" } });
-    await prisma.$transaction((tx) => getOrCreateStockBalance(tx, { facilityId: facilityA.id, itemId: item.id, lotId: lot.id, locationId: location.id }));
-    await prisma.stockBalance.updateMany({ where: { lotId: lot.id }, data: { onHandQty: 5 } });
+    await seedFixtureStock({ facilityId: facilityA.id, itemId: item.id, lotId: lot.id, locationId: location.id, quantity: 5, actorUserId: staffA.userId, key: `sec-overissue-${runId}` });
 
     const result = await prisma
       .$transaction((tx) =>

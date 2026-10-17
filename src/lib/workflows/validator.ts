@@ -53,6 +53,12 @@ export function validateWorkflowConfig(raw: unknown): WorkflowConfig {
       if (step.sla && step.sla.escalation.emitEventType && currentVersion(step.sla.escalation.emitEventType) === undefined) {
         throw new BadRequestError(`SLA escalation targets unknown event "${step.sla.escalation.emitEventType}".`);
       }
+    } else if (step.type === "ESCALATE") {
+      // The source id must be a field the trigger event's contract declares.
+      const contract = getEventContract(cfg.trigger.eventType, cfg.trigger.eventVersion);
+      const shape = (contract?.payload as unknown as { shape?: Record<string, unknown> } | undefined)?.shape ?? {};
+      const field = step.target.sourceField.slice("payload.".length);
+      if (!(field in shape)) throw new BadRequestError(`ESCALATE step "${step.key}": ${step.target.sourceField} is not a field of ${cfg.trigger.eventType}@${cfg.trigger.eventVersion}.`);
     }
     // TIMER durations are bounded by the schema (positive, <= MAX_TIMER_SECONDS).
   }

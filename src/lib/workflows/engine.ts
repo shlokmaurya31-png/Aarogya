@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { emitDomainEvent } from "@/lib/events/emit";
 import type { DomainEventEnvelope } from "@/lib/events/types";
 import { evaluateCondition } from "./conditions";
 import type { WorkflowConfig, StepConfig } from "./definition";
 import { createWorkflowTask } from "./tasks";
+import { escalateTask } from "@/lib/hospital/task";
 import { createTimerTx } from "./timers";
 import { resolveEffectiveInternal, isKnownConfigKey } from "@/lib/config";
 import {
@@ -105,7 +107,29 @@ export async function runInstance(instanceId: string, opts?: { now?: Date }): Pr
     data: { status: "RUNNING", claimToken: token, lastAttemptAt: now, attemptCount: { increment: 1 } },
   });
   if (claim.count !== 1) return; // not runnable, or another worker owns it
+  try {
+    await runClaimed(instanceId, token, now);
+  } catch (err) {
+    // A failure outside a step (its version or trigger gone, a broken row): bounded,
+    // never left RUNNING. Retryable errors go back to RUNNABLE until the budget.
+    await failOrRelease(instanceId, token, now, err);
+  }
+}
 
+/** Mark an instance FAILED (permanent, or out of attempts) or release it to RUNNABLE. */
+async function failOrRelease(instanceId: string, token: string | null, now: Date, err: unknown): Promise<void> {
+  const { category, message } = classifyWorkflowError(err);
+  const inst = await prisma.workflowInstance.findUnique({ where: { id: instanceId }, select: { attemptCount: true } });
+  const retry = isRetryable(category) && (inst?.attemptCount ?? 0) < LIMITS.MAX_INSTANCE_ATTEMPTS;
+  await prisma.workflowInstance.updateMany({
+    where: { id: instanceId, ...(token ? { claimToken: token } : {}), status: { notIn: ["COMPLETED", "FAILED", "CANCELLED"] } },
+    data: retry
+      ? { status: "RUNNABLE", claimToken: null, failureCategory: category, failureMessage: safeMessage(message) }
+      : { status: "FAILED", claimToken: null, failedAt: now, failureCategory: category, failureMessage: safeMessage(message) },
+  });
+}
+
+async function runClaimed(instanceId: string, token: string, now: Date): Promise<void> {
   const inst = await prisma.workflowInstance.findUnique({ where: { id: instanceId }, include: { steps: { orderBy: { stepIndex: "asc" } } } });
   if (!inst) return;
   const version = await prisma.workflowVersion.findUniqueOrThrow({ where: { id: inst.workflowVersionId } });
@@ -204,6 +228,31 @@ async function executeStep(
     return "CONTINUE";
   }
 
+  if (stepCfg.type === "ESCALATE") {
+    // Escalate-only SLA: a timer that, on breach, escalates the task another
+    // module owns (found by its idempotency key). No task is created here.
+    const sourceId = ctx.payload[stepCfg.target.sourceField.slice("payload.".length)];
+    if (typeof sourceId !== "string" || !inst.facilityId) {
+      await markCompleted(null); // nothing to watch (no source id / no facility): the step is a no-op
+      return "CONTINUE";
+    }
+    const slaSeconds = await effectiveSlaSeconds(inst, defKey, stepCfg.afterSeconds, now);
+    await prisma.$transaction(async (tx) => {
+      await createTimerTx(tx, {
+        workflowInstanceId: inst.id, workflowStepId: step.id, kind: "SLA",
+        availableAt: new Date(now.getTime() + slaSeconds.seconds * 1000),
+        payload: {
+          target: { facilityId: inst.facilityId, idempotencyKey: `${stepCfg.target.taskType}:${sourceId}` },
+          escalate: { ...(stepCfg.raisePriorityTo ? { raisePriorityTo: stepCfg.raisePriorityTo } : {}), ...(stepCfg.reassignToRole ? { reassignToRole: stepCfg.reassignToRole } : {}) },
+          slaSeconds: slaSeconds.seconds, slaSource: slaSeconds.source, slaVersion: slaSeconds.version,
+        } as unknown as Prisma.InputJsonValue,
+        idempotencyKey: `${step.id}:sla`,
+      });
+      await tx.workflowStep.updateMany({ where: { id: step.id, status: { in: ["PENDING", "RUNNING"] } }, data: { status: "COMPLETED", completedAt: now, startedAt: now, resultRef: null } });
+    });
+    return "CONTINUE";
+  }
+
   if (stepCfg.type === "TIMER") {
     await prisma.$transaction(async (tx) => {
       await createTimerTx(tx, { workflowInstanceId: inst.id, workflowStepId: step.id, kind: "DELAY", availableAt: new Date(now.getTime() + stepCfg.dueAfterSeconds * 1000), idempotencyKey: `${step.id}:timer` });
@@ -213,13 +262,18 @@ async function executeStep(
     return "WAIT";
   }
 
-  // ACTION
-  await runAction(inst, stepCfg);
-  await markCompleted(null);
+  // ACTION — the action (e.g. an emitted event) and the step's completion
+  // commit together (ADR 0004 rule 1): no event without a completed step, and
+  // no completed step without its event.
+  await prisma.$transaction(async (tx) => {
+    await runAction(tx, inst, stepCfg);
+    await tx.workflowStep.updateMany({ where: { id: step.id, status: { in: ["PENDING", "RUNNING"] } }, data: { status: "COMPLETED", completedAt: now, startedAt: now, resultRef: null } });
+  });
   return "CONTINUE";
 }
 
 async function runAction(
+  tx: Prisma.TransactionClient,
   inst: { id: string; organizationId: string | null; facilityId: string | null; triggerEventId: string; correlationId: string },
   stepCfg: Extract<StepConfig, { type: "ACTION" }>,
 ): Promise<void> {
@@ -229,7 +283,7 @@ async function runAction(
     // Preserve causation: the emitted event shares the instance's correlation chain
     // and names the trigger event as its cause. Depth-capping in
     // startWorkflowsForEvent prevents runaway event→workflow→event loops.
-    await emitDomainEvent(prisma, {
+    await emitDomainEvent(tx, {
       type: p.eventType,
       aggregateId: p.aggregateId ?? inst.id,
       organizationId: inst.organizationId,
@@ -268,18 +322,29 @@ export interface TickResult { timersFired: number; escalated: number; instancesR
 export async function tickWorkflows(opts: TickOptions = {}): Promise<TickResult> {
   const now = opts.now ?? new Date();
   const batchSize = Math.min(Math.max(1, opts.batchSize ?? 100), 500);
+  await reapStaleInstances(now);
   const timers = await processDueWorkflowTimers(now, batchSize);
   const instancesRun = await runRunnableInstances(now, batchSize);
   return { ...timers, instancesRun };
 }
 
 async function processDueWorkflowTimers(now: Date, batchSize: number): Promise<{ timersFired: number; escalated: number }> {
-  const due = await prisma.workflowTimer.findMany({ where: { status: "PENDING", availableAt: { lte: now } }, orderBy: { availableAt: "asc" }, take: batchSize, select: { id: true } });
+  // Workflow spine §3.3: one statement claims a batch with FOR UPDATE SKIP
+  // LOCKED, so concurrent ticks take disjoint timers; the token still guards
+  // every later write.
+  const token = randomUUID();
+  const due = await prisma.$queryRaw<{ id: string }[]>`
+    UPDATE "WorkflowTimer" t
+    SET "status" = 'CLAIMED', "claimToken" = ${token}, "claimedAt" = ${now}, "attemptCount" = t."attemptCount" + 1, "updatedAt" = ${now}
+    WHERE t."id" IN (
+      SELECT "id" FROM "WorkflowTimer"
+      WHERE "status" = 'PENDING' AND "availableAt" <= ${now}
+      ORDER BY "availableAt", "id"
+      FOR UPDATE SKIP LOCKED
+      LIMIT ${batchSize})
+    RETURNING t."id"`;
   let timersFired = 0, escalated = 0;
   for (const t of due) {
-    const token = randomUUID();
-    const claim = await prisma.workflowTimer.updateMany({ where: { id: t.id, status: "PENDING" }, data: { status: "CLAIMED", claimToken: token, claimedAt: now, attemptCount: { increment: 1 } } });
-    if (claim.count !== 1) continue; // another worker won the claim
     timersFired++;
     const timer = await prisma.workflowTimer.findUniqueOrThrow({ where: { id: t.id } });
     try {
@@ -295,20 +360,57 @@ async function processDueWorkflowTimers(now: Date, batchSize: number): Promise<{
         if (escalatedNow) escalated++;
         await prisma.workflowTimer.updateMany({ where: { id: t.id, claimToken: token }, data: { status: "COMPLETED", completedAt: now } });
       }
-    } catch {
-      // Release the claim so a later tick retries this timer (never lost).
-      await prisma.workflowTimer.updateMany({ where: { id: t.id, claimToken: token }, data: { status: "PENDING", claimToken: null } });
+    } catch (err) {
+      // Bounded: a permanent failure, or LIMITS.MAX_TIMER_ATTEMPTS failures,
+      // fails the timer and its instance (listed by listWorkflowDeadLetters);
+      // otherwise the claim is released with a backoff and a later tick retries.
+      const { category, message } = classifyWorkflowError(err);
+      if (!isRetryable(category) || timer.attemptCount >= LIMITS.MAX_TIMER_ATTEMPTS) {
+        await prisma.workflowTimer.updateMany({ where: { id: t.id, claimToken: token }, data: { status: "FAILED", claimToken: null } });
+        await prisma.workflowInstance.updateMany({
+          where: { id: timer.workflowInstanceId, status: { notIn: ["COMPLETED", "FAILED", "CANCELLED"] } },
+          data: { status: "FAILED", claimToken: null, failedAt: now, failureCategory: category, failureMessage: safeMessage(`timer ${timer.kind}: ${message}`) },
+        });
+        // An SLA timer's instance has usually completed already: record the failure on it anyway.
+        await prisma.workflowInstance.updateMany({
+          where: { id: timer.workflowInstanceId, status: "COMPLETED" },
+          data: { failureCategory: category, failureMessage: safeMessage(`timer ${timer.kind}: ${message}`) },
+        });
+      } else {
+        await prisma.workflowTimer.updateMany({ where: { id: t.id, claimToken: token }, data: { status: "PENDING", claimToken: null, availableAt: stepBackoff(now, timer.attemptCount) } });
+      }
     }
   }
   return { timersFired, escalated };
 }
 
+/** The effective SLA for a workflow step: the D8 override for `workflow.<key>.sla`, else the version's own value (snapshotted on the timer). */
+async function effectiveSlaSeconds(inst: { organizationId: string | null; facilityId: string | null }, defKey: string, fallback: number, now: Date) {
+  const cfgKey = `workflow.${defKey}.sla`;
+  if (inst.organizationId && isKnownConfigKey(cfgKey)) {
+    const eff = await resolveEffectiveInternal({ key: cfgKey, organizationId: inst.organizationId, facilityId: inst.facilityId, atTime: now, fallbackRaw: String(fallback) });
+    if (typeof eff.value === "number" && eff.value > 0) return { seconds: eff.value, source: eff.source as string, version: eff.version };
+  }
+  return { seconds: fallback, source: "WORKFLOW_VERSION", version: null as number | null };
+}
+
 async function escalateSla(timer: { id: string; workflowInstanceId: string; workflowStepId: string | null; payload: unknown }): Promise<boolean> {
+  const target = (timer.payload as { target?: { facilityId: string; idempotencyKey: string }; escalate?: { raisePriorityTo?: "ROUTINE" | "URGENT" | "STAT"; reassignToRole?: string } } | null)?.target;
+  if (target) {
+    // ESCALATE step: escalate the existing task if it is still open. No task
+    // (the source was resolved before one was needed) or a closed one: nothing to do.
+    const esc = (timer.payload as { escalate?: { raisePriorityTo?: "ROUTINE" | "URGENT" | "STAT"; reassignToRole?: string } }).escalate ?? {};
+    return prisma.$transaction(async (tx) => {
+      const task = await tx.task.findFirst({ where: { facilityId: target.facilityId, idempotencyKey: target.idempotencyKey, source: { not: "WORKFLOW" } }, select: { id: true } });
+      if (!task) return false;
+      return (await escalateTask(tx, task.id, esc)) !== null;
+    });
+  }
   const payload = (timer.payload ?? {}) as { taskId?: string; escalation?: { taskType: string; title: string; description?: string; priority?: "ROUTINE" | "URGENT" | "STAT"; assignedRole?: string; emitEventType?: string } };
   if (!payload.escalation) return false;
   if (payload.taskId) {
-    const task = await prisma.workflowTask.findUnique({ where: { id: payload.taskId }, select: { status: true } });
-    if (task && (task.status === "COMPLETED" || task.status === "CANCELLED")) return false; // met SLA — no escalation
+    const task = await prisma.task.findUnique({ where: { id: payload.taskId }, select: { status: true } });
+    if (task && (task.status === "COMPLETED" || task.status === "CANCELLED" || task.status === "EXPIRED")) return false; // met SLA — no escalation
   }
   const inst = await prisma.workflowInstance.findUniqueOrThrow({ where: { id: timer.workflowInstanceId }, select: { organizationId: true, facilityId: true } });
   await prisma.$transaction(async (tx) => {
@@ -320,6 +422,15 @@ async function escalateSla(timer: { id: string; workflowInstanceId: string; work
     });
   });
   return true;
+}
+
+/** Return abandoned RUNNING instances (a worker died mid-run) to RUNNABLE, or FAILED once out of attempts. */
+async function reapStaleInstances(now: Date): Promise<void> {
+  const stale = await prisma.workflowInstance.findMany({
+    where: { status: "RUNNING", lastAttemptAt: { lt: new Date(now.getTime() - LIMITS.STALE_CLAIM_MS) } },
+    select: { id: true, claimToken: true }, take: 100,
+  });
+  for (const s of stale) await failOrRelease(s.id, s.claimToken, now, Object.assign(new Error("claim abandoned (stale RUNNING instance)"), { retryable: true }));
 }
 
 async function runRunnableInstances(now: Date, batchSize: number): Promise<number> {

@@ -1,6 +1,7 @@
+import { registerStudentAccount } from "@/lib/student/accounts";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { Course, LearningTrack, VerificationMethod, VerificationStatus, Role } from "@prisma/client";
+import { Course, LearningTrack, VerificationMethod, VerificationStatus } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { hashPassword } from "@/lib/auth/password";
 import { createSession } from "@/lib/auth/session";
@@ -59,19 +60,9 @@ export async function POST(req: NextRequest) {
   const passwordHash = await hashPassword(input.password);
   const status = await decideInitialVerificationStatus(input.verificationMethod, input.institutionEmail || undefined);
 
-  const user = await prisma.user.create({
-    data: {
-      email: input.email.toLowerCase(),
-      passwordHash,
-      role: Role.STUDENT,
-      displayName: input.preferredName || input.fullLegalName,
-      legalName: input.fullLegalName,
-    },
-  });
-
-  const studentProfile = await prisma.studentProfile.create({
-    data: {
-      userId: user.id,
+  const { user } = await registerStudentAccount({
+    user: { email: input.email.toLowerCase(), passwordHash, displayName: input.preferredName || input.fullLegalName, legalName: input.fullLegalName },
+    profile: {
       institutionNameFreeText: input.institutionName,
       course: input.course,
       learningTrack: input.learningTrack,
@@ -88,17 +79,14 @@ export async function POST(req: NextRequest) {
       verificationMethod: input.verificationMethod,
       verifiedAt: status === VerificationStatus.VERIFIED ? new Date() : undefined,
     },
+    // Optional document upload for METHOD B/C — stored via the restricted VerificationProvider, never inline in the DB.
+    storeDocument: upload
+      ? async (studentProfileId) => {
+          const stored = await getVerificationProvider().store(studentProfileId, input.verificationMethod, upload.bytes, upload.name, upload.type);
+          return { kind: input.verificationMethod, storageRef: stored.storageRef, sha256: stored.sha256 };
+        }
+      : undefined,
   });
-
-  // Optional document upload for METHOD B/C — stored via the restricted VerificationProvider, never inline in the DB.
-  if (upload) {
-    const provider = getVerificationProvider();
-    const stored = await provider.store(studentProfile.id, input.verificationMethod, upload.bytes, upload.name, upload.type);
-    await prisma.verificationDocument.create({
-      data: { studentProfileId: studentProfile.id, kind: input.verificationMethod, storageRef: stored.storageRef, sha256: stored.sha256 },
-    });
-    await prisma.studentProfile.update({ where: { id: studentProfile.id }, data: { verificationStatus: VerificationStatus.UNDER_REVIEW } });
-  }
 
   await recordAuditEvent("student.verification.submitted", user.id, { method: input.verificationMethod, status });
   await createSession(user.id, user.role);

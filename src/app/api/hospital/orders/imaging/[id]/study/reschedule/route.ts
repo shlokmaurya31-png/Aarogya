@@ -38,7 +38,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const study = await prisma.imagingStudy.findFirst({ where: { imagingOrderId: id, status: "SCHEDULED" }, orderBy: { createdAt: "desc" } });
     if (!study) throw new NotFoundError("No scheduled study to reschedule for this order.");
 
-    const updated = await prisma.$transaction((tx) => rescheduleStudy(tx, study.id, resourceId ?? study.resourceId, parsedScheduledAt, durationMinutes));
+    const updated = await prisma.$transaction((tx) => rescheduleStudy(tx, study.id, resourceId ?? study.resourceId, parsedScheduledAt, durationMinutes, session.userId));
 
     await recordAuditEvent(
       "hospital.imaging.rescheduled",

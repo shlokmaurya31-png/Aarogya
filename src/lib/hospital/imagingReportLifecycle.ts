@@ -1,10 +1,19 @@
 import { Prisma } from "@prisma/client";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
-import { emitDomainEvent } from "@/lib/events/emit";
-import { facilityOrganizationId } from "@/lib/events/tenant";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 import { syncOrderStatus } from "./orderEnvelope";
+import { minutesBetween } from "./labResultLifecycle";
 
 type Tx = Prisma.TransactionClient;
+
+/**
+ * The order's patient, encounter and facility: the tenant and correlation of a
+ * report's events. From the order, not the study, so a report with no linked
+ * study still emits (it used to be released without an event).
+ */
+function reportContext(tx: Tx, imagingOrderId: string) {
+  return tx.imagingOrder.findUniqueOrThrow({ where: { id: imagingOrderId }, select: { patientId: true, encounterId: true, encounter: { select: { facilityId: true } } } });
+}
 
 export class ReportConcurrencyError extends BadRequestError {
   constructor(action: string) {
@@ -76,27 +85,19 @@ export async function enterReport(tx: Tx, input: EnterReportInput) {
 }
 
 /** Guarded — ENTERED -> VERIFIED once; concurrent double-verify is rejected, not silently accepted twice (brief §23 test #3). */
-export async function verifyReport(tx: Tx, reportId: string, verifiedByStaffId: string) {
+export async function verifyReport(tx: Tx, reportId: string, verifiedByStaffId: string, byUserId?: string) {
   const result = await tx.imagingReport.updateMany({
     where: { id: reportId, status: "ENTERED", isCurrent: true },
     data: { status: "VERIFIED", verifiedByStaffId, verifiedAt: new Date() },
   });
   if (result.count !== 1) throw new ReportConcurrencyError("verified");
   const verified = await tx.imagingReport.findUniqueOrThrow({ where: { id: reportId } });
-  // Phase D6 — ImagingReportReleased on verification. Tenant scope from the study
-  // (a report with no linked study emits no tenant-scoped event).
-  if (verified.studyId) {
-    const study = await tx.imagingStudy.findUnique({ where: { id: verified.studyId }, select: { facilityId: true, patientId: true } });
-    if (study) {
-      await emitDomainEvent(tx, {
-        type: "ImagingReportReleased",
-        aggregateId: reportId,
-        organizationId: await facilityOrganizationId(tx, study.facilityId),
-        facilityId: study.facilityId,
-        payload: { reportId, studyId: verified.studyId, patientId: study.patientId, critical: verified.isCritical },
-      });
-    }
-  }
+  // Phase D6 — ImagingReportReleased on verification, correlated by the encounter.
+  const ctx = await reportContext(tx, verified.imagingOrderId);
+  await emitFacilityEvent(tx, {
+    type: "ImagingReportReleased", aggregateId: reportId, facilityId: ctx.encounter.facilityId, actorUserId: byUserId, encounterId: ctx.encounterId,
+    payload: { reportId, patientId: ctx.patientId, critical: verified.isCritical, ...(verified.studyId ? { studyId: verified.studyId } : {}) },
+  });
   return verified;
 }
 
@@ -109,20 +110,31 @@ export async function verifyReport(tx: Tx, reportId: string, verifiedByStaffId: 
  * established elsewhere in this codebase to a spot Milestone B left
  * unguarded.
  */
-export async function acknowledgeReport(tx: Tx, reportId: string, acknowledgedByStaffId: string) {
+export async function acknowledgeReport(tx: Tx, reportId: string, acknowledgedByStaffId: string, byUserId?: string) {
   const result = await tx.imagingReport.updateMany({
     where: { id: reportId, isCritical: true, acknowledgedAt: null },
     data: { acknowledgedByStaffId, acknowledgedAt: new Date() },
   });
   if (result.count !== 1) throw new ReportConcurrencyError("acknowledged");
-  return tx.imagingReport.findUniqueOrThrow({ where: { id: reportId } });
+  const acked = await tx.imagingReport.findUniqueOrThrow({ where: { id: reportId } });
+  const ctx = await reportContext(tx, acked.imagingOrderId);
+  await emitFacilityEvent(tx, {
+    type: "CriticalResultAcknowledged", aggregateId: acked.id, aggregateType: "IMAGING_REPORT", facilityId: ctx.encounter.facilityId,
+    actorUserId: byUserId, encounterId: ctx.encounterId,
+    payload: {
+      resultKind: "IMAGING", reportId: acked.id, patientId: ctx.patientId, acknowledgedByStaffId,
+      minutesToAcknowledge: minutesBetween(acked.verifiedAt ?? acked.reportedAt, acked.acknowledgedAt!),
+    },
+  });
+  return acked;
 }
 
 /** Amendment (brief §11) — the previous verified version is preserved unchanged, never overwritten. */
 export async function amendReport(
   tx: Tx,
   reportId: string,
-  input: { findings: string; impression: string; recommendations?: string | null; isCritical?: boolean; reason: string; amendedByStaffId: string }
+  input: { findings: string; impression: string; recommendations?: string | null; isCritical?: boolean; reason: string; amendedByStaffId: string },
+  byUserId?: string,
 ) {
   const original = await tx.imagingReport.findUnique({ where: { id: reportId } });
   if (!original) throw new NotFoundError("Report not found.");
@@ -161,5 +173,11 @@ export async function amendReport(
     throw err;
   }
 
+  const ctx = await reportContext(tx, original.imagingOrderId);
+  await emitFacilityEvent(tx, {
+    type: "DiagnosticReportAmended", aggregateId: original.id, aggregateType: "IMAGING_REPORT", facilityId: ctx.encounter.facilityId,
+    actorUserId: byUserId, encounterId: ctx.encounterId,
+    payload: { reportKind: "IMAGING", amendedId: amended.id, supersedesId: original.id, orderId: original.imagingOrderId, patientId: ctx.patientId, version: amended.version, critical: amended.isCritical },
+  });
   return { original, amended };
 }

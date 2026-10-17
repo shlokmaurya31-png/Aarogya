@@ -12,8 +12,9 @@ import { seedHospital } from "./seedData/hospital";
 import { seedPhase1Extensions } from "./seedData/hospitalPhase1";
 import { seedPhase2PatientFlow } from "./seedData/hospitalPhase2";
 import { seedPhase3Clinical } from "./seedData/hospitalPhase3";
-import { seedPhase5Billing } from "./seedData/hospitalPhase5";
+import { seedPhase5Billing, seedChargeCaptureTariffs } from "./seedData/hospitalPhase5";
 import { seedPhase6aInventory } from "./seedData/hospitalPhase6a";
+import { seedClinicalCatalogue } from "./seedData/clinicalCatalogue";
 import { ensureCommercialBootstrap } from "../src/lib/commercial/bootstrap";
 import { ensureBillingBootstrap } from "../src/lib/billing/bootstrap";
 import { ensureWorkflowSeed } from "../src/lib/workflows/seed";
@@ -208,6 +209,8 @@ async function main() {
   await seedPhase3Clinical(prisma);
   await seedPhase5Billing(prisma);
   await seedPhase6aInventory(prisma);
+  await seedClinicalCatalogue(prisma);
+  await seedChargeCaptureTariffs(prisma);
   await seedDemoLicensure(prisma);
   console.log(`Order statuses derived for ${await syncSeededOrderStatuses(prisma)} specific order(s).`);
   // Phase D2 — materialise the commercial registry (entitlement definitions,
@@ -222,7 +225,7 @@ async function main() {
   const admin = await prisma.user.findUnique({ where: { email: "admin@demo.aarogya" }, select: { id: true } });
   if (admin) {
     const wf = await ensureWorkflowSeed(admin.id);
-    console.log(`Workflow seed: ${wf.created} canonical workflow(s) published.`);
+    console.log(`Workflow seed: ${wf.created} canonical workflow(s) published, ${wf.updated} updated to a new version.`);
     // Phase D8 — a demo org-level configuration override (idempotent).
     const firstOrg = await prisma.organization.findFirst({ select: { id: true }, orderBy: { createdAt: "asc" } });
     if (firstOrg) {

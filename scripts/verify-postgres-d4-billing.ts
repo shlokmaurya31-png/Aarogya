@@ -132,6 +132,17 @@ async function run() {
     const late = await ingestWebhook({ providerKind: "RAZORPAY", payload: failEvt, signature: sign(failEvt), eventIdHint: "d4t-evt-late" });
     const att = await prisma.billingPaymentAttempt.findFirstOrThrow({ where: { providerRequestRef: "order_d4t_1" } });
     if (att.status === "SUCCEEDED" && (late.status === "DUPLICATE" || late.status === "PROCESSED")) ok("stale failure after capture does not revert a SUCCEEDED attempt"); else bad("out-of-order", `${late.status}/${att.status}`);
+    // A failure on a pending attempt marks it FAILED and emits PaymentFailed once
+    // (workflow spine §1.1: this event had no producer before).
+    await makeInvoiceWithOrder(ID.uPlatform, ID.orgA, "order_d4t_fail", "2033-01-01");
+    const failNow = JSON.stringify({ event: "payment.failed", payload: { payment: { entity: { id: "pay_d4t_fail", order_id: "order_d4t_fail", status: "failed", error_code: "card_declined" } } } });
+    const f1 = await ingestWebhook({ providerKind: "RAZORPAY", payload: failNow, signature: sign(failNow), eventIdHint: "d4t-evt-fail-1" });
+    const failedAtt = await prisma.billingPaymentAttempt.findFirstOrThrow({ where: { providerRequestRef: "order_d4t_fail" } });
+    const failEvents = () => prisma.domainEventOutbox.count({ where: { eventType: "PaymentFailed", aggregateId: failedAtt.id } });
+    if (f1.status === "PROCESSED" && failedAtt.status === "FAILED" && (await failEvents()) === 1) ok("payment.failed marks the attempt FAILED and emits PaymentFailed once"); else bad("PaymentFailed", `${f1.status}/${failedAtt.status}/${await failEvents()}`);
+    const failAgain = JSON.stringify({ event: "payment.failed", payload: { payment: { entity: { id: "pay_d4t_fail", order_id: "order_d4t_fail", status: "failed", error_code: "card_declined" } } } });
+    await ingestWebhook({ providerKind: "RAZORPAY", payload: failAgain, signature: sign(failAgain), eventIdHint: "d4t-evt-fail-2" });
+    if ((await failEvents()) === 1) ok("a repeated failure emits no second PaymentFailed"); else bad("PaymentFailed duplicate", String(await failEvents()));
     // Amount mismatch -> reconcile.
     const inv2 = await makeInvoiceWithOrder(ID.uPlatform, ID.orgA, "order_d4t_mm", "2032-01-01");
     void inv2;

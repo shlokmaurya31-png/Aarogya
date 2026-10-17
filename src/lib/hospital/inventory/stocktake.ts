@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { BadRequestError } from "@/lib/auth/rbac";
 import { createAdjustment } from "./adjustment";
 import { assertItemInFacility, assertLocationInFacility, assertLotInFacility } from "./facilityScope";
+import { emitStockDocumentStatus } from "./stockDocumentEvent";
 
 type Tx = Prisma.TransactionClient;
 
@@ -79,6 +80,11 @@ export async function completeStockTake(tx: Tx, stockTakeId: string, input: { co
     });
     await tx.stockTakeLine.update({ where: { id: line.id }, data: { resultingAdjustmentId: adjustment.id } });
   }
+  await emitStockDocumentStatus(tx, {
+    documentType: "STOCK_TAKE", documentId: stockTake.id, facilityId: stockTake.facilityId, from: "IN_PROGRESS", to: "COMPLETED",
+    locationId: stockTake.locationId, varianceLineCount: stockTake.lines.filter((l) => l.varianceQuantity && l.varianceQuantity !== 0).length,
+    actorUserId: input.actorUserId,
+  });
 
   return tx.stockTake.findUniqueOrThrow({ where: { id: stockTakeId }, include: { lines: true } });
 }

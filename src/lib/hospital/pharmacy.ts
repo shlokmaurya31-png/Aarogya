@@ -17,6 +17,8 @@ import type { Prisma, MedicationOrderStatus, MedicationReturnSource, MedicationR
 import { syncOrderStatus } from "./orderEnvelope";
 import { parseOptionalEnum } from "@/lib/enumValue";
 import { $Enums } from "@prisma/client";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+import { emitSupplyRequestStatus } from "@/lib/hospital/inventory/supplyRequestEvent";
 
 /**
  * Enterprise Pharmacy service (Phase B6). An ORCHESTRATION layer over the
@@ -31,6 +33,17 @@ import { $Enums } from "@prisma/client";
  */
 
 type Tx = Prisma.TransactionClient;
+
+/** MedicationSubstituted, in the writer's transaction (explicit or at dispense time). */
+function emitSubstituted(tx: Tx, sub: { id: string; facilityId: string; replacementItemId: string | null; authorizedByStaffId: string }, order: { id: string; patientId: string; encounterId: string }, byUserId: string) {
+  return emitFacilityEvent(tx, {
+    type: "MedicationSubstituted", aggregateId: sub.id, facilityId: sub.facilityId, actorUserId: byUserId, encounterId: order.encounterId,
+    payload: {
+      substitutionId: sub.id, orderId: order.id, patientId: order.patientId, encounterId: order.encounterId, authorizedByStaffId: sub.authorizedByStaffId,
+      ...(sub.replacementItemId ? { replacementItemId: sub.replacementItemId } : {}),
+    },
+  });
+}
 
 // ── Medication master ─────────────────────────────────────────────────────
 export async function updateMedicationMaster(input: {
@@ -194,7 +207,18 @@ export async function dispenseFromPharmacy(input: {
     }
 
     if (input.substitutedDrugName && input.substitutedDrugName !== order.drugName) {
-      await tx.medicationSubstitution.create({ data: { facilityId: input.facilityId, medicationOrderId: order.id, originalDrugName: order.drugName, replacementItemId: item.id, replacementDrugName: input.substitutedDrugName, reason: input.notes ?? "Dispense-time substitution", authorizedByStaffId: input.pharmacistStaffId } });
+      const sub = await tx.medicationSubstitution.create({ data: { facilityId: input.facilityId, medicationOrderId: order.id, originalDrugName: order.drugName, replacementItemId: item.id, replacementDrugName: input.substitutedDrugName, reason: input.notes ?? "Dispense-time substitution", authorizedByStaffId: input.pharmacistStaffId } });
+      await emitSubstituted(tx, sub, order, input.byUserId);
+    }
+    // MedicationDispensed, one per dispensing record (each names its own lot).
+    for (const r of records) {
+      await emitFacilityEvent(tx, {
+        type: "MedicationDispensed", aggregateId: r.id, facilityId: input.facilityId, actorUserId: input.byUserId, encounterId: order.encounterId,
+        payload: {
+          dispensingRecordId: r.id, orderId: order.id, patientId: order.patientId, encounterId: order.encounterId,
+          quantity: r.quantity, partial: !fullyDispensed, dispenseGroupId,
+        },
+      });
     }
     await tx.auditEvent.create({ data: { type: "hospital.pharmacy.dispensed", userId: input.byUserId, detail: { orderId: order.id, dispenseGroupId, totalQty, lots: records.map((r) => r.itemLotId), controlled: order.isControlled, fullyDispensed }, facilityId: input.facilityId, patientId: order.patientId, encounterId: order.encounterId } });
     return { dispenseGroupId, records, order: refreshed, fullyDispensed };
@@ -205,8 +229,12 @@ export async function dispenseFromPharmacy(input: {
 export async function recordSubstitution(input: { medicationOrderId: string; facilityId: string; replacementDrugName: string; replacementItemId?: string; reason: string; authorizedByStaffId: string; byUserId: string }) {
   const order = await prisma.medicationOrder.findUnique({ where: { id: input.medicationOrderId }, include: { encounter: true } });
   if (!order || order.encounter.facilityId !== input.facilityId) throw new NotFoundError("Medication order not found.");
-  const sub = await prisma.medicationSubstitution.create({
-    data: { facilityId: input.facilityId, medicationOrderId: order.id, originalDrugName: order.drugName, replacementItemId: input.replacementItemId, replacementDrugName: input.replacementDrugName, reason: input.reason, authorizedByStaffId: input.authorizedByStaffId },
+  const sub = await prisma.$transaction(async (tx) => {
+    const created = await tx.medicationSubstitution.create({
+      data: { facilityId: input.facilityId, medicationOrderId: order.id, originalDrugName: order.drugName, replacementItemId: input.replacementItemId, replacementDrugName: input.replacementDrugName, reason: input.reason, authorizedByStaffId: input.authorizedByStaffId },
+    });
+    await emitSubstituted(tx, created, order, input.byUserId);
+    return created;
   });
   await recordAuditEvent("hospital.pharmacy.substitution", input.byUserId, { orderId: order.id, substitutionId: sub.id }, { facilityId: input.facilityId, patientId: order.patientId, encounterId: order.encounterId });
   return sub;
@@ -273,6 +301,14 @@ export async function recordControlledWastage(input: { facilityId: string; itemI
     });
     await recordWaste(tx, { facilityId: input.facilityId, itemId: input.itemId, lotId: input.itemLotId, locationId: input.locationId, quantity: input.quantity, reason: input.wasteReason ?? "OPENED_UNUSED", patientId: input.patientId ?? undefined, encounterId: input.encounterId ?? undefined, requestedByStaffId: input.recordedByStaffId, actorUserId: input.byUserId, idempotencyKey: `ctrl-waste-${ret.id}` });
     await tx.auditEvent.create({ data: { type: "hospital.pharmacy.controlledWastage", userId: input.byUserId, detail: { returnId: ret.id, itemId: input.itemId, lotId: input.itemLotId, quantity: input.quantity, witnessStaffId: input.witnessStaffId }, facilityId: input.facilityId, patientId: input.patientId, encounterId: input.encounterId } });
+    // The regulatory fact; the stock movement itself is recordWaste's (StockMoved at step 9a).
+    await emitFacilityEvent(tx, {
+      type: "PharmacyComplianceRecorded", aggregateId: ret.id, facilityId: input.facilityId, actorUserId: input.byUserId, encounterId: input.encounterId,
+      payload: {
+        recordId: ret.id, kind: "CONTROLLED_WASTAGE", locationId: input.locationId, itemId: input.itemId, itemLotId: input.itemLotId, witnessStaffId: input.witnessStaffId,
+        ...(input.patientId ? { patientId: input.patientId } : {}),
+      },
+    });
     return ret;
   });
 }
@@ -310,10 +346,22 @@ export async function createRecall(input: { facilityId: string; itemId: string; 
       : await tx.itemLot.findMany({ where: { itemId: input.itemId, facilityId: input.facilityId, status: { in: ["ACTIVE", "QUARANTINED"] } } });
     if (input.itemLotId && lots.length === 0) throw new NotFoundError("Lot not found in this facility.");
     const recall = await tx.medicationRecall.create({ data: { facilityId: input.facilityId, itemId: input.itemId, itemLotId: input.itemLotId, manufacturer: input.manufacturer, batchRef: input.batchRef, reason: input.reason, reference: input.reference, createdByStaffId: input.createdByStaffId } });
+    let affected = 0;
     for (const lot of lots) {
       // Guarded: only pull issuable/quarantined lots into RECALLED (terminal-safe).
-      await tx.itemLot.updateMany({ where: { id: lot.id, status: { in: ["ACTIVE", "QUARANTINED"] } }, data: { status: "RECALLED", quarantineReason: `Recall: ${input.reason}`, quarantinedAt: new Date(), quarantinedByUserId: input.byUserId } });
+      const r = await tx.itemLot.updateMany({ where: { id: lot.id, status: { in: ["ACTIVE", "QUARANTINED"] } }, data: { status: "RECALLED", quarantineReason: `Recall: ${input.reason}`, quarantinedAt: new Date(), quarantinedByUserId: input.byUserId } });
+      if (r.count === 1) {
+        affected += 1;
+        await emitFacilityEvent(tx, {
+          type: "StockLotStatusChanged", aggregateId: lot.id, facilityId: input.facilityId, actorUserId: input.byUserId,
+          payload: { lotId: lot.id, itemId: lot.itemId, from: lot.status, to: "RECALLED", cause: "RECALL", recallId: recall.id },
+        });
+      }
     }
+    await emitFacilityEvent(tx, {
+      type: "MedicationRecallStatusChanged", aggregateId: recall.id, facilityId: input.facilityId, actorUserId: input.byUserId,
+      payload: { recallId: recall.id, itemId: input.itemId, from: null, to: "OPEN", affectedLotCount: affected, ...(input.itemLotId ? { itemLotId: input.itemLotId } : {}) },
+    });
     await tx.auditEvent.create({ data: { type: "hospital.pharmacy.recallCreated", userId: input.byUserId, detail: { recallId: recall.id, itemId: input.itemId, itemLotId: input.itemLotId, affectedLots: lots.map((l) => l.id) }, facilityId: input.facilityId } });
     return recall;
   });
@@ -326,6 +374,10 @@ export async function closeRecall(input: { recallId: string; facilityId: string;
     const r = await tx.medicationRecall.updateMany({ where: { id: recall.id, status: "OPEN" }, data: { status: "CLOSED", closedByStaffId: input.closedByStaffId, closedAt: new Date() } });
     if (r.count !== 1) throw new BadRequestError("Recall is already closed.");
     await tx.auditEvent.create({ data: { type: "hospital.pharmacy.recallClosed", userId: input.byUserId, detail: { recallId: recall.id }, facilityId: input.facilityId } });
+    await emitFacilityEvent(tx, {
+      type: "MedicationRecallStatusChanged", aggregateId: recall.id, facilityId: input.facilityId, actorUserId: input.byUserId,
+      payload: { recallId: recall.id, itemId: recall.itemId, from: "OPEN", to: "CLOSED", affectedLotCount: 0, ...(recall.itemLotId ? { itemLotId: recall.itemLotId } : {}) },
+    });
     return tx.medicationRecall.findUniqueOrThrow({ where: { id: recall.id } });
   });
 }
@@ -352,7 +404,16 @@ export async function getExpiryReport(facilityId: string, opts?: { windowDays?: 
 export async function recordStorageCheck(input: { facilityId: string; locationId: string; recordedValue: number; unit: string; status?: string; recordedByStaffId: string; notes?: string; byUserId: string }) {
   const loc = await prisma.stockLocation.findUnique({ where: { id: input.locationId } });
   if (!loc || loc.facilityId !== input.facilityId) throw new NotFoundError("Location not found in this facility.");
-  const check = await prisma.pharmacyStorageCheck.create({ data: { facilityId: input.facilityId, locationId: input.locationId, recordedValue: input.recordedValue, unit: input.unit, status: parseOptionalEnum($Enums.StorageCheckStatus, input.status, "status"), recordedByStaffId: input.recordedByStaffId, notes: input.notes } });
+  const status = parseOptionalEnum($Enums.StorageCheckStatus, input.status, "status");
+  const check = await prisma.$transaction(async (tx) => {
+    const created = await tx.pharmacyStorageCheck.create({ data: { facilityId: input.facilityId, locationId: input.locationId, recordedValue: input.recordedValue, unit: input.unit, status, recordedByStaffId: input.recordedByStaffId, notes: input.notes } });
+    // The reading itself stays in the record; the event carries only OK / EXCURSION.
+    await emitFacilityEvent(tx, {
+      type: "PharmacyComplianceRecorded", aggregateId: created.id, facilityId: input.facilityId, actorUserId: input.byUserId,
+      payload: { recordId: created.id, kind: "STORAGE_CHECK", locationId: input.locationId, storageStatus: created.status },
+    });
+    return created;
+  });
   await recordAuditEvent("hospital.pharmacy.storageCheck", input.byUserId, { checkId: check.id, locationId: input.locationId, value: input.recordedValue }, { facilityId: input.facilityId });
   return check;
 }
@@ -412,6 +473,7 @@ export async function transitionPharmacyRequest(input: { requestId: string; faci
     const r = await tx.pharmacyRequest.updateMany({ where: { id: req.id, status: req.status }, data });
     if (r.count !== 1) throw new BadRequestError("Request changed state concurrently — refresh and try again.");
     await tx.auditEvent.create({ data: { type: "hospital.pharmacy.requestUpdated", userId: input.byUserId, detail: { requestId: req.id, from: req.status, to: input.to }, facilityId: req.facilityId, patientId: req.patientId, encounterId: req.encounterId } });
+    await emitSupplyRequestStatus(tx, req, { requestKind: "PHARMACY", from: req.status, to: input.to, actorUserId: input.byUserId });
     return tx.pharmacyRequest.findUniqueOrThrow({ where: { id: req.id } });
   });
 }

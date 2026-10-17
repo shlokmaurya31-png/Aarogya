@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { addProblem } from "@/lib/hospital/problemList";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
@@ -35,8 +36,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!diagnosis) throw new BadRequestError("diagnosis is required.");
     const coded = normalizeCode({ codeSystem, code, codeDisplay });
 
-    const problem = await prisma.problem.create({
-      data: { patientId: id, diagnosis, status: "ACTIVE", severity: parseOptionalEnum($Enums.Severity, typeof severity === "string" ? severity.toUpperCase() : severity, "severity"), onsetDate: onsetDate ? new Date(onsetDate) : undefined, ...coded },
+    const problem = await addProblem({
+      facilityId, patientId: id, diagnosis, byUserId: session.userId, onsetDate: onsetDate ? new Date(onsetDate) : undefined, ...coded,
+      severity: parseOptionalEnum($Enums.Severity, typeof severity === "string" ? severity.toUpperCase() : severity, "severity"),
     });
 
     await recordAuditEvent(

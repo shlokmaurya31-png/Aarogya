@@ -46,8 +46,10 @@ export type AuditEventType =
   | "hospital.patient.deceasedRecorded"
   | "hospital.encounter.cancelled"
   | "hospital.diagnosis.added"
+  | "hospital.diagnosis.updated"
   | "hospital.problem.added"
   | "hospital.allergy.added"
+  | "hospital.allergy.updated"
   | "hospital.episode.created"
   | "hospital.episode.closed"
   | "hospital.task.created"
@@ -98,6 +100,9 @@ export type AuditEventType =
   | "hospital.transferRequest.completed"
   | "hospital.transferRequest.cancelled"
   | "hospital.discharge.blockerChanged"
+  | "hospital.discharge.readinessDerived"
+  | "hospital.discharge.holdPlaced"
+  | "hospital.discharge.holdCleared"
   | "hospital.discharge.expectedDateChanged"
   | "hospital.location.assigned"
   // Phase 3 — Doctor OS / Nursing OS / Medication Lifecycle / Pharmacy.
@@ -156,6 +161,7 @@ export type AuditEventType =
   // Phase 5 — Billing + Insurance + Revenue Cycle. Recorded through the
   // same synchronous AuditEvent mechanism as every prior phase.
   | "hospital.billing.chargeVoided"
+  | "hospital.billing.supplementaryDrafted"
   | "hospital.billing.tariffCreated"
   | "hospital.billing.tariffDeactivated"
   | "hospital.billing.packageCreated"
@@ -203,6 +209,7 @@ export type AuditEventType =
   | "hospital.inventory.adjustmentRejected"
   | "hospital.inventory.wasteRecorded"
   | "hospital.inventory.wasteApproved"
+  | "hospital.inventory.wasteRejected"
   | "hospital.inventory.lotQuarantined"
   | "hospital.inventory.lotReleased"
   | "hospital.inventory.stocktakeStarted"

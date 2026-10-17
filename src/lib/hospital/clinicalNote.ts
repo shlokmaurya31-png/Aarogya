@@ -1,5 +1,37 @@
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
+import type { ClinicalNote, Prisma } from "@prisma/client";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+
+/** ClinicalNoteSigned: the note's type and ids, never its content; an amendment names the note it replaces. */
+async function emitNoteSigned(tx: Prisma.TransactionClient, note: ClinicalNote, byUserId: string) {
+  const enc = await tx.encounter.findUniqueOrThrow({ where: { id: note.encounterId }, select: { facilityId: true, patientId: true } });
+  await emitFacilityEvent(tx, {
+    type: "ClinicalNoteSigned", aggregateId: note.id, facilityId: enc.facilityId, actorUserId: byUserId, encounterId: note.encounterId,
+    payload: {
+      entryId: note.id, encounterId: note.encounterId, patientId: enc.patientId, entryType: note.type.trim().toUpperCase(),
+      ...(note.supersedesId ? { supersedesEntryId: note.supersedesId } : {}),
+    },
+  });
+}
+
+/**
+ * Creates a note (batch 6, fix 2). A note created already SIGNED is signed in
+ * that transaction, so it emits ClinicalNoteSigned exactly as signNote does; a
+ * DRAFT emits nothing until it is signed.
+ */
+export async function createNote(input: { encounterId: string; authorStaffId: string; authorRole: string; type: string; content: Prisma.InputJsonValue; sign: boolean; byUserId: string }) {
+  return prisma.$transaction(async (tx) => {
+    const note = await tx.clinicalNote.create({
+      data: {
+        encounterId: input.encounterId, authorStaffId: input.authorStaffId, authorRole: input.authorRole, type: input.type, content: input.content,
+        status: input.sign ? "SIGNED" : "DRAFT", signedAt: input.sign ? new Date() : undefined,
+      },
+    });
+    if (input.sign) await emitNoteSigned(tx, note, input.byUserId);
+    return note;
+  });
+}
 
 export class NoteConcurrencyError extends BadRequestError {
   constructor(status: string) {
@@ -25,7 +57,9 @@ export async function signNote(input: { noteId: string; encounterId: string; byU
       data: { status: "SIGNED", signedAt: new Date() },
     });
     if (result.count !== 1) throw new NoteConcurrencyError(existing.status);
-    return tx.clinicalNote.findUniqueOrThrow({ where: { id: input.noteId } });
+    const signed = await tx.clinicalNote.findUniqueOrThrow({ where: { id: input.noteId } });
+    await emitNoteSigned(tx, signed, input.byUserId);
+    return signed;
   });
 }
 
@@ -74,6 +108,7 @@ export async function amendNote(input: {
         supersedesId: input.supersedesId,
       },
     });
+    await emitNoteSigned(tx, note, input.byUserId);
     return note;
   });
 }

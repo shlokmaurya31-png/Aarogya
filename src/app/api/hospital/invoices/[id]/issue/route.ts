@@ -21,7 +21,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const invoice = await findInvoiceInFacility(id, facilityId);
     const updated = await prisma.$transaction((tx) =>
-      issueInvoice(tx, id, { discountMinor, taxRatePercent, dueAt: dueAt ? new Date(dueAt) : undefined })
+      issueInvoice(tx, id, { discountMinor, taxRatePercent, dueAt: dueAt ? new Date(dueAt) : undefined, byUserId: session.userId })
     );
 
     await recordAuditEvent(

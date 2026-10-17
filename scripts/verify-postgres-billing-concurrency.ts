@@ -17,6 +17,7 @@ import { draftInvoiceForAccount, addChargeToInvoice, issueInvoice, InvoiceConcur
 import { getOrCreateBillingAccount } from "../src/lib/hospital/billing/billingAccount";
 import { createTariff, TariffConflictError } from "../src/lib/hospital/billing/pricing";
 import { createClaimDraft, submitClaim, ClaimConcurrencyError } from "../src/lib/hospital/billing/claims";
+import { createPayer, addPatientCoverage } from "../src/lib/hospital/billing/coverage";
 import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
 
 const prisma = new PrismaClient();
@@ -264,10 +265,14 @@ async function main() {
   {
     const orderId = await freshImagingOrder(facility.id, encounter.id, patient.id, staff.id);
     const { charge } = await prisma.$transaction((tx) => createChargeIfNotExists(tx, { encounterId: encounter.id, patientId: patient.id, facilityId: facility.id, description: "Claim race fixture", category: "IMAGING", unitPriceMinor: 40000, sourceType: "ImagingOrder", sourceId: orderId }));
-    const coverage = await prisma.patientCoverage.findFirst({ where: { payer: { type: "INSURANCE" } } });
-    if (!coverage) {
-      report("Claim race: skipped (no seeded insurance coverage found)", true);
-    } else {
+    // The coverage of the patient under test (a claim must be on their own
+    // coverage), created for them when they have none, so the race always runs.
+    const existingCoverage = await prisma.patientCoverage.findFirst({ where: { patientId: patient.id, status: "ACTIVE", payer: { type: "INSURANCE" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+    const coverage = existingCoverage ?? await prisma.$transaction(async (tx) => {
+      const payer = await createPayer(tx, { name: `Concurrency Insurer ${Date.now().toString(36)}`, type: "INSURANCE" });
+      return addPatientCoverage(tx, { patientId: patient.id, payerId: payer.id, memberId: `CONC-${Date.now().toString(36)}`, validFrom: new Date(Date.now() - 86_400_000), priorityOrder: 2, addedByUserId: staff.userId });
+    });
+    {
       const invoice = await prisma.$transaction(async (tx) => {
         const d = await draftInvoiceForAccount(tx, { encounterId: encounter.id, patientId: patient.id, facilityId: facility.id, generatedByUserId: staff.userId });
         await addChargeToInvoice(tx, d.id, charge.id);

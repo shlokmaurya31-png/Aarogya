@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
-import { prisma } from "@/lib/db";
+import { versionStaffDocument } from "@/lib/documents/staffDocuments";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
-import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
+import { withApiErrors, BadRequestError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 
 /**
@@ -19,42 +19,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const { session, facilityId, staff } = await requireFacilityStaff("document:manage", body?.facilityId);
     if (!staff) throw new BadRequestError("Documents must be recorded by a staff account.");
 
-    const prior = await prisma.clinicalDocument.findUnique({ where: { id } });
-    if (!prior || prior.facilityId !== facilityId) throw new NotFoundError("Document not found.");
-    if (prior.status !== "CURRENT") throw new BadRequestError("Only the current version of a document can be superseded.");
-
     const { title, storageRef, accessPolicy } = body ?? {};
-
-    const created = await prisma.$transaction(async (tx) => {
-      const cas = await tx.clinicalDocument.updateMany({
-        where: { id, status: "CURRENT" },
-        data: { status: "SUPERSEDED" },
-      });
-      if (cas.count !== 1) throw new BadRequestError("Document was updated by someone else — refresh and try again.");
-
-      return tx.clinicalDocument.create({
-        data: {
-          facilityId,
-          patientId: prior.patientId,
-          encounterId: prior.encounterId,
-          type: prior.type,
-          title: title ?? prior.title,
-          storageRef: storageRef ?? prior.storageRef,
-          version: prior.version + 1,
-          supersedesId: prior.id,
-          status: "CURRENT",
-          accessPolicy: accessPolicy ?? prior.accessPolicy,
-          authorStaffId: staff.id,
-          uploadedByStaffId: staff.id,
-        },
-      });
-    });
+    const created = await versionStaffDocument({ documentId: id, facilityId, title, storageRef, accessPolicy, staffId: staff.id, byUserId: session.userId });
 
     await recordAuditEvent(
       "hospital.document.versioned",
       session.userId,
-      { documentId: created.id, supersedesId: prior.id, version: created.version },
-      { facilityId, patientId: prior.patientId, encounterId: prior.encounterId ?? undefined }
+      { documentId: created.id, supersedesId: created.supersedesId, version: created.version },
+      { facilityId, patientId: created.patientId, encounterId: created.encounterId ?? undefined }
     );
     return { document: created };
   });

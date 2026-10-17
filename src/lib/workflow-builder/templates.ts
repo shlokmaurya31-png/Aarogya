@@ -32,15 +32,15 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   {
     id: "critical-lab",
     name: "Critical lab review",
-    description: "When a critical lab result is released, create a STAT clinical review task with an SLA and escalation. The SLA is configurable per hospital via the D8 configuration engine.",
+    description: "When a critical lab result is released, escalate its follow-up task (the task-generator creates it; this never creates another) if it is still open after the SLA. The SLA is configurable per hospital via the D8 configuration engine.",
     document: {
       name: "Critical lab review",
       trigger: { eventType: "LabResultReleased", eventVersion: 1, condition: { all: [{ field: "payload.critical", operator: "equals", value: true }] } },
       steps: [
         {
-          type: "TASK", key: "review", taskType: "CRITICAL_RESULT_REVIEW", title: "Review critical lab result",
-          priority: "STAT", assignedRole: "DOCTOR",
-          sla: { dueAfterSeconds: 900, escalation: { taskType: "CRITICAL_RESULT_ESCALATION", title: "Critical result not reviewed within SLA", priority: "STAT", assignedRole: "HOSPITAL_ADMIN" } },
+          type: "ESCALATE", key: "escalate",
+          target: { taskType: "CRITICAL_RESULT_FOLLOW_UP", sourceField: "payload.resultId" },
+          afterSeconds: 900, raisePriorityTo: "STAT", reassignToRole: "HOSPITAL_ADMIN",
         },
       ],
     },

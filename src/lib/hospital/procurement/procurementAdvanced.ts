@@ -1,8 +1,9 @@
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 import { computePurchaseOrderTotals } from "@/lib/hospital/procurement/pricing";
-import type { RfqStatus, SupplierInvoiceStatus, UnitOfMeasure } from "@prisma/client";
+import type { Prisma, RfqStatus, SupplierInvoiceStatus, UnitOfMeasure } from "@prisma/client";
 
 /**
  * Enterprise procurement depth (Phase B8) — RFQ + vendor comparison, effective
@@ -135,6 +136,22 @@ export async function selectQuotation(input: { quotationId: string; facilityId: 
 }
 
 // ── Supplier invoice — three-way-match BOUNDARY (PO / GR / Invoice) ──────────
+/** SupplierInvoiceStatusChanged (spine step 9a): the match flags, never the invoice reference or notes. */
+async function emitSupplierInvoiceStatus(
+  tx: Prisma.TransactionClient,
+  inv: { id: string; facilityId: string; supplierId: string; purchaseOrderId: string | null; status: string; totalMinor: number; quantityMismatch: boolean; priceMismatch: boolean; missingReceipt: boolean },
+  from: string | null, actorUserId: string,
+) {
+  await emitFacilityEvent(tx, {
+    type: "SupplierInvoiceStatusChanged", aggregateId: inv.id, facilityId: inv.facilityId, actorUserId,
+    payload: {
+      invoiceId: inv.id, supplierId: inv.supplierId, ...(inv.purchaseOrderId ? { purchaseOrderId: inv.purchaseOrderId } : {}),
+      from, to: inv.status, totalMinor: inv.totalMinor,
+      quantityMismatch: inv.quantityMismatch, priceMismatch: inv.priceMismatch, missingReceipt: inv.missingReceipt,
+    },
+  });
+}
+
 export async function recordSupplierInvoice(input: { facilityId: string; supplierId: string; invoiceRef: string; totalMinor: number; purchaseOrderId?: string; invoiceDate?: Date; recordedByStaffId: string; notes?: string; byUserId: string }) {
   const supplier = await prisma.supplier.findUnique({ where: { id: input.supplierId } });
   if (!supplier || supplier.facilityId !== input.facilityId) throw new NotFoundError("Supplier not found in this facility.");
@@ -153,13 +170,19 @@ export async function recordSupplierInvoice(input: { facilityId: string; supplie
   }
   const status: SupplierInvoiceStatus = input.purchaseOrderId ? (quantityMismatch || priceMismatch || missingReceipt ? "DISCREPANCY" : "MATCHED") : "RECEIVED";
 
-  const invoice = await prisma.supplierInvoice.create({
-    data: { facilityId: input.facilityId, supplierId: input.supplierId, purchaseOrderId: input.purchaseOrderId, invoiceRef: input.invoiceRef, invoiceDate: input.invoiceDate, totalMinor: input.totalMinor, status, quantityMismatch, priceMismatch, missingReceipt, matchNotes, recordedByStaffId: input.recordedByStaffId, notes: input.notes } as never,
+  const invoice = await prisma.$transaction(async (tx) => {
+    const created = await tx.supplierInvoice.create({
+      // SupplierInvoice has no notes column: writing `notes` (hidden by an `as never` cast) made every
+      // invoice recorded with notes fail. The notes go to the audit record instead (batch 6).
+      data: { facilityId: input.facilityId, supplierId: input.supplierId, purchaseOrderId: input.purchaseOrderId, invoiceRef: input.invoiceRef, invoiceDate: input.invoiceDate, totalMinor: input.totalMinor, status, quantityMismatch, priceMismatch, missingReceipt, matchNotes, recordedByStaffId: input.recordedByStaffId },
+    });
+    await emitSupplierInvoiceStatus(tx, created, null, input.byUserId);
+    return created;
   }).catch((e: unknown) => {
     if (e instanceof Error && /unique/i.test(e.message)) throw new BadRequestError("A supplier invoice with that reference already exists (duplicate invoice reference).");
     throw e;
   });
-  await recordAuditEvent("hospital.procurement.invoiceRecorded", input.byUserId, { invoiceId: invoice.id, status, quantityMismatch, priceMismatch, missingReceipt }, { facilityId: input.facilityId });
+  await recordAuditEvent("hospital.procurement.invoiceRecorded", input.byUserId, { invoiceId: invoice.id, status, quantityMismatch, priceMismatch, missingReceipt, ...(input.notes ? { notes: input.notes } : {}) }, { facilityId: input.facilityId });
   return invoice;
 }
 
@@ -171,7 +194,9 @@ export async function reviewSupplierInvoice(input: { invoiceId: string; facility
     const r = await tx.supplierInvoice.updateMany({ where: { id: invoice.id, status: invoice.status }, data: { status: input.to, reviewedByStaffId: input.reviewedByStaffId, reviewedAt: new Date() } });
     if (r.count !== 1) throw new BadRequestError("Invoice changed state concurrently — refresh and try again.");
     await tx.auditEvent.create({ data: { type: "hospital.procurement.invoiceReviewed", userId: input.byUserId, detail: { invoiceId: invoice.id, to: input.to }, facilityId: invoice.facilityId } });
-    return tx.supplierInvoice.findUniqueOrThrow({ where: { id: invoice.id } });
+    const reviewed = await tx.supplierInvoice.findUniqueOrThrow({ where: { id: invoice.id } });
+    await emitSupplierInvoiceStatus(tx, reviewed, invoice.status, input.byUserId);
+    return reviewed;
   });
 }
 

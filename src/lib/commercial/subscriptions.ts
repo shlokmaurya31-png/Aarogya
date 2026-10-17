@@ -145,16 +145,24 @@ export async function transitionSubscription(m: ActorMemberships, organizationId
   if (!canTransitionSubscription(sub.status, to)) throw new BadRequestError(`Cannot move a subscription from ${sub.status} to ${to}.`);
 
   const now = new Date();
-  const updated = await prisma.organizationSubscription.update({
-    where: { organizationId },
-    data: {
-      status: to,
-      suspendedAt: to === "SUSPENDED" ? now : sub.suspendedAt,
-      gracePeriodEndsAt: to === "GRACE" ? new Date(now.getTime() + 7 * 86_400_000) : sub.gracePeriodEndsAt,
-    },
+  // Compare-and-set on the status read, with SubscriptionStatusChanged in the same transaction.
+  return prisma.$transaction(async (tx) => {
+    const r = await tx.organizationSubscription.updateMany({
+      where: { organizationId, status: sub.status },
+      data: {
+        status: to,
+        suspendedAt: to === "SUSPENDED" ? now : sub.suspendedAt,
+        gracePeriodEndsAt: to === "GRACE" ? new Date(now.getTime() + 7 * 86_400_000) : sub.gracePeriodEndsAt,
+      },
+    });
+    if (r.count !== 1) throw new BadRequestError("The subscription changed concurrently. Refresh and try again.");
+    await emitDomainEvent(tx, {
+      type: "SubscriptionStatusChanged", aggregateId: sub.id, organizationId, actorUserId: m.userId,
+      payload: { subscriptionId: sub.id, from: sub.status, to },
+    });
+    await recordAuditEvent("commercial.subscription.transitioned", m.userId, { from: sub.status, to, reason: reason ?? null }, { organizationId }, tx);
+    return tx.organizationSubscription.findUniqueOrThrow({ where: { organizationId } });
   });
-  await recordAuditEvent("commercial.subscription.transitioned", m.userId, { from: sub.status, to, reason: reason ?? null }, { organizationId });
-  return updated;
 }
 
 /** Cancel a subscription: at period end (keeps access until then) or immediately. */

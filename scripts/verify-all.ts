@@ -3,6 +3,12 @@
  * two Phase 6A inventory scripts) against a freshly reset, migrated and
  * seeded database, and writes a summary to .verify-report/latest.md.
  *
+ * It uses its OWN database, never the dev one: VERIFY_DATABASE_URL (default
+ * postgresql://aarogya:aarogya@localhost:5432/aarogya_verify, created by the
+ * Docker init script). Every child process (the reset, the seed and each
+ * gate) gets DATABASE_URL and DIRECT_URL set to it, so the dev database in
+ * DATABASE_URL is never reset.
+ *
  * The gates are NOT idempotent (they consume appointment slots, roster
  * windows, document versions), so the database is always reset first:
  *
@@ -12,9 +18,11 @@
  *                  comma-separated also accepted)
  *   --timeout <s>  per-script timeout in seconds (default 300)
  *
- * Safety: resetting wipes the database, so this refuses to run unless
- * DATABASE_URL and DIRECT_URL point at localhost / 127.0.0.1 / ::1, or
- * ALLOW_REMOTE_VERIFY=1. Supabase (staging) hosts are refused even then.
+ * Safety: resetting wipes the verify database, so this refuses to run unless
+ * VERIFY_DATABASE_URL points at localhost / 127.0.0.1 / ::1, or
+ * ALLOW_REMOTE_VERIFY=1. Supabase (staging) hosts are refused even then. It
+ * also refuses when the verify database has the same name as the dev
+ * database (DATABASE_URL / DIRECT_URL), so it can never reset the dev data.
  *
  * Usage: npm run verify:all -- [--fresh-each] [--only nhcx] [--timeout 600]
  */
@@ -98,7 +106,31 @@ const ORDER = [
   "verify-postgres-bookability",
   "verify-postgres-walk-ins",
   "verify-postgres-schema-constraints",
+  // Week 3: workflow spine
+  "verify-postgres-runner",
+  "verify-postgres-services-out-of-routes",
+  "verify-postgres-adt-events",
+  "verify-postgres-task-merge",
   "verify-postgres-problem-list",
+  "verify-postgres-nursing-events",
+  "verify-postgres-orders-results-medication",
+  "verify-postgres-ot-blood-events",
+  "verify-postgres-needs-pricing",
+  "verify-postgres-late-charges",
+  "verify-postgres-records-access-events",
+  "verify-postgres-billing-claims-events",
+  "verify-postgres-billing-consumers",
+  "verify-postgres-invoice-drafting-guard",
+  "verify-postgres-discharge-holds",
+  "verify-postgres-supply-events",
+  "verify-postgres-clinical-records-events",
+  "verify-postgres-quality-ops-events",
+  "verify-postgres-access-identity-events",
+  "verify-postgres-route-services",
+  // §7: the core-journey replay test, extended at each spine step.
+  "verify-postgres-core-journey",
+  // Batch 4: bounded retries; runs after the tenancy sweep (checks its fixtures)
+  "verify-postgres-bounded-retry",
   // Runs last among the gates: checks every row the earlier gates created.
   "verify-postgres-facility-consistency",
   // Runs late: its whole-database check covers every earlier gate's orders.
@@ -123,7 +155,15 @@ interface Result {
   status: "PASS" | "FAIL" | "TIMEOUT";
   durationMs: number;
   tail: string[];
+  exitCode: number | null;
+  signal: string | null;
+  peakRssBytes: number | null;
+  /** True when the gate printed nothing at all (stdout and stderr empty). */
+  silent: boolean;
 }
+
+/** Lines of each stream kept in the per-gate log (.verify-report/gates/<name>.log). */
+const LOG_TAIL_LINES = 200;
 
 function parseArgs(argv: string[]): Options {
   const opts: Options = { freshEach: false, only: [], timeoutMs: 300_000 };
@@ -149,34 +189,48 @@ function hostOf(name: string, url: string | undefined): string {
   }
 }
 
-// Both URLs are checked: `prisma migrate reset` connects through DIRECT_URL,
-// the gates through DATABASE_URL.
-function assertSafeTarget() {
-  const host = hostOf("DATABASE_URL", process.env.DATABASE_URL);
-  const hosts = [host, hostOf("DIRECT_URL", process.env.DIRECT_URL)];
+const DEFAULT_VERIFY_URL = "postgresql://aarogya:aarogya@localhost:5432/aarogya_verify";
+const LOCAL_HOSTS = ["localhost", "127.0.0.1", "::1", "[::1]"];
+
+function dbName(url: URL): string {
+  return decodeURIComponent(url.pathname.replace(/^\//, ""));
+}
+
+/**
+ * The database verify:all resets and every child process uses. Refuses
+ * Supabase always, any non-local host unless ALLOW_REMOTE_VERIFY=1, and a
+ * verify database named like the dev database (DATABASE_URL / DIRECT_URL).
+ */
+function resolveVerifyTarget(): { url: string; host: string; name: string } {
+  const raw = process.env.VERIFY_DATABASE_URL || DEFAULT_VERIFY_URL;
+  const host = hostOf("VERIFY_DATABASE_URL", raw);
+  const verify = new URL(raw);
   // Staging (Supabase) is never a valid target, whatever the override says.
-  const staging = hosts.find((h) => /(^|\.)supabase\.(co|com)$/i.test(h));
-  if (staging) {
-    throw new Error(`Refusing to run: "${staging}" is the Supabase staging database. verify:all must never run against staging (docs/STAGING_SUPABASE.md).`);
+  if (/(^|\.)supabase\.(co|com)$/i.test(host)) {
+    throw new Error(`Refusing to run: "${host}" is the Supabase staging database. verify:all must never run against staging (docs/STAGING_SUPABASE.md).`);
   }
-  const remote = hosts.find((h) => !["localhost", "127.0.0.1", "::1", "[::1]"].includes(h));
-  if (remote && process.env.ALLOW_REMOTE_VERIFY !== "1") {
+  if (!LOCAL_HOSTS.includes(host) && process.env.ALLOW_REMOTE_VERIFY !== "1") {
     throw new Error(
-      `Refusing to run: "${remote}" is not localhost. verify:all wipes the database. ` +
+      `Refusing to run: "${host}" is not localhost. verify:all wipes the database. ` +
         "Set ALLOW_REMOTE_VERIFY=1 only if that database is disposable."
     );
   }
-  // migrate reset (DIRECT_URL) and the gates (DATABASE_URL) must hit the
-  // same database; otherwise overriding only DATABASE_URL would reset
-  // whatever DIRECT_URL in .env points at, e.g. the dev database.
-  const [db, direct] = [new URL(process.env.DATABASE_URL!), new URL(process.env.DIRECT_URL!)];
-  if (db.hostname !== direct.hostname || db.pathname !== direct.pathname) {
-    throw new Error(
-      `Refusing to run: DATABASE_URL (${db.hostname}${db.pathname}) and DIRECT_URL (${direct.hostname}${direct.pathname}) name different databases. ` +
-        "Set both to the database verify:all may wipe."
-    );
+  const name = dbName(verify);
+  if (!name) throw new Error("Refusing to run: VERIFY_DATABASE_URL names no database.");
+  // The dev database is never the verify database, even on another host
+  // (the names are what a mistyped override most often gets wrong).
+  for (const devVar of ["DATABASE_URL", "DIRECT_URL"]) {
+    const dev = process.env[devVar];
+    if (!dev) continue;
+    hostOf(devVar, dev);
+    if (dbName(new URL(dev)) === name) {
+      throw new Error(
+        `Refusing to run: the verify database "${name}" has the same name as the dev database in ${devVar}. ` +
+          "verify:all resets its database; point VERIFY_DATABASE_URL at a separate one (default aarogya_verify)."
+      );
+    }
   }
-  return host;
+  return { url: raw, host, name };
 }
 
 function discover(opts: Options): string[] {
@@ -196,14 +250,54 @@ function discover(opts: Options): string[] {
 }
 
 /** Runs a command, streaming nothing; returns exit status and captured output. */
-function run(cmd: string, args: string[], timeoutMs: number): Promise<{ code: number | null; timedOut: boolean; output: string }> {
+let childEnv: NodeJS.ProcessEnv = process.env;
+
+interface RunOutcome {
+  code: number | null;
+  signal: string | null;
+  timedOut: boolean;
+  /** stdout and stderr interleaved as they arrived. */
+  output: string;
+  stdout: string;
+  stderr: string;
+  peakRssBytes: number | null;
+}
+
+/**
+ * /usr/bin/time reports the child's peak memory: `-l` on macOS (bytes), `-v` on
+ * Linux (kbytes). Its report is appended to stderr; it is parsed and removed.
+ */
+const TIME_BIN = existsSync("/usr/bin/time") ? "/usr/bin/time" : null;
+const TIME_FLAG = process.platform === "darwin" ? "-l" : "-v";
+
+function splitTimeReport(stderr: string): { stderr: string; peakRssBytes: number | null; signal: string | null } {
+  const mac = /^\s+[\d.]+ real\s+[\d.]+ user\s+[\d.]+ sys\s*$/m.exec(stderr);
+  const gnu = /^\tCommand (being timed|terminated by signal)/m.exec(stderr);
+  const at = [mac?.index, gnu?.index].filter((n): n is number => n !== undefined).sort((a, b) => a - b)[0];
+  if (at === undefined) return { stderr, peakRssBytes: null, signal: null };
+  const report = stderr.slice(at);
+  const macRss = /(\d+)\s+maximum resident set size/.exec(report);
+  const gnuRss = /Maximum resident set size \(kbytes\): (\d+)/.exec(report);
+  const sig = /terminated by signal (\d+)/.exec(report);
+  return {
+    stderr: stderr.slice(0, at),
+    peakRssBytes: macRss ? Number(macRss[1]) : gnuRss ? Number(gnuRss[1]) * 1024 : null,
+    signal: sig ? `signal ${sig[1]}` : null,
+  };
+}
+
+/** Runs a command, streaming nothing; returns its exit code, signal, output (and each stream) and peak memory. */
+function run(cmd: string, args: string[], timeoutMs: number, opts: { measure?: boolean } = {}): Promise<RunOutcome> {
   return new Promise((resolve) => {
+    const [bin, argv] = opts.measure && TIME_BIN ? [TIME_BIN, [TIME_FLAG, cmd, ...args]] : [cmd, args];
     // detached: the child gets its own process group, so a timeout kills
     // tsx and everything it spawned.
-    const child = spawn(cmd, args, { cwd: ROOT, env: process.env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(bin, argv, { cwd: ROOT, env: childEnv, detached: true, stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
-    child.stdout.on("data", (d) => (output += d));
-    child.stderr.on("data", (d) => (output += d));
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (d) => { output += d; stdout += d; });
+    child.stderr.on("data", (d) => { output += d; stderr += d; });
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
@@ -213,11 +307,39 @@ function run(cmd: string, args: string[], timeoutMs: number): Promise<{ code: nu
         child.kill("SIGKILL");
       }
     }, timeoutMs);
-    child.on("close", (code) => {
+    child.on("close", (code, signal) => {
       clearTimeout(timer);
-      resolve({ code, timedOut, output });
+      const t = opts.measure && TIME_BIN ? splitTimeReport(stderr) : { stderr, peakRssBytes: null, signal: null };
+      const timeReport = stderr.slice(t.stderr.length);
+      // A child killed by a signal under /usr/bin/time shows as 128+N (or the report says so).
+      const childSignal = signal ?? t.signal ?? (code !== null && code > 128 && code < 160 ? `signal ${code - 128}` : null);
+      resolve({ code, signal: childSignal, timedOut, output: timeReport ? output.replace(timeReport, "") : output, stdout, stderr: t.stderr, peakRssBytes: t.peakRssBytes });
     });
   });
+}
+
+function fmtBytes(n: number | null): string {
+  return n === null ? "—" : `${Math.round(n / 1024 / 1024)} MB`;
+}
+
+/** The per-gate log: exit, signal, duration, peak memory, then the last lines of stdout and stderr. */
+function writeGateLog(name: string, r: RunOutcome, durationMs: number, status: Result["status"]) {
+  const dir = path.join(REPORT_DIR, "gates");
+  mkdirSync(dir, { recursive: true });
+  const silent = !r.stdout.trim() && !r.stderr.trim();
+  writeFileSync(path.join(dir, `${name}.log`), [
+    `gate:      ${name}`,
+    `status:    ${status}${silent ? "  — NO OUTPUT" : ""}`,
+    `exit code: ${r.code ?? "none"}`,
+    `signal:    ${r.signal ?? "none"}${r.timedOut ? " (killed by the verify-all timeout)" : ""}`,
+    `duration:  ${fmt(durationMs)}`,
+    `peak RSS:  ${fmtBytes(r.peakRssBytes)}${TIME_BIN ? "" : " (no /usr/bin/time)"}`,
+    "",
+    `── stdout (last ${LOG_TAIL_LINES} lines) ──`, ...lastLines(r.stdout, LOG_TAIL_LINES),
+    "",
+    `── stderr (last ${LOG_TAIL_LINES} lines) ──`, ...lastLines(r.stderr, LOG_TAIL_LINES),
+    "",
+  ].join("\n"));
 }
 
 async function resetDatabase() {
@@ -250,18 +372,22 @@ function report(results: Result[], opts: Options, host: string, totalMs: number)
     "# verify:all report",
     "",
     `- Date: ${new Date().toISOString()}`,
-    `- Database host: ${host}`,
+    `- Database: ${host} (the verify database; the dev database is never touched)`,
     `- Mode: ${opts.freshEach ? "fresh database before each script" : "one fresh database for all scripts"}`,
     opts.only.length ? `- Filter: ${opts.only.join(", ")}` : "- Filter: none",
     `- Result: **${passed}/${results.length} passed** in ${fmt(totalMs)}`,
     `- Excluded: ${[...EXCLUDED].join(", ")} (needs external ABDM sandbox credentials)`,
     "",
-    "| # | Script | Result | Duration |",
-    "|---|--------|--------|----------|",
-    ...results.map((r, i) => `| ${i + 1} | ${r.name} | ${r.status === "PASS" ? "PASS" : `**${r.status}**`} | ${fmt(r.durationMs)} |`),
+    `- Per-gate logs (exit code, signal, duration, peak memory, last ${LOG_TAIL_LINES} lines of stdout and stderr): .verify-report/gates/<gate>.log`,
+    "",
+    "| # | Script | Result | Duration | Exit | Signal | Peak RSS |",
+    "|---|--------|--------|----------|------|--------|----------|",
+    ...results.map((r, i) => `| ${i + 1} | ${r.name} | ${r.status === "PASS" ? "PASS" : `**${r.status}**`} | ${fmt(r.durationMs)} | ${r.exitCode ?? "—"} | ${r.signal ?? "—"} | ${fmtBytes(r.peakRssBytes)} |`),
   ];
   for (const r of results.filter((x) => x.status !== "PASS")) {
-    lines.push("", `## ${r.name}: ${r.status}`, "", "Last 40 lines of output:", "", "```", ...r.tail, "```");
+    lines.push("", `## ${r.name}: ${r.status}`, "");
+    if (r.silent) lines.push(`**NO OUTPUT: the gate exited with code ${r.exitCode ?? "none"}, signal ${r.signal ?? "none"}, after ${fmt(r.durationMs)}.**`, "");
+    lines.push(`Exit code ${r.exitCode ?? "none"}, signal ${r.signal ?? "none"}, peak RSS ${fmtBytes(r.peakRssBytes)}. Full tail: .verify-report/gates/${r.name}.log`, "", "Last 40 lines of output:", "", "```", ...r.tail, "```");
   }
   return lines.join("\n") + "\n";
 }
@@ -271,7 +397,12 @@ async function main() {
   // Same source Prisma uses; variables already set in the shell win, so the
   // safety check and every child process see one DATABASE_URL.
   if (existsSync(path.join(ROOT, ".env"))) process.loadEnvFile(path.join(ROOT, ".env"));
-  const host = assertSafeTarget();
+  const target = resolveVerifyTarget();
+  const host = `${target.host}/${target.name}`;
+  // Every child (reset, seed, gates, the apps the HTTP gates start) sees only
+  // the verify database. Next.js and Prisma never override a variable that
+  // is already set, so .env cannot point them back at the dev database.
+  childEnv = { ...process.env, DATABASE_URL: target.url, DIRECT_URL: target.url };
   if (!existsSync(TSX) || !existsSync(PRISMA)) throw new Error("tsx/prisma not found in node_modules; run npm ci first.");
 
   const names = discover(opts);
@@ -285,11 +416,20 @@ async function main() {
     console.log(`[${i + 1}/${names.length}] ${name}`);
     if (opts.freshEach) await resetDatabase();
     const t0 = Date.now();
-    const r = await run(TSX, [path.join("scripts", `${name}.ts`)], opts.timeoutMs);
+    const r = await run(TSX, [path.join("scripts", `${name}.ts`)], opts.timeoutMs, { measure: true });
     const status = r.timedOut ? "TIMEOUT" : r.code === 0 ? "PASS" : "FAIL";
-    const result: Result = { name, status, durationMs: Date.now() - t0, tail: status === "PASS" ? [] : lastLines(r.output, 40) };
+    const durationMs = Date.now() - t0;
+    const silent = !r.stdout.trim() && !r.stderr.trim();
+    const result: Result = {
+      name, status, durationMs, tail: status === "PASS" ? [] : lastLines(r.output, 40),
+      exitCode: r.code, signal: r.signal, peakRssBytes: r.peakRssBytes, silent,
+    };
     results.push(result);
-    console.log(`  ${status} (${fmt(result.durationMs)})`);
+    writeGateLog(name, r, durationMs, status);
+    console.log(`  ${status} (${fmt(durationMs)}${r.peakRssBytes !== null ? `, ${fmtBytes(r.peakRssBytes)}` : ""})`);
+    if (status !== "PASS" && silent) {
+      console.log(`  !!!! ${name} exited with NO OUTPUT — exit code ${r.code ?? "none"}, signal ${r.signal ?? "none"}${r.timedOut ? " (timeout)" : ""}. See .verify-report/gates/${name}.log`);
+    }
   }
 
   const md = report(results, opts, host, Date.now() - started);

@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { getProvider } from "./provider";
-import { recordPayment } from "./payments";
+import { recordPayment, emitPaymentFailed } from "./payments";
 import { refreshInvoicePaymentStatus } from "./invoices";
 import { applyPaidRenewal } from "@/lib/commercial/subscriptions";
 import { canTransitionAttempt } from "./paymentState";
@@ -156,10 +156,12 @@ async function applyFailure(tx: Prisma.TransactionClient, event: { providerResou
   const attempt = await tx.billingPaymentAttempt.findFirst({ where: { providerRequestRef: event.providerResourceRef }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
   if (!attempt) return { status: "IGNORED", detail: "failure for unknown order" };
   if (!canTransitionAttempt(attempt.status, "FAILED")) return { status: "DUPLICATE", detail: "attempt no longer pending" };
-  await tx.billingPaymentAttempt.updateMany({
+  const r = await tx.billingPaymentAttempt.updateMany({
     where: { id: attempt.id, status: { in: ["INITIATED", "PENDING"] } },
     data: { status: "FAILED", failureCode: event.failureCode ?? "failed", failureReason: event.failureCode ?? "failed" },
   });
+  if (r.count !== 1) return { status: "DUPLICATE", detail: "attempt no longer pending" };
+  await emitPaymentFailed(tx, { ...attempt, failureCode: event.failureCode ?? "failed" });
   return { status: "PROCESSED", detail: "attempt marked failed" };
 }
 

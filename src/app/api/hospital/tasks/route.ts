@@ -1,4 +1,5 @@
 import { $Enums } from "@prisma/client";
+import { createTask, TERMINAL_STATUSES } from "@/lib/hospital/task";
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
@@ -24,7 +25,7 @@ export async function GET(req: NextRequest) {
     const tasks = await prisma.task.findMany({
       where: {
         facilityId,
-        ...(status ? { status } : { status: { notIn: ["COMPLETED", "CANCELLED"] } }),
+        ...(status ? { status } : { status: { notIn: TERMINAL_STATUSES } }),
         ...(ownerStaffId ? { ownerStaffId } : {}),
         ...(encounterId ? { encounterId } : {}),
       },
@@ -45,23 +46,21 @@ export async function POST(req: NextRequest) {
     const { title, type, description, priority, dueAt, patientId, encounterId, ownerStaffId, departmentId } = body ?? {};
     if (!title || !type) throw new BadRequestError("title and type are required.");
 
-    const task = await prisma.task.create({
-      data: {
-        facilityId,
-        departmentId,
-        title,
-        description,
-        type,
-        priority: priority ?? "ROUTINE",
-        status: ownerStaffId ? "ASSIGNED" : "OPEN",
-        dueAt: dueAt ? new Date(dueAt) : undefined,
-        source: "manual",
-        patientId,
-        encounterId,
-        ownerStaffId,
-        createdByStaffId: staff.id,
-      },
-    });
+    const task = await prisma.$transaction((tx) => createTask(tx, {
+      facilityId,
+      departmentId,
+      title,
+      description,
+      type,
+      priority: parseOptionalEnum($Enums.Priority, priority, "priority") ?? "ROUTINE",
+      status: ownerStaffId ? "ASSIGNED" : "OPEN",
+      dueAt: dueAt ? new Date(dueAt) : undefined,
+      source: "MANUAL",
+      patientId,
+      encounterId,
+      ownerStaffId,
+      createdByStaffId: staff.id,
+    }, session.userId));
 
     await recordAuditEvent(
       "hospital.task.created",

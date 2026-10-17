@@ -194,7 +194,14 @@ export async function voidInvoice(m: ActorMemberships, invoiceId: string, reason
     if (invoice.status === "VOID") return invoice;
     if (invoice.amountPaidMinor > 0) throw new BadRequestError("This invoice has payments and cannot be voided; issue a refund or credit instead.");
     if (invoice.status === "PAID") throw new BadRequestError("A paid invoice cannot be voided.");
-    const updated = await tx.billingInvoice.update({ where: { id: invoiceId }, data: { status: "VOID", voidedAt: new Date(), voidReason: reason } });
+    // Compare-and-set on the status read, so the event's "from" is the real one.
+    const r = await tx.billingInvoice.updateMany({ where: { id: invoiceId, status: invoice.status }, data: { status: "VOID", voidedAt: new Date(), voidReason: reason } });
+    if (r.count !== 1) throw new BadRequestError("This invoice changed concurrently. Refresh and try again.");
+    const updated = await tx.billingInvoice.findUniqueOrThrow({ where: { id: invoiceId } });
+    await emitDomainEvent(tx, {
+      type: "InvoiceVoided", aggregateId: invoiceId, organizationId: invoice.organizationId, actorUserId: m.userId,
+      payload: { invoiceId, from: invoice.status, totalMinor: invoice.totalMinor, currency: invoice.currency },
+    });
     await recordAuditEvent("commercial.billing.invoiceVoided", m.userId, { invoiceId, reason }, { organizationId: invoice.organizationId }, tx);
     return updated;
   });

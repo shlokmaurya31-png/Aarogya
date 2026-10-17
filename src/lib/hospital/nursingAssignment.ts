@@ -1,5 +1,19 @@
 import { prisma } from "@/lib/db";
 import { BadRequestError } from "@/lib/auth/rbac";
+import type { NursingAssignment, Prisma } from "@prisma/client";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+
+/** NurseAssignmentStatusChanged (triage step 5b), in the writer's transaction. */
+function emitAssignmentStatus(tx: Prisma.TransactionClient, a: NursingAssignment, change: { from: "ACTIVE" | null; to: "ACTIVE" | "ENDED"; endedBy?: "ENDED" | "REASSIGNED" }, byUserId: string) {
+  return emitFacilityEvent(tx, {
+    type: "NurseAssignmentStatusChanged", aggregateId: a.id, facilityId: a.facilityId, actorUserId: byUserId, encounterId: a.encounterId,
+    payload: {
+      assignmentId: a.id, patientId: a.patientId, nurseStaffId: a.nurseStaffId, from: change.from, to: change.to,
+      ...(a.encounterId ? { encounterId: a.encounterId } : {}),
+      ...(change.endedBy ? { endedBy: change.endedBy } : {}),
+    },
+  });
+}
 
 export class NursingAssignmentConcurrencyError extends BadRequestError {
   constructor(message: string) {
@@ -36,10 +50,19 @@ export async function assignNurse(input: {
 }) {
   try {
     return await prisma.$transaction(async (tx) => {
-      await tx.nursingAssignment.updateMany({
-        where: { patientId: input.patientId, endAt: null },
-        data: { endAt: new Date() },
-      });
+      // End the patient's open assignment (at most one: partial unique index)
+      // and emit its ENDED change; a row ended concurrently is a conflict.
+      const open = await tx.nursingAssignment.findMany({ where: { patientId: input.patientId, endAt: null } });
+      if (open.length) {
+        const ended = await tx.nursingAssignment.updateMany({
+          where: { id: { in: open.map((o) => o.id) }, endAt: null },
+          data: { endAt: new Date() },
+        });
+        if (ended.count !== open.length) {
+          throw new NursingAssignmentConcurrencyError("This patient's assignment changed at the same moment. Refresh and try again.");
+        }
+        for (const o of open) await emitAssignmentStatus(tx, o, { from: "ACTIVE", to: "ENDED", endedBy: "REASSIGNED" }, input.byUserId);
+      }
       const assignment = await tx.nursingAssignment.create({
         data: {
           facilityId: input.facilityId,
@@ -62,6 +85,7 @@ export async function assignNurse(input: {
           encounterId: input.encounterId,
         },
       });
+      await emitAssignmentStatus(tx, assignment, { from: null, to: "ACTIVE" }, input.byUserId);
       return assignment;
     });
   } catch (err) {
@@ -97,6 +121,7 @@ export async function endAssignment(input: { assignmentId: string; facilityId: s
         encounterId: existing.encounterId ?? undefined,
       },
     });
+    await emitAssignmentStatus(tx, updated, { from: "ACTIVE", to: "ENDED", endedBy: "ENDED" }, input.byUserId);
     return updated;
   });
 }

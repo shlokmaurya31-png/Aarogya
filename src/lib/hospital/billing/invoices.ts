@@ -1,10 +1,15 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
+import { BadRequestError, ConflictError, NotFoundError } from "@/lib/auth/rbac";
 import { sumMinor } from "./money";
 import { getOrCreateBillingAccount } from "./billingAccount";
 import { nextSequence, formatSequenceNumber } from "./sequence";
 import { textContains } from "@/lib/search";
+import { closeTask, OPEN_STATUSES } from "@/lib/hospital/task";
+import { facilityOrganizationId } from "@/lib/events/tenant";
+import { resolveEffectiveInternal } from "@/lib/config/resolver";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+import { CHARGE_CAPTURE_TRIGGERS } from "./chargeCapture";
 
 type Tx = Prisma.TransactionClient;
 
@@ -39,10 +44,34 @@ export function isInvoiceTransitionAllowed(from: string, to: string): boolean {
 }
 
 /** Creates a new DRAFT invoice anchored to the encounter's BillingAccount. Multiple DRAFT invoices per account are legal (e.g. billing an interim period vs. the final stay). */
+export class ChargesPendingError extends ConflictError {
+  constructor() {
+    super("Charges for this encounter are still being posted. Try again in a moment.");
+  }
+}
+
+/**
+ * Design risk #2 (workflow spine): charge-capture posts some charges a moment
+ * after their event. Drafting or issuing waits until charge-capture has
+ * finished every such event of the encounter (processed or dead-lettered), so
+ * an invoice never misses a charge that is on its way. Other consumers'
+ * backlog does not block billing.
+ */
+async function assertNoPendingCharges(tx: Tx, encounterId: string) {
+  const pending = await tx.domainEventOutbox.count({
+    where: {
+      correlationId: encounterId, eventType: { in: [...CHARGE_CAPTURE_TRIGGERS] }, status: { in: ["PENDING", "PROCESSING", "RETRY"] },
+      deliveries: { none: { consumerName: "charge-capture", status: { in: ["PROCESSED", "DEAD_LETTER"] } } },
+    },
+  });
+  if (pending > 0) throw new ChargesPendingError();
+}
+
 export async function draftInvoiceForAccount(
   tx: Tx,
   input: { encounterId: string; patientId: string; facilityId: string; payerId?: string | null; generatedByUserId: string }
 ) {
+  await assertNoPendingCharges(tx, input.encounterId);
   const account = await getOrCreateBillingAccount(tx, { encounterId: input.encounterId, patientId: input.patientId, facilityId: input.facilityId });
   return tx.invoice.create({
     data: {
@@ -65,6 +94,25 @@ async function recalculateDraftTotals(tx: Tx, invoiceId: string, invoiceLevelDis
   const totalMinor = taxableMinor + taxMinor;
   await tx.invoice.update({ where: { id: invoiceId }, data: { subtotalMinor, discountMinor, taxMinor, totalMinor } });
   return { subtotalMinor, discountMinor, taxMinor, totalMinor };
+}
+
+/**
+ * Keep a DRAFT invoice line in step with its charge after the charge is priced
+ * or waived (an issued line is never edited: the charge can't change then).
+ */
+export async function syncDraftLineForCharge(tx: Tx, chargeId: string) {
+  const charge = await tx.charge.findUniqueOrThrow({ where: { id: chargeId }, include: { invoiceLine: { include: { invoice: { select: { id: true, status: true } } } } } });
+  const line = charge.invoiceLine;
+  if (!line) return;
+  if (line.invoice.status !== "DRAFT") throw new InvoiceNotDraftError();
+  await tx.invoiceLine.update({ where: { id: line.id }, data: { description: charge.description, unitPriceMinor: charge.unitPriceMinor, netAmountMinor: charge.netAmountMinor } });
+  await recalculateDraftTotals(tx, line.invoice.id, 0, 0);
+}
+
+export class InvoiceNeedsPricingError extends BadRequestError {
+  constructor(count: number) {
+    super(`${count} line(s) on this invoice still need pricing. Price or waive them before issuing.`);
+  }
 }
 
 /** Pulls an un-invoiced POSTED charge for the same encounter onto this DRAFT invoice as a new line. A charge can appear on at most one invoice ever (InvoiceLine.chargeId is unique). */
@@ -92,27 +140,78 @@ export async function addChargeToInvoice(tx: Tx, invoiceId: string, chargeId: st
   return tx.invoice.findUniqueOrThrow({ where: { id: invoiceId }, include: { lines: true } });
 }
 
+/** `billing.late_charge.document_type` for the facility: SUPPLEMENTARY_INVOICE (default) or DEBIT_NOTE. */
+export async function lateChargeDocumentType(facilityId: string): Promise<"SUPPLEMENTARY_INVOICE" | "DEBIT_NOTE"> {
+  const organizationId = await facilityOrganizationId(prisma, facilityId);
+  const { value } = await resolveEffectiveInternal({ key: "billing.late_charge.document_type", organizationId, facilityId });
+  return value === "DEBIT_NOTE" ? "DEBIT_NOTE" : "SUPPLEMENTARY_INVOICE";
+}
+
+/**
+ * Batch 5, decision 2: collect an encounter's charges that are on no invoice
+ * (the late ones) onto a new DRAFT document linked to the issued original. The
+ * original is never edited. The document type follows the facility's
+ * `billing.late_charge.document_type`.
+ */
+export async function draftSupplementaryInvoice(tx: Tx, input: { originalInvoiceId: string; generatedByUserId: string }) {
+  const original = await tx.invoice.findUniqueOrThrow({ where: { id: input.originalInvoiceId } });
+  if (original.documentType !== "INVOICE") throw new BadRequestError("Supplement the original invoice, not a supplementary document.");
+  if (!["ISSUED", "PARTIALLY_PAID", "PAID"].includes(original.status)) throw new BadRequestError("Only an issued invoice can be supplemented; add the charges to the draft instead.");
+  await assertNoPendingCharges(tx, original.encounterId);
+  const pending = await tx.charge.findMany({ where: { encounterId: original.encounterId, status: "POSTED", invoiceLine: null }, orderBy: [{ createdAt: "asc" }, { id: "asc" }], select: { id: true } });
+  if (!pending.length) throw new BadRequestError("This encounter has no un-invoiced charges to collect.");
+  const supplementary = await tx.invoice.create({
+    data: {
+      billingAccountId: original.billingAccountId, encounterId: original.encounterId, patientId: original.patientId, facilityId: original.facilityId,
+      payerId: original.payerId, generatedByUserId: input.generatedByUserId,
+      documentType: await lateChargeDocumentType(original.facilityId), supplementsInvoiceId: original.id,
+    },
+  });
+  for (const c of pending) await addChargeToInvoice(tx, supplementary.id, c.id);
+  return tx.invoice.findUniqueOrThrow({ where: { id: supplementary.id }, include: { lines: true } });
+}
+
+const NUMBER_PREFIX = { INVOICE: "INV", SUPPLEMENTARY_INVOICE: "SUP", DEBIT_NOTE: "DN" } as const;
+
 /** Guarded DRAFT -> ISSUED: assigns invoiceNumber atomically via the fiscal-year sequence and freezes totals. Losing a concurrent double-issue attempt gets InvoiceConcurrencyError, never a duplicate number. */
 export async function issueInvoice(
   tx: Tx,
   invoiceId: string,
-  input: { discountMinor?: number; taxRatePercent?: number; dueAt?: Date }
+  input: { discountMinor?: number; taxRatePercent?: number; dueAt?: Date; byUserId?: string | null }
 ) {
   const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId }, include: { lines: true } });
   if (invoice.status !== "DRAFT") throw new InvoiceNotDraftError();
   if (invoice.lines.length === 0) throw new BadRequestError("Cannot issue an invoice with no lines.");
+  await assertNoPendingCharges(tx, invoice.encounterId);
+  // Batch 5: never issue a zero line that was only waiting for a price.
+  const unpriced = await tx.charge.count({ where: { invoiceLine: { invoiceId }, pricingStatus: "NEEDS_PRICING" } });
+  if (unpriced > 0) throw new InvoiceNeedsPricingError(unpriced);
 
   const totals = await recalculateDraftTotals(tx, invoiceId, input.discountMinor ?? 0, input.taxRatePercent ?? 0);
 
   const fiscalYear = new Date().getFullYear();
   const seq = await nextSequence(tx, { facilityId: invoice.facilityId, fiscalYear });
-  const invoiceNumber = formatSequenceNumber("INV", fiscalYear, seq);
+  const invoiceNumber = formatSequenceNumber(NUMBER_PREFIX[invoice.documentType], fiscalYear, seq);
 
   const result = await tx.invoice.updateMany({
     where: { id: invoiceId, status: "DRAFT" },
     data: { status: "ISSUED", invoiceNumber, issuedAt: new Date(), dueAt: input.dueAt, ...totals },
   });
   if (result.count !== 1) throw new InvoiceConcurrencyError("issued");
+  await emitFacilityEvent(tx, {
+    type: "HospitalInvoiceIssued", aggregateId: invoice.id, facilityId: invoice.facilityId, encounterId: invoice.encounterId, actorUserId: input.byUserId ?? null,
+    payload: {
+      invoiceId: invoice.id, encounterId: invoice.encounterId, patientId: invoice.patientId, totalMinor: totals.totalMinor, currency: invoice.currency,
+      lineCount: invoice.lines.length, documentType: invoice.documentType,
+      ...(invoice.supplementsInvoiceId ? { supplementsInvoiceId: invoice.supplementsInvoiceId } : {}),
+    },
+  });
+  // Late charges now collected: their billing exception tasks are done.
+  const late = invoice.lines.map((l) => l.chargeId).filter((id): id is string => !!id).map((id) => `LATE_CHARGE:${id}`);
+  if (late.length) {
+    const tasks = await tx.task.findMany({ where: { facilityId: invoice.facilityId, idempotencyKey: { in: late }, status: { in: OPEN_STATUSES } }, select: { id: true } });
+    for (const t of tasks) await closeTask(tx, t.id, "COMPLETED", { completedAt: new Date() });
+  }
   return tx.invoice.findUniqueOrThrow({ where: { id: invoiceId }, include: { lines: true } });
 }
 
@@ -127,6 +226,13 @@ export async function voidInvoice(tx: Tx, invoiceId: string, input: { reason: st
     data: { status: "VOID", voidedAt: new Date(), voidedByUserId: input.byUserId, voidReason: input.reason },
   });
   if (result.count !== 1) throw new InvoiceConcurrencyError("voided");
+  await emitFacilityEvent(tx, {
+    type: "HospitalInvoiceVoided", aggregateId: invoice.id, facilityId: invoice.facilityId, encounterId: invoice.encounterId, actorUserId: input.byUserId,
+    payload: {
+      invoiceId: invoice.id, encounterId: invoice.encounterId, patientId: invoice.patientId, from: invoice.status,
+      totalMinor: invoice.totalMinor, currency: invoice.currency, documentType: invoice.documentType,
+    },
+  });
   return tx.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
 }
 

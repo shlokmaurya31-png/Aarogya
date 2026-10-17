@@ -1,5 +1,22 @@
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
+import type { NursingAssessment, Prisma } from "@prisma/client";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+
+/**
+ * NursingAssessmentRecorded (triage step 5b), in the writer's transaction: the
+ * stage reached and the version, never the findings. A draft is a process
+ * step and emits nothing.
+ */
+function emitAssessmentRecorded(tx: Prisma.TransactionClient, a: NursingAssessment, stage: "COMPLETED" | "SIGNED" | "AMENDED", byUserId?: string) {
+  return emitFacilityEvent(tx, {
+    type: "NursingAssessmentRecorded", aggregateId: a.id, facilityId: a.facilityId, actorUserId: byUserId ?? null, encounterId: a.encounterId,
+    payload: {
+      assessmentId: a.id, patientId: a.patientId, encounterId: a.encounterId, nurseStaffId: a.nurseStaffId, stage, version: a.version,
+      ...(stage === "AMENDED" && a.previousVersionId ? { supersedesAssessmentId: a.previousVersionId } : {}),
+    },
+  });
+}
 
 export class AssessmentConcurrencyError extends BadRequestError {
   constructor(status: string) {
@@ -35,7 +52,7 @@ export async function createAssessment(input: {
   });
 }
 
-export async function completeAssessment(input: { assessmentId: string; encounterId: string; findings?: unknown }) {
+export async function completeAssessment(input: { assessmentId: string; encounterId: string; findings?: unknown; byUserId?: string }) {
   return prisma.$transaction(async (tx) => {
     const existing = await tx.nursingAssessment.findUniqueOrThrow({ where: { id: input.assessmentId } });
     if (existing.encounterId !== input.encounterId) throw new NotFoundError("Nursing assessment not found.");
@@ -50,11 +67,13 @@ export async function completeAssessment(input: { assessmentId: string; encounte
       },
     });
     if (result.count !== 1) throw new AssessmentConcurrencyError(existing.status);
-    return tx.nursingAssessment.findUniqueOrThrow({ where: { id: input.assessmentId } });
+    const completed = await tx.nursingAssessment.findUniqueOrThrow({ where: { id: input.assessmentId } });
+    await emitAssessmentRecorded(tx, completed, "COMPLETED", input.byUserId);
+    return completed;
   });
 }
 
-export async function signAssessment(input: { assessmentId: string; encounterId: string }) {
+export async function signAssessment(input: { assessmentId: string; encounterId: string; byUserId?: string }) {
   return prisma.$transaction(async (tx) => {
     const existing = await tx.nursingAssessment.findUniqueOrThrow({ where: { id: input.assessmentId } });
     if (existing.encounterId !== input.encounterId) throw new NotFoundError("Nursing assessment not found.");
@@ -65,7 +84,9 @@ export async function signAssessment(input: { assessmentId: string; encounterId:
       data: { status: "SIGNED", signedAt: new Date() },
     });
     if (result.count !== 1) throw new AssessmentConcurrencyError(existing.status);
-    return tx.nursingAssessment.findUniqueOrThrow({ where: { id: input.assessmentId } });
+    const signed = await tx.nursingAssessment.findUniqueOrThrow({ where: { id: input.assessmentId } });
+    await emitAssessmentRecorded(tx, signed, "SIGNED", input.byUserId);
+    return signed;
   });
 }
 
@@ -83,6 +104,7 @@ export async function amendAssessment(input: {
   nurseStaffId: string;
   findings: unknown;
   amendmentReason: string;
+  byUserId?: string;
 }) {
   return prisma.$transaction(async (tx) => {
     const old = await tx.nursingAssessment.findUniqueOrThrow({ where: { id: input.assessmentId } });
@@ -95,7 +117,7 @@ export async function amendAssessment(input: {
     });
     if (result.count !== 1) throw new AssessmentConcurrencyError(old.status);
 
-    return tx.nursingAssessment.create({
+    const amended = await tx.nursingAssessment.create({
       data: {
         facilityId: old.facilityId,
         patientId: old.patientId,
@@ -109,5 +131,7 @@ export async function amendAssessment(input: {
         signedAt: new Date(),
       },
     });
+    await emitAssessmentRecorded(tx, amended, "AMENDED", input.byUserId);
+    return amended;
   });
 }

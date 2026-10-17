@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { generateAccessionNumber as generateAccessionNumberWithPrefix } from "./accessionNumber";
 import { syncOrderStatus } from "./orderEnvelope";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 type Tx = Prisma.TransactionClient;
 
@@ -98,15 +99,42 @@ async function guardedTransition(
   return tx.specimen.findUniqueOrThrow({ where: { id: specimenId } });
 }
 
-export async function collectSpecimen(tx: Tx, specimenId: string, collectedByStaffId: string, notes?: string) {
+export async function collectSpecimen(tx: Tx, specimenId: string, collectedByStaffId: string, notes?: string, byUserId?: string) {
   const specimen = await guardedTransition(tx, specimenId, "COLLECTION_PENDING", "COLLECTED", { collectedByStaffId, collectedAt: new Date(), collectionNotes: notes }, "collected");
   await tx.labOrder.updateMany({ where: { id: specimen.labOrderId, status: "ORDERED" }, data: { status: "COLLECTED" } });
   await syncOrderStatus(tx, "LAB", specimen.labOrderId);
+  await emitFacilityEvent(tx, {
+    type: "SpecimenCollected", aggregateId: specimen.id, facilityId: specimen.facilityId, actorUserId: byUserId, encounterId: specimen.encounterId,
+    payload: {
+      specimenId: specimen.id, patientId: specimen.patientId, specimenSource: "LAB_ORDER", labOrderId: specimen.labOrderId,
+      ...(specimen.encounterId ? { encounterId: specimen.encounterId } : {}),
+    },
+  });
   return specimen;
 }
 
-export async function receiveSpecimen(tx: Tx, specimenId: string, receivedByStaffId: string) {
-  return guardedTransition(tx, specimenId, "COLLECTED", "RECEIVED", { receivedByStaffId, receivedAt: new Date() }, "received");
+/** SpecimenStatusChanged (lab receipt, a rejection, or the new specimen of a recollection), in the caller's transaction. */
+async function emitSpecimenStatus(
+  tx: Tx,
+  s: { id: string; labOrderId: string; facilityId: string; patientId: string; encounterId: string | null },
+  change: { from: SpecimenStatus | null; to: "RECEIVED" | "REJECTED" | "COLLECTION_PENDING"; rejectionReason?: SpecimenRejectionReason; recollectionOfSpecimenId?: string },
+  byUserId?: string,
+) {
+  await emitFacilityEvent(tx, {
+    type: "SpecimenStatusChanged", aggregateId: s.id, facilityId: s.facilityId, actorUserId: byUserId, encounterId: s.encounterId,
+    payload: {
+      specimenId: s.id, labOrderId: s.labOrderId, patientId: s.patientId, from: change.from, to: change.to,
+      ...(s.encounterId ? { encounterId: s.encounterId } : {}),
+      ...(change.rejectionReason ? { rejectionReason: change.rejectionReason } : {}),
+      ...(change.recollectionOfSpecimenId ? { recollectionOfSpecimenId: change.recollectionOfSpecimenId } : {}),
+    },
+  });
+}
+
+export async function receiveSpecimen(tx: Tx, specimenId: string, receivedByStaffId: string, byUserId?: string) {
+  const specimen = await guardedTransition(tx, specimenId, "COLLECTED", "RECEIVED", { receivedByStaffId, receivedAt: new Date() }, "received");
+  await emitSpecimenStatus(tx, specimen, { from: "COLLECTED", to: "RECEIVED" }, byUserId);
+  return specimen;
 }
 
 export async function acceptSpecimen(tx: Tx, specimenId: string, acceptedByStaffId: string) {
@@ -121,7 +149,8 @@ export async function rejectSpecimen(
   specimenId: string,
   reason: SpecimenRejectionReason,
   rejectedByStaffId: string,
-  notes?: string
+  notes?: string,
+  byUserId?: string,
 ) {
   const specimen = await tx.specimen.findUniqueOrThrow({ where: { id: specimenId } });
   if (!isSpecimenTransitionAllowed(specimen.status, "REJECTED")) {
@@ -132,11 +161,13 @@ export async function rejectSpecimen(
     data: { status: "REJECTED", rejectedReason: reason, rejectedNotes: notes, rejectedByStaffId, rejectedAt: new Date() },
   });
   if (result.count !== 1) throw new SpecimenConcurrencyError("rejected");
-  return tx.specimen.findUniqueOrThrow({ where: { id: specimenId } });
+  const rejected = await tx.specimen.findUniqueOrThrow({ where: { id: specimenId } });
+  await emitSpecimenStatus(tx, rejected, { from: specimen.status, to: "REJECTED", rejectionReason: reason }, byUserId);
+  return rejected;
 }
 
 /** Creates a NEW specimen row for the same order, linked back to the rejected original — full history preserved (brief §15). */
-export async function recollectSpecimen(tx: Tx, rejectedSpecimenId: string, specimenType?: string) {
+export async function recollectSpecimen(tx: Tx, rejectedSpecimenId: string, specimenType?: string, byUserId?: string) {
   const original = await tx.specimen.findUniqueOrThrow({ where: { id: rejectedSpecimenId }, include: { recollections: true } });
   if (original.status !== "REJECTED") {
     throw new InvalidSpecimenTransitionError(original.status, "COLLECTION_PENDING");
@@ -145,7 +176,7 @@ export async function recollectSpecimen(tx: Tx, rejectedSpecimenId: string, spec
     throw new BadRequestError("This specimen has already been recollected.");
   }
   try {
-    return await tx.specimen.create({
+    const recollection = await tx.specimen.create({
       data: {
         labOrderId: original.labOrderId,
         facilityId: original.facilityId,
@@ -157,6 +188,8 @@ export async function recollectSpecimen(tx: Tx, rejectedSpecimenId: string, spec
         recollectionOfSpecimenId: original.id,
       },
     });
+    await emitSpecimenStatus(tx, recollection, { from: null, to: "COLLECTION_PENDING", recollectionOfSpecimenId: original.id }, byUserId);
+    return recollection;
   } catch (err) {
     // Milestone E hardening — Specimen.recollectionOfSpecimenId is now a DB-
     // level unique constraint (see prisma/migrations), backstopping the

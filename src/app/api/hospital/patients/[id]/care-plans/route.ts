@@ -55,6 +55,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       createdByStaffId: staff.id,
       notes: parsed.data.notes,
       interventions: parsed.data.interventions,
+      byUserId: session.userId,
     });
     await recordAuditEvent(
       "hospital.carePlan.created",
