@@ -20,10 +20,22 @@
  *   6. Care relationship windows: OPD 30 days after the last encounter, IPD
  *      the admission plus 30 days after discharge, per facility, capped at 90.
  *   7. Staff never read a person's profile, contacts, links or access log.
+ *   8. Insider-takeover fix: a phone staff set or change can't take a link
+ *      code for 7 days (a code already sent is voided too); two-staff
+ *      in-person verification still works; after the hold, codes work
+ *      again; every phone change, by staff or the patient, notifies the
+ *      previous number with no clinical or facility detail.
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-person-identity.ts
  */
+process.env.SMS_PROVIDER = "outbox";
+
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { SMS_OUTBOX_FILE } from "../src/lib/messaging/sms";
+import { submitSecondFactor, verifyLinkCode } from "../src/lib/person/linking";
+import { updatePatientRecord } from "../src/lib/patient/demographics";
+import { updateProfile } from "../src/lib/patient/experience/profile";
 import { prisma } from "../src/lib/db";
 import { registerPatientAccount, connectFacilityRecord } from "../src/lib/patient/selfRegistration";
 import {
@@ -184,6 +196,49 @@ async function main() {
   report("Staff get nothing for a person's profile, links or access log", (await personAccess({ kind: "STAFF", userId: A.userId, facilityId: PUNE }, personId, "PROFILE")) === null);
   report("The person's own login does", (await personAccess({ kind: "OWNER", userId: user }, personId, "PROFILE"))?.via === "OWNER");
   report("Another account's login does not", (await personAccess({ kind: "OWNER", userId: doctor.id }, personId, "PROFILE")) === null);
+
+  // ── 8. Insider-takeover fix ──
+  const smsTo = async (phone: string) => (await readFile(SMS_OUTBOX_FILE, "utf8").catch(() => "")).trim().split("\n").filter(Boolean)
+    .map((l) => JSON.parse(l) as { to: string; text: string }).filter((m) => m.to.replace(/\D/g, "").endsWith(phone.slice(-10)));
+  const oldPhone = `96${String(Date.now()).slice(-8)}`;
+  const newPhone = `95${String(Date.now()).slice(-8)}`;
+  const longAgo = new Date(Date.now() - 30 * day);
+  const r8 = await prisma.patient.create({ data: { uhid: `PIDHOLD-${run}`, facilityId: PUNE, fullName: `Hold Person ${run}`, sex: "F", dob: new Date("1981-02-03"), phone: oldPhone, phoneConfirmedAt: longAgo, phoneSetByStaffAt: longAgo } });
+  await updatePatientRecord({ patientId: r8.id, facilityId: PUNE, byUserId: A.userId, changes: { phone: newPhone } });
+  const notice = (await smsTo(oldPhone)).find((m) => /phone number on your hospital record/.test(m.text));
+  report("Staff change the phone: the previous number is told", Boolean(notice));
+  report("…with no clinical or facility detail", Boolean(notice) && !/Pune|Medical Centre|fac-/i.test(notice!.text) && !notice!.text.includes(r8.uhid));
+  report("…and it's audited", (await prisma.auditEvent.count({ where: { type: "patient.contact.changeNotified", patientId: r8.id } })) === 1);
+  const held = await registerPatientAccount({ fullName: r8.fullName, email: `pid-hold-${run}@verify.aarogya`, passwordHash: "x", sex: "F", dob: new Date("1981-02-03") });
+  const heldReq = await prisma.patientLinkRequest.findFirstOrThrow({ where: { userId: held.userId } });
+  report("Within 7 days of the staff change, a code link is refused: in person, PHONE_RECENTLY_CHANGED", held.status === "IN_PERSON_REQUIRED" && heldReq.reviewReason === "PHONE_RECENTLY_CHANGED", `${held.status} ${heldReq.reviewReason}`);
+  report("…and no code went to the new phone", !(await smsTo(newPhone)).some((m) => /verification code/.test(m.text)));
+  const hs = await startInPersonVerification({ facilityId: PUNE, requestId: heldReq.id, staffId: A.id, byUserId: A.userId, idType: "PASSPORT", idLast4: "Z9Z9", reason: "PHONE_RECENTLY_CHANGED" });
+  await approveInPersonVerification({ facilityId: PUNE, linkId: hs.linkId, staffId: B.id, byUserId: B.userId });
+  const hc = await confirmPendingLink(held.userId, hs.linkId);
+  report("…the two-staff in-person route still links", hc.status === "LINKED" && (await selfPatientIds(held.userId)).includes(r8.id));
+  // A code already on its way is voided by a staff change.
+  const r9phone = `94${String(Date.now()).slice(-8)}`;
+  const r9 = await prisma.patient.create({ data: { uhid: `PIDVOID-${run}`, facilityId: PUNE, fullName: `Void Person ${run}`, sex: "M", dob: new Date("1983-04-05"), phone: r9phone, phoneConfirmedAt: longAgo, phoneSetByStaffAt: longAgo } });
+  const v = await registerPatientAccount({ fullName: r9.fullName, email: `pid-void-${run}@verify.aarogya`, passwordHash: "x", sex: "M", dob: new Date("1983-04-05") });
+  report("Outside the hold, a match still routes to the second factor", v.status === "VERIFICATION_REQUIRED", v.status);
+  await submitSecondFactor(v.userId, { kind: "UHID", value: r9.uhid });
+  const sentCode = (await smsTo(r9phone)).reverse().find((m) => /verification code/.test(m.text))?.text.match(/\b(\d{6})\b/)?.[1];
+  await updatePatientRecord({ patientId: r9.id, facilityId: PUNE, byUserId: A.userId, changes: { phone: `93${String(Date.now()).slice(-8)}` } });
+  const voided = await verifyLinkCode(v.userId, sentCode ?? "");
+  report("A staff phone change after the code went out voids it: the right code no longer links", Boolean(sentCode) && voided.status === "IN_PERSON_REQUIRED" && !(await selfPatientIds(v.userId)).includes(r9.id), voided.status);
+  // After the hold, codes work again.
+  await prisma.patient.update({ where: { id: r9.id }, data: { phoneSetByStaffAt: new Date(Date.now() - 8 * day) } });
+  const r9After = await prisma.patient.findUniqueOrThrow({ where: { id: r9.id } });
+  const { routeFor } = await import("../src/lib/person/linking");
+  report("8 days after the staff change, the phone can take a code again", (await routeFor(r9After)).route === "SECOND_FACTOR_REQUIRED");
+  // The patient changing it in the portal tells the previous number too.
+  const selfUser = await prisma.user.create({ data: { email: `pid-selfphone-${run}@verify.aarogya`, passwordHash: "x", role: "PATIENT", displayName: "Self phone" } });
+  const selfRec = await prisma.patient.create({ data: { uhid: `PIDSELF-${run}`, facilityId: PUNE, fullName: `Self Phone ${run}`, sex: "F", phone: `92${String(Date.now()).slice(-8)}` } });
+  const { linkAccountForGate } = await import("./lib/personFixture");
+  await linkAccountForGate(prisma, selfUser.id, selfRec.id);
+  await updateProfile({ patientId: selfRec.id, patientIds: [selfRec.id], facilityId: PUNE, isSelf: true, allowedClasses: new Set(["PERSONAL"]) }, { phone: `91${String(Date.now()).slice(-8)}` }, selfUser.id);
+  report("The patient changes their phone in the portal: the previous number is told", (await smsTo(selfRec.phone!)).some((m) => /phone number on your hospital record/.test(m.text)));
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();

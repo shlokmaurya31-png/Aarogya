@@ -198,11 +198,11 @@ async function main() {
   console.log("4. Mass assignment protection");
   await expectThrow("profile update rejects unknown/privileged keys (strict schema)", async () => {
     const s = await resolveActScope(ctxA);
-    await updateProfile(s, { phone: "999", facilityId: ID.facOther, registrationStatus: "INACTIVE", uhid: "HACK" } as any);
+    await updateProfile(s, { phone: "999", facilityId: ID.facOther, registrationStatus: "INACTIVE", uhid: "HACK" } as any, ctxA.userId);
   });
   await expectOk("profile update applies only allowed fields", async () => {
     const s = await resolveActScope(ctxA);
-    await updateProfile(s, { phone: "222", communicationPreference: "EMAIL" });
+    await updateProfile(s, { phone: "222", communicationPreference: "EMAIL" }, ctxA.userId);
     const ev = await prisma.domainEventOutbox.findFirst({ where: { eventType: "PatientDemographicsUpdated", aggregateId: s.patientId }, orderBy: { seq: "desc" } });
     const fields = (ev?.payload as { fields?: string[] } | undefined)?.fields ?? [];
     if (!fields.includes("PHONE") || JSON.stringify(ev?.payload).includes("222")) throw new Error(`PatientDemographicsUpdated must name PHONE and carry no value: ${JSON.stringify(ev?.payload)}`);

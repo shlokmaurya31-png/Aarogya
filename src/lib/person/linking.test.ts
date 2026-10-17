@@ -4,12 +4,26 @@ import { phoneUsable, PHONE_CONFIRMATION_MAX_AGE_MS, startInPersonVerification }
 describe("phone codes need a phone confirmed within 12 months", () => {
   const now = new Date("2026-10-19T00:00:00Z");
   it("refuses a missing phone or a never-confirmed one", () => {
-    expect(phoneUsable({ phone: null, phoneConfirmedAt: now }, now)).toBe(false);
-    expect(phoneUsable({ phone: "9811122334", phoneConfirmedAt: null }, now)).toBe(false);
+    expect(phoneUsable({ phone: null, phoneConfirmedAt: now }, undefined, now)).toBe(false);
+    expect(phoneUsable({ phone: "9811122334", phoneConfirmedAt: null }, undefined, now)).toBe(false);
   });
   it("accepts up to 12 months, refuses after", () => {
-    expect(phoneUsable({ phone: "9811122334", phoneConfirmedAt: new Date(now.getTime() - PHONE_CONFIRMATION_MAX_AGE_MS) }, now)).toBe(true);
-    expect(phoneUsable({ phone: "9811122334", phoneConfirmedAt: new Date(now.getTime() - PHONE_CONFIRMATION_MAX_AGE_MS - 1) }, now)).toBe(false);
+    expect(phoneUsable({ phone: "9811122334", phoneConfirmedAt: new Date(now.getTime() - PHONE_CONFIRMATION_MAX_AGE_MS) }, undefined, now)).toBe(true);
+    expect(phoneUsable({ phone: "9811122334", phoneConfirmedAt: new Date(now.getTime() - PHONE_CONFIRMATION_MAX_AGE_MS - 1) }, undefined, now)).toBe(false);
+  });
+});
+
+describe("a phone staff set or changed can't take a link code during the hold (insider-takeover fix)", () => {
+  const now = new Date("2026-10-20T00:00:00Z");
+  const day = 86_400_000;
+  const p = (setDaysAgo: number) => ({ phone: "9811122334", phoneConfirmedAt: new Date(now.getTime() - setDaysAgo * day), phoneSetByStaffAt: new Date(now.getTime() - setDaysAgo * day) });
+  it("refuses within the default 7 days, allows after", () => {
+    expect(phoneUsable(p(6.9), undefined, now)).toBe(false);
+    expect(phoneUsable(p(7), undefined, now)).toBe(true);
+  });
+  it("uses the facility's hold", () => {
+    expect(phoneUsable(p(10), 14 * day, now)).toBe(false);
+    expect(phoneUsable(p(10), 0, now)).toBe(true);
   });
 });
 

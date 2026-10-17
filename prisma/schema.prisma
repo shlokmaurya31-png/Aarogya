@@ -2216,8 +2216,12 @@ model Patient {
 
   // Phase 0 — the verified bridge to a platform-level Person, and when the
   // phone on this record was last confirmed (second factor for phone codes).
-  personLinks      PersonPatientLink[]
-  phoneConfirmedAt DateTime?
+  personLinks       PersonPatientLink[]
+  phoneConfirmedAt  DateTime?
+  /// Phase 0 (insider-takeover fix): when staff last set or changed the phone.
+  /// For identity.staff_phone_hold_days after it, the phone can't receive a
+  /// link code; only two-staff in-person verification can link.
+  phoneSetByStaffAt DateTime?
 
   @@index([facilityId])
   @@index([mergedIntoId])
@@ -10235,6 +10239,7 @@ enum PersonInPersonReason {
   PHONE_NOT_CONFIRMED
   PHONE_UNREACHABLE
   SECOND_FACTOR_UNAVAILABLE
+  PHONE_RECENTLY_CHANGED
 }
 
 enum PersonUnlinkActor {

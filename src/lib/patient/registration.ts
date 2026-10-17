@@ -39,7 +39,7 @@ export async function createRegisteredPatient(tx: Tx, input: {
       dob: input.dob ?? undefined,
       ...(input.dobPrecision ? { dobPrecision: input.dobPrecision } : {}),
       userId: input.userId ?? undefined,
-      ...(input.phoneConfirmed && input.phone ? { phoneConfirmedAt: new Date() } : {}),
+      ...(input.phoneConfirmed && input.phone ? { phoneConfirmedAt: new Date(), phoneSetByStaffAt: new Date() } : {}),
     },
   });
   await emitDomainEvent(tx, {

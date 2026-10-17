@@ -78,6 +78,7 @@ export type AuditEventType =
   | "patient.person.link.unlinkRequested"
   | "patient.person.link.unlinked"
   | "patient.contact.confirmed"
+  | "patient.contact.changeNotified"
   | "patient.document.uploaded"
   // Phase D11 — Patient Experience: family/caregiver delegated access lifecycle.
   | "patient.delegation.invited"

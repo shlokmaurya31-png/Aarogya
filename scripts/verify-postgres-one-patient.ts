@@ -3,9 +3,9 @@
  *
  *   1. The front desk registers a patient in Hospital OS.
  *   2. The same person self-registers in the patient portal: a likely match.
- *      They give the record's UHID (Phase 0's second factor), a code goes to
- *      the phone on the hospital record, and entering it links the record to
- *      their Person. No second Patient is created.
+ *      The front desk set the record's phone minutes ago, so (insider-takeover
+ *      fix) no code goes to it: two staff verify the person's ID in person and
+ *      the person confirms. No second Patient is created.
  *   3. The front desk opens an encounter; the patient uploads a document.
  *   5. Phase 0: the person connects a second facility; the portal shows both
  *      records labelled by facility; the other facility's staff can't reach it.
@@ -77,19 +77,26 @@ async function main() {
     // 2. The same person self-registers and verifies with the code sent to the record's phone.
     const self = await call("", "POST", "/api/patient/register",
       { fullName: person.fullName, email: `one-patient-${run}@verify.aarogya`, password: "OnePatient@123", sex: "F", phone: `+91 ${phone}` }, "10.88.0.1");
-    report("Self-registration finds the record and asks for the code", self.status === 200 && self.json.status === "VERIFICATION_REQUIRED", String(self.json.status));
-    report("…without revealing the record's ID", !JSON.stringify(self.json).includes(P));
+    report("Self-registration finds the record without revealing it", self.status === 200 && !JSON.stringify(self.json).includes(P));
+    // Insider-takeover fix: the front desk set this record's phone minutes ago,
+    // so no code may go to it for 7 days; the person verifies in person with
+    // two staff members instead.
+    report("…the phone was just set by staff, so it routes to in-person verification (no code)", self.json.status === "IN_PERSON_REQUIRED", String(self.json.status));
     const patientCookie = self.setCookie;
-    // Phase 0: the record's phone was entered by the front desk (confirmed), so
-    // the person first gives a second factor that matches the record exactly:
-    // the UHID here (the desk recorded an age, not a date of birth).
-    const factor = await call(patientCookie, "POST", "/api/patient/link/second-factor", { kind: "UHID", value: hospitalPatient.uhid });
-    report("The second factor (the record's UHID) sends the code", factor.status === 200 && factor.json.status === "CODE_SENT", JSON.stringify(factor.json));
     const sent = (await readFile(OUTBOX, "utf8").catch(() => "")).trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as { to: string; text: string });
-    const code = sent.reverse().find((m) => m.to.replace(/\D/g, "").endsWith(phone))?.text.match(/\b(\d{6})\b/)?.[1];
-    report("The code went to the phone on the hospital record", Boolean(code));
-    const link = await call(patientCookie, "POST", "/api/patient/link", { code });
-    report("Entering the code links the account to the front desk's record", link.status === 200 && link.json.status === "LINKED" && link.json.patientId === P, JSON.stringify(link.json));
+    report("No code went to the record's phone during the hold", !sent.some((m) => m.to.replace(/\D/g, "").endsWith(phone) && /verification code/.test(m.text)));
+    const admin = await loginAs(base, "admin@amc-demo.aarogya", STAFF_PASSWORD);
+    const queue = await call(frontDesk, "GET", "/api/hospital/patient-link-requests");
+    const req = ((queue.json.requests ?? queue.json.linkRequests ?? queue.json) as { id: string; candidatePatient?: { id: string } }[]);
+    const reqId = (Array.isArray(req) ? req : []).find((r) => r.candidatePatient?.id === P)?.id;
+    report("The front desk sees the request waiting for in-person verification", Boolean(reqId), `HTTP ${queue.status}`);
+    const started = await call(frontDesk, "POST", `/api/hospital/patient-link-requests/${reqId}/in-person`, { idType: "AADHAAR", idLast4: "1234", reason: "PHONE_RECENTLY_CHANGED" });
+    const linkId = started.json.linkId as string | undefined;
+    report("Staff member A records the ID check (last 4 only)", started.status === 200 && Boolean(linkId), JSON.stringify(started.json).slice(0, 200));
+    const approved = await call(admin, "POST", `/api/hospital/person-links/${linkId}/approve`, {});
+    report("A different staff member approves", approved.status === 200, `HTTP ${approved.status}`);
+    const link = await call(patientCookie, "POST", `/api/patient/person/links/${linkId}/confirm`, {});
+    report("The person confirms: the account's Person is linked to the front desk's record", link.status === 200 && link.json.status === "LINKED" && link.json.patientId === P, JSON.stringify(link.json));
     const patientCols = (await prisma.$queryRaw<{ column_name: string }[]>`SELECT column_name FROM information_schema.columns WHERE table_name = 'Patient'`).map((c) => c.column_name);
     report("Patient stores no age (ageYears dropped; dobPrecision present, no dobEstimated)", !patientCols.includes("ageYears") && patientCols.includes("dobPrecision") && !patientCols.includes("dobEstimated"));
     const studentCols = (await prisma.$queryRaw<{ column_name: string }[]>`SELECT column_name FROM information_schema.columns WHERE table_name = 'StudentProfile'`).map((c) => c.column_name);

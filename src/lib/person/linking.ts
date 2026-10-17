@@ -9,6 +9,7 @@ import { sendSms, maskPhone } from "@/lib/messaging/sms";
 import { sendEmail } from "@/lib/email/send";
 import { recordActiveLink } from "./person";
 import { requireOwnedPerson } from "./access";
+import { resolveEffectiveInternal } from "@/lib/config/resolver";
 
 /**
  * Phase 0 — linking a facility record to a Person, and unlinking it
@@ -40,9 +41,33 @@ function codeHash(requestId: string, code: string): string {
   return createHmac("sha256", secret).update(`${requestId}:${code}`).digest("hex");
 }
 
-/** Is the record's phone confirmed recently enough to receive a link code? */
-export function phoneUsable(p: { phone: string | null; phoneConfirmedAt: Date | null }, now = new Date()): boolean {
-  return Boolean(p.phone && p.phoneConfirmedAt && now.getTime() - p.phoneConfirmedAt.getTime() <= PHONE_CONFIRMATION_MAX_AGE_MS);
+type PhoneFacts = { phone: string | null; phoneConfirmedAt: Date | null; phoneSetByStaffAt?: Date | null };
+export const STAFF_PHONE_HOLD_DEFAULT_DAYS = 7;
+
+/**
+ * Can the record's phone receive a link code? Confirmed within 12 months,
+ * and (insider-takeover fix) not set or changed by staff within the hold
+ * (`holdMs`): a staff member can't point a record at their own phone and
+ * link it to an account by code. In-person verification is unaffected.
+ */
+export function phoneUsable(p: PhoneFacts, holdMs = STAFF_PHONE_HOLD_DEFAULT_DAYS * 86_400_000, now = new Date()): boolean {
+  if (!p.phone || !p.phoneConfirmedAt || now.getTime() - p.phoneConfirmedAt.getTime() > PHONE_CONFIRMATION_MAX_AGE_MS) return false;
+  return !(p.phoneSetByStaffAt && now.getTime() - p.phoneSetByStaffAt.getTime() < holdMs);
+}
+
+/** The facility's staff-phone hold, in ms (identity.staff_phone_hold_days, capped at 90 by the registry). */
+export async function staffPhoneHoldMs(facilityId: string): Promise<number> {
+  const facility = await prisma.facility.findUnique({ where: { id: facilityId }, select: { organizationId: true } });
+  if (!facility?.organizationId) return STAFF_PHONE_HOLD_DEFAULT_DAYS * 86_400_000;
+  const eff = await resolveEffectiveInternal({ key: "identity.staff_phone_hold_days", organizationId: facility.organizationId, facilityId, fallbackRaw: String(STAFF_PHONE_HOLD_DEFAULT_DAYS) });
+  return (typeof eff.value === "number" ? eff.value : STAFF_PHONE_HOLD_DEFAULT_DAYS) * 86_400_000;
+}
+
+/** Why the record's phone can't take a code, or null if it can. */
+async function phoneBlock(p: PhoneFacts & { facilityId: string }): Promise<"NO_PHONE_ON_RECORD" | "PHONE_NOT_CONFIRMED" | "PHONE_RECENTLY_CHANGED" | null> {
+  if (!p.phone) return "NO_PHONE_ON_RECORD";
+  if (!phoneUsable({ ...p, phoneSetByStaffAt: null })) return "PHONE_NOT_CONFIRMED";
+  return phoneUsable(p, await staffPhoneHoldMs(p.facilityId)) ? null : "PHONE_RECENTLY_CHANGED";
 }
 
 /**
@@ -86,8 +111,10 @@ export type LinkRoute = "SECOND_FACTOR_REQUIRED" | "IN_PERSON_REQUIRED" | "FRONT
  */
 export async function routeFor(candidate: { id: string; phone: string | null; phoneConfirmedAt: Date | null }, personId?: string | null): Promise<{ route: LinkRoute; reason: string | null }> {
   if (await recordIsClaimed(candidate.id, personId)) return { route: "FRONT_DESK_REVIEW", reason: "the matched record is already connected to an account" };
-  if (phoneUsable(candidate)) return { route: "SECOND_FACTOR_REQUIRED", reason: null };
-  return { route: "IN_PERSON_REQUIRED", reason: candidate.phone ? "PHONE_NOT_CONFIRMED" : "NO_PHONE_ON_RECORD" };
+  const p = await prisma.patient.findUniqueOrThrow({ where: { id: candidate.id }, select: { phone: true, phoneConfirmedAt: true, phoneSetByStaffAt: true, facilityId: true } });
+  const blocked = await phoneBlock(p);
+  if (!blocked) return { route: "SECOND_FACTOR_REQUIRED", reason: null };
+  return { route: "IN_PERSON_REQUIRED", reason: blocked };
 }
 
 /** The person's open request (latest first), or 404. */
@@ -113,7 +140,7 @@ export async function submitSecondFactor(userId: string, input: { kind: string; 
   const kind = parseEnum($Enums.PersonSecondFactor, input.kind, "kind");
   const personId = await requireOwnedPerson(userId);
   const r = await openRequestFor(personId, ["SECOND_FACTOR_REQUIRED"]);
-  const record = await prisma.patient.findUniqueOrThrow({ where: { id: r.candidatePatientId! }, select: { id: true, uhid: true, dob: true, dobPrecision: true, phone: true, phoneConfirmedAt: true, facilityId: true } });
+  const record = await prisma.patient.findUniqueOrThrow({ where: { id: r.candidatePatientId! }, select: { id: true, uhid: true, dob: true, dobPrecision: true, phone: true, phoneConfirmedAt: true, phoneSetByStaffAt: true, facilityId: true } });
   const value = (input.value ?? "").trim();
   const ok = kind === "UHID"
     ? value.length > 0 && value === record.uhid
@@ -128,9 +155,10 @@ export async function submitSecondFactor(userId: string, input: { kind: string; 
     }
     return { status: "INVALID" as const, attemptsLeft: MAX_ATTEMPTS - attempts };
   }
-  // The phone may have aged out between opening the request and now.
-  if (!phoneUsable(record)) {
-    await toInPerson(r, "PHONE_NOT_CONFIRMED");
+  // The phone may have aged out, or been changed by staff, since the request opened.
+  const blocked = await phoneBlock(record);
+  if (blocked) {
+    await toInPerson(r, blocked);
     return { status: "IN_PERSON_REQUIRED" as const };
   }
   const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
@@ -159,6 +187,13 @@ export async function verifyLinkCode(userId: string, code: string) {
   if (!r.otpExpiresAt || r.otpExpiresAt.getTime() < Date.now()) {
     await prisma.patientLinkRequest.update({ where: { id: r.id }, data: { status: "SECOND_FACTOR_REQUIRED", otpHash: null, otpExpiresAt: null, secondFactorOk: null, reviewReason: "verification code expired" } });
     return { status: "EXPIRED" as const };
+  }
+  // A staff phone change after the code went out voids it (insider-takeover fix).
+  const rec = await prisma.patient.findUniqueOrThrow({ where: { id: r.candidatePatientId }, select: { phone: true, phoneConfirmedAt: true, phoneSetByStaffAt: true, facilityId: true } });
+  const blocked = await phoneBlock(rec);
+  if (blocked) {
+    await toInPerson(r, blocked);
+    return { status: "IN_PERSON_REQUIRED" as const };
   }
   const expected = Buffer.from(r.otpHash);
   const given = Buffer.from(codeHash(r.id, String(code ?? "").trim()));
@@ -395,6 +430,18 @@ export async function approveFacilityUnlink(input: { facilityId: string; linkId:
   if (link.unlinkRequestedByUserId === input.byUserId) throw new BadRequestError("A second, different staff member must approve.");
   await finishUnlink(link, { unlinkedByUserId: link.unlinkRequestedByUserId, unlinkApprovedByUserId: input.byUserId }, "FACILITY", link.unlinkRequestedReason, input.byUserId);
   return { status: "UNLINKED" as const };
+}
+
+// ── Phone changes notify the previous contact ───────────────────────────────
+
+/**
+ * Every phone change on a record, by staff or by the patient, tells the
+ * previous number, with no clinical or facility detail (insider-takeover fix).
+ */
+export async function notifyPreviousPhone(input: { patientId: string; facilityId: string; previousPhone: string | null; changedBy: "STAFF" | "PATIENT"; byUserId: string }) {
+  if (!input.previousPhone) return;
+  const sent = await sendSms(input.previousPhone, "The phone number on your hospital record with Aarogya was changed. If you didn't ask for this, contact the hospital.").catch(() => ({ delivered: false as const }));
+  await recordAuditEvent("patient.contact.changeNotified", input.byUserId, { patientId: input.patientId, changedBy: input.changedBy, to: maskPhone(input.previousPhone), delivered: sent.delivered }, { facilityId: input.facilityId, patientId: input.patientId });
 }
 
 // ── Contact confirmation ────────────────────────────────────────────────────

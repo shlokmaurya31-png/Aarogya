@@ -108,6 +108,8 @@ const EXACT: Record<string, KeySpec> = {
   // Per facility; the platform maximum is 90 days.
   "identity.care_window_opd_days": number({ scopes: ["ORGANIZATION", "FACILITY"], default: 30, min: 0, max: 90, description: "Days after the last outpatient (non-IPD) encounter during which the facility has a care relationship with the patient (max 90)." }),
   "identity.care_window_ipd_days": number({ scopes: ["ORGANIZATION", "FACILITY"], default: 30, min: 0, max: 90, description: "Days after discharge during which the facility has a care relationship with the patient; the admission itself always counts (max 90)." }),
+  // Phase 0 (insider-takeover fix): a phone staff set or changed can't receive a link code for this long.
+  "identity.staff_phone_hold_days": number({ scopes: ["ORGANIZATION", "FACILITY"], default: 7, min: 0, max: 90, description: "Days after staff set or change a record's phone during which it can't receive a link code (in-person verification still works)." }),
   "billing.late_charge.document_type": enumSpec(["SUPPLEMENTARY_INVOICE", "DEBIT_NOTE"], { scopes: ["ORGANIZATION", "FACILITY"], default: "SUPPLEMENTARY_INVOICE", description: "Document that collects charges posted after the encounter's invoice is issued, linked to the original." }),
 };
 

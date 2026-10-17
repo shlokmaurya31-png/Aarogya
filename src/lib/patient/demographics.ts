@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { NotFoundError } from "@/lib/auth/rbac";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+import { notifyPreviousPhone } from "@/lib/person/linking";
 
 /**
  * Staff edits to a patient's record (batch 7, item 5; previously written by
@@ -22,7 +23,8 @@ export async function updatePatientRecord(input: {
     const data = Object.fromEntries(Object.entries(input.changes).filter(([, v]) => v !== undefined));
     // Phase 0: staff entering a (new) phone with the patient present confirms it.
     const phoneChanged = "phone" in data && String(data.phone ?? "") !== String(before.phone ?? "");
-    const patient = await tx.patient.update({ where: { id: before.id }, data: { ...data, ...(phoneChanged ? { phoneConfirmedAt: data.phone ? new Date() : null } : {}) } });
+    // Insider-takeover fix: a staff phone change starts the code-link hold.
+    const patient = await tx.patient.update({ where: { id: before.id }, data: { ...data, ...(phoneChanged ? { phoneConfirmedAt: data.phone ? new Date() : null, phoneSetByStaffAt: new Date() } : {}) } });
     const fields = (Object.keys(FIELD_CODES) as (keyof typeof FIELD_CODES)[])
       .filter((k) => k in data && String(data[k] ?? "") !== String((before as Record<string, unknown>)[k] ?? ""))
       .map((k) => FIELD_CODES[k]);
@@ -32,6 +34,10 @@ export async function updatePatientRecord(input: {
         payload: { patientId: before.id, changeKind: "PROFILE", fields },
       });
     }
+    return { patient, previousPhone: phoneChanged ? before.phone : null };
+  }).then(async ({ patient, previousPhone }) => {
+    // Every phone change tells the previous number (no clinical or facility detail).
+    if (previousPhone) await notifyPreviousPhone({ patientId: patient.id, facilityId: patient.facilityId, previousPhone, changedBy: "STAFF", byUserId: input.byUserId });
     return patient;
   });
 }

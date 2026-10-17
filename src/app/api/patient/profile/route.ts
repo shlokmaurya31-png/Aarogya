@@ -18,6 +18,6 @@ export async function PATCH(req: NextRequest) {
     const ctx = await requirePatientActor();
     const scope = await resolveActScope(ctx);
     const body = await req.json().catch(() => ({}));
-    return updateProfile(scope, body);
+    return updateProfile(scope, body, ctx.userId);
   });
 }
