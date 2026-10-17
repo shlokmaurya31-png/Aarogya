@@ -4,6 +4,27 @@
 - **Status:** approved 2026-10-16 with the four changes below, which this document now reflects. Batch 3a applied it to `emitExemptions.ts` (`NOT_YET_CATALOGUED` is 0 and the CI rule rejects the category); each module's step wires its events.
 - **Scope:** every exported service function the CI emit rule lists as `NOT_YET_CATALOGUED`. Round 1 triaged 275. Since then three left the category: `completeTransferRequest` and `ingestWebhook` now reach registered emitting helpers (`transferPatientInTx`, `emitPaymentFailed`), and `addIntervention` moved to `OWED_EVENTS` (it emits TaskCreated but still owes `CarePlanUpdated`). **272** remain.
 
+## Final numbers (2026-10-17, end of Week 3)
+
+Every triaged function is wired or exempt. From the code (`emitExemptions.ts`,
+`catalogue.ts`; the full list is `docs/EVENT_CATALOGUE.md`):
+
+| | Count |
+|---|---|
+| `PLANNED` remaining | **0** |
+| `OWED_EVENTS` | **0** |
+| `NOT_YET_CATALOGUED` | **0** |
+| Route-write allowlist | **0** |
+| Event types / contracts | 149 / 156 |
+| Named exemptions | 223: `BOOKKEEPING` 51, `OPERATIONAL_DETAIL` 48, `CONFIGURATION` 42, `REFERENCE_DATA` 33, `PROCESS_STEP` 31, `SCHOLAR` 9, `INTEGRATION_PROTOCOL` 6, `CONSUMER_OUTPUT` 2, `ACCOUNT_SECURITY` 1 |
+| `SENSITIVE_EVENTS` | 15 |
+
+The exemption totals are larger than this triage's 86 because they include
+the exemptions that predate it (bookkeeping, configuration, reference data)
+and those added when the last route writes moved into services (batch 7, item
+5: `SCHOLAR`, `ACCOUNT_SECURITY`, and encounter details, schedule blocks and
+interoperability connections). The *Counts* below are the triage as approved.
+
 ## Approved changes (2026-10-16)
 
 1. **Settlements emit `ClaimSettled`** (planned #59), not `ClaimReconciliationStatusChanged`: `recordSettlement` (the NHCX settlement notification) and `reconcileSettlement` join `settleClaim` as its producers. `ClaimReconciliationStatusChanged` covers reconciliation exceptions only (`raiseException`, `resolveException`). Because three functions now emit `ClaimSettled`, step 9 gives its payload a closed `stage` code (SETTLED \| NOTIFIED \| RECONCILED) and an optional `settlementId`, so `discharge-readiness` can tell them apart.
@@ -600,6 +621,7 @@ names: 81 (77 new).
 
 | Step | State |
 |---|---|
+| all | **done** (2026-10-17, batch 8): see *Final numbers* above. |
 | 9c | **wired** (2026-10-17, batch 7): 26 functions (the triage's 14 plus their sibling transitions), 9 events. PLANNED is now 0. |
 | 9b | **wired** (2026-10-17, batch 7): 27 functions, 12 events. |
 | 9a | **wired** (2026-10-17, batch 6): 27 triage functions. `StockMoved` from `postLedgerEntry` (registered helper) covers its 10; `StockDocumentStatusChanged` with `documentType`; the waste HOLD flow (approved change 4); purchase-order, supplier-invoice, serial and supply-request events. Off the cut list: `StockBelowReorder` (with the reorder task) and `GoodsReceived`. |

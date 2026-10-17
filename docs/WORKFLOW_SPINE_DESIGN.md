@@ -1,7 +1,9 @@
 # Workflow spine: design (Week 3, phase A)
 
 - **Status:** Approved 2026-10-15 with changes (scheduling, ordering, ten more
-  events, the reserved rag-indexer). Phase B is being implemented.
+  events, the reserved rag-indexer). Built (Week 3 complete, 2026-10-17): see
+  §10 *As built* for the final state; the per-step notes stay where they were
+  written.
 - **Date:** 2026-10-15
 - **Builds on:** ADR 0004 (modules sync through transactional domain events),
   `src/lib/events` (outbox, delivery ledger, catalogue, dispatcher) and
@@ -28,6 +30,7 @@
 7. Core-journey replay test
 8. Risks
 9. Order of wiring
+10. As built (final)
 
 ---
 
@@ -1189,3 +1192,75 @@ off exactly once). Today a rejected waste stays written off.
 
 The replay test is written early as a skeleton (step 1) and grows a step at a
 time, so each wiring step lengthens the asserted chain.
+
+---
+
+## 10. As built (final, 2026-10-17)
+
+Week 3 is complete. The per-step *As built* notes above record each step's
+departures; this section is the end state. The full event list, generated from
+the code, is `docs/EVENT_CATALOGUE.md` (`npm run docs:events`; a unit test fails
+when it drifts).
+
+**Catalogue.** 149 event types, 156 versioned contracts (seven types have a v2:
+`ImagingStudyStatusChanged`, `ObservationRecorded`, `PatientDemographicsUpdated`,
+`ProblemListUpdated`, `SpecimenStatusChanged`, `StockLotStatusChanged`,
+`TaskUpdated`; producers emit v2, replay still accepts v1). By contract:
+INTERNAL 92, SENSITIVE 15, LOW 49; the 15 `SENSITIVE_EVENTS` are enforced by
+the CI rule. Every payload is a `.strict()` Zod object of identifiers and
+closed codes, checked by the sensitive-data guard on emit and on replay.
+
+**CI emit rule (§6).** Every exported `src/lib` function that writes either
+emits in its own transaction (directly, one call deep, or through one of 11
+registered emitting helpers) or is a named exemption. Final state:
+
+| | Count |
+|---|---|
+| `PLANNED` | **0** |
+| `OWED_EVENTS` | **0** |
+| `NOT_YET_CATALOGUED` | **0** (the category no longer exists) |
+| Route-write allowlist | **0** (no route handler writes a table) |
+| Named exemptions | 223 |
+| &nbsp;&nbsp;`BOOKKEEPING` | 51 |
+| &nbsp;&nbsp;`OPERATIONAL_DETAIL` | 48 |
+| &nbsp;&nbsp;`CONFIGURATION` | 42 |
+| &nbsp;&nbsp;`REFERENCE_DATA` | 33 |
+| &nbsp;&nbsp;`PROCESS_STEP` | 31 (each names its boundary event) |
+| &nbsp;&nbsp;`SCHOLAR` | 9 (the learning product; added in batch 7) |
+| &nbsp;&nbsp;`INTEGRATION_PROTOCOL` | 6 |
+| &nbsp;&nbsp;`CONSUMER_OUTPUT` | 2 |
+| &nbsp;&nbsp;`ACCOUNT_SECURITY` | 1 (password change/reset: audited, never an event) |
+
+**Consumers (§2).** Nine, registered in one place
+(`src/lib/runner/consumers.ts`): `observability-projection` and
+`workflow-engine` (every event), `task-generator`, `mar-scheduler`,
+`notification-dispatch`, `charge-capture`, `stock-movement`,
+`claim-drafting`, `discharge-readiness`. The `rag-indexer` is reserved for
+Week 4 (`docs/RAG_DESIGN.md` on `foundation/w4-intelligence`); its
+subscriptions are listed in §2. The `abdm-care-context` consumer (cut list)
+was not built.
+
+**Runner (§3).** One loop (`runTick`: dispatch, workflow timers, the MAR sweep
+and delegation expiry), `npm run worker` locally and the
+trigger-agnostic `/api/cron/tick`; per-aggregate ordering by `seq` with
+`SKIP LOCKED` claims and the stale-claim reaper.
+
+**Gates.** `verify:all` runs 78 gates on a freshly reset, migrated and seeded
+local database; `npm test` runs 1,084 unit tests (1,088 with the catalogue
+drift test). The final `verify-postgres-core-journey` (42 checks) walks the
+whole journey with zero dead letters, a full replay that creates nothing, all
+nine consumers exercised, and a parallel Noida journey with zero
+cross-facility rows. Release check: verify:all three times in a row on fresh
+databases, all green (batch 8).
+
+**Cut list.** `StockBelowReorder` and `GoodsReceived` were built (step 9a).
+
+**Found while closing (batch 8, A.2).** The appointment race gate failed one
+run in three: one contender of five got a client-side timeout instead of
+`SlotConflictError` (no double booking). Prisma's default interactive
+transaction may wait only 2s to start; a momentary stall exceeded it. The two
+services whose callers queue on a per-key advisory lock (`bookAppointment`,
+`setAvailability`) now use `CONTENDED_TX` (10s to start, 20s to finish, the
+budgets the serializable billing transactions already used), and the gate
+names any unexpected loser's error.
+
