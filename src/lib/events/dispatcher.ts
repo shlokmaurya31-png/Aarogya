@@ -135,6 +135,7 @@ async function processClaimed(id: string, token: string, now: Date): Promise<Out
     aggregateId: evt.aggregateId,
     organizationId: evt.organizationId,
     facilityId: evt.facilityId,
+    personId: evt.personId,
     actorUserId: evt.actorUserId,
     correlationId: evt.correlationId,
     causationId: evt.causationId,

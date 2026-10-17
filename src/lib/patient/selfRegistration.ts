@@ -27,6 +27,7 @@ import { sendSms, maskPhone } from "@/lib/messaging/sms";
 import { findDuplicateCandidates } from "./duplicateDetection";
 import { createRegisteredPatient } from "./registration";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+import { createPersonForAccount, recordActiveLink } from "@/lib/person/person";
 
 const OTP_TTL_MS = 10 * 60_000;
 const MAX_OTP_ATTEMPTS = 5;
@@ -82,6 +83,10 @@ export async function registerPatientAccount(input: SelfRegistrationInput): Prom
       const patient = await createRegisteredPatient(tx, {
         uhid, facilityId: facility.id, fullName: input.fullName, sex: input.sex, phone: input.phone, dob: input.dob, userId: user.id, actorUserId: user.id,
       });
+      // Phase 0: the account's Person, linked to the record its own sign-up
+      // created (SELF_CREATED: the person is the record's source).
+      const person = await createPersonForAccount(tx, { userId: user.id, displayName: input.fullName, email: input.email, dateOfBirth: input.dob, sex: input.sex, source: "SELF_REGISTRATION" });
+      await recordActiveLink(tx, { personId: person.id, patientId: patient.id, facilityId: facility.id, method: "SELF_CREATED", linkedByUserId: user.id });
       return { user, patient };
     });
     await recordAuditEvent("patient.account.registered", user.id, { patientId: patient.id, facilityId: facility.id }, { facilityId: facility.id, patientId: patient.id });
@@ -91,9 +96,10 @@ export async function registerPatientAccount(input: SelfRegistrationInput): Prom
   const record = await prisma.patient.findUniqueOrThrow({ where: { id: best.patientId }, select: { phone: true } });
   const { user, request } = await prisma.$transaction(async (tx) => {
     const user = await tx.user.create({ data: { email: input.email, passwordHash: input.passwordHash, role: Role.PATIENT, displayName: input.fullName } });
+    const person = await createPersonForAccount(tx, { userId: user.id, displayName: input.fullName, email: input.email, dateOfBirth: input.dob, sex: input.sex, source: "SELF_REGISTRATION" });
     const request = await tx.patientLinkRequest.create({
       data: {
-        userId: user.id, facilityId: facility.id, candidatePatientId: best.patientId,
+        userId: user.id, personId: person.id, facilityId: facility.id, candidatePatientId: best.patientId,
         status: record.phone && !bestOwned ? "OTP_SENT" : "FRONT_DESK_REVIEW",
         reviewReason: bestOwned ? "the matched record already has an account" : record.phone ? null : "no phone on the matched record",
         matchConfidence: best.confidence, matchScore: best.score, matchedOn: best.matchedOn,
@@ -175,6 +181,11 @@ async function linkRecord(r: PatientLinkRequest, userId: string, reviewerUserId:
       return false;
     }
     await tx.patientLinkRequest.update({ where: { id: r.id }, data: { status: "LINKED", otpHash: null, resolvedByUserId: reviewerUserId, resolvedAt: new Date() } });
+    // Phase 0: a code entered by the person is a verified link to their Person.
+    // (A front-desk decision is not; linking.ts replaces that path.)
+    if (!reviewerUserId && r.personId) {
+      await recordActiveLink(tx, { personId: r.personId, patientId: r.candidatePatientId!, facilityId: r.facilityId, method: "OTP_RECORD_CONTACT", linkedByUserId: userId, linkRequestId: r.id });
+    }
     // Both paths that link (the patient's OTP, the front desk's LINK decision) come through here.
     await emitFacilityEvent(tx, {
       type: "PatientAccountLinked", aggregateId: r.candidatePatientId!, facilityId: r.facilityId, actorUserId: reviewerUserId ?? userId,

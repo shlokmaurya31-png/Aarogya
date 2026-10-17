@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { EventContract } from "./types";
+import { PERSON_SOURCES, PERSON_LINK_METHODS } from "@/lib/person/vocab";
 
 /**
  * Phase D6 — the event catalogue (in-code schema registry).
@@ -60,6 +61,7 @@ const billingCreditStatus = z.enum(["ACTIVE", "APPLIED", "VOID"]);
 const billingCreditType = z.enum(["PROMOTIONAL", "MANUAL", "CORRECTION", "CONTRACT"]);
 const billingInvoiceStatus = z.enum(["DRAFT", "OPEN", "PARTIALLY_PAID", "PAID", "PAST_DUE", "VOID", "UNCOLLECTIBLE"]);
 const subscriptionStatus = z.enum(["TRIAL", "ACTIVE", "PAST_DUE", "GRACE", "SUSPENDED", "CANCELLED", "EXPIRED"]);
+const personLinkMethod = z.enum(PERSON_LINK_METHODS);
 
 function contract<P extends z.ZodTypeAny>(c: EventContract<P>): EventContract<P> {
   return c;
@@ -1270,6 +1272,20 @@ export const EVENT_CONTRACTS: EventContract[] = [
     type: "SubscriptionStatusChanged", version: 1, aggregateType: "SUBSCRIPTION", scope: "ORGANIZATION",
     sensitivity: "LOW", producer: "commercial subscriptions (transitionSubscription); entitlements follow it",
     payload: z.object({ subscriptionId: id, from: subscriptionStatus, to: subscriptionStatus }).strict(),
+  }),
+
+  // ── Person identity (Phase 0) ─────────────────────────────────────────────
+  // A Person belongs to no facility (PERSON scope); link events belong to the
+  // facility whose record was linked and carry the personId.
+  contract({
+    type: "PersonCreated", version: 1, aggregateType: "PERSON", scope: "PERSON",
+    sensitivity: "INTERNAL", producer: "person identity (createPersonForAccount: sign-up, the identity migration)",
+    payload: z.object({ personId: id, source: z.enum(PERSON_SOURCES) }).strict(),
+  }),
+  contract({
+    type: "PersonPatientLinked", version: 1, aggregateType: "PERSON_PATIENT_LINK", scope: "FACILITY",
+    sensitivity: "SENSITIVE", producer: "person identity (recordActiveLink: self-created at sign-up, phone code, in-person ID, ABHA)",
+    payload: z.object({ linkId: id, personId: id, patientId: id, method: personLinkMethod }).strict(),
   }),
 ];
 

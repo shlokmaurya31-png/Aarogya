@@ -75,7 +75,7 @@ async function fireEvent(type: string, opts: { organizationId?: string | null; f
   const aggregateId = opts.aggregateId ?? `agg-${++counter}`;
   const { eventId } = await emitDomainEvent(prisma, { type, aggregateId, organizationId: opts.organizationId ?? null, facilityId: opts.facilityId ?? null, correlationId: opts.correlationId ?? `d7gate:${type}:${aggregateId}`, payload: opts.payload });
   const r = await prisma.domainEventOutbox.findUniqueOrThrow({ where: { eventId } });
-  return { eventId: r.eventId, eventType: r.eventType, eventVersion: r.eventVersion, aggregateType: r.aggregateType, aggregateId: r.aggregateId, organizationId: r.organizationId, facilityId: r.facilityId, actorUserId: r.actorUserId, correlationId: r.correlationId, causationId: r.causationId, occurredAt: r.occurredAt, payload: r.payload as Record<string, unknown> };
+  return { eventId: r.eventId, eventType: r.eventType, eventVersion: r.eventVersion, aggregateType: r.aggregateType, aggregateId: r.aggregateId, organizationId: r.organizationId, facilityId: r.facilityId, personId: r.personId, actorUserId: r.actorUserId, correlationId: r.correlationId, causationId: r.causationId, occurredAt: r.occurredAt, payload: r.payload as Record<string, unknown> };
 }
 
 /** Manually seed a RUNNABLE (not-yet-run) instance so concurrent runInstance can race. */

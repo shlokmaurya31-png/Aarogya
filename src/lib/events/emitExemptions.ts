@@ -74,6 +74,8 @@ export const SENSITIVE_EVENTS: readonly string[] = [
   "PrivacyRequestStatusChanged", "InfectionExposureRecorded",
   // Consent facts are SENSITIVE (like ConsentGranted / ConsentRevoked).
   "ConsentRequestStatusChanged",
+  // Phase 0: linking a facility record to a person says who the person is.
+  "PersonPatientLinked",
 ];
 
 /**

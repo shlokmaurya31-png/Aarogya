@@ -103,6 +103,8 @@ model User {
   patientLinkRequests      PatientLinkRequest[]
   patientUploadedDocuments ClinicalDocument[]   @relation("PatientUploadedDocuments")
 
+  personAccount PersonAccount?
+
   @@index([role])
 }
 
@@ -568,8 +570,13 @@ model DomainEventOutbox {
   updatedAt        DateTime                @updatedAt
   deliveries       DomainEventDelivery[]
 
+  /// Phase 0 — the Person the event is about: required for PERSON-scoped
+  /// events, optional on FACILITY events about a linked patient.
+  personId String?
+
   @@index([status, nextAttemptAt])
   @@index([eventType])
+  @@index([personId])
   @@index([aggregateType, aggregateId])
   @@index([organizationId])
   @@index([correlationId])
@@ -1065,6 +1072,8 @@ model Facility {
   medicationItemLinks    MedicationItemLink[]
   formularyEntries       FormularyEntry[]
   patientLinkRequests    PatientLinkRequest[]
+
+  personPatientLinks PersonPatientLink[]
 
   @@unique([organizationId, slug])
   @@index([organizationId])
@@ -2204,6 +2213,11 @@ model Patient {
   // has granted over their own record (grantor side).
   delegationsGranted PatientDelegation[]  @relation("PatientDelegations")
   linkRequests       PatientLinkRequest[]
+
+  // Phase 0 — the verified bridge to a platform-level Person, and when the
+  // phone on this record was last confirmed (second factor for phone codes).
+  personLinks      PersonPatientLink[]
+  phoneConfirmedAt DateTime?
 
   @@index([facilityId])
   @@index([mergedIntoId])
@@ -9319,6 +9333,15 @@ model PatientLinkRequest {
   createdAt          DateTime          @default(now())
   updatedAt          DateTime          @updatedAt
 
+  // Phase 0 — the Person asking, how the link is verified, who started it,
+  // and (for phone codes) the second factor checked against the record.
+  person         Person?             @relation(fields: [personId], references: [id])
+  personId       String?
+  method         PersonLinkMethod?
+  initiatedBy    PersonLinkInitiator @default(PERSON)
+  secondFactor   PersonSecondFactor?
+  secondFactorOk Boolean?
+
   @@index([facilityId, status])
   @@index([userId])
 }
@@ -10125,4 +10148,227 @@ enum InvoiceDocumentType {
   INVOICE
   SUPPLEMENTARY_INVOICE
   DEBIT_NOTE
+}
+
+// ═══ Phase 0 — Person identity (docs/PERSON_IDENTITY_DESIGN.md) ═══════════════
+// A platform-level Person the patient owns, tied to no facility. Facility
+// Patient records link to it only after verification; never on a fuzzy match.
+// Person-scoped rows carry no facilityId and are read only through
+// personAccess() (src/lib/person/access.ts).
+
+enum PersonStatus {
+  ACTIVE
+  LOCKED
+  MERGED
+  CLOSED
+}
+
+enum PersonAccountRole {
+  OWNER
+}
+
+enum PersonContactKind {
+  PHONE
+  EMAIL
+}
+
+enum PersonContactStatus {
+  ACTIVE
+  REMOVED
+}
+
+enum PersonIdentifierSystem {
+  ABHA_NUMBER
+  ABHA_ADDRESS
+}
+
+enum PersonPatientLinkStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  UNLINKED
+  SUPERSEDED
+  REVERIFICATION_REQUIRED
+}
+
+enum PersonLinkMethod {
+  OTP_RECORD_CONTACT
+  ABHA_BOTH_VERIFIED
+  IN_PERSON_ID
+  SELF_CREATED
+}
+
+enum PersonLinkInitiator {
+  PERSON
+  FACILITY
+}
+
+enum PersonSecondFactor {
+  DOB
+  UHID
+}
+
+enum PersonIdDocumentType {
+  AADHAAR
+  PAN
+  PASSPORT
+  VOTER_ID
+  DRIVING_LICENCE
+  OTHER_GOVT
+}
+
+enum PersonInPersonReason {
+  NO_PHONE_ON_RECORD
+  PHONE_NOT_CONFIRMED
+  PHONE_UNREACHABLE
+  SECOND_FACTOR_UNAVAILABLE
+}
+
+enum PersonUnlinkActor {
+  PERSON
+  FACILITY
+  PLATFORM
+}
+
+enum PersonUnlinkReason {
+  PERSON_REQUEST
+  WRONG_PERSON
+  FACILITY_MERGE
+  PERSON_MERGE
+  SECURITY
+}
+
+enum PersonAccessLogKind {
+  PERSON_CREATED
+  LINK_REQUESTED
+  LINKED
+  LINK_REFUSED
+  UNLINKED
+  REVERIFICATION_REQUIRED
+  CONSENT_DECIDED
+  RECORD_ACCESSED
+}
+
+model Person {
+  id                 String        @id @default(cuid())
+  status             PersonStatus  @default(ACTIVE)
+  mergedIntoPersonId String?
+  mergedAt           DateTime?
+  /// What the person calls themselves; not a legal name, never copied into facility records.
+  displayName        String
+  dateOfBirth        DateTime?
+  dobPrecision       DobPrecision?
+  sex                String?
+  preferredLanguage  String        @default("en")
+  version            Int           @default(1)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  accounts     PersonAccount[]
+  contacts     PersonContact[]
+  identifiers  PersonIdentifier[]
+  links        PersonPatientLink[]
+  linkRequests PatientLinkRequest[]
+  accessLog    PersonAccessLogEntry[]
+
+  @@index([mergedIntoPersonId])
+}
+
+/// Which logins act for a Person. One active OWNER per adult Person (partial
+/// unique index in the migration); household roles arrive in 5b.
+model PersonAccount {
+  id        String            @id @default(cuid())
+  person    Person            @relation(fields: [personId], references: [id])
+  personId  String
+  user      User              @relation(fields: [userId], references: [id])
+  userId    String            @unique
+  role      PersonAccountRole @default(OWNER)
+  createdAt DateTime          @default(now())
+  endedAt   DateTime?
+
+  @@index([personId])
+}
+
+/// A verified phone belongs to one Person at a time (partial unique index).
+model PersonContact {
+  id         String              @id @default(cuid())
+  person     Person              @relation(fields: [personId], references: [id])
+  personId   String
+  kind       PersonContactKind
+  /// Normalized: E.164 for phones, lower-case for email.
+  value      String
+  verifiedAt DateTime?
+  status     PersonContactStatus @default(ACTIVE)
+  createdAt  DateTime            @default(now())
+
+  @@index([personId])
+}
+
+/// Platform-level ABHA. Only a hash and the last 4 characters are stored.
+model PersonIdentifier {
+  id                 String                               @id @default(cuid())
+  person             Person                               @relation(fields: [personId], references: [id])
+  personId           String
+  system             PersonIdentifierSystem
+  valueHash          String
+  valueLast4         String
+  verificationStatus ExternalIdentifierVerificationStatus @default(UNVERIFIED)
+  verifiedAt         DateTime?
+  /// ABDM_AUTH once the ABDM integration exists; NONE never counts as verified.
+  verifiedVia        String                               @default("NONE")
+  createdAt          DateTime                             @default(now())
+
+  @@index([personId])
+}
+
+/// The verified bridge from a facility Patient to a Person. At most one live
+/// link per facility record (partial unique index); facilityId equals the
+/// patient's (trigger); ACTIVE needs its method, time and actor; in-person
+/// verification needs two different staff members and stores only the ID
+/// type and last 4 characters (CHECKs in the migration).
+model PersonPatientLink {
+  id                     String                  @id @default(cuid())
+  person                 Person                  @relation(fields: [personId], references: [id])
+  personId               String
+  patient                Patient                 @relation(fields: [patientId], references: [id])
+  patientId              String
+  facility               Facility                @relation(fields: [facilityId], references: [id])
+  facilityId             String
+  status                 PersonPatientLinkStatus
+  method                 PersonLinkMethod?
+  linkRequestId          String?
+  linkedAt               DateTime?
+  linkedByUserId         String?
+  idType                 PersonIdDocumentType?
+  idLast4                String?
+  verifiedByStaffId      String?
+  approvedByStaffId      String?
+  inPersonReason         PersonInPersonReason?
+  unlinkedAt             DateTime?
+  unlinkedBy             PersonUnlinkActor?
+  unlinkedReason         PersonUnlinkReason?
+  unlinkedByUserId       String?
+  unlinkApprovedByUserId String?
+  supersededByLinkId     String?
+  version                Int                     @default(1)
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+
+  @@index([personId, status])
+  @@index([facilityId, status])
+  @@index([patientId])
+}
+
+/// What the person sees in their access log. Detail holds ids and codes only.
+model PersonAccessLogEntry {
+  id                  String              @id @default(cuid())
+  person              Person              @relation(fields: [personId], references: [id])
+  personId            String
+  kind                PersonAccessLogKind
+  /// The facility involved (which one accessed or was linked), for display; the row belongs to the Person.
+  accessingFacilityId String?
+  actorUserId         String?
+  detail              Json                @default("{}")
+  createdAt           DateTime            @default(now())
+
+  @@index([personId, createdAt])
 }

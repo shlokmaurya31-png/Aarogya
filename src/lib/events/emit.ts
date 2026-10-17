@@ -62,6 +62,18 @@ export async function emitDomainEvent(client: EmitClient, input: EmitEventInput)
   if (c.scope === "FACILITY" && !facilityId) {
     throw new PermanentEventError(`Event ${input.type} is FACILITY-scoped and requires a facilityId.`, "MISSING_FACILITY");
   }
+  // PERSON events belong to the Person, never to a facility (Phase 0): the
+  // person is required and a tenant is refused rather than silently dropped.
+  const personId = input.personId ?? null;
+  if (c.scope === "PERSON" && !personId) {
+    throw new PermanentEventError(`Event ${input.type} is PERSON-scoped and requires a personId.`, "MISSING_PERSON");
+  }
+  if (c.scope === "PERSON" && (organizationId || facilityId)) {
+    throw new PermanentEventError(`Event ${input.type} is PERSON-scoped and must not carry an organization or facility.`, "PERSON_TENANT");
+  }
+  if (personId && c.scope !== "PERSON" && c.scope !== "FACILITY") {
+    throw new PermanentEventError(`Event ${input.type} is ${c.scope}-scoped and can't carry a personId.`, "PERSON_SCOPE");
+  }
 
   const eventId = randomUUID();
   const correlationId = input.correlationId ?? eventId;
@@ -76,6 +88,7 @@ export async function emitDomainEvent(client: EmitClient, input: EmitEventInput)
       aggregateId: input.aggregateId,
       organizationId: c.scope === "PLATFORM" ? null : organizationId,
       facilityId: c.scope === "PLATFORM" ? null : facilityId,
+      personId,
       actorUserId: input.actorUserId ?? null,
       correlationId,
       causationId: input.causationId ?? null,
