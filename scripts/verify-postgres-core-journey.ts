@@ -1,10 +1,12 @@
 /**
  * Workflow spine §7: the core-journey replay test. Grows a step at a time
  * (§9); this version covers steps 1–8a of the §7 journey, the medication
- * round that step 6 wired, step 9 (OT, with the charge-capture and
- * stock-movement consumers, spine step 8), the portal upload (8b), and
- * pre-authorization, discharge, invoice → claim draft, a late charge and its
- * supplementary invoice (10–14, spine step 9).
+ * round that step 6 wired (with a dose not given and a reorder crossing),
+ * step 9 (OT, with the charge-capture and stock-movement consumers), blood,
+ * waste held then rejected, the portal upload (8b), pre-authorization,
+ * discharge (with a discharge hold), invoice → claim draft, a late charge and
+ * its supplementary invoice, and access and identity (break-glass, an ABHA
+ * link). Final for Week 3 (batch 8): every consumer takes part.
  *
  * Drives the real service functions, drains the runner after each step and
  * asserts, by correlationId = the encounter:
@@ -42,6 +44,12 @@ import { PDFDocument } from "pdf-lib";
 import { uploadPatientDocument } from "../src/lib/patient/experience/documents";
 import type { PatientAccessScope } from "../src/lib/patient/context";
 import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
+import { recordWaste, rejectWaste } from "../src/lib/hospital/inventory/waste";
+import { placeDischargeHold, clearDischargeHold, DischargeOnHoldError } from "../src/lib/hospital/dischargeHold";
+import { activateBreakGlass, completeBreakGlass } from "../src/lib/auth/authorize/breakGlass";
+import { linkExternalIdentifier } from "../src/lib/hospital/interoperability/externalIdentity";
+import { IDENTIFIER_SYSTEMS } from "../src/lib/hospital/interoperability/shared";
+import { EXPECTED_CONSUMERS } from "../src/lib/runner/consumers";
 import { implantSku } from "../prisma/seedData/clinicalCatalogue";
 import { registerBloodUnit, releaseUnit, recordPatientTyping, requestBlood, transitionRequest, recordCompatibility, verifyCompatibility, issueUnit } from "../src/lib/hospital/blood";
 import { createPayer, addPatientCoverage } from "../src/lib/hospital/billing/coverage";
@@ -140,16 +148,19 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
   }
 
   let orderId = "";
+  let drugItemId = "";
   if (opts.full) {
     // 8c. A medication round: order, verify (→ mar-scheduler doses), dispense, administer.
     const pharmacist = (await staffOf("PHARMACIST"))!;
     const pharmacy = await prisma.stockLocation.findFirstOrThrow({ where: { facilityId, name: "Central Pharmacy" } });
     const drugName = `CoreJourneyDrug${run}`;
-    const item = await prisma.item.create({ data: { facilityId, sku: `CJ-${run}`, name: drugName, category: "MEDICATION", baseUnit: "TABLET" } });
+    // Reorder point 9 with 10 in stock: the dispense of 2 crosses it (→ StockBelowReorder, a reorder task).
+    const item = await prisma.item.create({ data: { facilityId, sku: `CJ-${run}`, name: drugName, category: "MEDICATION", baseUnit: "TABLET", reorderPoint: 9, reorderQuantity: 50 } });
+    drugItemId = item.id;
     await tx((t) => linkMedicationToItem(t, SYSTEM_ACTOR, { target: { scope: "FACILITY", facilityId }, drugName, itemId: item.id }));
     const lot = await prisma.itemLot.create({ data: { itemId: item.id, facilityId, lotNumber: `CJ-LOT-${run}`, status: "ACTIVE", expiresAt: new Date("2029-01-01") } });
     await tx((t) => createAdjustment(t, { facilityId, itemId: item.id, lotId: lot.id, locationId: pharmacy.id, quantityDelta: 10, reason: "FOUND", requestedByStaffId: pharmacist.id, actorUserId: pharmacist.userId, idempotencyKey: `cj-${run}` }));
-    await step("8c Medication", ["MedicationOrdered", "MedicationVerified", "StockMoved", "MedicationDispensed", "ChargePosted", "MedicationAdministered"], async () => {
+    await step("8c Medication", ["MedicationOrdered", "MedicationVerified", "StockMoved", "MedicationDispensed", "ChargePosted", "MedicationAdministered", "MedicationDoseNotGiven"], async () => {
       const o = await createMedicationOrder({ facilityId, encounterId: enc.id, patientId: patient.id, orderingStaffId: doctor.id, drugName, dose: "1 tab", route: "PO", frequency: "BD", overrideReason: "journey", byUserId: by });
       if (o.blocked) throw new Error("unexpected safety block");
       orderId = o.order.id;
@@ -158,11 +169,17 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
       await dispenseMedication({ medicationOrderId: orderId, pharmacistStaffId: pharmacist.id, quantity: 2, quantityUnit: "TABLET", dispensingLocationId: pharmacy.id, byUserId: pharmacist.userId });
       const first = await prisma.medicationAdministration.findFirstOrThrow({ where: { medicationOrderId: orderId, status: "DUE" }, orderBy: { scheduledAt: "asc" } });
       await administerMedication({ administrationId: first.id, status: "GIVEN", administeredByStaffId: nurse.id, safetyChecksConfirmed: true, byUserId: nurse.userId });
+      // The next dose is held (nil by mouth): MedicationDoseNotGiven.
+      const second = await prisma.medicationAdministration.findFirstOrThrow({ where: { medicationOrderId: orderId, status: "DUE" }, orderBy: { scheduledAt: "asc" } });
+      await administerMedication({ administrationId: second.id, status: "HELD", reasonCode: "NPO", administeredByStaffId: nurse.id, byUserId: nurse.userId });
     });
   }
   let surgeryId = "";
+  let identifierId = "";
   let usageId = "";
   let bloodIssueId = "";
+  let wasteId = "";
+  let wasteBalance = "";
   if (opts.full) {
     // 9. OT (batch 6, fix 5: the seeded catalogue): PTCA, scheduled for its
     // typical duration, a drug-eluting stent from stock, completion
@@ -201,10 +218,19 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
       await verifyCompatibility({ testId: test.id, facilityId, verifiedByStaffId: doctor.id, byUserId: by });
       bloodIssueId = (await issueUnit({ requestId: breq.id, facilityId, unitId: unit.id, compatibilityTestId: test.id, issuedByStaffId: doctor.id, byUserId: by })).id;
     });
+    // 9c. Waste awaiting approval holds its stock; rejected, it returns it (approved change 4).
+    const waste = await prisma.item.create({ data: { facilityId, sku: `CJ-W-${run}`, name: `Dressing ${run}`, category: "CONSUMABLE", baseUnit: "PIECE" } });
+    const wasteLot = await prisma.itemLot.create({ data: { itemId: waste.id, facilityId, lotNumber: `CJ-W-LOT-${run}`, status: "ACTIVE", expiresAt: new Date("2030-01-01") } });
+    for (const q of [40, 30]) await tx((t) => createAdjustment(t, { facilityId, itemId: waste.id, lotId: wasteLot.id, locationId: pharmacy.id, quantityDelta: q, reason: "FOUND", requestedByStaffId: doctor.id, actorUserId: by, idempotencyKey: `cj-w-${q}-${run}` }));
+    await step("9c Waste hold → reject", ["StockMoved", "StockMoved"], async () => {
+      wasteId = (await tx((t) => recordWaste(t, { facilityId, itemId: waste.id, lotId: wasteLot.id, locationId: pharmacy.id, quantity: 60, reason: "CONTAMINATED", encounterId: enc.id, patientId: patient.id, requestedByStaffId: doctor.id, actorUserId: by, idempotencyKey: `cj-waste-${run}` }))).waste.id;
+      await tx((t) => rejectWaste(t, wasteId, { actorUserId: nurse.userId, rejectedByStaffId: nurse.id }));
+    });
+    wasteBalance = await prisma.stockBalance.findFirstOrThrow({ where: { lotId: wasteLot.id, locationId: pharmacy.id } }).then((b) => `${b.onHandQty}/${b.reservedQty}`);
   }
   // 10–14 (batch 5 (d)): pre-authorization, discharge, invoice → claim draft,
   // a late charge and its supplementary invoice.
-  const billing = { preAuthId: "", dischargeId: "", invoiceId: "", supplementaryId: "", lateChargeId: "", readinessBeforeFinalize: "" };
+  const billing = { preAuthId: "", dischargeId: "", invoiceId: "", supplementaryId: "", lateChargeId: "", readinessBeforeFinalize: "", finalizeRefusedOnHold: false };
   if (opts.full) {
     const payer = await tx((t) => createPayer(t, { name: `CJ Insurer ${run}`, type: "INSURANCE" }));
     const coverage = await tx((t) => addPatientCoverage(t, { patientId: patient.id, payerId: payer.id, memberId: `CJ-${run}`, validFrom: new Date(Date.now() - 86_400_000), addedByUserId: by }));
@@ -215,7 +241,7 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
     // 11. Discharge: initiation (→ prep task), the summary (→ documentationReady,
     // and insuranceReady from the approved pre-authorization), the human flags,
     // finalize (bed-days charged in-transaction).
-    await step("11 Discharge", ["DischargeInitiated", "TaskCreated", "DocumentGenerated", "ChargePosted", "PatientDischarged", "EncounterClosed", "TaskCompleted"], async () => {
+    await step("11 Discharge", ["DischargeInitiated", "TaskCreated", "DocumentGenerated", "DischargeHoldChanged", "DischargeHoldChanged", "ChargePosted", "PatientDischarged", "EncounterClosed", "TaskCompleted"], async () => {
       billing.dischargeId = (await initiateDischarge(admissionId, by, doctor.id)).id;
       await generateAndStoreDocument({ type: "discharge-summary", patient: { name: patient.fullName }, diagnoses: ["NSTEMI"] },
         { facilityId, letterhead: { facilityName: "Aarogya Medical Centre", authorName: "Dr Verify", authorRegistration: "MMC-0000" }, issuedByUserId: by, patientId: patient.id, encounterId: enc.id });
@@ -223,6 +249,10 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
       const d = await prisma.discharge.findUniqueOrThrow({ where: { id: billing.dischargeId } });
       billing.readinessBeforeFinalize = `${d.documentationReady}/${d.insuranceReady}/${d.billingReady}`;
       await updateDischargeReadiness(billing.dischargeId, { clinicallyReady: true, billingReady: true, pharmacyReady: true, transportReady: true });
+      // A billing hold: finalize is refused until it is cleared.
+      const hold = await placeDischargeHold({ dischargeId: billing.dischargeId, facilityId, reasonCode: "BILLING", byUserId: by });
+      billing.finalizeRefusedOnHold = await finalizeDischarge(billing.dischargeId, by, { summary: "core journey" }).then(() => false, (e) => e instanceof DischargeOnHoldError);
+      await clearDischargeHold({ holdId: hold.id, facilityId, byUserId: by });
       await finalizeDischarge(billing.dischargeId, by, { summary: "core journey" });
     });
     // 12–13. The final bill (every charge priced from the catalogue): draft
@@ -243,8 +273,14 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
     await step("14b Supplementary invoice", ["HospitalInvoiceIssued", "TaskCompleted", "ClaimDrafted", "TaskCreated"], async () => {
       billing.supplementaryId = (await tx(async (t) => issueInvoice(t, (await draftSupplementaryInvoice(t, { originalInvoiceId: billing.invoiceId, generatedByUserId: by })).id, { byUserId: by }))).id;
     });
+    // 15. Access and identity: an emergency (break-glass) window on the encounter, completed; an ABHA number linked.
+    await step("15 Access and identity", ["BreakGlassStatusChanged", "BreakGlassStatusChanged"], async () => {
+      const w = await activateBreakGlass({ facilityId, patientId: patient.id, encounterId: enc.id, actorUserId: by, actorStaffId: doctor.id, reason: "Core journey: unconscious on readmission review", emergencyContext: "UNCONSCIOUS_PATIENT" });
+      await completeBreakGlass({ facilityId, breakGlassId: w.id, actorUserId: by });
+      identifierId = (await linkExternalIdentifier({ facilityId, entityType: "PATIENT", entityId: patient.id, system: IDENTIFIER_SYSTEMS.ABHA_NUMBER, value: `CJ-ABHA-${run}`, byUserId: by })).id;
+    });
   }
-  return { facilityId, patientId: patient.id, encounterId: enc.id, orderId, resultId, surgeryId, usageId, bloodIssueId, uploadedDocumentId, steps, registered, openAfter8, critTask, billing };
+  return { facilityId, patientId: patient.id, encounterId: enc.id, orderId, resultId, surgeryId, usageId, bloodIssueId, uploadedDocumentId, steps, registered, openAfter8, critTask, billing, drugItemId, wasteId, wasteBalance, identifierId };
 }
 
 async function main() {
@@ -261,12 +297,17 @@ async function main() {
   // their event; the lab and dispensing charges are posted in their own transaction.
   // StockMoved (step 9a): the dispense (in its transaction) and the stent (stock-movement).
   const expectedProducers = ["EdArrivalRegistered", "PatientTriaged", "AdmissionRequested", "BedReserved", "AdmissionCreated", "IcuAdmitted", "PatientTransferred", "ChargePosted",
-    "ChargePosted", "LabOrderPlaced", "SpecimenCollected", "SpecimenStatusChanged", "LabResultReleased", "CriticalResultAcknowledged", "MedicationOrdered", "MedicationVerified", "StockMoved", "MedicationDispensed", "ChargePosted", "MedicationAdministered",
+    "ChargePosted", "LabOrderPlaced", "SpecimenCollected", "SpecimenStatusChanged", "LabResultReleased", "CriticalResultAcknowledged",
+    "MedicationOrdered", "MedicationVerified", "StockMoved", "MedicationDispensed", "ChargePosted", "MedicationAdministered", "MedicationDoseNotGiven",
     "SurgeryRequested", "SurgeryStatusChanged", "SurgeryStatusChanged", "SurgeryScheduled", "ProcedureStarted", "SurgeryItemUsed", "ProcedureCompleted", "ChargePosted", "StockMoved", "ChargePosted",
+    // 9b: blood; 9c: waste held then released.
     "BloodCompatibilityRecorded", "BloodRequestStatusChanged", "BloodRequestStatusChanged", "BloodRequestStatusChanged", "BloodCompatibilityRecorded", "BloodRequestStatusChanged", "BloodIssued", "ChargePosted",
-    // 9b: blood. 10–14: pre-authorization, discharge (bed-days in finalize), invoice → claim, late charge → supplementary → its claim.
-    "PreauthStatusChanged", "PreauthDecided", "DischargeInitiated", "DocumentGenerated", "ChargePosted", "PatientDischarged", "EncounterClosed",
-    "HospitalInvoiceIssued", "ClaimDrafted", "ChargePosted", "HospitalInvoiceIssued", "ClaimDrafted"];
+    "StockMoved", "StockMoved",
+    // 10–14: pre-authorization, discharge (a hold placed and cleared; bed-days in finalize), invoice → claim, late charge → supplementary → its claim.
+    "PreauthStatusChanged", "PreauthDecided", "DischargeInitiated", "DocumentGenerated", "DischargeHoldChanged", "DischargeHoldChanged", "ChargePosted", "PatientDischarged", "EncounterClosed",
+    "HospitalInvoiceIssued", "ClaimDrafted", "ChargePosted", "HospitalInvoiceIssued", "ClaimDrafted",
+    // 15: break-glass (the identifier link is checked by aggregate: it is not correlated by the encounter).
+    "BreakGlassStatusChanged", "BreakGlassStatusChanged"];
   report("The producers' events, in emission order", producers.join() === expectedProducers.join(), producers.join(" → "));
 
   const bad = all.flatMap((e) => {
@@ -278,7 +319,16 @@ async function main() {
   });
   report(`Every payload (${all.length}) passes its contract and the sensitive-data guard`, bad.length === 0, bad.join("; "));
 
-  const ids = all.map((e) => e.eventId);
+  // The journey's events that are not correlated by the encounter (stock, documents, identity), by aggregate.
+  const side = await prisma.domainEventOutbox.findMany({
+    where: { OR: [
+      { eventType: "StockBelowReorder", aggregateId: a.drugItemId },
+      { eventType: "StockDocumentStatusChanged", aggregateId: a.wasteId },
+      { eventType: "ExternalIdentifierStatusChanged", aggregateId: a.identifierId },
+    ] },
+    orderBy: { seq: "asc" },
+  });
+  const ids = [...all, ...side].map((e) => e.eventId);
   const notProcessed = await prisma.domainEventDelivery.count({ where: { eventId: { in: ids }, status: { not: "PROCESSED" } } });
   const dead = await prisma.domainEventOutbox.count({ where: { eventId: { in: ids }, status: "DEAD_LETTER" } });
   report("Every delivery PROCESSED; zero dead letters", notProcessed === 0 && dead === 0, `${notProcessed} unprocessed, ${dead} dead`);
@@ -302,6 +352,21 @@ async function main() {
   const codes = catalogueCharges.map((c) => `${c.chargeCode}:${c.pricingStatus}`).sort().join();
   report("9/9b: the seeded catalogue's specific tariffs priced PTCA, the stent and the PRBC unit (no generic, nothing needing a price)",
     codes === [`BLOOD:PRBC:PRICED`, `ITEM:${implantSku("DES", a.facilityId)}:PRICED`, "PROCEDURE:PTCA:PRICED"].sort().join(), codes);
+
+  // Every consumer took part in the journey.
+  const consumersSeen = new Set((await prisma.domainEventDelivery.findMany({ where: { eventId: { in: ids }, status: "PROCESSED" }, select: { consumerName: true }, distinct: ["consumerName"] })).map((d) => d.consumerName));
+  const missing = EXPECTED_CONSUMERS.filter((c) => !consumersSeen.has(c));
+  report(`Every registered consumer (${EXPECTED_CONSUMERS.length}) processed journey events`, missing.length === 0, missing.join(",") || [...consumersSeen].sort().join(","));
+
+  // 8c reorder, 9c waste, 15 identity (events not correlated by the encounter).
+  const reorder = side.filter((e) => e.eventType === "StockBelowReorder");
+  const reorderTasks = await prisma.task.count({ where: { facilityId: a.facilityId, type: "STOCK_REORDER", idempotencyKey: { startsWith: `STOCK_REORDER:${a.drugItemId}:` } } });
+  report("8c The dispense crossed the drug's reorder point: StockBelowReorder once, one reorder task", reorder.length === 1 && (reorder[0].payload as { onHandQty: number }).onHandQty === 8 && reorderTasks === 1, `${reorder.length} events, ${reorderTasks} tasks`);
+  const wasteDoc = side.filter((e) => e.eventType === "StockDocumentStatusChanged").map((e) => e.payload as { documentType: string; to: string });
+  report("9c Waste on hold then rejected: stock fully restored (70 on hand, 0 held), WASTE REJECTED", a.wasteBalance === "70/0" && wasteDoc.length === 1 && wasteDoc[0].documentType === "WASTE" && wasteDoc[0].to === "REJECTED", a.wasteBalance);
+  const ident = side.filter((e) => e.eventType === "ExternalIdentifierStatusChanged").map((e) => e.payload as { change: string; system: string });
+  report("15 An ABHA number linked: ExternalIdentifierStatusChanged LINKED (ABHA_NUMBER), never the value", ident.length === 1 && ident[0].change === "LINKED" && ident[0].system === "ABHA_NUMBER" && !JSON.stringify(ident).includes("CJ-ABHA"));
+  report("11 A billing hold refused finalize until it was cleared", a.billing.finalizeRefusedOnHold);
 
   // 10–14: discharge, billing and claims.
   const bl = a.billing;
@@ -334,6 +399,10 @@ async function main() {
     await prisma.charge.count({ where: { encounterId: a.encounterId } }),
     await prisma.stockLedgerEntry.count({ where: { encounterId: a.encounterId } }),
     await prisma.claim.count({ where: { invoice: { encounterId: a.encounterId } } }),
+    await prisma.dischargeHold.count({ where: { discharge: { admission: { encounterId: a.encounterId } } } }),
+    await prisma.task.count({ where: { facilityId: a.facilityId, type: "STOCK_REORDER", idempotencyKey: { startsWith: `STOCK_REORDER:${a.drugItemId}:` } } }),
+    await prisma.stockLedgerEntry.count({ where: { itemId: a.drugItemId } }),
+    await prisma.stockLedgerEntry.count({ where: { sourceType: "WasteRecord", sourceId: a.wasteId } }),
   ].join("/");
   const before = await counts();
   const admin = await prisma.user.findFirstOrThrow({ where: { role: "AAROGYA_ADMIN" }, orderBy: { id: "asc" } });
@@ -341,7 +410,7 @@ async function main() {
   for (const id of ids) await replayEvent(platform, id, { reason: "core-journey replay gate" });
   await drain();
   const after = await counts();
-  report("Replay: re-running every event creates no task, notification, dose, charge, stock movement or claim (tasks/notifications/doses/charges/ledger/claims)", after === before, `${before} → ${after}`);
+  report("Replay: re-running every delivery creates nothing new (tasks/notifications/doses/charges/ledger/claims/holds/reorder tasks/drug ledger/waste ledger)", after === before, `${before} → ${after}`);
   const replayDead = await prisma.domainEventOutbox.count({ where: { eventId: { in: ids }, status: { not: "PROCESSED" } } });
   report("…and every replayed event is PROCESSED again", replayDead === 0, String(replayDead));
 
@@ -352,8 +421,14 @@ async function main() {
     prisma.notification.count({ where: { encounterId: a.encounterId, facilityId: { not: a.facilityId } } }),
     prisma.notification.count({ where: { encounterId: b.encounterId, facilityId: { not: b.facilityId } } }),
     prisma.domainEventOutbox.count({ where: { correlationId: b.encounterId, facilityId: { not: b.facilityId } } }),
+    prisma.domainEventOutbox.count({ where: { correlationId: a.encounterId, facilityId: { not: a.facilityId } } }),
+    prisma.charge.count({ where: { OR: [{ encounterId: a.encounterId, facilityId: { not: a.facilityId } }, { encounterId: b.encounterId, facilityId: { not: b.facilityId } }] } }),
+    prisma.invoice.count({ where: { OR: [{ encounterId: a.encounterId, facilityId: { not: a.facilityId } }, { encounterId: b.encounterId, facilityId: { not: b.facilityId } }] } }),
+    prisma.claim.count({ where: { invoice: { encounterId: a.encounterId }, facilityId: { not: a.facilityId } } }),
+    prisma.stockLedgerEntry.count({ where: { OR: [{ encounterId: a.encounterId, facilityId: { not: a.facilityId } }, { encounterId: b.encounterId, facilityId: { not: b.facilityId } }] } }),
+    prisma.dischargeHold.count({ where: { discharge: { admission: { encounterId: a.encounterId } }, facilityId: { not: a.facilityId } } }),
   ]);
-  report("Tenancy: the parallel journey in another facility writes only its own rows", leak.every((n) => n === 0), leak.join(","));
+  report("Tenancy: zero cross-facility rows for either journey (tasks, notifications, events, charges, invoices, claims, stock, holds)", leak.every((n) => n === 0), leak.join(","));
   report("…and it ran the same chain there (steps 2–8a)", b.steps.every((s) => sorted(s.got) === sorted(s.expected)), b.steps.map((s) => `${s.name}:${s.got.length}`).join(" "));
 
   console.log(`\n${pass} passed, ${fail} failed.`);

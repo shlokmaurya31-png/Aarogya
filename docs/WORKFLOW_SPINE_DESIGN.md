@@ -1161,6 +1161,22 @@ handlers that wrote tables directly now call services:
   verification review was a 500.
 Gate `verify-postgres-route-services`.
 
+**The core-journey replay, final (batch 8, Part A.1).** `verify-postgres-core-journey`
+now runs every §7 step and everything added since: the critical-result
+acknowledgement, a portal upload, a dose held (`MedicationDoseNotGiven`), a
+dispense crossing the drug's reorder point (`StockBelowReorder` and a reorder
+task), OT with a seeded procedure and implant, a seeded blood unit, waste held
+then rejected (stock fully restored), pre-authorization, a discharge hold that
+refuses finalize until cleared, invoice → claim draft, a late charge → its
+supplementary invoice and claim, and access and identity (a break-glass window,
+an ABHA link). It asserts each step's events, the journey's exact emission
+order, every payload against its contract and the sensitive-data guard, every
+delivery processed with zero dead letters, that all nine registered consumers
+processed journey events, that replaying every delivery (encounter-correlated
+and the journey's stock, document and identity events) creates nothing new
+(tasks, notifications, doses, charges, stock entries, claims, holds, reorder
+tasks), and zero cross-facility rows for the parallel Noida journey.
+
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b
 (quality, safety, operations) and 9c (access, identity, interoperability,
