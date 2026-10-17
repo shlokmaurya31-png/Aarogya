@@ -752,6 +752,113 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({ reactionId: id, transfusionId: id, encounterId: id, patientId: id, from: transfusionReactionStatus, to: transfusionReactionStatus }).strict(),
   }),
 
+  // ── Quality, safety and facility operations (spine §9 step 9b) ───────────
+  contract({
+    type: "QualityIncidentStatusChanged", version: 1, aggregateType: "QUALITY_INCIDENT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "quality (createQualityIncident, transitionIncident, reopenIncident, reviewRca: the RCA review is a stage of the incident)",
+    payload: z.object({
+      incidentId: id, change: z.enum(["REPORTED", "TRANSITION", "REOPENED", "RCA_REVIEWED"]),
+      from: z.enum(["REPORTED", "TRIAGED", "UNDER_INVESTIGATION", "ACTION_REQUIRED", "RESOLVED", "CLOSED", "CANCELLED"]).nullable(),
+      to: z.enum(["REPORTED", "TRIAGED", "UNDER_INVESTIGATION", "ACTION_REQUIRED", "RESOLVED", "CLOSED", "CANCELLED"]),
+      category: z.enum(["MEDICATION", "FALL", "PRESSURE_INJURY", "DIAGNOSTIC", "SURGICAL", "TRANSFUSION", "INFECTION", "EQUIPMENT", "OPERATIONAL", "SECURITY", "OTHER"]),
+      severity: z.enum(["LOW", "MODERATE", "HIGH", "CRITICAL"]),
+      confidentiality: z.enum(["STANDARD", "RESTRICTED"]),
+      rcaId: optId,
+      /** Only for a STANDARD incident: a RESTRICTED one never names the patient in the stream. */
+      patientId: optId, encounterId: optId,
+    }).strict(),
+  }),
+  contract({
+    type: "CapaStatusChanged", version: 1, aggregateType: "CAPA", scope: "FACILITY",
+    sensitivity: "LOW", producer: "quality (createCapa, transitionCapa)",
+    payload: z.object({
+      capaId: id, actionType: z.enum(["CORRECTIVE", "PREVENTIVE"]),
+      from: z.enum(["OPEN", "IN_PROGRESS", "COMPLETED", "VERIFIED", "CLOSED", "CANCELLED"]).nullable(),
+      to: z.enum(["OPEN", "IN_PROGRESS", "COMPLETED", "VERIFIED", "CLOSED", "CANCELLED"]),
+      incidentId: optId, findingId: optId,
+    }).strict(),
+  }),
+  contract({
+    type: "QualityFindingStatusChanged", version: 1, aggregateType: "QUALITY_FINDING", scope: "FACILITY",
+    sensitivity: "LOW", producer: "quality (createFinding, closeFinding)",
+    payload: z.object({
+      findingId: id, from: z.enum(["OPEN", "IN_PROGRESS", "CLOSED"]).nullable(), to: z.enum(["OPEN", "IN_PROGRESS", "CLOSED"]),
+      severity: z.enum(["LOW", "MODERATE", "HIGH", "CRITICAL"]).optional(), auditId: optId, standardId: optId, measureId: optId, incidentId: optId,
+    }).strict(),
+  }),
+  contract({
+    type: "QualityMeasureStatusChanged", version: 1, aggregateType: "QUALITY_MEASURE", scope: "FACILITY",
+    sensitivity: "LOW", producer: "quality (setMeasureStatus)",
+    payload: z.object({
+      measureId: id, standardId: id,
+      from: z.enum(["PENDING", "COMPLIANT", "PARTIAL", "NON_COMPLIANT", "NOT_APPLICABLE"]),
+      to: z.enum(["PENDING", "COMPLIANT", "PARTIAL", "NON_COMPLIANT", "NOT_APPLICABLE"]),
+    }).strict(),
+  }),
+  contract({
+    type: "DietOrderStatusChanged", version: 1, aggregateType: "DIET_ORDER", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "operations (createDietOrder, setDietOrderStatus)",
+    payload: z.object({
+      dietOrderId: id, encounterId: id, patientId: id,
+      from: z.enum(["ACTIVE", "DISCONTINUED", "CANCELLED"]).nullable(), to: z.enum(["ACTIVE", "DISCONTINUED", "CANCELLED"]),
+      /** The documented diet codes; a stored free-text type is reported as OTHER. Never the restrictions or notes. */
+      dietType: z.enum(["REGULAR", "LIQUID", "SOFT", "CLEAR_LIQUID", "NPO", "THERAPEUTIC", "OTHER"]),
+    }).strict(),
+  }),
+  contract({
+    type: "EquipmentServiceRecorded", version: 1, aggregateType: "EQUIPMENT", scope: "FACILITY",
+    sensitivity: "LOW", producer: "operations (recordEquipmentCalibration, recordEquipmentMaintenance, completePreventiveMaintenance)",
+    payload: z.object({ recordId: id, equipmentId: optId, serviceKind: z.enum(["CALIBRATION", "MAINTENANCE", "PREVENTIVE"]), nextDueAt: iso.optional() }).strict(),
+  }),
+  contract({
+    type: "EquipmentStatusChanged", version: 1, aggregateType: "EQUIPMENT", scope: "FACILITY",
+    sensitivity: "LOW", producer: "operations (setEquipmentStatus; startDowntime, endDowntime: a downtime with or without a registered device)",
+    payload: z.object({
+      cause: z.enum(["MANUAL", "DOWNTIME_STARTED", "DOWNTIME_ENDED"]),
+      equipmentId: optId, downtimeId: optId,
+      /** Set when a registered device's status moved. */
+      from: z.enum(["IN_SERVICE", "UNDER_MAINTENANCE", "OUT_OF_SERVICE", "RETIRED"]).optional(),
+      to: z.enum(["IN_SERVICE", "UNDER_MAINTENANCE", "OUT_OF_SERVICE", "RETIRED"]).optional(),
+    }).strict(),
+  }),
+  contract({
+    type: "InfectionIncidentStatusChanged", version: 1, aggregateType: "INFECTION_INCIDENT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "infection control (createInfectionIncident, transitionInfectionIncident, createInfectionInvestigation)",
+    payload: z.object({
+      incidentId: id, change: z.enum(["REPORTED", "TRANSITION", "INVESTIGATION_RECORDED"]),
+      from: z.enum(["REPORTED", "UNDER_REVIEW", "INVESTIGATION", "ACTION_REQUIRED", "RESOLVED", "CLOSED", "CANCELLED"]).nullable(),
+      to: z.enum(["REPORTED", "UNDER_REVIEW", "INVESTIGATION", "ACTION_REQUIRED", "RESOLVED", "CLOSED", "CANCELLED"]),
+      /** The documented type codes; a stored free-text type is reported as OTHER. */
+      incidentType: z.enum(["HAI", "CLABSI", "CAUTI", "SSI", "MDRO", "OTHER"]),
+      isolationRequired: z.boolean(), investigationId: optId, patientId: optId, encounterId: optId,
+    }).strict(),
+  }),
+  contract({
+    type: "InfectionExposureRecorded", version: 1, aggregateType: "INFECTION_INCIDENT", scope: "FACILITY",
+    sensitivity: "SENSITIVE", producer: "infection control (recordExposure); never the exposed person's reference",
+    payload: z.object({ exposureId: id, incidentId: id }).strict(),
+  }),
+  contract({
+    type: "LabQualityControlRecorded", version: 1, aggregateType: "LAB_QC", scope: "FACILITY",
+    sensitivity: "LOW", producer: "lab (recordQc, reviewQc, recordCalibration, reviewCalibration)",
+    payload: z.object({
+      recordKind: z.enum(["QC", "CALIBRATION"]), recordId: id, stage: z.enum(["RECORDED", "REVIEWED", "REJECTED"]),
+      /** QC: the run's outcome (a failure is the quality fact); a label other than PASS/FAIL is OTHER. Never the values. */
+      outcome: z.enum(["PASS", "FAIL", "OTHER", "UNRECORDED"]).optional(),
+    }).strict(),
+  }),
+  contract({
+    type: "MaintenanceRequestStatusChanged", version: 1, aggregateType: "MAINTENANCE_REQUEST", scope: "FACILITY",
+    sensitivity: "LOW", producer: "operations (createMaintenanceRequest, transitionMaintenance): an equipment or facility fault",
+    payload: z.object({
+      requestId: id,
+      from: z.enum(["REPORTED", "TRIAGED", "ASSIGNED", "IN_PROGRESS", "RESOLVED", "VERIFIED", "CLOSED", "CANCELLED"]).nullable(),
+      to: z.enum(["REPORTED", "TRIAGED", "ASSIGNED", "IN_PROGRESS", "RESOLVED", "VERIFIED", "CLOSED", "CANCELLED"]),
+      issueType: z.enum(["ELECTRICAL", "PLUMBING", "HVAC", "STRUCTURAL", "EQUIPMENT", "OTHER"]),
+      priority: orderPriority, equipmentId: optId,
+    }).strict(),
+  }),
+
   // ── Hospital billing: pricing of charges posted without a tariff (batch 5) ──
   contract({
     type: "ChargeRepriced", version: 1, aggregateType: "CHARGE", scope: "FACILITY",

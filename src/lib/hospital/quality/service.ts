@@ -1,4 +1,4 @@
-import { $Enums } from "@prisma/client";
+import { $Enums, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
@@ -8,6 +8,46 @@ import {
   assertQualityRefsInFacility,
 } from "@/lib/hospital/quality/shared";
 import { parseEnum } from "@/lib/enumValue";
+import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+
+type Tx = Prisma.TransactionClient;
+
+/** QualityIncidentStatusChanged (step 9b). A RESTRICTED incident never names the patient or encounter in the stream. */
+async function emitIncident(
+  tx: Tx,
+  inc: { id: string; facilityId: string; status: string; category: string; severity: string; confidentiality: string; patientId: string | null; encounterId: string | null },
+  change: "REPORTED" | "TRANSITION" | "REOPENED" | "RCA_REVIEWED", from: string | null, byUserId: string, rcaId?: string,
+) {
+  const open = inc.confidentiality === "STANDARD";
+  await emitFacilityEvent(tx, {
+    type: "QualityIncidentStatusChanged", aggregateId: inc.id, facilityId: inc.facilityId, actorUserId: byUserId, encounterId: open ? inc.encounterId : null,
+    payload: {
+      incidentId: inc.id, change, from, to: inc.status, category: inc.category, severity: inc.severity, confidentiality: inc.confidentiality,
+      ...(rcaId ? { rcaId } : {}), ...(open && inc.patientId ? { patientId: inc.patientId } : {}), ...(open && inc.encounterId ? { encounterId: inc.encounterId } : {}),
+    },
+  });
+}
+
+async function emitCapa(tx: Tx, c: { id: string; facilityId: string; actionType: string; status: string; incidentId: string | null; findingId: string | null }, from: string | null, byUserId: string) {
+  await emitFacilityEvent(tx, {
+    type: "CapaStatusChanged", aggregateId: c.id, facilityId: c.facilityId, actorUserId: byUserId,
+    payload: { capaId: c.id, actionType: c.actionType, from, to: c.status, ...(c.incidentId ? { incidentId: c.incidentId } : {}), ...(c.findingId ? { findingId: c.findingId } : {}) },
+  });
+}
+
+async function emitFinding(
+  tx: Tx,
+  f: { id: string; facilityId: string; status: string; severity: string | null; auditId: string | null; standardId: string | null; measureId: string | null; incidentId: string | null },
+  from: string | null, byUserId: string,
+) {
+  await emitFacilityEvent(tx, {
+    type: "QualityFindingStatusChanged", aggregateId: f.id, facilityId: f.facilityId, actorUserId: byUserId,
+    payload: {
+      findingId: f.id, from, to: f.status, ...(f.severity ? { severity: f.severity } : {}), ...(f.auditId ? { auditId: f.auditId } : {}),
+      ...(f.standardId ? { standardId: f.standardId } : {}), ...(f.measureId ? { measureId: f.measureId } : {}), ...(f.incidentId ? { incidentId: f.incidentId } : {}),
+    },
+  });
+}
 
 /**
  * Phase B10 Quality / Patient-Safety service — incident reporting, lifecycle,
@@ -53,15 +93,19 @@ export async function createQualityIncident(input: {
     const inf = await prisma.infectionIncident.findUnique({ where: { id: input.infectionIncidentId } });
     if (!inf || inf.facilityId !== input.facilityId) throw new NotFoundError("Infection incident not found in this facility.");
   }
-  const incident = await prisma.qualityIncident.create({
-    data: {
-      facilityId: input.facilityId, category: input.category, severity: parseEnum($Enums.IncidentSeverity, input.severity ?? "MODERATE", "severity"),
-      confidentiality: parseEnum($Enums.QualityIncidentConfidentiality, input.confidentiality ?? "STANDARD", "confidentiality"), title: input.title, description: input.description,
-      immediateAction: input.immediateAction, patientId: input.patientId, encounterId: input.encounterId,
-      departmentId: input.departmentId, occurrenceAt: input.occurrenceAt, dueAt: input.dueAt,
-      reportedByStaffId: input.reportedByStaffId, relatedEntityType: input.relatedEntityType,
-      relatedEntityId: input.relatedEntityId, infectionIncidentId: input.infectionIncidentId, source: input.source,
-    },
+  const incident = await prisma.$transaction(async (tx) => {
+    const created = await tx.qualityIncident.create({
+      data: {
+        facilityId: input.facilityId, category: input.category, severity: parseEnum($Enums.IncidentSeverity, input.severity ?? "MODERATE", "severity"),
+        confidentiality: parseEnum($Enums.QualityIncidentConfidentiality, input.confidentiality ?? "STANDARD", "confidentiality"), title: input.title, description: input.description,
+        immediateAction: input.immediateAction, patientId: input.patientId, encounterId: input.encounterId,
+        departmentId: input.departmentId, occurrenceAt: input.occurrenceAt, dueAt: input.dueAt,
+        reportedByStaffId: input.reportedByStaffId, relatedEntityType: input.relatedEntityType,
+        relatedEntityId: input.relatedEntityId, infectionIncidentId: input.infectionIncidentId, source: input.source,
+      },
+    });
+    await emitIncident(tx, created, "REPORTED", null, input.byUserId);
+    return created;
   });
   await recordAuditEvent("hospital.quality.incidentReported", input.byUserId, { incidentId: incident.id, category: incident.category, severity: incident.severity }, { facilityId: input.facilityId, patientId: input.patientId, encounterId: input.encounterId });
   return incident;
@@ -100,7 +144,9 @@ export async function transitionIncident(input: {
     if (r.count !== 1) throw new QualityConcurrencyError();
     await tx.qualityIncidentTransition.create({ data: { facilityId: inc.facilityId, incidentId: inc.id, fromStatus: inc.status, toStatus: parseEnum($Enums.QualityIncidentStatus, input.to, "status"), reason: input.reason, actorStaffId: input.actorStaffId } });
     await tx.auditEvent.create({ data: { type: INCIDENT_STATUS_AUDIT[input.to] ?? "hospital.quality.incidentUpdated", userId: input.byUserId, detail: { incidentId: inc.id, from: inc.status, to: input.to, reason: input.reason }, facilityId: inc.facilityId, patientId: inc.patientId, encounterId: inc.encounterId } });
-    return tx.qualityIncident.findUniqueOrThrow({ where: { id: inc.id } });
+    const moved = await tx.qualityIncident.findUniqueOrThrow({ where: { id: inc.id } });
+    await emitIncident(tx, moved, "TRANSITION", inc.status, input.byUserId);
+    return moved;
   });
 }
 
@@ -115,7 +161,9 @@ export async function reopenIncident(input: { incidentId: string; facilityId: st
     if (r.count !== 1) throw new BadRequestError("Only a closed incident can be reopened.");
     await tx.qualityIncidentTransition.create({ data: { facilityId: inc.facilityId, incidentId: inc.id, fromStatus: "CLOSED", toStatus: "UNDER_INVESTIGATION", reason: input.reason, actorStaffId: input.actorStaffId } });
     await tx.auditEvent.create({ data: { type: "hospital.quality.incidentReopened", userId: input.byUserId, detail: { incidentId: inc.id, reason: input.reason }, facilityId: inc.facilityId, patientId: inc.patientId } });
-    return tx.qualityIncident.findUniqueOrThrow({ where: { id: inc.id } });
+    const reopened = await tx.qualityIncident.findUniqueOrThrow({ where: { id: inc.id } });
+    await emitIncident(tx, reopened, "REOPENED", "CLOSED", input.byUserId);
+    return reopened;
   });
 }
 
@@ -180,6 +228,9 @@ export async function reviewRca(input: { rcaId: string; facilityId: string; revi
     const r = await tx.rootCauseAnalysis.updateMany({ where: { id: rca.id, status: { in: ["DRAFT", "UNDER_REVIEW"] } }, data: { status: "REVIEWED", reviewedByStaffId: input.reviewedByStaffId, reviewedAt: new Date() } });
     if (r.count !== 1) throw new BadRequestError("RCA is already reviewed.");
     await tx.auditEvent.create({ data: { type: "hospital.quality.rcaReviewed", userId: input.byUserId, detail: { rcaId: rca.id, incidentId: rca.incidentId }, facilityId: rca.facilityId } });
+    // The RCA review is a stage of the incident (triage): the incident's status is unchanged.
+    const inc = await tx.qualityIncident.findUniqueOrThrow({ where: { id: rca.incidentId } });
+    await emitIncident(tx, inc, "RCA_REVIEWED", inc.status, input.byUserId, rca.id);
     return tx.rootCauseAnalysis.findUniqueOrThrow({ where: { id: rca.id } });
   });
 }
@@ -197,12 +248,16 @@ export async function createCapa(input: {
     incidentId: input.incidentId, findingId: input.findingId, departmentId: input.departmentId,
   });
   if (input.ownerStaffId) await assertQualityStaffInFacility(prisma, input.ownerStaffId, input.facilityId);
-  const capa = await prisma.capaAction.create({
-    data: {
-      facilityId: input.facilityId, title: input.title, description: input.description, actionType: input.actionType,
-      incidentId: input.incidentId, findingId: input.findingId, ownerStaffId: input.ownerStaffId,
-      departmentId: input.departmentId, dueAt: input.dueAt, createdByStaffId: input.createdByStaffId,
-    },
+  const capa = await prisma.$transaction(async (tx) => {
+    const created = await tx.capaAction.create({
+      data: {
+        facilityId: input.facilityId, title: input.title, description: input.description, actionType: input.actionType,
+        incidentId: input.incidentId, findingId: input.findingId, ownerStaffId: input.ownerStaffId,
+        departmentId: input.departmentId, dueAt: input.dueAt, createdByStaffId: input.createdByStaffId,
+      },
+    });
+    await emitCapa(tx, created, null, input.byUserId);
+    return created;
   });
   await recordAuditEvent("hospital.quality.capaCreated", input.byUserId, { capaId: capa.id, incidentId: input.incidentId, actionType: capa.actionType }, { facilityId: input.facilityId });
   return capa;
@@ -239,7 +294,9 @@ export async function transitionCapa(input: {
     if (r.count !== 1) throw new QualityConcurrencyError();
     const auditType = input.to === "COMPLETED" ? "hospital.quality.capaCompleted" : input.to === "VERIFIED" ? "hospital.quality.capaVerified" : input.to === "CLOSED" ? "hospital.quality.capaClosed" : "hospital.quality.capaUpdated";
     await tx.auditEvent.create({ data: { type: auditType, userId: input.byUserId, detail: { capaId: capa.id, from: capa.status, to: input.to }, facilityId: capa.facilityId } });
-    return tx.capaAction.findUniqueOrThrow({ where: { id: capa.id } });
+    const moved = await tx.capaAction.findUniqueOrThrow({ where: { id: capa.id } });
+    await emitCapa(tx, moved, capa.status, input.byUserId);
+    return moved;
   });
 }
 
@@ -268,7 +325,17 @@ export async function setMeasureStatus(input: { facilityId: string; measureId: s
   const measure = await prisma.qualityMeasure.findUnique({ where: { id: input.measureId } });
   if (!measure || measure.facilityId !== input.facilityId) throw new NotFoundError("Measure not found.");
   await assertQualityStaffInFacility(prisma, input.reviewedByStaffId, input.facilityId);
-  const updated = await prisma.qualityMeasure.update({ where: { id: measure.id }, data: { status: parseEnum($Enums.QualityMeasureStatus, input.status, "status"), reviewedByStaffId: input.reviewedByStaffId, reviewedAt: new Date() } });
+  // Compare-and-set on the status read (batch 7: a plain update let two reviewers overwrite each other), with its event.
+  const updated = await prisma.$transaction(async (tx) => {
+    const r = await tx.qualityMeasure.updateMany({ where: { id: measure.id, status: measure.status }, data: { status: parseEnum($Enums.QualityMeasureStatus, input.status, "status"), reviewedByStaffId: input.reviewedByStaffId, reviewedAt: new Date() } });
+    if (r.count !== 1) throw new QualityConcurrencyError();
+    const m = await tx.qualityMeasure.findUniqueOrThrow({ where: { id: measure.id } });
+    await emitFacilityEvent(tx, {
+      type: "QualityMeasureStatusChanged", aggregateId: m.id, facilityId: m.facilityId, actorUserId: input.byUserId,
+      payload: { measureId: m.id, standardId: m.standardId, from: measure.status, to: m.status },
+    });
+    return m;
+  });
   await recordAuditEvent("hospital.quality.measureReviewed", input.byUserId, { measureId: measure.id, status: input.status }, { facilityId: input.facilityId });
   return updated;
 }
@@ -340,8 +407,12 @@ export async function createFinding(input: {
   await assertQualityRefsInFacility(prisma, input.facilityId, {
     auditId: input.auditId, standardId: input.standardId, measureId: input.measureId, incidentId: input.incidentId,
   });
-  const finding = await prisma.qualityFinding.create({
-    data: { facilityId: input.facilityId, title: input.title, description: input.description, sourceType: input.sourceType, severity: input.severity === undefined ? undefined : parseEnum($Enums.IncidentSeverity, input.severity, "severity"), auditId: input.auditId, standardId: input.standardId, measureId: input.measureId, incidentId: input.incidentId, identifiedByStaffId: input.identifiedByStaffId },
+  const finding = await prisma.$transaction(async (tx) => {
+    const created = await tx.qualityFinding.create({
+      data: { facilityId: input.facilityId, title: input.title, description: input.description, sourceType: input.sourceType, severity: input.severity === undefined ? undefined : parseEnum($Enums.IncidentSeverity, input.severity, "severity"), auditId: input.auditId, standardId: input.standardId, measureId: input.measureId, incidentId: input.incidentId, identifiedByStaffId: input.identifiedByStaffId },
+    });
+    await emitFinding(tx, created, null, input.byUserId);
+    return created;
   });
   await recordAuditEvent("hospital.quality.findingCreated", input.byUserId, { findingId: finding.id, auditId: input.auditId }, { facilityId: input.facilityId });
   return finding;
@@ -354,6 +425,8 @@ export async function closeFinding(input: { facilityId: string; findingId: strin
     const r = await tx.qualityFinding.updateMany({ where: { id: finding.id, status: { in: ["OPEN", "IN_PROGRESS"] } }, data: { status: "CLOSED", closedByStaffId: input.closedByStaffId, closedAt: new Date() } });
     if (r.count !== 1) throw new BadRequestError("Finding is already closed.");
     await tx.auditEvent.create({ data: { type: "hospital.quality.findingClosed", userId: input.byUserId, detail: { findingId: finding.id }, facilityId: finding.facilityId } });
-    return tx.qualityFinding.findUniqueOrThrow({ where: { id: finding.id } });
+    const closed = await tx.qualityFinding.findUniqueOrThrow({ where: { id: finding.id } });
+    await emitFinding(tx, closed, finding.status, input.byUserId);
+    return closed;
   });
 }

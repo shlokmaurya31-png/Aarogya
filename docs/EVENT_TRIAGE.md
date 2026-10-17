@@ -600,6 +600,7 @@ names: 81 (77 new).
 
 | Step | State |
 |---|---|
+| 9b | **wired** (2026-10-17, batch 7): 27 functions, 12 events. |
 | 9a | **wired** (2026-10-17, batch 6): 27 triage functions. `StockMoved` from `postLedgerEntry` (registered helper) covers its 10; `StockDocumentStatusChanged` with `documentType`; the waste HOLD flow (approved change 4); purchase-order, supplier-invoice, serial and supply-request events. Off the cut list: `StockBelowReorder` (with the reorder task) and `GoodsReceived`. |
 | 9 | **wired** (2026-10-16, batch 5) with the planned billing events (#50–54, 58, 59): 27 triage functions (36 entries, counting both `voidInvoice` and both `resolveException` paths and the planned producers). `ClaimSettled` carries `stage` (approved change 1). Charge categories became a closed set. |
 | 7 | **wired** (2026-10-16, batch 5) with the step-7 planned events: 10 triage functions, plus `decideLinkRequest` (LINK → `PatientAccountLinked` FRONT_DESK), the document, note and family producers. `addPatientIdentifier` emits only for MRN/UHID; external identifiers are 9c's. |

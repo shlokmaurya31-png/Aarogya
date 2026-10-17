@@ -1101,6 +1101,24 @@ stock through `scripts/lib/stockFixture.ts` (a balance increment plus its
 `postLedgerEntry` ADJUSTMENT), and the 9a gate's reconciliation is
 facility-wide and requires 0 mismatches.
 
+**As built: step 9b (batch 7, item 3).** Quality, patient safety and facility
+operations, 27 triage functions: `QualityIncidentStatusChanged` (report,
+transitions, reopen, and the RCA review as a stage with the status unchanged;
+a RESTRICTED incident never names the patient or encounter, in the payload or
+the correlation), `CapaStatusChanged`, `QualityFindingStatusChanged`,
+`QualityMeasureStatusChanged`, `DietOrderStatusChanged`,
+`EquipmentStatusChanged` (manual, downtime started/ended; a downtime may have no
+registered device), `EquipmentServiceRecorded` (calibration, maintenance,
+preventive), `InfectionIncidentStatusChanged` (report, investigation recorded,
+transitions), `InfectionExposureRecorded` (SENSITIVE; never the person),
+`LabQualityControlRecorded` (QC or calibration, recorded or reviewed, the QC
+outcome PASS/FAIL/OTHER), `MaintenanceRequestStatusChanged`. Free-text type
+fields with documented code lists (diet type, infection type, issue type, QC
+result) are reported as their code, or OTHER, never their text. Fixed here:
+`startDowntime` linked a device without checking its facility and was not
+transactional; `setEquipmentStatus` and `setMeasureStatus` were unguarded
+updates (now compare-and-set). Gate `verify-postgres-quality-ops-events`.
+
 **Triage sub-steps** (`docs/EVENT_TRIAGE.md`, approved 2026-10-16): 5b
 (nursing and tasks), then, after step 9, 9a (inventory and procurement), 9b
 (quality, safety, operations) and 9c (access, identity, interoperability,

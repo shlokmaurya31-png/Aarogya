@@ -5,6 +5,16 @@ import { getPacsAdapter } from "@/lib/hospital/pacsAdapter";
 import type { Prisma, LabQcReviewStatus, ExternalLabStatus, ExternalLabReferral } from "@prisma/client";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
+/** LabQualityControlRecorded (step 9b): the record, its stage and (QC) the outcome code; never the values or the instrument tag. */
+async function emitLabQc(tx: Prisma.TransactionClient, facilityId: string, e: { recordKind: "QC" | "CALIBRATION"; recordId: string; stage: "RECORDED" | "REVIEWED" | "REJECTED"; result?: string | null }, byUserId: string) {
+  const label = e.result?.trim().toUpperCase();
+  const outcome = e.recordKind !== "QC" ? undefined : !label ? "UNRECORDED" : label === "PASS" || label === "FAIL" ? label : "OTHER";
+  await emitFacilityEvent(tx, {
+    type: "LabQualityControlRecorded", aggregateId: e.recordId, facilityId, actorUserId: byUserId,
+    payload: { recordKind: e.recordKind, recordId: e.recordId, stage: e.stage, ...(outcome ? { outcome } : {}) },
+  });
+}
+
 /** ExternalLabReferralStatusChanged, in the writer's transaction. IDs and status codes only. */
 function emitReferralStatus(tx: Prisma.TransactionClient, r: ExternalLabReferral, from: ExternalLabStatus | null, byUserId: string) {
   return emitFacilityEvent(tx, {
@@ -64,8 +74,12 @@ const QC_REVIEW_TRANSITIONS: Record<LabQcReviewStatus, LabQcReviewStatus[]> = {
 
 export async function recordQc(input: { facilityId: string; instrumentId: string; controlType: string; catalogTestId?: string; controlLot?: string; observedValue?: number; expectedValue?: number; unit?: string; result?: string; performedByStaffId: string; notes?: string; runAt?: Date; byUserId: string }) {
   if (!input.instrumentId || !input.controlType) throw new BadRequestError("instrumentId and controlType are required.");
-  const qc = await prisma.labQcRecord.create({
+  const qc = await prisma.$transaction(async (tx) => {
+    const created = await tx.labQcRecord.create({
     data: { facilityId: input.facilityId, instrumentId: input.instrumentId, controlType: input.controlType, catalogTestId: input.catalogTestId, controlLot: input.controlLot, observedValue: input.observedValue, expectedValue: input.expectedValue, unit: input.unit, result: input.result, performedByStaffId: input.performedByStaffId, notes: input.notes, runAt: input.runAt ?? new Date() },
+    });
+    await emitLabQc(tx, input.facilityId, { recordKind: "QC", recordId: created.id, stage: "RECORDED", result: created.result }, input.byUserId);
+    return created;
   });
   await recordAuditEvent("hospital.lab.qcRecorded", input.byUserId, { qcId: qc.id, instrumentId: input.instrumentId, result: input.result }, { facilityId: input.facilityId });
   return qc;
@@ -79,6 +93,7 @@ export async function reviewQc(input: { qcId: string; facilityId: string; to: "R
     const r = await tx.labQcRecord.updateMany({ where: { id: qc.id, status: "PENDING" }, data: { status: input.to, reviewedByStaffId: input.reviewedByStaffId, reviewedAt: new Date(), ...(input.notes !== undefined ? { notes: input.notes } : {}) } });
     if (r.count !== 1) throw new BadRequestError("QC record was reviewed concurrently — refresh and try again.");
     await tx.auditEvent.create({ data: { type: "hospital.lab.qcReviewed", userId: input.byUserId, detail: { qcId: qc.id, to: input.to }, facilityId: qc.facilityId } });
+    await emitLabQc(tx, qc.facilityId, { recordKind: "QC", recordId: qc.id, stage: input.to, result: qc.result }, input.byUserId);
     return tx.labQcRecord.findUniqueOrThrow({ where: { id: qc.id } });
   });
 }
@@ -86,8 +101,12 @@ export async function reviewQc(input: { qcId: string; facilityId: string; to: "R
 // ── Instrument calibration ───────────────────────────────────────────────────
 export async function recordCalibration(input: { facilityId: string; instrumentId: string; calibrationType: string; performedByStaffId: string; calibratedAt?: Date; nextDueAt?: Date; notes?: string; byUserId: string }) {
   if (!input.instrumentId || !input.calibrationType) throw new BadRequestError("instrumentId and calibrationType are required.");
-  const cal = await prisma.labCalibrationRecord.create({
+  const cal = await prisma.$transaction(async (tx) => {
+    const created = await tx.labCalibrationRecord.create({
     data: { facilityId: input.facilityId, instrumentId: input.instrumentId, calibrationType: input.calibrationType, performedByStaffId: input.performedByStaffId, calibratedAt: input.calibratedAt ?? new Date(), nextDueAt: input.nextDueAt, notes: input.notes },
+    });
+    await emitLabQc(tx, input.facilityId, { recordKind: "CALIBRATION", recordId: created.id, stage: "RECORDED" }, input.byUserId);
+    return created;
   });
   await recordAuditEvent("hospital.lab.calibrationRecorded", input.byUserId, { calibrationId: cal.id, instrumentId: input.instrumentId }, { facilityId: input.facilityId });
   return cal;
@@ -101,6 +120,7 @@ export async function reviewCalibration(input: { calibrationId: string; facility
     const r = await tx.labCalibrationRecord.updateMany({ where: { id: cal.id, status: "PENDING" }, data: { status: input.to, reviewedByStaffId: input.reviewedByStaffId, reviewedAt: new Date(), ...(input.notes !== undefined ? { notes: input.notes } : {}) } });
     if (r.count !== 1) throw new BadRequestError("Calibration record was reviewed concurrently — refresh and try again.");
     await tx.auditEvent.create({ data: { type: "hospital.lab.calibrationReviewed", userId: input.byUserId, detail: { calibrationId: cal.id, to: input.to }, facilityId: cal.facilityId } });
+    await emitLabQc(tx, cal.facilityId, { recordKind: "CALIBRATION", recordId: cal.id, stage: input.to }, input.byUserId);
     return tx.labCalibrationRecord.findUniqueOrThrow({ where: { id: cal.id } });
   });
 }

@@ -275,3 +275,32 @@ describe("step-9a payload codes mirror their sources", () => {
     expect(options("StockDocumentStatusChanged", "to")).toEqual(union);
   });
 });
+
+describe("step-9b payload codes mirror their sources", () => {
+  const options = (type: string, key: string) => {
+    const shape = (getEventContract(type, 1)!.payload as unknown as { shape: Record<string, { options?: string[]; unwrap?: () => unknown }> }).shape;
+    let f = shape[key] as { options?: string[]; unwrap?: () => unknown };
+    while (!f.options && f.unwrap) f = f.unwrap() as typeof f;
+    return [...(f.options ?? [])].sort();
+  };
+  const cases: [string, string, readonly string[]][] = [
+    ["QualityIncidentStatusChanged", "to", Object.values($Enums.QualityIncidentStatus)],
+    ["QualityIncidentStatusChanged", "severity", Object.values($Enums.IncidentSeverity)],
+    ["QualityIncidentStatusChanged", "confidentiality", Object.values($Enums.QualityIncidentConfidentiality)],
+    ["CapaStatusChanged", "to", Object.values($Enums.CapaActionStatus)],
+    ["CapaStatusChanged", "actionType", Object.values($Enums.CapaActionActionType)],
+    ["QualityFindingStatusChanged", "to", Object.values($Enums.QualityFindingStatus)],
+    ["QualityMeasureStatusChanged", "to", Object.values($Enums.QualityMeasureStatus)],
+    ["DietOrderStatusChanged", "to", Object.values($Enums.DietOrderStatus)],
+    ["EquipmentStatusChanged", "to", Object.values($Enums.BiomedicalEquipmentStatus)],
+    ["InfectionIncidentStatusChanged", "to", Object.values($Enums.InfectionIncidentStatus)],
+    ["MaintenanceRequestStatusChanged", "to", Object.values($Enums.MaintenanceRequestStatus)],
+  ];
+  for (const [type, key, source] of cases) {
+    it(`${type}.${key} mirrors its Prisma enum`, () => expect(options(type, key)).toEqual([...source].sort()));
+  }
+  it("QualityIncidentStatusChanged.category = INCIDENT_CATEGORIES", async () => {
+    const { INCIDENT_CATEGORIES } = await import("@/lib/hospital/quality/shared");
+    expect(options("QualityIncidentStatusChanged", "category")).toEqual([...INCIDENT_CATEGORIES].sort());
+  });
+});
