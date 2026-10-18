@@ -60,6 +60,7 @@ import { draftInvoiceForAccount, addChargeToInvoice, issueInvoice, draftSuppleme
 import { createCharge } from "../src/lib/hospital/billing/chargeCapture";
 import { linkAccountForGate } from "./lib/personFixture";
 import { decidePersonConsent } from "../src/lib/person/consent";
+import { staffPersonDocuments } from "../src/lib/person/documents";
 
 let pass = 0;
 let fail = 0;
@@ -344,10 +345,12 @@ async function main() {
   report("The critical-result task opened at 8 is completed by 8a", a.openAfter8 === "OPEN" && crit?.status === "COMPLETED");
   report("minutesToAcknowledge matches the stored timestamps",
     (ack.payload as { minutesToAcknowledge: number }).minutesToAcknowledge === Math.floor((result.acknowledgedAt!.getTime() - result.verifiedAt!.getTime()) / 60_000));
-  const uploadedEvents = await prisma.domainEventOutbox.count({ where: { eventType: "PatientDocumentUploaded", aggregateId: a.uploadedDocumentId } });
-  const listed = await prisma.clinicalDocument.count({ where: { id: a.uploadedDocumentId, facilityId: a.facilityId, patientId: a.patientId } });
+  // Phase 0, part 2: the upload is the person's own document (PersonDocument, PERSON event); the
+  // facility sees it through the resolver because the person shared and is being treated there.
+  const uploadedEvents = await prisma.domainEventOutbox.count({ where: { eventType: "PersonDocumentUploaded", aggregateId: a.uploadedDocumentId } });
+  const listed = (await staffPersonDocuments(a.facilityId, [a.patientId])).filter((d) => d.id === a.uploadedDocumentId).length;
   const reviewTasks = await prisma.task.count({ where: { facilityId: a.facilityId, idempotencyKey: `DOCUMENT_REVIEW:${a.uploadedDocumentId}` } });
-  report("8b Outside report (shared with treating hospitals): PatientDocumentUploaded once, in the facility's document list, exactly one review task", uploadedEvents === 1 && listed === 1 && reviewTasks === 1, `${uploadedEvents}/${listed}/${reviewTasks}`);
+  report("8b Outside report (shared with treating hospitals): PersonDocumentUploaded once, visible to the treating facility, exactly one review task", uploadedEvents === 1 && listed === 1 && reviewTasks === 1, `${uploadedEvents}/${listed}/${reviewTasks}`);
   const doses = await prisma.medicationAdministration.count({ where: { medicationOrderId: a.orderId } });
   report("mar-scheduler scheduled the BD doses once", doses === 3, String(doses));
   const otCharges = await prisma.charge.count({ where: { OR: [{ sourceType: "Surgery", sourceId: a.surgeryId }, { sourceType: "SurgeryItemUsage", sourceId: a.usageId }, { sourceType: "IcuAdmission" }], encounterId: a.encounterId } });

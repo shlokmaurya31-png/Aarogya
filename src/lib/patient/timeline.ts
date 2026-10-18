@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
 import { resolvePatientIdsForRead } from "./merge";
 import { TRANSFER_WITH_LOCATIONS, transferRouteLabel } from "@/lib/hospital/admission";
-import { documentVisibilityFor, type DocumentViewer } from "@/lib/person/access";
+import { documentVisibilityFor, personDocumentsFor, type DocumentViewer } from "@/lib/person/access";
 
 /**
  * The longitudinal timeline (brief §32) is built by reading every typed
@@ -41,6 +41,7 @@ const TIMELINE_ROW_LIMIT = 200;
 export async function buildPatientTimeline(patientId: string, viewer: DocumentViewer): Promise<TimelineEntry[]> {
   const patientIds = await resolvePatientIdsForRead(patientId);
   const documentsVisible = await documentVisibilityFor(viewer, patientIds);
+  const personDocuments = await personDocumentsFor(viewer, patientIds);
 
   const [encounters, diagnoses, problems, allergies, vitals, notes, medOrders, labOrders, imagingOrders, tasks, referrals, admissions, specimens, labResults, imagingStudies, imagingReports, transfers, documents] =
     await Promise.all([
@@ -280,6 +281,18 @@ export async function buildPatientTimeline(patientId: string, viewer: DocumentVi
       summary: `${doc.type} document${doc.version > 1 ? ` (v${doc.version})` : ""}: ${doc.title}`,
       actor: doc.uploadedBy?.user?.displayName,
       sourceType: "ClinicalDocument",
+      sourceId: doc.id,
+    });
+  }
+  // Phase 0: the person's own uploads (patient-provided), as the viewer may see them.
+  for (const doc of personDocuments) {
+    entries.push({
+      id: `person-document-${doc.id}`,
+      timestamp: doc.uploadedAt.toISOString(),
+      type: "Document",
+      summary: `Patient-provided ${doc.type} document: ${doc.title}`,
+      actor: undefined,
+      sourceType: "PersonDocument",
       sourceId: doc.id,
     });
   }

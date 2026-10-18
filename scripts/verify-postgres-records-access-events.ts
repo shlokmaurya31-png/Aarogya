@@ -3,8 +3,10 @@
  * events. (Family acceptance/revocation, profile updates and account linking
  * are asserted in the D11 and self-registration gates, which drive them.)
  *
- *   1. PatientDocumentUploaded on a portal upload → the task-generator opens one
- *      DOCUMENT_REVIEW task (redelivery opens no second one).
+ *   1. PersonDocumentUploaded on a portal upload (Phase 0, part 2: the
+ *      person's own document) → once the person shares uploads and has a care
+ *      relationship, the task-generator opens one DOCUMENT_REVIEW task at that
+ *      facility (redelivery opens no second one).
  *   2. DocumentGenerated (document type, draft flag, never content).
  *   3. ClinicalNoteSigned on sign and on amend (naming the note replaced),
  *      never the content.
@@ -77,8 +79,8 @@ async function main() {
   await openEncounter({ facilityId, patientId: patient.id, type: "OPD", chiefComplaint: "Upload review", byUserId: doctor.id });
   await decidePersonConsent({ userId: user.id, purpose: "SHARE_UPLOADS_WITH_TREATING", decision: "GRANTED" });
   const up = await uploadPatientDocument(scope, user.id, { bytes: Buffer.from(await pdf.save()), contentType: "application/pdf", originalName: "r.pdf", title: `Outside report ${run}`, type: "REPORT" });
-  const uploaded = await payloads("PatientDocumentUploaded", up.id);
-  report("A portal upload emits PatientDocumentUploaded (type, uploader; no title)", uploaded.length === 1 && uploaded[0].documentType === "REPORT" && uploaded[0].uploadedBy === "PATIENT" && !JSON.stringify(uploaded).includes("Outside"));
+  const uploaded = await payloads("PersonDocumentUploaded", up.id);
+  report("A portal upload emits PersonDocumentUploaded (type; no title)", uploaded.length === 1 && uploaded[0].documentType === "REPORT" && !JSON.stringify(uploaded).includes("Outside"));
   await drain();
   const reviewKey = { facilityId_idempotencyKey: { facilityId, idempotencyKey: `DOCUMENT_REVIEW:${up.id}` } };
   report("…after they share (and with an open encounter), task-generator opens one DOCUMENT_REVIEW task for the care team", (await prisma.task.findUnique({ where: reviewKey }))?.status === "OPEN");
@@ -179,7 +181,7 @@ async function main() {
 
   // Redelivery creates no second review task.
   await drain();
-  const ids = (await prisma.domainEventOutbox.findMany({ where: { eventType: "PatientDocumentUploaded", aggregateId: up.id }, select: { eventId: true } })).map((e) => e.eventId);
+  const ids = (await prisma.domainEventOutbox.findMany({ where: { eventType: "PersonDocumentUploaded", aggregateId: up.id }, select: { eventId: true } })).map((e) => e.eventId);
   await prisma.domainEventDelivery.updateMany({ where: { eventId: { in: ids } }, data: { status: "PENDING" } });
   await prisma.domainEventOutbox.updateMany({ where: { eventId: { in: ids } }, data: { status: "PENDING", processedAt: null } });
   await drain();

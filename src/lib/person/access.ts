@@ -169,6 +169,12 @@ export async function documentVisibilityFor(viewer: DocumentViewer, patientIds: 
   return viewer.kind === "STAFF" ? staffDocumentVisibility(viewer.facilityId, patientIds) : {};
 }
 
+/** The person documents a viewer sees for these records (staff: the resolver; patient side: the linked person's own). */
+export async function personDocumentsFor(viewer: DocumentViewer, patientIds: string[]) {
+  const { staffPersonDocuments, linkedPersonDocuments } = await import("./documents");
+  return viewer.kind === "STAFF" ? staffPersonDocuments(viewer.facilityId, patientIds) : linkedPersonDocuments(patientIds);
+}
+
 /** By-id staff lookups: is this one document visible to staff of `facilityId`? */
 export async function staffCanSeeDocument(doc: { id: string; patientId: string; uploadedByUserId: string | null; personId: string | null }, facilityId: string): Promise<boolean> {
   if (!doc.uploadedByUserId || !doc.personId) return true;

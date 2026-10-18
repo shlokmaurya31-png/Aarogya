@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { NotFoundError } from "@/lib/auth/rbac";
 import { assertClass, type PatientAccessScope } from "../context";
+import { linkedPersonDocuments } from "@/lib/person/documents";
 
 /**
  * Phase D11 — patient-facing reports (brief §18, §51).
@@ -68,6 +69,12 @@ export async function listReports(scope: PatientAccessScope): Promise<ReportDTO[
       date: d.createdAt.toISOString(), status: "RELEASED_TO_PATIENT",
       facility: d.facility?.name ?? null, downloadable: Boolean(d.storageRef),
     });
+  }
+  // Phase 0: the person's own uploads (self scope only; delegates see them from households, 5b).
+  if (scope.isSelf) {
+    for (const d of await linkedPersonDocuments(scope.patientIds)) {
+      out.push({ id: `upload:${d.id}`, kind: "DOCUMENT", title: d.title, date: d.uploadedAt.toISOString(), status: "RELEASED_TO_PATIENT", facility: null, downloadable: true });
+    }
   }
   out.sort((a, b) => b.date.localeCompare(a.date));
   return out;

@@ -1311,6 +1311,16 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({ personId: id, sourcePersonId: id, mergeRecordId: id, method: z.enum(["BOTH_ACCOUNTS_PROVEN"]) }).strict(),
   }),
   contract({
+    type: "PersonDocumentUploaded", version: 1, aggregateType: "PERSON_DOCUMENT", scope: "PERSON",
+    sensitivity: "INTERNAL", producer: "person identity (uploadPersonDocument: the person's own upload, tied to no facility)",
+    payload: z.object({ personId: id, documentId: id, documentType: z.enum(["REPORT", "REFERRAL_LETTER", "ID_PROOF", "OTHER"]) }).strict(),
+  }),
+  contract({
+    type: "PersonDocumentWithdrawn", version: 1, aggregateType: "PERSON_DOCUMENT", scope: "PERSON",
+    sensitivity: "INTERNAL", producer: "person identity (withdrawPersonDocument)",
+    payload: z.object({ personId: id, documentId: id }).strict(),
+  }),
+  contract({
     type: "PatientContactConfirmed", version: 1, aggregateType: "PATIENT", scope: "FACILITY",
     sensitivity: "INTERNAL", producer: "person identity (confirmPatientContact: staff confirm the record's phone with the patient present)",
     payload: z.object({ patientId: id, contact: z.enum(["PHONE"]), via: z.enum(["STAFF_IN_PERSON"]) }).strict(),

@@ -146,6 +146,8 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/person/linking.ts#offerAbhaLink": { category: "PROCESS_STEP", reason: "ABHA match offered; the person confirms (disabled until ABDM verification)", boundary: ["PersonPatientLinked"] },
   "src/lib/person/linking.ts#startReverification": { category: "PROCESS_STEP", reason: "a migrated link's verification opened (same routes as a new link); the outcome is the link", boundary: ["PersonPatientLinked"] },
   "src/lib/person/merge.ts#startPersonMerge": { category: "PROCESS_STEP", reason: "the other account's password checked and a code sent to each account; the outcome is the merge", boundary: ["PersonMerged"] },
+  "src/lib/person/documents.ts#movePersonUploads": { category: "BOOKKEEPING", reason: "one-off migration of existing uploads to PersonDocument (same bytes); refuses rather than guesses" },
+  "src/lib/person/documents.ts#personDocumentDownload": { category: "BOOKKEEPING", reason: "access log and audit of a staff read; no state change" },
   "src/lib/person/linking.ts#requestFacilityUnlink": { category: "PROCESS_STEP", reason: "first staff member's unlink request; a second approves", boundary: ["PersonPatientUnlinked"] },
   "src/lib/billing/invoices.ts#addInvoiceLine": { category: "PROCESS_STEP", reason: "edit to a draft invoice; money moves on InvoiceFinalized", boundary: ["InvoiceFinalized", "InvoiceVoided"] },
   "src/lib/billing/invoices.ts#refreshInvoicePaymentStatus": { category: "BOOKKEEPING", reason: "derived status, decision log or provenance written as part of another operation" },

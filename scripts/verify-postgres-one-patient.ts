@@ -130,7 +130,7 @@ async function main() {
     const profile = await call(patientCookie, "GET", "/api/patient/profile");
     report("Portal profile: same demographics", profile.json.fullName === person.fullName && profile.json.sex === person.sex && profile.json.phone === person.phone && profile.json.bloodGroup === person.bloodGroup);
     const reports = await call(patientCookie, "GET", "/api/patient/reports");
-    report("Portal: the document", ((reports.json.reports as { id: string }[]) ?? []).some((r) => r.id === `document:${D}`));
+    report("Portal: the document (the person's own upload)", ((reports.json.reports as { id: string }[]) ?? []).some((r) => r.id === `upload:${D}`));
 
     const chart = await call(doctor, "GET", `/api/hospital/patients/${P}/chart`);
     const chartPatient = chart.json.patient as Record<string, unknown> | undefined;
@@ -143,7 +143,7 @@ async function main() {
     // Phase 0: the upload belongs to the person. The hospital treating them
     // sees it only once they choose "share my uploads with hospitals treating
     // me" (no default), inside a care relationship (the open encounter).
-    const hasDoc = async () => (((await call(doctor, "GET", `/api/hospital/documents?patientId=${P}`)).json.documents as { id: string }[]) ?? []).some((d) => d.id === D);
+    const hasDoc = async () => (((await call(doctor, "GET", `/api/hospital/documents?patientId=${P}`)).json.personDocuments as { id: string }[]) ?? []).some((d) => d.id === D);
     const overview = await call(patientCookie, "GET", "/api/patient/person");
     report("Portal: the person is asked to choose upload sharing (no default)", overview.status === 200 && (overview.json.sharing as { choiceNeeded?: boolean })?.choiceNeeded === true && (overview.json.sharing as { uploadsWithTreatingHospitals?: unknown }).uploadsWithTreatingHospitals === null);
     report("Hospital OS chart: the upload is hidden before the person chooses", !(await hasDoc()));
@@ -151,6 +151,10 @@ async function main() {
     report("Hospital OS chart: …and after they decline", declined.status === 200 && !(await hasDoc()));
     const granted = await call(patientCookie, "POST", "/api/patient/person/sharing", { decision: "GRANTED" });
     report("Hospital OS chart: the document, once they share with hospitals treating them", granted.status === 200 && (await hasDoc()));
+    const staffDl = await call(doctor, "GET", `/api/hospital/person-documents/${D}/download?patientId=${P}`);
+    report("Hospital OS: the upload downloads by a short-lived signed URL, through the resolver", staffDl.status === 200 && typeof staffDl.json.url === "string", `HTTP ${staffDl.status}`);
+    const ownDl = await call(patientCookie, "GET", `/api/patient/person/documents/${D}/download`);
+    report("Portal: the person downloads their own upload the same way", ownDl.status === 200 && typeof ownDl.json.url === "string");
 
     const api = await call(frontDesk, "GET", `/api/hospital/patients/${P}`);
     const apiPatient = api.json.patient as Record<string, unknown> | undefined;

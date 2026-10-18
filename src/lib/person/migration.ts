@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 import { createPersonForAccount, recordActiveLink } from "./person";
 import { routeFor } from "./linking";
+import { movePersonUploads, type UploadMoveRefusal } from "./documents";
 
 type Tx = Prisma.TransactionClient;
 
@@ -44,6 +45,9 @@ export interface MigrationReport {
   uploadsOwned: number;
   requestsRerouted: number;
   refusals: MigrationRefusal[];
+  /** Step 2 (Phase 0, part 2): owned uploads moved to PersonDocument, and the ones refused. */
+  uploadsMoved: number;
+  uploadMoveRefusals: UploadMoveRefusal[];
 }
 
 type Plan =
@@ -106,8 +110,9 @@ export async function migrateIdentities(opts: { dryRun: boolean; onlyUserIds?: s
   const report: MigrationReport = {
     dryRun: opts.dryRun, accountsSeen: 0, alreadyMigrated: 0, personsCreated: 0,
     linksActive: { SELF_CREATED: 0, OTP_RECORD_CONTACT: 0 }, linksReverificationRequired: { FRONT_DESK_LINK: 0, NO_EVIDENCE: 0 },
-    accountsWithoutRecord: 0, uploadsOwned: 0, requestsRerouted: 0, refusals: [],
+    accountsWithoutRecord: 0, uploadsOwned: 0, requestsRerouted: 0, refusals: [], uploadsMoved: 0, uploadMoveRefusals: [],
   };
+  const planned: string[] = [];
   const users = await prisma.user.findMany({
     where: { role: "PATIENT", ...(opts.onlyUserIds ? { id: { in: opts.onlyUserIds } } : {}) },
     select: { id: true, email: true, displayName: true }, orderBy: [{ createdAt: "asc" }, { id: "asc" }],
@@ -121,6 +126,7 @@ export async function migrateIdentities(opts: { dryRun: boolean; onlyUserIds?: s
     if (plan.kind === "ACTIVE") report.linksActive[plan.method] += 1;
     if (plan.kind === "REVERIFY") report.linksReverificationRequired[plan.reason] += 1;
     report.personsCreated += 1;
+    planned.push(user.id);
     if (opts.dryRun) {
       report.uploadsOwned += await prisma.clinicalDocument.count({ where: { uploadedByUserId: user.id, personId: null } });
       report.requestsRerouted += await prisma.patientLinkRequest.count({ where: { userId: user.id, personId: null, status: { in: ["OTP_SENT", "FRONT_DESK_REVIEW"] } } });
@@ -130,5 +136,12 @@ export async function migrateIdentities(opts: { dryRun: boolean; onlyUserIds?: s
     report.uploadsOwned += done.uploads;
     report.requestsRerouted += done.rerouted;
   }
+  // Step 2: owned uploads move to PersonDocument (refuse rather than guess).
+  const scopedPersons = opts.onlyUserIds
+    ? (await prisma.personAccount.findMany({ where: { userId: { in: opts.onlyUserIds } }, select: { personId: true } })).map((p) => p.personId)
+    : undefined;
+  const moved = await movePersonUploads({ dryRun: opts.dryRun, onlyPersonIds: scopedPersons, alsoUploadedBy: opts.dryRun ? planned : undefined });
+  report.uploadsMoved = moved.moved;
+  report.uploadMoveRefusals = moved.refusals;
   return report;
 }

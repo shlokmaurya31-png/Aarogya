@@ -26,6 +26,7 @@ import { prisma } from "../src/lib/db";
 import { SMS_OUTBOX_FILE } from "../src/lib/messaging/sms";
 import { migrateIdentities } from "../src/lib/person/migration";
 import { staffDocumentVisibility } from "../src/lib/person/access";
+import { staffPersonDocuments } from "../src/lib/person/documents";
 import { decidePersonConsent } from "../src/lib/person/consent";
 import { startReverification, submitSecondFactor, verifyLinkCode } from "../src/lib/person/linking";
 
@@ -78,19 +79,28 @@ async function main() {
   const p8 = await record("taken", { userId: u7.id });
   const other = await prisma.person.create({ data: { displayName: "Other", accounts: { create: { userId: uOther.id, role: "OWNER" } } } });
   await prisma.personPatientLink.create({ data: { personId: other.id, patientId: p8.id, facilityId, status: "ACTIVE", method: "SELF_CREATED", linkedAt: new Date(), linkedByUserId: uOther.id } });
-  const d1 = await prisma.clinicalDocument.create({ data: { facilityId, patientId: p1.id, type: "REPORT", title: `Old upload ${run}`, accessPolicy: "PATIENT_VISIBLE", uploadedByUserId: u1.id } });
-  const d4 = await prisma.clinicalDocument.create({ data: { facilityId, patientId: p4.id, type: "REPORT", title: `Old upload 4 ${run}`, accessPolicy: "PATIENT_VISIBLE", uploadedByUserId: u4.id } });
+  const d1 = await prisma.clinicalDocument.create({ data: { facilityId, patientId: p1.id, type: "REPORT", title: `Old upload ${run}`, accessPolicy: "PATIENT_VISIBLE", uploadedByUserId: u1.id, storageRef: `local:patient-uploads/idmig/${run}-1`, sha256: "a".repeat(64) } });
+  const d4 = await prisma.clinicalDocument.create({ data: { facilityId, patientId: p4.id, type: "REPORT", title: `Old upload 4 ${run}`, accessPolicy: "PATIENT_VISIBLE", uploadedByUserId: u4.id, storageRef: `local:patient-uploads/idmig/${run}-4`, sha256: "b".repeat(64) } });
+  // Uploads the move must refuse: no file; something references it (credential evidence).
+  const dNoFile = await prisma.clinicalDocument.create({ data: { facilityId, patientId: p2.id, type: "REPORT", title: `No file ${run}`, accessPolicy: "PATIENT_VISIBLE", uploadedByUserId: u2.id } });
+  const dRef = await prisma.clinicalDocument.create({ data: { facilityId, patientId: p2.id, type: "REPORT", title: `Referenced ${run}`, accessPolicy: "PATIENT_VISIBLE", uploadedByUserId: u2.id, storageRef: `local:patient-uploads/idmig/${run}-ref`, sha256: "c".repeat(64) } });
+  const staffRow = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { user: { role: "HOSPITAL_ADMIN" } }, select: { id: true } });
+  await prisma.credential.create({ data: { facilityId, staffId: staffRow.id, credentialType: "TRAINING", name: "evidence", createdByStaffId: staffRow.id, documentId: dRef.id } });
   const ours = [u1, u2, u3, u4, u5, u6, u7].map((u) => u.id);
-  const visibleToFacility = async (docId: string, patientId: string) =>
-    (await prisma.clinicalDocument.count({ where: { AND: [{ id: docId }, await staffDocumentVisibility(facilityId, [patientId])] } })) === 1;
+  // Before the move an upload is a ClinicalDocument; after it, a PersonDocument (moved from that id).
+  const visibleToFacility = async (docId: string, patientId: string) => {
+    const moved = await prisma.personDocument.findUnique({ where: { movedFromClinicalDocumentId: docId } });
+    if (moved) return (await staffPersonDocuments(facilityId, [patientId])).some((d) => d.id === moved.id);
+    return (await prisma.clinicalDocument.count({ where: { AND: [{ id: docId }, await staffDocumentVisibility(facilityId, [patientId])] } })) === 1;
+  };
   report("Before migration, an old upload is visible to its facility (the pre-Phase-0 rule)", await visibleToFacility(d1.id, p1.id));
 
   // ── Dry run ──
   const personsBefore = await prisma.person.count();
   const dry = await migrateIdentities({ dryRun: true, onlyUserIds: ours });
   report("The dry run writes nothing", (await prisma.person.count()) === personsBefore && (await prisma.patient.findUniqueOrThrow({ where: { id: p1.id } })).userId === u1.id);
-  report("…and plans: 2 ACTIVE (self-created, code), 2 to reverify (desk, no evidence), 1 without a record, 2 refused",
-    dry.linksActive.SELF_CREATED === 1 && dry.linksActive.OTP_RECORD_CONTACT === 1 && dry.linksReverificationRequired.FRONT_DESK_LINK === 1
+  report("…and plans: 2 ACTIVE (self-created, code), 2 to reverify (desk, no evidence), 1 without a record, 2 refused; 2 uploads to move, 2 refused",
+    dry.uploadsMoved === 2 && dry.uploadMoveRefusals.length === 2 && dry.linksActive.SELF_CREATED === 1 && dry.linksActive.OTP_RECORD_CONTACT === 1 && dry.linksReverificationRequired.FRONT_DESK_LINK === 1
       && dry.linksReverificationRequired.NO_EVIDENCE === 1 && dry.accountsWithoutRecord === 1 && dry.refusals.length === 2, JSON.stringify(dry));
 
   // ── Run ──
@@ -118,9 +128,15 @@ async function main() {
   const linkedEv = await prisma.domainEventOutbox.count({ where: { eventType: "PersonPatientLinked", aggregateId: { in: [l1!.id, l2!.id] } } });
   report("PersonPatientLinked for the trusted links, PersonLinkReverificationRequired for the others", linkedEv === 2 && reverify === 2);
 
-  // ── Old uploads: owned, still visible to their facility until the person chooses ──
-  const d1After = await prisma.clinicalDocument.findUniqueOrThrow({ where: { id: d1.id } });
-  report("Old uploads now belong to the uploader's Person, flagged as pre-Phase-0", d1After.personId === (await personOf(u1.id)) && d1After.legacyFacilityVisible === true);
+  // ── Old uploads: moved to PersonDocument, still visible to their facility until the person chooses ──
+  const d1After = await prisma.personDocument.findUnique({ where: { movedFromClinicalDocumentId: d1.id } });
+  report("Old uploads moved to PersonDocument: the uploader's Person, same bytes, the pre-Phase-0 facility and record kept",
+    d1After?.personId === (await personOf(u1.id)) && d1After?.storageRef === d1.storageRef && d1After?.sha256 === d1.sha256 && d1After?.legacyFacilityId === facilityId && d1After?.legacyPatientId === p1.id);
+  report("…and the ClinicalDocument row it moved from is gone", (await prisma.clinicalDocument.count({ where: { id: d1.id } })) === 0);
+  const refusedMoves = new Map(res.uploadMoveRefusals.map((r) => [r.documentId, r.reason]));
+  report("The move refuses, and leaves untouched, an upload with no file and one something references",
+    refusedMoves.get(dNoFile.id) === "NO_FILE" && refusedMoves.get(dRef.id) === "REFERENCED"
+      && (await prisma.clinicalDocument.count({ where: { id: { in: [dNoFile.id, dRef.id] } } })) === 2 && res.uploadsMoved === 2, JSON.stringify({ moved: res.uploadsMoved, refused: res.uploadMoveRefusals }));
   report("…and stay visible to the facility they were uploaded to (no choice yet)", await visibleToFacility(d1.id, p1.id));
   report("…including for a link awaiting reverification", await visibleToFacility(d4.id, p4.id));
   await decidePersonConsent({ userId: u1.id, purpose: "SHARE_UPLOADS_WITH_TREATING", decision: "DECLINED" });
@@ -128,7 +144,8 @@ async function main() {
 
   // ── Idempotent ──
   const again = await migrateIdentities({ dryRun: false, onlyUserIds: ours });
-  report("A second run changes nothing (5 already migrated, the 2 refusals again)", again.alreadyMigrated === 5 && again.personsCreated === 0 && again.refusals.length === 2 && (await prisma.person.count()) === personsBefore + 5);
+  report("A second run changes nothing (5 already migrated, the 2 refusals again, no upload moved twice)",
+    again.alreadyMigrated === 5 && again.personsCreated === 0 && again.refusals.length === 2 && again.uploadsMoved === 0 && again.uploadMoveRefusals.length === 2 && (await prisma.person.count()) === personsBefore + 5);
 
   // ── Reverification through the normal flow ──
   const rv = await startReverification(u4.id, l4!.id);

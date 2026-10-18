@@ -114,6 +114,7 @@ export const AGGREGATE_TYPES = [
   "PERSON",
   "PERSON_PATIENT_LINK",
   "PERSON_LINK_REQUEST",
+  "PERSON_DOCUMENT",
 ] as const;
 export type AggregateType = (typeof AGGREGATE_TYPES)[number];
 

@@ -11,7 +11,10 @@
  *   B shares, an open encounter at Pune           → Pune staff see the upload
  *                                                    (positive control: the
  *                                                    check can fail)
- *   B shares; Noida (where B has another record)  → nothing for Noida staff
+ *   B shares; a Noida record but no care there    → nothing for Noida staff
+ *   B shares; Noida treating someone else          → nothing of B's
+ *   B shares; Noida treats B                       → Noida sees it (uploads are
+ *                                                    the person's, not Pune's)
  *   B declines again                              → nothing
  *   B unlinks Pune                                → nothing
  *   Person A's own login, at any point            → nothing of B's
@@ -31,6 +34,7 @@ import { buildPatientTimeline } from "../src/lib/patient/timeline";
 import { buildPatientSummary } from "../src/lib/patient/summary";
 import { clinicianAssistantContext } from "../src/lib/ai/assistantContext";
 import { staffDocumentVisibility, personAccess } from "../src/lib/person/access";
+import { staffPersonDocuments, personDocumentDownload } from "../src/lib/person/documents";
 import { personOverview } from "../src/lib/person/overview";
 import { decidePersonConsent } from "../src/lib/person/consent";
 import { unlinkByPerson } from "../src/lib/person/linking";
@@ -67,11 +71,14 @@ async function main() {
       const pdf = await PDFDocument.create(); pdf.addPage([100, 100]);
       return uploadPatientDocument(scopeB, b.userId, { bytes: Buffer.from(await pdf.save()), contentType: "application/pdf", originalName: "leak.pdf", title: `Report ${CANARY}`, type: "REPORT" });
     });
-  report("Fixture: B's upload belongs to B's Person", (await prisma.clinicalDocument.findUniqueOrThrow({ where: { id: up.id } })).personId === personB);
+  report("Fixture: B's upload is B's own PersonDocument", (await prisma.personDocument.findUniqueOrThrow({ where: { id: up.id } })).personId === personB);
 
   // Every staff-side surface, as text.
   const staffViews = async (facilityId: string, patientId: string) => {
-    const docs = await prisma.clinicalDocument.findMany({ where: { AND: [{ patientId }, await staffDocumentVisibility(facilityId, [patientId])] } });
+    const docs = [
+      ...(await prisma.clinicalDocument.findMany({ where: { AND: [{ patientId }, await staffDocumentVisibility(facilityId, [patientId])] } })),
+      ...(await staffPersonDocuments(facilityId, [patientId])),
+    ];
     const [timeline, summary] = await Promise.all([buildPatientTimeline(patientId, { kind: "STAFF", facilityId }), buildPatientSummary(patientId, { kind: "STAFF", facilityId })]);
     const ai = await clinicianAssistantContext(patientId, facilityId);
     return JSON.stringify({ docs, timeline, summary, ai });
@@ -101,11 +108,19 @@ async function main() {
   report("…but never B's profile, contacts or access log", !(await staffProfile(PUNE)) && !(await staffViews(PUNE, pb)).includes(`${CANARY.toLowerCase()}@contact`));
   report("…and A still sees nothing of B's", !(await aSees()));
 
+  // Uploads are the person's (not Pune's): a hospital that treats B sees them
+  // once B shares — and only while it treats B, only through B's own record.
   const noida = await connectFacilityRecord(b.userId, { facilityId: NOIDA, fullName: `Leak B Noida ${run}`, sex: "F" });
   const pbn = noida.status === "LINKED_NEW" ? noida.patientId : "";
+  report("B shares and has a Noida record but no care there: Noida staff see nothing", Boolean(pbn) && !(await sees(NOIDA, pbn)));
+  report("…and can't download it through that record (signed URL refused)",
+    await personDocumentDownload({ kind: "STAFF", userId: "noida-staff", facilityId: NOIDA, patientId: pbn }, up.id).then(() => false, () => true));
+  const unrelated = await prisma.patient.create({ data: { uhid: `LEAKN-${run}`, facilityId: NOIDA, fullName: `Leak unrelated ${run}`, sex: "M" } });
+  await prisma.encounter.create({ data: { patientId: unrelated.id, facilityId: NOIDA, type: "OPD", status: "IN_CONSULTATION", chiefComplaint: "leak gate" } });
+  report("Noida staff treating someone else see nothing of B's", !(await sees(NOIDA, unrelated.id))
+    && await personDocumentDownload({ kind: "STAFF", userId: "noida-staff", facilityId: NOIDA, patientId: unrelated.id }, up.id).then(() => false, () => true));
   await prisma.encounter.create({ data: { patientId: pbn, facilityId: NOIDA, type: "OPD", status: "IN_CONSULTATION", chiefComplaint: "leak gate" } });
-  report("B shares and is treated at Noida too: Noida staff see nothing of the Pune upload", Boolean(pbn) && !(await sees(NOIDA, pbn)));
-  report("…and Noida staff can't reach the Pune record's documents", (await prisma.clinicalDocument.count({ where: { AND: [{ id: up.id }, await staffDocumentVisibility(NOIDA, [pbn])] } })) === 0);
+  report("Control: once Noida treats B (B shares), Noida staff see B's upload through B's record", await sees(NOIDA, pbn));
 
   await decidePersonConsent({ userId: b.userId, purpose: "SHARE_UPLOADS_WITH_TREATING", decision: "DECLINED" });
   report("B declines again: Pune staff see nothing", !(await sees(PUNE, pb)));

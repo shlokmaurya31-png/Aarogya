@@ -4,6 +4,7 @@ import { createTask, closeTask as closeTaskTx, OPEN_STATUSES } from "@/lib/hospi
 import type { DomainEventConsumer } from "@/lib/events/consumers";
 import { PermanentEventError, type DomainEventEnvelope } from "@/lib/events/types";
 import { staffCanSeeDocument } from "@/lib/person/access";
+import { staffPersonDocuments } from "@/lib/person/documents";
 
 /**
  * task-generator (workflow spine §2): creates and closes operational tasks in
@@ -121,7 +122,7 @@ export const taskGenerator: DomainEventConsumer = {
   handles: [
     "AdmissionRequested", "BedReserved", "AdmissionRequestStatusChanged", "EdDispositionDecided", "DischargeInitiated", "PatientDischarged",
     "LabResultReleased", "ImagingReportReleased", "CriticalResultAcknowledged", "MedicationDoseMissed", "PatientDocumentUploaded",
-    "StockBelowReorder",
+    "StockBelowReorder", "PersonDocumentUploaded",
   ],
   async handle(event) {
     const p = event.payload as Record<string, string>;
@@ -155,6 +156,22 @@ export const taskGenerator: DomainEventConsumer = {
         const doc = await prisma.clinicalDocument.findUnique({ where: { id: p.documentId }, select: { id: true, patientId: true, uploadedByUserId: true, personId: true } });
         if (!doc || !event.facilityId || !(await staffCanSeeDocument(doc, event.facilityId))) return;
         return openPatientTask(event, p.patientId, { type: "DOCUMENT_REVIEW", title: "Review a document the patient uploaded", priority: "ROUTINE", sourceId: p.documentId });
+      }
+      case "PersonDocumentUploaded": {
+        // Phase 0, part 2: a person's upload is reviewed at each facility
+        // that may see it right now (the person's sharing choice and a care
+        // relationship at a linked record); nowhere else, not even its existence.
+        if (!event.personId) return;
+        const links = await prisma.personPatientLink.findMany({ where: { personId: event.personId, status: "ACTIVE" }, select: { facilityId: true, patientId: true } });
+        for (const l of links) {
+          const visible = await staffPersonDocuments(l.facilityId, [l.patientId]);
+          if (!visible.some((d) => d.id === p.documentId)) continue;
+          await prisma.$transaction((tx) => createTask(tx, {
+            facilityId: l.facilityId, patientId: l.patientId, type: "DOCUMENT_REVIEW", title: "Review a document the patient uploaded", priority: "ROUTINE",
+            source: "EVENT", idempotencyKey: keyOf("DOCUMENT_REVIEW", p.documentId),
+          }));
+        }
+        return;
       }
       case "StockBelowReorder":
         return openReorderTask(event, p as unknown as { itemId: string; locationId: string; ledgerEntryId: string; onHandQty: number });

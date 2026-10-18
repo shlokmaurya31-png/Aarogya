@@ -10303,6 +10303,8 @@ model Person {
   mergeRecords          PersonMergeRecord[]  @relation("PersonMergeRecordTarget")
   mergeRecordsAsSource  PersonMergeRecord[]  @relation("PersonMergeRecordSource")
 
+  personDocuments PersonDocument[]
+
   @@index([mergedIntoPersonId])
 }
 
@@ -10493,4 +10495,38 @@ model PersonMergeRecord {
   reversedAt     DateTime?
 
   @@index([sourcePersonId])
+}
+
+enum PersonDocumentStatus {
+  CURRENT
+  WITHDRAWN
+}
+
+/// A document the person uploaded: theirs, tied to no facility. Staff see it
+/// only through personAccess() (the person's sharing choice + a care
+/// relationship), or, for an upload made before Phase 0, at the facility it
+/// was uploaded to until the person chooses (legacyFacilityId/legacyPatientId).
+/// Bytes stay in the private patient-uploads bucket; reads are signed URLs.
+model PersonDocument {
+  id                          String               @id @default(cuid())
+  person                      Person               @relation(fields: [personId], references: [id])
+  personId                    String
+  type                        String // REPORT | REFERRAL_LETTER | ID_PROOF | OTHER
+  title                       String
+  storageRef                  String
+  sha256                      String
+  contentType                 String?
+  status                      PersonDocumentStatus @default(CURRENT)
+  uploadedByUserId            String
+  uploadedAt                  DateTime             @default(now())
+  /// Pre-Phase-0 uploads only: the facility and record it was uploaded to.
+  legacyFacilityId            String?
+  legacyPatientId             String?
+  /// The ClinicalDocument row it was moved from (the move deletes that row).
+  movedFromClinicalDocumentId String?              @unique
+  withdrawnAt                 DateTime?
+  createdAt                   DateTime             @default(now())
+  updatedAt                   DateTime             @updatedAt
+
+  @@index([personId, status])
 }
