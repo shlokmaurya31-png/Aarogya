@@ -530,7 +530,7 @@ What the code does where it differs from, or adds to, the sections above. Each i
 - **`RecordConflictAcknowledged`** (new) records a clinician acknowledging or resolving a conflict.
 - **Dose, frequency and unit are optional in the fact schemas,** so an incomplete fact reaches the person flagged (one band lower) instead of being dropped.
 - **Nine languages** include Malayalam (the table in §10.1 names eight).
-- **Page images are not re-rendered:** a PDF page is copied into its own single-page PDF; an image upload is its own page. Orientation and resolution normalization need an image library the repository doesn't carry.
+- **Page images are not re-rendered:** a PDF page is copied into its own single-page PDF; an image upload is its own page. Orientation and resolution normalization need an image library the repository doesn't carry. *Superseded in Week 4b (§15.3).*
 - **The "no known allergies" conflict rule has nothing to read:** the schema has no verified NKDA record.
 - **Proxy review** stays out of Week 4a, as §9 says: routes resolve only the session's own Person.
 
@@ -548,3 +548,8 @@ What the code does where it differs from, or adds to, the sections above. Each i
 - **A closed account's bridged allergies are taken back** (and again at purge), keeping clinician-confirmed ones.
 - **Stalled steps are resumed by the runner:** a crashing step gives its claim back; a killed worker's claim goes stale after 10 minutes and the tick's sweep resumes it.
 - **The timeline shows confirmed entries** ("Lab result from the patient's document: …", with "handwritten" where it applies) under the same rule as the uploads they came from. The RAG index hooks (§12 step 9) wait for Week 4b, which builds the index.
+
+### 15.3 Week 4b follow-ups (2026-10-18)
+
+- **Image pages are normalized before OCR** (`src/lib/documents/normalize.ts`, with `sharp`): the EXIF orientation is applied and then all metadata dropped (no camera, time or GPS tags reach storage or a provider); a tilt of up to ±10° is measured from the text lines' projection profile and undone, only when the measurement is clear; the long edge comes down to 2,400 px (never enlarged); the page is stored as JPEG (mozjpeg, quality 82). The upload itself is never touched; the normalized page is stored alongside it (`DocumentPage`, with a `normalization` record of what was done). A decompression bomb (over 80 megapixels) fails the run as `TOO_LARGE`; bytes that don't decode are `UNREADABLE`. Gate: `verify-postgres-image-normalization`.
+- **Not done (where not feasible):** PDF pages are still not rasterized (no PDF renderer is carried), and a page turned 90° or 180° with no EXIF tag is left to the OCR model, which reads rotated pages.

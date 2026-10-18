@@ -10754,6 +10754,8 @@ model DocumentPage {
   storageRef   String
   sha256       String
   contentType  String
+  /// What was done to an image page before OCR (src/lib/documents/normalize.ts); null for PDF pages.
+  normalization Json?
 
   @@unique([processingId, pageNo])
   @@index([personId])

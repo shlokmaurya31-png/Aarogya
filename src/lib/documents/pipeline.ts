@@ -8,6 +8,7 @@ import { DocumentProviderError, getDocumentProviders, type CandidateFact, type L
 import { medicineDictionary } from "@/lib/medicines/reference";
 import { claimStep, createRun, finishStep, moveRun, MAX_STEP_ATTEMPTS, STALE_CLAIM_MS, TERMINAL_RUN } from "./pipelineState";
 import { MAX_PAGES, splitPdf, stripProtected, translateText } from "./steps";
+import { normalizePageImage, type Normalization } from "./normalize";
 import { detectLanguage, isSupportedLanguage } from "./language";
 import { bandOf, LOW_THRESHOLD } from "./confidence";
 import { identifierSpans, personIdentifiers } from "./identifiers";
@@ -167,6 +168,20 @@ async function releasingOnCrash(processingId: string, step: DocumentStepKind, fn
 
 // ── Step 1: page split ─────────────────────────────────────────────────────
 
+interface PreparedPage { bytes: Buffer; contentType: string; normalization?: Normalization }
+
+/** A PDF: one single-page PDF per page (not rasterized; there is no PDF renderer). */
+async function pdfPages(bytes: Buffer): Promise<PreparedPage[] | DocumentStepError> {
+  const pages = await splitPdf(bytes);
+  return typeof pages === "string" ? pages : pages.map((b) => ({ bytes: b, contentType: "application/pdf" }));
+}
+
+/** A photo or scan: one page, normalized (upright, deskewed, resized, compressed); the upload is only read. */
+async function imagePage(bytes: Buffer): Promise<PreparedPage[] | DocumentStepError> {
+  const n = await normalizePageImage(bytes);
+  return typeof n === "string" ? n : [n];
+}
+
 async function pageSplitStepInner(processingId: string) {
   const run = await loadRun(processingId);
   if (TERMINAL_RUN.includes(run.status)) return;
@@ -180,21 +195,21 @@ async function pageSplitStepInner(processingId: string) {
   if (original.bytes.length > MAX_DOCUMENT_BYTES) return stepError(run, "PAGE_SPLIT", "TOO_LARGE");
   // The type recorded at upload (checked against the bytes then); local storage doesn't keep it.
   const type = doc.contentType || original.contentType || "";
-  const pages = type === "application/pdf" ? await splitPdf(original.bytes) : PAGE_TYPES.includes(type) ? [original.bytes] : "UNREADABLE";
+  const pages = type === "application/pdf" ? await pdfPages(original.bytes) : PAGE_TYPES.includes(type) ? await imagePage(original.bytes) : "UNREADABLE";
   if (typeof pages === "string") return stepError(run, "PAGE_SPLIT", pages as DocumentStepError);
   const have = new Set((await prisma.documentPage.findMany({ where: { processingId }, select: { pageNo: true } })).map((p) => p.pageNo));
-  const stored: { pageNo: number; storageRef: string; sha256: string; contentType: string }[] = [];
-  for (const [i, bytes] of pages.entries()) {
+  const stored: { pageNo: number; storageRef: string; sha256: string; contentType: string; normalization?: Prisma.InputJsonValue }[] = [];
+  for (const [i, page] of pages.entries()) {
     if (have.has(i + 1)) continue;
-    const ext = type === "application/pdf" ? "pdf" : type.split("/")[1];
-    const s = await storage.put({ bucket: "patient-uploads", bytes, contentType: type, originalName: `page-${i + 1}.${ext}`, scope: run.personId });
-    stored.push({ pageNo: i + 1, storageRef: s.storageRef, sha256: s.sha256, contentType: s.contentType });
+    const ext = page.contentType === "application/pdf" ? "pdf" : page.contentType.split("/")[1];
+    const s = await storage.put({ bucket: "patient-uploads", bytes: page.bytes, contentType: page.contentType, originalName: `page-${i + 1}.${ext}`, scope: run.personId });
+    stored.push({ pageNo: i + 1, storageRef: s.storageRef, sha256: s.sha256, contentType: s.contentType, ...(page.normalization ? { normalization: page.normalization as unknown as Prisma.InputJsonValue } : {}) });
   }
   const done = await ifStillRunning(() => prisma.$transaction(async (tx) => {
     await assertRunning(tx, processingId, "PAGE_SPLIT");
     await tx.documentPage.createMany({ data: stored.map((p) => ({ ...p, processingId, personId: run.personId })), skipDuplicates: true });
     await tx.documentProcessing.update({ where: { id: processingId }, data: { pageCount: pages.length } });
-    await finishStep(tx, processingId, "PAGE_SPLIT", { status: "DONE" }, { provider: "pdf-lib" });
+    await finishStep(tx, processingId, "PAGE_SPLIT", { status: "DONE" }, { provider: type === "application/pdf" ? "pdf-lib" : "sharp" });
     await emitDomainEvent(tx, { type: "DocumentPagesPrepared", aggregateId: processingId, personId: run.personId, payload: { processingId, documentId: run.documentId, personId: run.personId, pageCount: pages.length } });
     return true;
   }));
