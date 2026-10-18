@@ -1,5 +1,4 @@
 import type { DocumentProcessing, DocumentStepError, DocumentStepKind, Prisma } from "@prisma/client";
-import { PDFDocument } from "pdf-lib";
 import { prisma } from "@/lib/db";
 import { getStorageAdapter } from "@/lib/storage";
 import { emitDomainEvent } from "@/lib/events/emit";
@@ -8,7 +7,7 @@ import { documentProcessingPermit } from "@/lib/ai/realData";
 import { DocumentProviderError, getDocumentProviders, type CandidateFact, type Line, type OcrResult, type ProcessingPermit } from "@/lib/ai/documents";
 import { medicineDictionary } from "@/lib/medicines/reference";
 import { claimStep, createRun, finishStep, moveRun, MAX_STEP_ATTEMPTS, STALE_CLAIM_MS, TERMINAL_RUN } from "./pipelineState";
-import { mask, noInventedNumbers, placeholdersIntact, protectedSpans, restore, type Span } from "./protect";
+import { MAX_PAGES, splitPdf, stripProtected, translateText } from "./steps";
 import { detectLanguage, isSupportedLanguage } from "./language";
 import { bandOf, LOW_THRESHOLD } from "./confidence";
 import { identifierSpans, personIdentifiers } from "./identifiers";
@@ -37,7 +36,7 @@ type Tx = Prisma.TransactionClient;
  */
 
 export const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
-export const MAX_PAGES = 50;
+export { MAX_PAGES };
 const OPEN_RUN = ["QUEUED", "RUNNING", "AWAITING_REVIEW"] as const;
 const PAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
 /** Uploads of these types are never processed: they hold identifiers, not health facts. */
@@ -168,22 +167,6 @@ async function releasingOnCrash(processingId: string, step: DocumentStepKind, fn
 
 // ── Step 1: page split ─────────────────────────────────────────────────────
 
-async function splitPdf(bytes: Buffer): Promise<Buffer[] | DocumentStepError> {
-  let src: PDFDocument;
-  try { src = await PDFDocument.load(bytes, { updateMetadata: false }); } catch { return "UNREADABLE"; }
-  const n = src.getPageCount();
-  if (n === 0) return "UNREADABLE";
-  if (n > MAX_PAGES) return "TOO_LARGE";
-  const out: Buffer[] = [];
-  for (let i = 0; i < n; i++) {
-    const one = await PDFDocument.create({ updateMetadata: false });
-    const [p] = await one.copyPages(src, [i]);
-    one.addPage(p);
-    out.push(Buffer.from(await one.save({ useObjectStreams: false })));
-  }
-  return out;
-}
-
 async function pageSplitStepInner(processingId: string) {
   const run = await loadRun(processingId);
   if (TERMINAL_RUN.includes(run.status)) return;
@@ -220,13 +203,6 @@ async function pageSplitStepInner(processingId: string) {
 }
 
 // ── Step 2: OCR and language ───────────────────────────────────────────────
-
-function stripProtected(text: string, dictionary: readonly string[]): string {
-  const spans = protectedSpans(text, dictionary);
-  let out = "", at = 0;
-  for (const s of spans) { out += text.slice(at, s.start) + " "; at = s.end; }
-  return out + text.slice(at);
-}
 
 async function ocrStepInner(processingId: string) {
   const run = await loadRun(processingId);
@@ -288,26 +264,6 @@ async function ocrStepInner(processingId: string) {
 
 // ── Step 3: translation with the exact-copy check ──────────────────────────
 
-/** Masks protected values (and the person's identifiers), translates, checks, restores. */
-async function translatePage(text: string, from: string, to: string, dictionary: readonly string[], identifiers: readonly string[], permit: ProcessingPermit) {
-  const { translation, tagging } = getDocumentProviders();
-  const idSpans = identifierSpans(text, identifiers);
-  // Tagging sees the text with identifiers already masked.
-  const forTagging = mask(text, protectedSpans(text, [], idSpans)).masked;
-  const tagged = (await tagging.tagMedicines(forTagging, permit)).names;
-  const extra: Span[] = [...idSpans];
-  for (const name of tagged) for (const m of text.matchAll(new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gu"))) extra.push({ start: m.index!, end: m.index! + m[0].length, kind: "TAGGED" });
-  const m = mask(text, protectedSpans(text, dictionary, extra));
-  for (const strict of [false, true]) {
-    const out = await translation.translate(m.masked, from, to, { strict }, permit);
-    if (placeholdersIntact(out.text, m.originals.length) && noInventedNumbers(out.text)) {
-      return { text: restore(out.text, m.originals), check: "PASSED" as const, spans: m, model: out.model };
-    }
-    if (strict) return { text: out.text, check: "FAILED" as const, spans: m, model: out.model };
-  }
-  throw new Error("unreachable");
-}
-
 async function translateStepInner(processingId: string) {
   const run = await loadRun(processingId);
   if (TERMINAL_RUN.includes(run.status)) return;
@@ -338,9 +294,9 @@ async function translateStepInner(processingId: string) {
   const { names: dictionary } = await medicineDictionary();
   const identifiers = await personIdentifiers(run.personId);
   for (const t of todo) {
-    let r: Awaited<ReturnType<typeof translatePage>>;
+    let r: Awaited<ReturnType<typeof translateText>>;
     try {
-      r = await translatePage(t.text, t.language, target, dictionary, identifiers, permit);
+      r = await translateText(t.text, t.language, target, dictionary, identifiers, getDocumentProviders(), permit);
     } catch (err) {
       const code = providerCode(err);
       if (!code) throw err;

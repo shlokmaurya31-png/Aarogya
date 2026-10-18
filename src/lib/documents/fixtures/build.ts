@@ -109,7 +109,7 @@ export function dischargeSummary(c: Common & { diagnosis: string; procedure?: st
   (c.tests ?? []).forEach((t) => w.lab(t));
   c.meds.forEach((m) => w.med(m));
   w.advice();
-  return w.done("DISCHARGE_SUMMARY");
+  return w.done(c.mixed ? "MIXED" : "DISCHARGE_SUMMARY");
 }
 
 export function imagingReport(c: Common & { procedure: string; impression: string }): DocumentFixture {

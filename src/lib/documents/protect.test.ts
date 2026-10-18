@@ -70,3 +70,13 @@ describe("NLEM 2022 reference names", () => {
     expect(nlemNames()).toContain("Metformin");
   });
 });
+
+describe("letter-digit codes", () => {
+  it("L4-L5, (Vitamin) B12, T2DM and 2nd are protected whole, so no digit is left for a translator", () => {
+    const text = "निष्कर्ष: L4-L5 disc bulge, Vitamin B12 low, T2DM since 2nd visit";
+    const m = mask(text, protectedSpans(text, []));
+    expect(m.originals).toEqual(["L4-L5", "Vitamin B12", "T2DM", "2nd"]);
+    expect(noInventedNumbers(m.masked)).toBe(true);
+  });
+});
+

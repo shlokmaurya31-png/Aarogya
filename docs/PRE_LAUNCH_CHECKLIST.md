@@ -24,6 +24,8 @@
 | 9 | **Demo credentials** | The seeded demo accounts share well-known passwords (`Hospital@123`, `Scholar@123`). Never seed them into staging or production; rotate any environment that ever had them. |
 | 10 | **Commercial drug brand list** | Licensing decision after the pilot. Until then, brand names depend on model tagging. |
 | 11 | **WHO INN full import** | The repository carries a curated starter set. The full, versioned INN list is imported from WHO's published cumulative list, with its list number recorded, and refreshed yearly. |
+| 12 | **Document pipeline: real-provider evaluation** | `npm run eval:documents -- --provider real` (synthetic fixtures only; needs `DOCUMENT_AI_PROVIDER=claude` and a key) with its report recorded in the PR. First add a renderer that draws every script with handwriting fonts and noise: today's fixture PDFs draw Latin-script lines only, so a real run scores English pages meaningfully and the other scripts not at all. The CI run on the mocks proves gating and exactness, not model quality. |
+| 13 | **Document pipeline: image normalization** | Page images are not re-rendered (no orientation or resolution normalization): a PDF page is copied into its own PDF and an image upload is its own page. Add an image library and normalization before relying on phone photos. |
 
 ## How to update this file
 

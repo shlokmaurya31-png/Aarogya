@@ -12,7 +12,7 @@ export type SpanKind = "NUMBER" | "UNIT" | "DOSE" | "MEDICINE" | "ANALYTE" | "TA
 export interface Span { start: number; end: number; kind: SpanKind }
 
 export const UNITS = [
-  "mg/dL", "g/dL", "mmol/L", "mEq/L", "µmol/L", "umol/L", "ng/mL", "pg/mL", "µg/dL", "IU/L", "U/L", "mIU/L", "µIU/mL", "uIU/mL",
+  "mg/dL", "g/dL", "mmol/L", "mEq/L", "µmol/L", "umol/L", "ng/mL", "ng/dL", "mg/L", "pg/mL", "µg/dL", "IU/L", "U/L", "mIU/L", "µIU/mL", "uIU/mL",
   "x10^3/µL", "x10^6/µL", "x10^3/uL", "/µL", "/uL", "/cumm", "cells/cumm", "mm/hr", "mmHg", "bpm", "fL", "pg",
   "mg", "mcg", "µg", "g", "kg", "ml", "mL", "L", "IU", "units", "%",
 ] as const;
@@ -50,6 +50,8 @@ export function protectedSpans(text: string, dictionary: readonly string[], extr
   push(bounded(byLengthDesc(DOSE_NOTATIONS)), "DOSE");
   // Numbers with what binds to them: 120/80, 4.0-6.0, 4.0–6.0, 12,500, dates.
   push(/(?<![\p{L}\p{N}])\d+(?:[.,]\d+)*(?:\s*[-–/]\s*\d+(?:[.,]\d+)*)*(?![\p{N}])/gu, "NUMBER");
+  // Codes that mix Latin letters and digits (L4-L5, B12, T2DM, 2nd, HbA1c): their digits are values too.
+  push(/(?<![\p{L}\p{N}])(?:[A-Za-z]+\d[A-Za-z\d]*|\d+[A-Za-z][A-Za-z\d]*)(?:[-–/](?:[A-Za-z]+\d[A-Za-z\d]*|\d+[A-Za-z]*))*(?![\p{L}\p{N}])/gu, "NUMBER");
   push(bounded(byLengthDesc(UNITS)), "UNIT");
   if (dictionary.length) push(bounded(byLengthDesc(dictionary)), "MEDICINE");
   push(bounded(byLengthDesc(ANALYTES)), "ANALYTE");
