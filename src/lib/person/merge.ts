@@ -5,6 +5,7 @@ import { recordAuditEvent } from "@/lib/auth/audit";
 import { BadRequestError, ConflictError, NotFoundError } from "@/lib/auth/rbac";
 import { verifyPassword } from "@/lib/auth/password";
 import { sendEmail } from "@/lib/email/send";
+import { sendSms } from "@/lib/messaging/sms";
 import { emitDomainEvent } from "@/lib/events/emit";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 import { ownedPersonId, requireOwnedPerson } from "./access";
@@ -113,7 +114,20 @@ const same = (a: string, b: string) => { const x = Buffer.from(a); const y = Buf
  * and password. Then a code goes to each account's email. A wrong password
  * says nothing about the other account.
  */
-export async function startPersonMerge(userId: string, input: { otherEmail: string; otherPassword: string }) {
+/** A Person's verified phone (proved by a correct code; see linking.ts), or null. */
+async function verifiedPhone(personId: string): Promise<string | null> {
+  const c = await prisma.personContact.findFirst({ where: { personId, kind: "PHONE", status: "ACTIVE", verifiedAt: { not: null } }, orderBy: { verifiedAt: "desc" }, select: { value: true } });
+  return c?.value ?? null;
+}
+
+/**
+ * `channel`: where each account's code goes — its email (default) or its
+ * verified phone. PHONE needs a verified phone on both Persons (otherwise
+ * refused, never silently switched to email).
+ */
+export async function startPersonMerge(userId: string, input: { otherEmail: string; otherPassword: string; channel?: "EMAIL" | "PHONE" }) {
+  const channel = input.channel ?? "EMAIL";
+  if (channel !== "EMAIL" && channel !== "PHONE") throw new BadRequestError("channel must be EMAIL or PHONE.");
   const personId = await requireOwnedPerson(userId);
   const other = await prisma.user.findUnique({ where: { email: (input.otherEmail ?? "").trim().toLowerCase() }, select: { id: true, email: true, passwordHash: true, role: true } });
   const ok = other && other.role === "PATIENT" && other.id !== userId && (await verifyPassword(String(input.otherPassword ?? ""), other.passwordHash));
@@ -123,6 +137,10 @@ export async function startPersonMerge(userId: string, input: { otherEmail: stri
     throw new BadRequestError("We couldn't verify the other account.");
   }
   const me = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { email: true } });
+  const phones = channel === "PHONE" ? [await verifiedPhone(personId), await verifiedPhone(sourcePersonId)] : [null, null];
+  if (channel === "PHONE" && (!phones[0] || !phones[1])) {
+    throw new BadRequestError("Both accounts need a verified phone to use phone codes. Use email codes instead.");
+  }
   const t = String(randomInt(0, 1_000_000)).padStart(6, "0");
   const s = String(randomInt(0, 1_000_000)).padStart(6, "0");
   await prisma.personMergeRequest.updateMany({ where: { personId, status: "PENDING" }, data: { status: "EXPIRED" } });
@@ -131,15 +149,17 @@ export async function startPersonMerge(userId: string, input: { otherEmail: stri
   });
   await prisma.personMergeRequest.update({ where: { id: req.id }, data: { targetCodeHash: hash(req.id, "T", t), sourceCodeHash: hash(req.id, "S", s) } });
   const text = (code: string) => `Your Aarogya code to combine two accounts is ${code}. It expires in 15 minutes. If you didn't ask to combine accounts, ignore this and change your password.`;
-  const [a, b] = await Promise.all([
-    sendEmail({ to: me.email, subject: "Combine your Aarogya accounts", text: text(t) }),
-    sendEmail({ to: other!.email, subject: "Combine your Aarogya accounts", text: text(s) }),
-  ]);
+  const [a, b] = channel === "PHONE"
+    ? await Promise.all([sendSms(phones[0]!, text(t)), sendSms(phones[1]!, text(s))])
+    : await Promise.all([
+      sendEmail({ to: me.email, subject: "Combine your Aarogya accounts", text: text(t) }),
+      sendEmail({ to: other!.email, subject: "Combine your Aarogya accounts", text: text(s) }),
+    ]);
   if (!a.delivered || !b.delivered) {
     await prisma.personMergeRequest.update({ where: { id: req.id }, data: { status: "FAILED" } });
     throw new BadRequestError("We couldn't send the verification codes. Try again later.");
   }
-  await recordAuditEvent("person.merge.requested", userId, { personId, sourcePersonId, requestId: req.id });
+  await recordAuditEvent("person.merge.requested", userId, { personId, sourcePersonId, requestId: req.id, channel });
   return { requestId: req.id, expiresAt: req.expiresAt.toISOString() };
 }
 

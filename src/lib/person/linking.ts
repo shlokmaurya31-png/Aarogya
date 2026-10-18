@@ -33,6 +33,14 @@ const MAX_ATTEMPTS = 5;
 export const PHONE_CONFIRMATION_MAX_AGE_MS = 365 * 86_400_000;
 const LIVE_LINK: $Enums.PersonPatientLinkStatus[] = ["PENDING_VERIFICATION", "ACTIVE", "REVERIFICATION_REQUIRED"];
 
+/** E.164-ish for Indian numbers: "+91 98765 43210" / "9876543210" → "+919876543210". */
+export function normalizePhone(raw: string): string {
+  const d = raw.replace(/\D/g, "");
+  if (d.length === 10) return `+91${d}`;
+  if (d.length === 12 && d.startsWith("91")) return `+${d}`;
+  return `+${d}`;
+}
+
 export const ABHA_LINKING_ENABLED = () => process.env.PERSON_ABHA_LINKING === "enabled";
 
 function codeHash(requestId: string, code: string): string {
@@ -209,6 +217,12 @@ export async function verifyLinkCode(userId: string, code: string) {
   }
   const linked = await completeLink(r, personId, userId, "OTP_RECORD_CONTACT", async (tx) => {
     await tx.patient.update({ where: { id: r.candidatePatientId! }, data: { phoneConfirmedAt: new Date() } });
+    // The person just proved control of this phone: it becomes their verified
+    // contact, unless another Person already holds it as verified (then not).
+    const phone = rec.phone ? normalizePhone(rec.phone) : null;
+    if (phone && !(await tx.personContact.findFirst({ where: { kind: "PHONE", value: phone, status: "ACTIVE", verifiedAt: { not: null } } }))) {
+      await tx.personContact.create({ data: { personId, kind: "PHONE", value: phone, verifiedAt: new Date() } });
+    }
   });
   if (!linked) return { status: "PENDING_REVIEW" as const };
   return { status: "LINKED" as const, patientId: r.candidatePatientId };

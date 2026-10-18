@@ -92,6 +92,8 @@ async function main() {
   const right = await verifyLinkOtp(b.userId, code ?? "");
   const bLink = await linkTo(rec.id);
   report("The right code links the record to the registrant's Person (OTP_RECORD_CONTACT)", right.status === "LINKED" && bLink?.personId === (await personOf(b.userId)) && bLink?.method === "OTP_RECORD_CONTACT");
+  report("…the phone the person just proved becomes their verified contact",
+    (await prisma.personContact.count({ where: { personId: await personOf(b.userId), kind: "PHONE", value: "+919811122334", verifiedAt: { not: null } } })) === 1);
   report("…Patient.userId is no longer written (retired)", (await prisma.patient.findUniqueOrThrow({ where: { id: rec.id } })).userId === null);
   report("The registrant's status shows LINKED", (await linkStatusFor(b.userId))?.status === "LINKED");
   const linkedEvents = await prisma.domainEventOutbox.findMany({ where: { eventType: "PersonPatientLinked", aggregateId: bLink?.id ?? "-" } });

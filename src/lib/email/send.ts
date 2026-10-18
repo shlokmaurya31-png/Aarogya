@@ -1,5 +1,6 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import path from "node:path";
+import { assertEmailProviderAllowed } from "./guard";
 
 /**
  * Transactional email. One provider, Resend, over its REST API (no SDK
@@ -29,6 +30,7 @@ export const EMAIL_OUTBOX_FILE = path.join(process.cwd(), ".data", "outbox", "em
 
 export async function sendEmail(message: EmailMessage): Promise<EmailResult> {
   if (process.env.EMAIL_PROVIDER === "outbox") {
+    assertEmailProviderAllowed();
     try {
       await mkdir(path.dirname(EMAIL_OUTBOX_FILE), { recursive: true });
       await appendFile(EMAIL_OUTBOX_FILE, JSON.stringify({ ...message, at: new Date().toISOString() }) + "\n");

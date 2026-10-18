@@ -16,6 +16,6 @@ export async function POST(req: NextRequest) {
     if (!rl.allowed) throw new BadRequestError("Too many attempts. Try again later.");
     const b = await req.json().catch(() => null);
     if (typeof b?.otherEmail !== "string" || typeof b?.otherPassword !== "string") throw new BadRequestError("otherEmail and otherPassword are required.");
-    return startPersonMerge(session.userId, { otherEmail: b.otherEmail, otherPassword: b.otherPassword });
+    return startPersonMerge(session.userId, { otherEmail: b.otherEmail, otherPassword: b.otherPassword, channel: b.channel === "PHONE" ? "PHONE" : b.channel === undefined ? "EMAIL" : b.channel });
   });
 }

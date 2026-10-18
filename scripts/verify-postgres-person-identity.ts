@@ -48,7 +48,7 @@ process.env.EMAIL_PROVIDER = "outbox";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { SMS_OUTBOX_FILE } from "../src/lib/messaging/sms";
-import { submitSecondFactor, verifyLinkCode } from "../src/lib/person/linking";
+import { submitSecondFactor, verifyLinkCode, normalizePhone } from "../src/lib/person/linking";
 import { updatePatientRecord } from "../src/lib/patient/demographics";
 import { updateProfile } from "../src/lib/patient/experience/profile";
 import { EMAIL_OUTBOX_FILE } from "../src/lib/email/send";
@@ -338,6 +338,25 @@ async function main() {
   report("…different sharing choices both lapse, so the person is asked again", (await prisma.personConsent.count({ where: { personId: X.personId, status: "ACTIVE" } })) === 0);
   report("…PersonMerged once, and a reversible snapshot", (await prisma.domainEventOutbox.count({ where: { eventType: "PersonMerged", aggregateId: X.personId } })) === 1
     && Boolean((await prisma.personMergeRecord.findFirst({ where: { personId: X.personId, sourcePersonId: Y.personId } }))?.snapshot));
+  // Person merge by phone codes (each account's verified phone).
+  const X2 = await acct("x2"); const Y2 = await acct("y2"); const Z2 = await acct("z2");
+  const phX = `+9190${String(Date.now()).slice(-8)}`; const phY = `+9189${String(Date.now()).slice(-8)}`;
+  await prisma.personContact.create({ data: { personId: X2.personId, kind: "PHONE", value: phX, verifiedAt: new Date() } });
+  await prisma.personContact.create({ data: { personId: Y2.personId, kind: "PHONE", value: phY, verifiedAt: new Date() } });
+  await prisma.personContact.create({ data: { personId: Z2.personId, kind: "PHONE", value: `+9188${String(Date.now()).slice(-8)}` } });
+  report("Phone-code merge is refused when the other account has no verified phone (never silently emailed)",
+    await refused(startPersonMerge(X2.userId, { otherEmail: Z2.email, otherPassword: `Merge@${run}`, channel: "PHONE" })));
+  const pm = await startPersonMerge(X2.userId, { otherEmail: Y2.email, otherPassword: `Merge@${run}`, channel: "PHONE" });
+  const smsCode = async (to: string) => (await smsTo(to)).reverse().find((m) => /combine two accounts/.test(m.text))?.text.match(/\b(\d{6})\b/)?.[1] ?? "";
+  const [px, py] = [await smsCode(phX), await smsCode(phY)];
+  report("…with verified phones, a code goes to each phone", Boolean(px && py && px !== py));
+  const pmDone = await confirmPersonMerge(X2.userId, pm.requestId, { thisAccountCode: px, otherAccountCode: py });
+  report("…and both phone codes merge the Persons", pmDone.status === "MERGED" && (await prisma.person.findUniqueOrThrow({ where: { id: Y2.personId } })).mergedIntoPersonId === X2.personId);
+  // A correct link code makes the record's phone the person's verified contact.
+  const vContact = await prisma.personContact.findFirst({ where: { kind: "PHONE", value: normalizePhone(r9.phone ?? ""), verifiedAt: { not: null } } });
+  const heldPerson = (await prisma.personAccount.findUniqueOrThrow({ where: { userId: held.userId } })).personId;
+  report("A link by in-person ID adds no verified phone (the person never proved the phone)",
+    (await prisma.personContact.count({ where: { personId: heldPerson, kind: "PHONE", verifiedAt: { not: null } } })) === 0 && vContact === null);
   const routes = (await import("node:fs")).readdirSync("src/app/api/hospital", { recursive: true }).map(String);
   report("There is no staff route that merges Persons", !routes.some((r) => /person/i.test(r) && /merge/i.test(r)));
 
