@@ -118,6 +118,12 @@ export async function purgeClosedPersons(opts: { now?: Date; batchSize?: number 
           payload: { linkId: l.id, personId, patientId: l.patientId, by: "PERSON", reason: "ACCOUNT_CLOSED" },
         });
       }
+      // Week 4a: the pipeline's derived data and the person's confirmed facts go
+      // with their documents. Conflicts that a clinician resolved stay with the
+      // facility record (they name only ids); open ones are withdrawn.
+      await tx.recordConflict.deleteMany({ where: { personId, status: { not: "RESOLVED_BY_CLINICIAN" } } });
+      await tx.patientProvidedRecord.deleteMany({ where: { personId } });
+      await tx.documentProcessing.deleteMany({ where: { personId } });
       await tx.personDocument.deleteMany({ where: { personId } });
       await tx.clinicalDocument.deleteMany({ where: { id: { in: deleteLegacy.map((d) => d.id) } } });
       // Referenced uploads are now the facility record's: kept, detached from the Person.
