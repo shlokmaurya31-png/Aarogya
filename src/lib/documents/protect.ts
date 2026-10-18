@@ -8,7 +8,7 @@
  * The translator never sees a protected value it could alter.
  */
 
-export type SpanKind = "NUMBER" | "UNIT" | "DOSE" | "MEDICINE" | "ANALYTE" | "TAGGED";
+export type SpanKind = "NUMBER" | "UNIT" | "DOSE" | "MEDICINE" | "ANALYTE" | "TAGGED" | "IDENTIFIER";
 export interface Span { start: number; end: number; kind: SpanKind }
 
 export const UNITS = [

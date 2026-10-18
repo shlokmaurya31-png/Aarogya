@@ -40,7 +40,6 @@ import { assertNoSensitiveData } from "../src/lib/events/sensitiveGuard";
 import { replayEvent } from "../src/lib/events/replay";
 import { loadActorMemberships } from "../src/lib/auth/tenantContext";
 import { runTick } from "../src/lib/runner/tick";
-import { PDFDocument } from "pdf-lib";
 import { uploadPatientDocument } from "../src/lib/patient/experience/documents";
 import type { PatientAccessScope } from "../src/lib/patient/context";
 import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
@@ -61,6 +60,7 @@ import { createCharge } from "../src/lib/hospital/billing/chargeCapture";
 import { linkAccountForGate } from "./lib/personFixture";
 import { decidePersonConsent } from "../src/lib/person/consent";
 import { staffPersonDocuments } from "../src/lib/person/documents";
+import { fixtureById, fixturePdf } from "../src/lib/documents/fixtures";
 
 let pass = 0;
 let fail = 0;
@@ -140,17 +140,22 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
 
   // 8b. Outside report through the patient portal (not encounter-scoped: checked directly below).
   let uploadedDocumentId = "";
+  let journeyPersonId = "";
+  let processingId = "";
   if (opts.full) {
     const portalUser = await prisma.user.create({ data: { email: `cj-${run}@verify.aarogya`, passwordHash: "x", role: "PATIENT", displayName: "Journey patient" } });
     await linkAccountForGate(prisma, portalUser.id, patient.id);
     // Phase 0: the care team sees the upload because the person chose to share
     // uploads with hospitals treating them (the open encounter is the relationship).
     await decidePersonConsent({ userId: portalUser.id, purpose: "SHARE_UPLOADS_WITH_TREATING", decision: "GRANTED" });
-    const pdf = await PDFDocument.create();
-    pdf.addPage([200, 100]).drawText(`outside ${run}`, { x: 10, y: 50, size: 8 });
+    // Week 4a: a gate Person is SYNTHETIC, so the document pipeline (mock providers) reads the upload:
+    // a synthetic Hindi kidney-function report, translated for an English reader.
+    journeyPersonId = (await prisma.personAccount.findUniqueOrThrow({ where: { userId: portalUser.id } })).personId;
+    await prisma.person.update({ where: { id: journeyPersonId }, data: { dataClassification: "SYNTHETIC", preferredLanguage: "en" } });
     const scope: PatientAccessScope = { patientId: patient.id, patientIds: [patient.id], facilityId, isSelf: true, allowedClasses: new Set(["RECORDS", "REPORTS"]) };
-    uploadedDocumentId = (await uploadPatientDocument(scope, portalUser.id, { bytes: Buffer.from(await pdf.save()), contentType: "application/pdf", originalName: "outside.pdf", title: "Outside echo", type: "REPORT" })).id;
+    uploadedDocumentId = (await uploadPatientDocument(scope, portalUser.id, { bytes: await fixturePdf(fixtureById("lab-hi-kft")!), contentType: "application/pdf", originalName: "outside.pdf", title: "Outside kidney function report", type: "REPORT" })).id;
     await drain();
+    processingId = (await prisma.documentProcessing.findFirst({ where: { documentId: uploadedDocumentId } }))?.id ?? "";
   }
 
   let orderId = "";
@@ -286,7 +291,7 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
       identifierId = (await linkExternalIdentifier({ facilityId, entityType: "PATIENT", entityId: patient.id, system: IDENTIFIER_SYSTEMS.ABHA_NUMBER, value: `CJ-ABHA-${run}`, byUserId: by })).id;
     });
   }
-  return { facilityId, patientId: patient.id, encounterId: enc.id, orderId, resultId, surgeryId, usageId, bloodIssueId, uploadedDocumentId, steps, registered, openAfter8, critTask, billing, drugItemId, wasteId, wasteBalance, identifierId };
+  return { facilityId, patientId: patient.id, encounterId: enc.id, orderId, resultId, surgeryId, usageId, bloodIssueId, uploadedDocumentId, journeyPersonId, processingId, steps, registered, openAfter8, critTask, billing, drugItemId, wasteId, wasteBalance, identifierId };
 }
 
 async function main() {
@@ -331,6 +336,9 @@ async function main() {
       { eventType: "StockBelowReorder", aggregateId: a.drugItemId },
       { eventType: "StockDocumentStatusChanged", aggregateId: a.wasteId },
       { eventType: "ExternalIdentifierStatusChanged", aggregateId: a.identifierId },
+      // 8b: the upload and the document pipeline's run (PERSON events).
+      { eventType: "PersonDocumentUploaded", aggregateId: a.uploadedDocumentId },
+      { aggregateType: "DOCUMENT_PROCESSING", aggregateId: a.processingId },
     ] },
     orderBy: { seq: "asc" },
   });
@@ -351,6 +359,11 @@ async function main() {
   const listed = (await staffPersonDocuments(a.facilityId, [a.patientId])).filter((d) => d.id === a.uploadedDocumentId).length;
   const reviewTasks = await prisma.task.count({ where: { facilityId: a.facilityId, idempotencyKey: `DOCUMENT_REVIEW:${a.uploadedDocumentId}` } });
   report("8b Outside report (shared with treating hospitals): PersonDocumentUploaded once, visible to the treating facility, exactly one review task", uploadedEvents === 1 && listed === 1 && reviewTasks === 1, `${uploadedEvents}/${listed}/${reviewTasks}`);
+  // Week 4a: the pipeline read it (synthetic Person, mock providers): pages, text, a translation for an English reader.
+  const run8b = await prisma.documentProcessing.findUnique({ where: { id: a.processingId }, include: { steps: true, texts: { include: { translations: true } } } });
+  const stepsDone = (run8b?.steps ?? []).filter((s) => ["PAGE_SPLIT", "OCR", "TRANSLATE"].includes(s.step) && s.status === "DONE").length;
+  report("8b …the document pipeline split, read (hi) and translated it (exact-copy check passed)",
+    stepsDone === 3 && run8b?.texts[0]?.language === "hi" && run8b.texts[0].translations[0]?.exactCopyCheck === "PASSED", run8b?.steps.map((s) => `${s.step}:${s.status}`).join(" "));
   const doses = await prisma.medicationAdministration.count({ where: { medicationOrderId: a.orderId } });
   report("mar-scheduler scheduled the BD doses once", doses === 3, String(doses));
   const otCharges = await prisma.charge.count({ where: { OR: [{ sourceType: "Surgery", sourceId: a.surgeryId }, { sourceType: "SurgeryItemUsage", sourceId: a.usageId }, { sourceType: "IcuAdmission" }], encounterId: a.encounterId } });

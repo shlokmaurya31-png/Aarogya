@@ -86,6 +86,7 @@ export function labReport(c: Common & { tests: LabTest[] }): DocumentFixture {
   const w = new Writer(c);
   w.meta("LAB_REPORT", "labReport");
   c.tests.forEach((t) => w.lab(t));
+  if (c.mixed) w.advice();
   return w.done(c.mixed ? "MIXED" : "LAB_REPORT");
 }
 
