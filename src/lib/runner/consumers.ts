@@ -7,7 +7,7 @@ import { chargeCapture } from "@/lib/consumers/chargeCapture";
 import { stockMovement } from "@/lib/consumers/stockMovement";
 import { claimDrafting } from "@/lib/consumers/claimDrafting";
 import { dischargeReadiness } from "@/lib/consumers/dischargeReadiness";
-import { docAllergyBridge, docExtract, docMerge, docOcr, docPageSplit, docTranslate, docWithdrawal } from "@/lib/consumers/documentPipeline";
+import { docAllergyBridge, docConflicts, docExtract, docMerge, docOcr, docPageSplit, docTranslate, docWithdrawal } from "@/lib/consumers/documentPipeline";
 
 /**
  * Workflow spine §3.1 — the one place every domain-event consumer is
@@ -15,7 +15,7 @@ import { docAllergyBridge, docExtract, docMerge, docOcr, docPageSplit, docTransl
  * dispatch without, say, the workflow engine (previously a side-effect import
  * in individual routes). Idempotent: registration is keyed by name.
  */
-export const EXPECTED_CONSUMERS = ["observability-projection", "workflow-engine", "task-generator", "mar-scheduler", "notification-dispatch", "charge-capture", "stock-movement", "claim-drafting", "discharge-readiness", "doc-page-split", "doc-ocr", "doc-translate", "doc-extract", "doc-merge", "doc-allergy-bridge", "doc-withdrawal"] as const;
+export const EXPECTED_CONSUMERS = ["observability-projection", "workflow-engine", "task-generator", "mar-scheduler", "notification-dispatch", "charge-capture", "stock-movement", "claim-drafting", "discharge-readiness", "doc-page-split", "doc-ocr", "doc-translate", "doc-extract", "doc-merge", "doc-allergy-bridge", "doc-withdrawal", "doc-conflicts"] as const;
 
 export function registerAllConsumers(): string[] {
   registerConsumer(workflowConsumer);
@@ -33,5 +33,6 @@ export function registerAllConsumers(): string[] {
   registerConsumer(docMerge);
   registerConsumer(docAllergyBridge);
   registerConsumer(docWithdrawal);
+  registerConsumer(docConflicts);
   return getConsumerNames();
 }

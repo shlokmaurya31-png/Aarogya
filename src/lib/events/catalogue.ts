@@ -1433,6 +1433,19 @@ export const EVENT_CONTRACTS: EventContract[] = [
     sensitivity: "SENSITIVE", producer: "document pipeline (withdrawPatientRecord; the upload withdrawn; a re-run supersedes an entry)",
     payload: z.object({ recordId: id, personId: id, kind: patientProvidedKind, change: z.enum(["CORRECTED", "WITHDRAWN", "SUPERSEDED"]) }).strict(),
   }),
+  contract({
+    type: "RecordConflictDetected", version: 1, aggregateType: "RECORD_CONFLICT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "document pipeline (doc-conflicts: a patient-provided entry disagrees with this facility's verified record; nothing is overwritten)",
+    payload: z.object({
+      conflictId: id, personId: id, patientId: id, kind: patientProvidedKind, patientProvidedRecordId: id,
+      verifiedSourceType: z.enum(["LabResult", "Allergy", "MedicationOrder", "Diagnosis"]), verifiedSourceId: id,
+    }).strict(),
+  }),
+  contract({
+    type: "RecordConflictAcknowledged", version: 1, aggregateType: "RECORD_CONFLICT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "document pipeline (acknowledgeConflict: a clinician saw it, or resolved it by recording a verified entry)",
+    payload: z.object({ conflictId: id, patientId: id, status: z.enum(["ACKNOWLEDGED", "RESOLVED_BY_CLINICIAN"]), staffId: id }).strict(),
+  }),
 ];
 
 const KEY = (type: string, version: number) => `${type}@${version}`;

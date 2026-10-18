@@ -1,6 +1,7 @@
 import type { DomainEventConsumer } from "@/lib/events/consumers";
 import { extractStep, ocrStep, pageSplitStep, runForUpload, translateStep } from "@/lib/documents/pipeline";
 import { mergeReviewedFact, rebridgePerson, withdrawDocumentDerived } from "@/lib/documents/merge";
+import { checkRecordConflicts, recheckForPatient } from "@/lib/documents/conflicts";
 
 /**
  * Week 4a — the document pipeline's consumers (docs/DOCUMENT_PIPELINE_DESIGN.md
@@ -69,5 +70,25 @@ export const docWithdrawal: DomainEventConsumer = {
   handles: ["PersonDocumentWithdrawn"],
   async handle(event) {
     await withdrawDocumentDerived(String(event.payload.documentId));
+  },
+};
+
+/**
+ * Conflicts with verified records (§8): a new patient-provided entry is
+ * checked against the linked facility records; a verified record of a linked
+ * patient (released result, recorded diagnosis, allergy change, verified
+ * order) re-checks that person's entries of the same kind.
+ */
+export const docConflicts: DomainEventConsumer = {
+  name: "doc-conflicts",
+  handles: ["PatientProvidedRecordAdded", "LabResultReleased", "DiagnosisRecorded", "AllergyListUpdated", "MedicationVerified"],
+  async handle(event) {
+    const p = event.payload as { recordId?: string; patientId?: string; source?: string };
+    if (event.eventType === "PatientProvidedRecordAdded") return void (await checkRecordConflicts(String(p.recordId)));
+    // A bridged patient-provided allergy is not a verified record.
+    if (event.eventType === "AllergyListUpdated" && p.source === "PATIENT_PROVIDED") return;
+    if (!p.patientId) return;
+    const kind = ({ LabResultReleased: "LAB_RESULT", DiagnosisRecorded: "DIAGNOSIS", AllergyListUpdated: "ALLERGY", MedicationVerified: "MEDICATION_HISTORY" } as const)[event.eventType as "LabResultReleased"];
+    await recheckForPatient(p.patientId, kind);
   },
 };

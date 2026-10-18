@@ -2,6 +2,12 @@
  * Week 4a — the document pipeline, end to end on the mock providers
  * (docs/DOCUMENT_PIPELINE_DESIGN.md §12).
  *
+ * Part 5 (step 8, conflicts): each rule (lab value, allergy entered in
+ * error, medication dose, resolved diagnosis) fires once per pair, through
+ * the entry's event and a verified record's later event; the verified value
+ * is shown first, to the person and to the treating facility (opt-in and care
+ * relationship) only; a clinician acknowledges once; nothing is overwritten.
+ *
  * Part 4 (step 7, merge): only confirmed or corrected facts become entries
  * (PATIENT_PROVIDED, with provenance; exact fields equal the source spans);
  * once per fact; the run completes; the treating facility sees entries only
@@ -57,6 +63,8 @@ import { bulkReview, confirmFact, confirmFactField, correctFact, listOwnFacts, r
 import { COULD_NOT_READ, pageView, processingStatus, requestReprocess } from "../src/lib/documents/patientView";
 import { listOwnRecords, mergeReviewedFact, staffPatientProvidedRecords, withdrawPatientRecord } from "../src/lib/documents/merge";
 import { EXACT_FIELDS } from "../src/lib/documents/factSchemas";
+import { acknowledgeConflict, checkRecordConflicts, facilityConflicts, listOwnConflicts } from "../src/lib/documents/conflicts";
+import { emitFacilityEvent } from "../src/lib/events/facilityEvent";
 import { decidePersonConsent } from "../src/lib/person/consent";
 import { uploadPersonDocument, withdrawPersonDocument } from "../src/lib/person/documents";
 import { checkMedicationSafety } from "../src/lib/hospital/clinicalSafety";
@@ -507,6 +515,58 @@ async function main() {
   await drain();
   const rw = await runOf(dw.id);
   report("…and a run awaiting review is CANCELLED, its PENDING facts discarded", rw?.status === "CANCELLED" && (await prisma.extractedFact.count({ where: { processingId: rw.id } })) === 0);
+
+  // ── Part 5: conflicts with verified records (detected, shown, never overwritten) ──
+  const pc = await person();
+  const cLink = await prisma.personPatientLink.findFirstOrThrow({ where: { personId: pc.personId, status: "ACTIVE" }, include: { patient: { select: { facilityId: true } } } });
+  const cFac = cLink.patient.facilityId, cPat = cLink.patientId;
+  await decidePersonConsent({ userId: pc.userId, purpose: "SHARE_UPLOADS_WITH_TREATING", decision: "GRANTED" });
+  const staff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { department: { facilityId: cFac } }, select: { id: true, userId: true } });
+  const enc = await prisma.encounter.create({ data: { patientId: cPat, facilityId: cFac, type: "OPD", status: "IN_CONSULTATION", chiefComplaint: "conflict gate" } });
+  const order = await prisma.labOrder.create({ data: { encounterId: enc.id, patientId: cPat, testName: "Creatinine", category: "Biochemistry", orderedByStaffId: staff.id } });
+  const verifiedLab = await prisma.labResult.create({ data: { labOrderId: order.id, value: "1.10", unit: "mg/dL", status: "VERIFIED", resultedAt: new Date("2026-02-05T09:00:00Z") } });
+  await prisma.allergy.create({ data: { patientId: cPat, substance: "Sulfonamides", severity: "MODERATE", status: "ENTERED_IN_ERROR", verification: "CONFIRMED" } });
+  await prisma.medicationOrder.create({ data: { encounterId: enc.id, patientId: cPat, drugName: "Metformin", dose: "1000 mg", route: "ORAL", frequency: "BD", orderedByStaffId: staff.id, status: "VERIFIED", orderedAt: new Date("2026-01-01T00:00:00Z") } });
+  await prisma.diagnosis.create({ data: { patientId: cPat, encounterId: enc.id, diagnosis: "Type 2 Diabetes Mellitus", type: "FINAL", status: "RESOLVED", diagnosedByStaffId: staff.id, createdAt: new Date("2025-06-01T00:00:00Z") } });
+  for (const id of ["lab-hi-kft", "rx-mr-printed"]) {
+    const d = await upload(pc.userId, await fixturePdf(fixtureById(id)!));
+    await drain();
+    const runId = (await runOf(d.id))!.id;
+    const fs = (await listOwnFacts(pc.userId)).filter((f) => f.processingId === runId);
+    await bulkReview(pc.userId, { decisions: fs.map((f) => ({ factId: f.id, version: f.version, decision: "CONFIRM" })) });
+    await drain();
+  }
+  const conflicts = await prisma.recordConflict.findMany({ where: { personId: pc.personId } });
+  const kinds = conflicts.map((c) => c.kind).sort().join(",");
+  report("Each rule fires once: lab value, allergy entered in error, medication dose, resolved diagnosis", kinds === "ALLERGY,DIAGNOSIS,LAB_RESULT,MEDICATION_HISTORY", kinds);
+  report("…only for the analyte that differs (Creatinine 1.42 vs 1.10; Urea, Sodium, Potassium have no verified result)",
+    conflicts.filter((c) => c.kind === "LAB_RESULT").length === 1 && conflicts.find((c) => c.kind === "LAB_RESULT")?.verifiedSourceId === verifiedLab.id);
+  const detected = await prisma.domainEventOutbox.findMany({ where: { eventType: "RecordConflictDetected", personId: pc.personId } });
+  report("RecordConflictDetected once per conflict, FACILITY-scoped with the personId, no values",
+    detected.length === 4 && detected.every((e) => e.facilityId === cFac && !["1.42", "1.10", "Metformin", "Sulfonamides"].some((n) => carries(e.payload, n))));
+  for (const r of await prisma.patientProvidedRecord.findMany({ where: { personId: pc.personId } })) await checkRecordConflicts(r.id);
+  report("Re-detection is idempotent on the pair", (await prisma.recordConflict.count({ where: { personId: pc.personId } })) === 4);
+  report("Nothing was overwritten: the verified result and the entry keep their values",
+    (await prisma.labResult.findUniqueOrThrow({ where: { id: verifiedLab.id } })).value === "1.10"
+      && ((await prisma.patientProvidedRecord.findFirstOrThrow({ where: { personId: pc.personId, kind: "LAB_RESULT", value: { path: ["analyte"], equals: "Creatinine" } } })).value as { value: string }).value === "1.42");
+  const own = await listOwnConflicts(pc.userId);
+  const lab = own.find((c) => c.kind === "LAB_RESULT")!;
+  report("The person sees each conflict, the verified value first, then 'Your uploaded report says …' with a link to the page",
+    own.length === 4 && Object.keys(lab)[Object.keys(lab).indexOf("verified")] === "verified" && Object.keys(lab).indexOf("verified") < Object.keys(lab).indexOf("patientProvided")
+      && (lab.verified.value as { value: string }).value === "1.10" && lab.patientProvided?.label === "Your uploaded report says" && !!lab.patientProvided.documentId && lab.patientProvided.pageNo === 1);
+  report("The treating facility's clinicians see them (opt-in and care relationship); another facility sees none",
+    (await facilityConflicts(cFac, [cPat])).length === 4 && (await facilityConflicts("fac-other-none", [cPat])).length === 0);
+  const ack = await acknowledgeConflict({ conflictId: lab.id, facilityId: cFac, staffId: staff.id });
+  report("A clinician acknowledges a conflict (RecordConflictAcknowledged); once only; another facility can't",
+    ack.status === "ACKNOWLEDGED" && await refusedP(acknowledgeConflict({ conflictId: lab.id, facilityId: cFac, staffId: staff.id })) && await notFound(acknowledgeConflict({ conflictId: lab.id, facilityId: "fac-other-none", staffId: staff.id }))
+      && (await prisma.domainEventOutbox.count({ where: { aggregateId: lab.id, eventType: "RecordConflictAcknowledged" } })) === 1);
+  // A verified result recorded later is checked against the existing entries (through its event).
+  const order2 = await prisma.labOrder.create({ data: { encounterId: enc.id, patientId: cPat, testName: "Potassium", category: "Biochemistry", orderedByStaffId: staff.id } });
+  const k = await prisma.labResult.create({ data: { labOrderId: order2.id, value: "5.9", unit: "mEq/L", status: "VERIFIED", resultedAt: new Date("2026-02-05T12:00:00Z") } });
+  await prisma.$transaction((tx) => emitFacilityEvent(tx, { type: "LabResultReleased", aggregateId: k.id, facilityId: cFac, payload: { resultId: k.id, orderId: order2.id, patientId: cPat } }));
+  await drain();
+  report("A verified result released later is checked through its event: a new conflict (Potassium 4.6 vs 5.9)",
+    (await prisma.recordConflict.count({ where: { personId: pc.personId, verifiedSourceId: k.id } })) === 1);
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();
