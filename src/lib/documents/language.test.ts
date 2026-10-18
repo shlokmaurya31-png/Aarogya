@@ -22,6 +22,12 @@ describe("language detection", () => {
       expect(detectLanguage(lines).language, l).toBe(l);
     }
   });
+  it("Odia (Orya) and Urdu (Arabic script, right to left) are detected, values in English notwithstanding", () => {
+    const or = detectLanguage([strip("ରୋଗୀ: Sasmita Behera"), strip("TSH 3.1 µIU/mL (0.4 - 4.0)"), strip("ଔଷଧ ସମୟରେ ଖାଆନ୍ତୁ ଏବଂ ପ୍ରଚୁର ପାଣି ପିଅନ୍ତୁ।")]);
+    expect([or.language, or.script]).toEqual(["or", "Orya"]);
+    const ur = detectLanguage([strip("تشخیص: Allergic Rhinitis"), strip("Tab. Montair 10 mg 0-0-1 x 15 days"), strip("مشورہ: دوائیں وقت پر لیں اور خوب پانی پئیں۔")]);
+    expect([ur.language, ur.script]).toEqual(["ur", "Arab"]);
+  });
   it("Marathi and Hindi are told apart; values in English don't make a page English", () => {
     expect(detectLanguage([strip("तपासणी अहवाल"), strip("Creatinine 1.42 mg/dL"), strip("औषधे वेळेवर घ्या आणि भरपूर पाणी प्या.")]).language).toBe("mr");
     expect(detectLanguage([strip("जाँच रिपोर्ट"), strip("Hemoglobin 13.5 g/dL"), strip("Sunrise Diagnostics, Pune")]).language).toBe("hi");

@@ -11,8 +11,10 @@ import type { DocumentStepError } from "@prisma/client";
  *                comes out upright), then dropped with the rest of the metadata
  *                (no camera, time or GPS tags reach storage or a provider);
  *   deskew       a small tilt (up to ±10°) is measured from the text lines'
- *                projection profile and undone, only when the measurement is
- *                clear; anything ambiguous is left as it is;
+ *                projection profile (ink found by a local threshold, so
+ *                shadows and the background around a photographed page don't
+ *                count) and undone, only when the measurement is clear;
+ *                anything ambiguous is left as it is;
  *   size         the long edge is brought down to 2,400 px (never enlarged);
  *   compression  JPEG (mozjpeg, quality 82) on a white background.
  *
@@ -54,7 +56,17 @@ const WHITE = { r: 255, g: 255, b: 255, alpha: 1 };
  * to each candidate angle; the angle whose row histogram is most peaked
  * (largest sum of squares) is the one the text lines run along.
  */
-export function estimateSkew(gray: Uint8Array, width: number, height: number): { degrees: number; gain: number } {
+export function estimateSkew(gray: Uint8Array, width: number, height: number, local?: Uint8Array): { degrees: number; gain: number } {
+  const xs: number[] = [], ys: number[] = [];
+  if (local) {
+    // Local threshold: ink is darker than its own neighbourhood. Shadows,
+    // dark backgrounds around a photographed page and gradients are not ink.
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+      const i = y * width + x;
+      if (gray[i] + LOCAL_INK_DELTA < local[i]) { xs.push(x); ys.push(y); }
+    }
+    return profile(xs, ys, width, height, gray.length);
+  }
   // Otsu's threshold on the grey histogram.
   const hist = new Array<number>(256).fill(0);
   for (const v of gray) hist[v] += 1;
@@ -72,8 +84,14 @@ export function estimateSkew(gray: Uint8Array, width: number, height: number): {
     const between = wB * wF * (mB - mF) ** 2;
     if (between > best) { best = between; threshold = t; }
   }
-  const xs: number[] = [], ys: number[] = [];
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) if (gray[y * width + x] <= threshold) { xs.push(x); ys.push(y); }
+  return profile(xs, ys, width, height, total);
+}
+
+/** How much darker than its neighbourhood (0–255) a pixel must be to count as ink. */
+const LOCAL_INK_DELTA = 28;
+
+function profile(xs: number[], ys: number[], width: number, height: number, total: number): { degrees: number; gain: number } {
   // A blank page, or one that is mostly ink (a photo, not text): nothing to measure.
   if (xs.length < 50 || xs.length > total * 0.5) return { degrees: 0, gain: 1 };
   const diag = Math.ceil(Math.hypot(width, height));
@@ -122,7 +140,8 @@ export async function normalizePageImage(bytes: Buffer): Promise<NormalizedPage 
       .toBuffer({ resolveWithObject: true });
     // Measure the tilt on a small grey copy (fast; text lines survive the downscale).
     const probe = await sharp(upright.data).greyscale().resize({ width: 900, height: 900, fit: "inside", withoutEnlargement: true }).raw().toBuffer({ resolveWithObject: true });
-    const skew = estimateSkew(new Uint8Array(probe.data), probe.info.width, probe.info.height);
+    const local = await sharp(probe.data, { raw: probe.info }).blur(12).toColourspace("b-w").raw().toBuffer();
+    const skew = estimateSkew(new Uint8Array(probe.data), probe.info.width, probe.info.height, new Uint8Array(local));
     let img = sharp(upright.data);
     if (skew.degrees !== 0) {
       img = sharp(await img.rotate(-skew.degrees, { background: WHITE }).png({ compressionLevel: 1 }).toBuffer())

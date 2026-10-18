@@ -64,6 +64,8 @@ const subscriptionStatus = z.enum(["TRIAL", "ACTIVE", "PAST_DUE", "GRACE", "SUSP
 const personLinkMethod = z.enum(PERSON_LINK_METHODS);
 // Week 4a — the document pipeline's closed codes.
 const documentLanguage = z.enum(["en", "hi", "mr", "ta", "bn", "gu", "te", "kn", "ml", "mixed", "und"]);
+// Week 4b: Odia and Urdu join the pipeline (the app's eleven languages).
+const documentLanguageV2 = z.enum(["en", "hi", "mr", "ta", "bn", "gu", "te", "kn", "ml", "or", "ur", "mixed", "und"]);
 const confidenceBand = z.enum(["HIGH", "MEDIUM", "LOW"]);
 const documentStep = z.enum(["PAGE_SPLIT", "OCR", "TRANSLATE", "EXTRACT", "MERGE"]);
 const extractedFactType = z.enum(["DOCUMENT_META", "DIAGNOSIS", "MEDICATION", "LAB_VALUE", "PROCEDURE", "ALLERGY"]);
@@ -1406,6 +1408,24 @@ export const EVENT_CONTRACTS: EventContract[] = [
     sensitivity: "INTERNAL", producer: "document pipeline (doc-translate: protected values masked; a translation failing the exact-copy check is never shown)",
     payload: z.object({
       processingId: id, documentId: id, personId: id, targetLanguage: documentLanguage,
+      translatedPages: z.number().int().min(0), exactCopyFailures: z.number().int().min(0), skipped: z.boolean(),
+    }).strict(),
+  }),
+  contract({
+    // v2 (Week 4b): Odia and Urdu.
+    type: "DocumentTextExtracted", version: 2, aggregateType: "DOCUMENT_PROCESSING", scope: "PERSON",
+    sensitivity: "INTERNAL", producer: "document pipeline (doc-ocr: text and language per page)",
+    payload: z.object({
+      processingId: id, documentId: id, personId: id, pageCount: z.number().int().min(1),
+      languages: z.array(documentLanguageV2), handwritten: z.boolean(), confidenceBand,
+    }).strict(),
+  }),
+  contract({
+    // v2 (Week 4b): Odia and Urdu.
+    type: "DocumentTranslated", version: 2, aggregateType: "DOCUMENT_PROCESSING", scope: "PERSON",
+    sensitivity: "INTERNAL", producer: "document pipeline (doc-translate: protected values masked; a translation failing the exact-copy check is never shown)",
+    payload: z.object({
+      processingId: id, documentId: id, personId: id, targetLanguage: documentLanguageV2,
       translatedPages: z.number().int().min(0), exactCopyFailures: z.number().int().min(0), skipped: z.boolean(),
     }).strict(),
   }),

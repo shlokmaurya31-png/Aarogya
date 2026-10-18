@@ -3,16 +3,16 @@ import type { DocumentFixture } from "./types";
 
 /**
  * The synthetic evaluation set (docs/DOCUMENT_PIPELINE_DESIGN.md §10.1): 50
- * reports in nine languages (en hi mr ta bn gu te kn ml), 10 of them
- * handwritten-style. Every person, doctor, registration number and facility
+ * reports in the app's eleven languages (en hi mr ta bn gu te kn ml or ur;
+ * Odia and Urdu added in Week 4b), 10 of them handwritten-style. Every person, doctor, registration number and facility
  * is invented; no real document was used. Expected facts are generated from
  * the same input as the report (exact by construction).
  *
- *   printed lab reports       15   en hi mr ta bn
- *   printed prescriptions      8   en hi gu mr
+ *   printed lab reports       15   en hi mr ta bn or
+ *   printed prescriptions      8   en hi gu mr ur
  *   handwritten prescriptions 10   en hi mr te   (OCR misreads planted)
- *   discharge summaries        7   en hi kn
- *   imaging reports            5   en mr ml
+ *   discharge summaries        7   en hi kn ur
+ *   imaging reports            5   en mr ml or
  *   mixed-language pages       5   hi+en, ta+en
  *
  * Pending clinical advisor: the reference ranges and drug regimens are
@@ -62,7 +62,7 @@ export const SAMPLES: DocumentFixture[] = [
   labReport({ id: "lab-ta-cbc", language: "ta", facility: "Vaigai Labs, Madurai", date: "29/02/2028", patient: "Anbu Selvan", tests: CBC("10.4", "13200", "512", "34", "L", "H") }),
   labReport({ id: "lab-bn-lipid", language: "bn", facility: "Hooghly Diagnostic Centre, Kolkata", date: "09/03/2026", patient: "Arindam Ghosh", tests: LIPID("182", "47", "96", "132") }),
   labReport({ id: "lab-bn-lft", language: "bn", facility: "Teesta Labs, Siliguri", date: "21/01/2026", patient: "Rupa Das", doctor: { name: "Dr. Sanjay Mukherjee", reg: "WBMC-61407" }, tests: LFT("2.4", "118", "96", "160", "3.2", "H") }),
-  labReport({ id: "lab-bn-thyroid", language: "bn", facility: "Padma Pathology, Durgapur", date: "06/02/2026", patient: "Moumita Sen", tests: THYROID("3.1", "1.3", "1.4") }),
+  labReport({ id: "lab-or-thyroid", language: "or", facility: "Mahanadi Diagnostics, Cuttack", date: "06/02/2026", patient: "Sasmita Behera", tests: THYROID("3.1", "1.3", "1.4") }),
 
   // ── Printed prescriptions (8) ──
   prescription({ id: "rx-en-1", language: "en", facility: "Green Leaf Clinic, Nagpur", date: "15/03/2026", patient: "Vikram Singh", doctor: { name: "Dr. Ritu Bansal", reg: "MMC-2014/09/7781" }, diagnosis: "Essential Hypertension", meds: [
@@ -81,7 +81,7 @@ export const SAMPLES: DocumentFixture[] = [
     m("Cap.", "Pan-D", "40 mg", "1-0-0", "14 days"), m("Syp.", "Sucralfate", "10 ml", "1-1-1", "14 days"),
   ] }),
   prescription({ id: "rx-gu-1", language: "gu", facility: "Sabarmati Clinic, Ahmedabad", date: "18/01/2026", patient: "Hetal Patel", doctor: { name: "Dr. Nirav Shah", reg: "GMC-50231" }, diagnosis: "Hypothyroidism", meds: [m("Tab.", "Levothyroxine", "50 mcg", "1-0-0", "90 days")] }),
-  prescription({ id: "rx-gu-2", language: "gu", facility: "Narmada Health Centre, Vadodara", date: "07/03/2026", patient: "Jignesh Desai", doctor: { name: "Dr. Bhavna Trivedi", reg: "GMC-61842" }, diagnosis: "Allergic Rhinitis", brands: ["Montair"], meds: [
+  prescription({ id: "rx-ur-1", language: "ur", facility: "Charminar Clinic, Hyderabad", date: "07/03/2026", patient: "Imran Siddiqui", doctor: { name: "Dr. Nazia Farooqui", reg: "TSMC-61842" }, diagnosis: "Allergic Rhinitis", brands: ["Montair"], meds: [
     m("Tab.", "Montair", "10 mg", "0-0-1", "15 days"), m("Tab.", "Cetirizine", "10 mg", "0-0-1", "5 days"),
   ] }),
   prescription({ id: "rx-mr-printed", language: "mr", facility: "Shree Clinic, Nashik", date: "21/01/2026", patient: "Sunita Patil", doctor: { name: "Dr. Prakash Joshi", reg: "MMC-2008/11/5521" }, diagnosis: "Type 2 Diabetes Mellitus", allergy: "Sulfonamides", meds: [
@@ -125,7 +125,7 @@ export const SAMPLES: DocumentFixture[] = [
   dischargeSummary({ id: "dc-en-2", language: "en", facility: "Lakeview Hospital, Udaipur", date: "24/02/2026", patient: "Kailash Meena", doctor: { name: "Dr. Sunita Rathore", reg: "RMC-38812" }, diagnosis: "Acute Myocardial Infarction", procedure: "Coronary Angioplasty", allergy: "Contrast Dye", tests: [t("Troponin I", "4.8", "ng/mL", "0 - 0.04", "H")], meds: [
     m("Tab.", "Aspirin", "75 mg", "1-0-0", "90 days"), m("Tab.", "Clopidogrel", "75 mg", "1-0-0", "90 days"), m("Tab.", "Atorvastatin", "40 mg", "0-0-1", "90 days"),
   ] }),
-  dischargeSummary({ id: "dc-en-3", language: "en", facility: "Sea Breeze Hospital, Visakhapatnam", date: "06/01/2026", patient: "Sravani Kumari", doctor: { name: "Dr. Mohan Varma", reg: "APMC-70145" }, diagnosis: "Dengue Fever", tests: [t("Platelet Count", "62", "x10^3/µL", "150 - 450", "L")], meds: [m("Tab.", "Paracetamol", "500 mg", "1-1-1", "5 days")] }),
+  dischargeSummary({ id: "dc-ur-1", language: "ur", facility: "Aligarh City Hospital, Aligarh", date: "06/01/2026", patient: "Shabana Khatoon", doctor: { name: "Dr. Tariq Ansari", reg: "UPMC-70145" }, diagnosis: "Dengue Fever", tests: [t("Platelet Count", "62", "x10^3/µL", "150 - 450", "L")], meds: [m("Tab.", "Paracetamol", "500 mg", "1-1-1", "5 days")] }),
   dischargeSummary({ id: "dc-hi-1", language: "hi", facility: "Shri Ram Hospital, Meerut", date: "15/02/2026", patient: "Om Prakash", doctor: { name: "Dr. Anita Goel", reg: "UPMC-52290" }, diagnosis: "Acute Exacerbation of COPD", tests: [t("Hemoglobin", "15.8", "g/dL", "13.0 - 17.0")], meds: [
     m("Tab.", "Prednisolone", "40 mg", "1-0-0", "5 days"), m("Tab.", "Doxofylline", "400 mg", "1-0-1", "14 days"),
   ] }),
@@ -141,7 +141,7 @@ export const SAMPLES: DocumentFixture[] = [
 
   // ── Imaging reports (5) ──
   imagingReport({ id: "img-en-xray", language: "en", facility: "Clear View Imaging, Chandigarh", date: "08/03/2026", patient: "Harpreet Kaur", doctor: { name: "Dr. Gurpreet Sandhu", reg: "PMC-30981" }, procedure: "X-Ray Chest PA View", impression: "Right lower zone consolidation" }),
-  imagingReport({ id: "img-en-ct", language: "en", facility: "Apex Scan Centre, Raipur", date: "17/02/2026", patient: "Ashok Verma", doctor: { name: "Dr. Neha Agrawal", reg: "CGMC-12764" }, procedure: "CT Brain Plain", impression: "No acute intracranial abnormality" }),
+  imagingReport({ id: "img-or-ct", language: "or", facility: "Kalinga Scan Centre, Bhubaneswar", date: "17/02/2026", patient: "Ashok Mohanty", doctor: { name: "Dr. Neha Panda", reg: "OMC-12764" }, procedure: "CT Brain Plain", impression: "No acute intracranial abnormality" }),
   imagingReport({ id: "img-mr-usg", language: "mr", facility: "Sahyadri Imaging Centre, Kolhapur", date: "09/03/2026", patient: "Vijay Shinde", doctor: { name: "Dr. Neha Deshpande", reg: "MMC-2015/07/8890" }, procedure: "USG Abdomen and Pelvis", impression: "Grade I fatty liver" }),
   imagingReport({ id: "img-mr-mri", language: "mr", facility: "Godavari Imaging, Nanded", date: "27/01/2026", patient: "Prakash Wagh", doctor: { name: "Dr. Swati Kulkarni", reg: "MMC-2012/03/6620" }, procedure: "MRI Lumbosacral Spine", impression: "L4-L5 disc bulge" }),
   imagingReport({ id: "img-ml-usg", language: "ml", facility: "Periyar Imaging Centre, Thrissur", date: "13/03/2026", patient: "Anitha Nair", doctor: { name: "Dr. Suresh Pillai", reg: "TCMC-61930" }, procedure: "USG Thyroid", impression: "Multinodular goitre" }),

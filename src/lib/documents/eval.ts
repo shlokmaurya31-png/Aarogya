@@ -1,5 +1,7 @@
 import type { ExtractedFactType } from "@prisma/client";
+import { createHash } from "node:crypto";
 import type { DocumentProviders, ProcessingPermit } from "@/lib/ai/documents/types";
+import { mockControl } from "@/lib/ai/documents/mock";
 import { FIXTURES, fixturePdf, ocrLines } from "./fixtures";
 import type { DocumentFixture, ExpectedFact } from "./fixtures/types";
 import { EXACT_FIELDS, factFields } from "./factSchemas";
@@ -7,6 +9,8 @@ import { assessCandidates, maskIdentifierLines, type AssessedFact } from "./asse
 import { identifierSpans } from "./identifiers";
 import { detectLanguage } from "./language";
 import { splitPdf, stripProtected, translateText } from "./steps";
+import { normalizePageImage } from "./normalize";
+import { renderFixturePage } from "./fixtures/render";
 
 /**
  * Week 4a — the evaluation (docs/DOCUMENT_PIPELINE_DESIGN.md §10.2). Runs each
@@ -42,13 +46,36 @@ function matchKey(type: ExtractedFactType, sourceText: string | undefined) {
   return `${type}|${sourceText ?? ""}`;
 }
 
-export async function scoreSample(f: DocumentFixture, providers: DocumentProviders, permit: ProcessingPermit, dictionary: readonly string[]): Promise<SampleScore> {
-  const pages = await splitPdf(await fixturePdf(f));
-  if (typeof pages === "string") throw new Error(`${f.id}: ${pages}`);
+/**
+ * What the OCR provider is given: the marker PDFs (CI; the mock reads their
+ * marker), or the rendered page images in each sample's own script, normalized
+ * as the pipeline normalizes a phone photo (the real run).
+ */
+export type EvalInput = "marker-pdf" | "rendered-image";
+
+async function samplePages(f: DocumentFixture, input: EvalInput, providers: DocumentProviders): Promise<{ bytes: Buffer; contentType: string }[]> {
+  if (input === "marker-pdf") {
+    const pages = await splitPdf(await fixturePdf(f));
+    if (typeof pages === "string") throw new Error(`${f.id}: ${pages}`);
+    return pages.map((bytes) => ({ bytes, contentType: "application/pdf" }));
+  }
+  const out: { bytes: Buffer; contentType: string }[] = [];
+  for (let n = 1; n <= f.pages.length; n++) {
+    const page = await normalizePageImage(await renderFixturePage(f, n));
+    if (typeof page === "string") throw new Error(`${f.id}: ${page}`);
+    // The OCR mock reads an image page by its sha256.
+    if (providers.ocr.id === "mock") mockControl.imagePages.set(createHash("sha256").update(page.bytes).digest("hex"), `${f.id}#${n}`);
+    out.push({ bytes: page.bytes, contentType: page.contentType });
+  }
+  return out;
+}
+
+export async function scoreSample(f: DocumentFixture, providers: DocumentProviders, permit: ProcessingPermit, dictionary: readonly string[], input: EvalInput = "marker-pdf"): Promise<SampleScore> {
+  const pages = await samplePages(f, input, providers);
   const s: SampleScore = { id: f.id, language: f.language, handwritten: f.handwritten, category: f.category, expectedFields: 0, correctFields: 0, extractedFields: 0, correctExtractedFields: 0, confirmedFacts: 0, confirmedExact: 0, confirmedExactFields: 0, wrongFacts: 0, wrongFactsLow: 0, translatedPages: 0, translationFailures: 0, dropped: 0, facts: 0 };
   const assessed: AssessedFact[] = [];
-  for (const [i, bytes] of pages.entries()) {
-    const ocr = await providers.ocr.ocrPage({ bytes, contentType: "application/pdf" }, {}, permit);
+  for (const [i, pageInput] of pages.entries()) {
+    const ocr = await providers.ocr.ocrPage(pageInput, {}, permit);
     const lang = detectLanguage(ocr.layout.map((l) => stripProtected(l.text, dictionary)));
     if (lang.language !== f.targetLanguage) {
       const tr = await translateText(ocr.text, lang.language, f.targetLanguage, dictionary, [f.patientName], providers, permit);
@@ -107,9 +134,9 @@ export interface EvalReport {
 
 const ratio = (a: number, b: number) => (b === 0 ? 1 : a / b);
 
-export async function runEvaluation(providers: DocumentProviders, permit: ProcessingPermit, dictionary: readonly string[], fixtures: readonly DocumentFixture[] = FIXTURES): Promise<EvalReport> {
+export async function runEvaluation(providers: DocumentProviders, permit: ProcessingPermit, dictionary: readonly string[], fixtures: readonly DocumentFixture[] = FIXTURES, input: EvalInput = "marker-pdf"): Promise<EvalReport> {
   const samples: SampleScore[] = [];
-  for (const f of fixtures) samples.push(await scoreSample(f, providers, permit, dictionary));
+  for (const f of fixtures) samples.push(await scoreSample(f, providers, permit, dictionary, input));
   const sum = (xs: SampleScore[], k: keyof SampleScore) => xs.reduce((n, x) => n + (x[k] as number), 0);
   const acc = (xs: SampleScore[]) => ratio(sum(xs, "correctFields"), sum(xs, "expectedFields"));
   const group = (key: (x: SampleScore) => string) => {

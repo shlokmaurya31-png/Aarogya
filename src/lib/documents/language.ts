@@ -8,7 +8,7 @@ import { DEVANAGARI_STOPWORDS, ENGLISH_STOPWORDS, SUPPORTED_LANGUAGES, type Supp
  *
  *   language   ISO 639-1 of the page; "mixed" when a supported Indic language
  *              and English prose share the page; "und" when the dominant
- *              script isn't one of the nine supported languages.
+ *              script isn't one of the supported languages' scripts.
  *   lines      each line's language (null for a line with no letters).
  */
 const SCRIPTS: [string, RegExp, SupportedLanguage | null][] = [
@@ -20,6 +20,9 @@ const SCRIPTS: [string, RegExp, SupportedLanguage | null][] = [
   ["Telu", /\p{Script=Telugu}/u, "te"],
   ["Knda", /\p{Script=Kannada}/u, "kn"],
   ["Mlym", /\p{Script=Malayalam}/u, "ml"],
+  ["Orya", /\p{Script=Oriya}/u, "or"],
+  // Urdu is the only supported language written in the Arabic script.
+  ["Arab", /\p{Script=Arabic}/u, "ur"],
 ];
 const LETTER = /\p{L}|\p{M}/u;
 
