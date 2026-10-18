@@ -126,7 +126,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: verify-report
-          path: .verify-report/latest.md
+          # The summary and every gate's own log (its checks, measurements and errors).
+          path: |
+            .verify-report/latest.md
+            .verify-report/gates/
           include-hidden-files: true
           if-no-files-found: warn
 
