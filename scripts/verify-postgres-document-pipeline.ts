@@ -2,6 +2,13 @@
  * Week 4a — the document pipeline, end to end on the mock providers
  * (docs/DOCUMENT_PIPELINE_DESIGN.md §12).
  *
+ * Part 3 (step 6, review): owner only, another Person's fact or document is a
+ * 404; a fact is decided once under concurrency; a correction is shown back
+ * before it is stored as typed, and refused by the schema when invalid; bulk
+ * confirm only for HIGH printed facts (all or nothing); handwritten facts
+ * field by field; a fact failing the exact-copy check can't be confirmed;
+ * status and pages (a failed translation withheld); reprocess.
+ *
  * Part 2 (step 5, extraction): from the original text (never the
  * translation, never the person's name); every fact PENDING; printed lab
  * values verbatim and HIGH; handwritten facts labelled, at most MEDIUM, a
@@ -38,6 +45,8 @@ import { pageSplitStep, resumeStalledDocumentSteps, runForUpload } from "../src/
 import { claimStep } from "../src/lib/documents/pipelineState";
 import { documentProcessingPermit } from "../src/lib/ai/realData";
 import type { ProcessingPermit } from "../src/lib/ai/documents";
+import { bulkReview, confirmFact, confirmFactField, correctFact, listOwnFacts, rejectFact } from "../src/lib/documents/review";
+import { COULD_NOT_READ, pageView, processingStatus, requestReprocess } from "../src/lib/documents/patientView";
 
 let pass = 0;
 let fail = 0;
@@ -73,6 +82,8 @@ async function upload(userId: string, bytes: Buffer, type = "REPORT") {
   return uploadPersonDocument(userId, { bytes, contentType: "application/pdf", originalName: "report.pdf", title: "Report", type });
 }
 
+const refusedP = <T>(p: Promise<T>) => p.then(() => false, () => true);
+const notFound = <T>(p: Promise<T>) => p.then(() => false, (e) => e?.constructor?.name === "NotFoundError");
 const runOf = (documentId: string) => prisma.documentProcessing.findFirst({ where: { documentId }, include: { steps: true } });
 const stepStatus = (r: { steps: { step: string; status: string }[] } | null, step: string) => r?.steps.find((s) => s.step === step)?.status;
 const eventsOf = (processingId: string, type: string) => prisma.domainEventOutbox.findMany({ where: { aggregateId: processingId, eventType: type } });
@@ -291,6 +302,103 @@ async function main() {
   const d9 = await upload(p9.userId, await fixturePdf(hi), "ID_PROOF");
   await drain();
   report("An ID proof upload never starts a run", (await prisma.documentProcessing.count({ where: { documentId: d9.id } })) === 0);
+
+  // ── Part 3: the person's review (owner only; compare-and-set) ──
+  setDocumentProvidersForTest(null);
+  mockControl.reset();
+  const rx = fixtureById("rx-mr-printed")!;
+  const pr = await person({ language: "en" });
+  const dr = await upload(pr.userId, await fixturePdf(rx));
+  await drain();
+  const rr = await runOf(dr.id);
+  const pending = await listOwnFacts(pr.userId);
+  report("The review list: the person's PENDING facts, with source text and region", pending.length === rx.expected.length && pending.every((f) => f.sourceText && f.region && f.processingId === rr!.id));
+  const lab0 = pending.find((f) => f.factType === "MEDICATION")!;
+  const dbl = await Promise.allSettled([confirmFact(pr.userId, lab0.id, { version: lab0.version }), confirmFact(pr.userId, lab0.id, { version: lab0.version })]);
+  const conf = await prisma.extractedFact.findUniqueOrThrow({ where: { id: lab0.id } });
+  const reviewedEv = await prisma.domainEventOutbox.findMany({ where: { aggregateId: rr!.id, eventType: "ExtractedFactReviewed" } });
+  report("Two concurrent confirms of one fact: decided once (one wins, one refused), one event",
+    dbl.filter((x) => x.status === "fulfilled").length === 1 && conf.reviewStatus === "CONFIRMED" && conf.reviewedVia === "SELF" && reviewedEv.length === 1);
+  report("ExtractedFactReviewed carries ids and codes only", !["Metformin", "500 mg", rx.patientName].some((n) => carries(reviewedEv[0].payload, n)) && (reviewedEv[0].payload as { decision: string }).decision === "CONFIRMED");
+  report("A decided fact can't be decided again", await refusedP(rejectFact(pr.userId, lab0.id, { version: conf.version })));
+
+  const other = await person();
+  report("Another Person's fact is a 404 (confirm, correct, reject, field)",
+    (await Promise.all([confirmFact(other.userId, pending[1].id, { version: pending[1].version }), correctFact(other.userId, pending[1].id, { version: pending[1].version, value: {}, typedValueConfirmed: true }), rejectFact(other.userId, pending[1].id, { version: pending[1].version }), confirmFactField(other.userId, pending[1].id, "text", { version: pending[1].version })].map((p) => p.then(() => "ok", (e) => e?.constructor?.name))))
+      .every((n) => n === "NotFoundError"));
+  report("…and so are another Person's document status and pages", await notFound(processingStatus(other.userId, dr.id)) && await notFound(pageView(other.userId, dr.id, 1)));
+
+  const diag = pending.find((f) => f.factType === "DIAGNOSIS")!;
+  const shown = await correctFact(pr.userId, diag.id, { version: diag.version, value: { text: "Type 2 diabetes mellitus  " } });
+  report("A correction is shown back first (not stored until confirmed as typed)", "needsConfirmation" in shown && (await prisma.extractedFact.findUniqueOrThrow({ where: { id: diag.id } })).reviewStatus === "PENDING");
+  report("…an invalid correction is refused by the type's schema", await refusedP(correctFact(pr.userId, diag.id, { version: diag.version, value: { text: "" }, typedValueConfirmed: true })) && await refusedP(correctFact(pr.userId, diag.id, { version: diag.version, value: { text: "x", note: "y" }, typedValueConfirmed: true })));
+  await correctFact(pr.userId, diag.id, { version: diag.version, value: { text: "Type 2 diabetes mellitus" }, typedValueConfirmed: true });
+  const corrected = await prisma.extractedFact.findUniqueOrThrow({ where: { id: diag.id } });
+  report("…confirmed as typed: CORRECTED with the value stored exactly", corrected.reviewStatus === "CORRECTED" && (corrected.reviewedValue as { text: string }).text === "Type 2 diabetes mellitus" && (corrected.value as { text: string }).text === "Type 2 Diabetes Mellitus");
+
+  // Bulk: only HIGH printed facts may be confirmed together.
+  const now = await listOwnFacts(pr.userId);
+  const allergyFact = now.find((f) => f.factType === "ALLERGY")!;
+  await prisma.extractedFact.update({ where: { id: allergyFact.id }, data: { confidenceBand: "LOW", version: { increment: 1 } } });
+  const fresh = await listOwnFacts(pr.userId);
+  report("The review list puts LOW first", fresh[0].confidenceBand === "LOW");
+  const before3 = await prisma.extractedFact.count({ where: { processingId: rr!.id, reviewStatus: "PENDING" } });
+  report("Bulk confirm including a LOW fact is refused, and nothing is half-applied",
+    await refusedP(bulkReview(pr.userId, { decisions: fresh.map((f) => ({ factId: f.id, version: f.version, decision: "CONFIRM" })) }))
+      && (await prisma.extractedFact.count({ where: { processingId: rr!.id, reviewStatus: "PENDING" } })) === before3);
+  const highs = fresh.filter((f) => f.bulkConfirmable);
+  const low = fresh.find((f) => f.confidenceBand === "LOW")!;
+  await bulkReview(pr.userId, { decisions: [...highs.map((f) => ({ factId: f.id, version: f.version, decision: "CONFIRM" })), { factId: low.id, version: low.version, decision: "REJECT" }] });
+  report("Bulk: HIGH printed facts confirmed and the LOW one rejected, in one go", highs.length > 0 && (await prisma.extractedFact.count({ where: { processingId: rr!.id, reviewStatus: "PENDING" } })) === 0);
+
+  // Handwritten: field by field only.
+  const hwFacts = await listOwnFacts(p2.userId);
+  const hwMed = hwFacts.find((f) => f.factType === "MEDICATION" && f.exactCopyCheck === "PASSED")!;
+  report("A handwritten fact can't be confirmed as a whole, nor in bulk",
+    await refusedP(confirmFact(p2.userId, hwMed.id, { version: hwMed.version })) && await refusedP(bulkReview(p2.userId, { decisions: [{ factId: hwMed.id, version: hwMed.version, decision: "CONFIRM" }] })) && !hwMed.bulkConfirmable);
+  let v = hwMed.version;
+  for (const field of hwMed.fields.slice(0, -1)) v = (await confirmFactField(p2.userId, hwMed.id, field, { version: v })).version;
+  const partly = await prisma.extractedFact.findUniqueOrThrow({ where: { id: hwMed.id } });
+  report("…each field confirmed one by one; until the last, the fact stays PENDING", partly.reviewStatus === "PENDING" && partly.confirmedFields.length === hwMed.fields.length - 1);
+  await confirmFactField(p2.userId, hwMed.id, hwMed.fields[hwMed.fields.length - 1], { version: v });
+  const whole = await prisma.extractedFact.findUniqueOrThrow({ where: { id: hwMed.id } });
+  report("…and the last field makes it CONFIRMED (every field confirmed)", whole.reviewStatus === "CONFIRMED" && hwMed.fields.every((x) => whole.confirmedFields.includes(x)));
+  report("A field the fact doesn't have is refused", await refusedP(confirmFactField(p2.userId, hwFacts.find((f) => f.id !== hwMed.id && f.reviewStatus === "PENDING")!.id, "colour", { version: 1 })));
+
+  // A fact that fails the exact-copy check can't be confirmed as extracted.
+  setDocumentProvidersForTest({ ...mocks, extraction: { id: "mock", async extract(page, permit) {
+    const r = await mocks.extraction.extract(page, permit);
+    return { ...r, facts: r.facts.map((f) => f.factType === "LAB_VALUE" ? { ...f, value: { ...f.value, value: String(Math.round(Number(f.value.value))), numericValue: Math.round(Number(f.value.value)) } } : f) };
+  } } });
+  const pe = await person();
+  const de = await upload(pe.userId, await fixturePdf(hi));
+  await drain();
+  setDocumentProvidersForTest(null);
+  const rounded = (await listOwnFacts(pe.userId)).filter((f) => f.factType === "LAB_VALUE");
+  const bad = rounded.find((f) => f.exactCopyCheck === "FAILED");
+  report("A model that rounds a lab value: exact-copy FAILED, LOW", !!bad && bad.confidenceBand === "LOW", rounded.map((f) => `${(f.value as { value: string }).value}:${f.exactCopyCheck}`).join(" "));
+  report("…it can't be confirmed as extracted (only corrected to the page, or rejected)", !!bad && await refusedP(confirmFact(pe.userId, bad.id, { version: bad.version })) && !bad.confirmable);
+  void de;
+
+  // Status and pages.
+  const st = await processingStatus(p1.userId, d1.id);
+  const pg = await pageView(p1.userId, d1.id, 1);
+  report("Status: steps (status only), languages, a translation, fact counts", "steps" in st && st.languages?.join() === "hi" && st.translated === true && (st.facts?.PENDING ?? 0) === hi.expected.length);
+  report("A page: the original image (signed URL), the text as read, and the translation, each labelled",
+    pg.original.label === "ORIGINAL" && !!pg.original.imageUrl && pg.text?.label === "TEXT_AS_READ" && pg.translation?.label === "TRANSLATION" && "text" in pg.translation && pg.translation.text.includes("Laboratory Report"));
+  const pgFailed = await pageView(p6.userId, d6.id, 1);
+  report("A translation that failed the exact-copy check is withheld; the original is shown", pgFailed.translation?.label === "TRANSLATION_WITHHELD" && !("text" in (pgFailed.translation ?? {})) && !!pgFailed.text);
+  const st5 = await processingStatus(p5.userId, d5.id);
+  report("An unreadable document says so, and that it is saved as it is", st5.status === "FAILED" && "message" in st5 && st5.message === COULD_NOT_READ);
+
+  // Reprocess.
+  report("Reprocess is refused while the facts await review", await refusedP(requestReprocess(p1.userId, d1.id, "LANGUAGE_CHANGED")));
+  const again = await requestReprocess(p5.userId, d5.id, "PATIENT_REQUEST");
+  await drain();
+  const runs5 = await prisma.documentProcessing.findMany({ where: { documentId: d5.id }, orderBy: { run: "asc" } });
+  report("Reprocess after a failure: a second run, through the pipeline again (the original still unreadable: FAILED)",
+    again.run === 2 && runs5.length === 2 && runs5[1].status === "FAILED" && (await prisma.domainEventOutbox.count({ where: { aggregateId: again.processingId, eventType: "DocumentReprocessRequested" } })) === 1);
+  report("An unknown reason or another Person's document is refused", await refusedP(requestReprocess(p5.userId, d5.id, "MODEL_UPGRADE")) && await notFound(requestReprocess(other.userId, d5.id, "PATIENT_REQUEST")));
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();

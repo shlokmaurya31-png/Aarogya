@@ -77,6 +77,14 @@ export type AuditEventType =
   | "person.merge.requested"
   | "person.merge.refused"
   | "person.merge.completed"
+  // Week 4a: the document pipeline — the person's review and their entries,
+  // a clinician acknowledging a conflict.
+  | "person.document.pageViewed"
+  | "person.document.reprocessRequested"
+  | "person.fact.reviewed"
+  | "person.fact.bulkReviewed"
+  | "person.record.withdrawn"
+  | "record.conflict.acknowledged"
   | "patient.person.link.requested"
   | "patient.person.link.secondFactorFailed"
   | "patient.person.link.codeSent"

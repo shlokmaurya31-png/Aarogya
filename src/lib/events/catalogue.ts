@@ -66,6 +66,7 @@ const personLinkMethod = z.enum(PERSON_LINK_METHODS);
 const documentLanguage = z.enum(["en", "hi", "mr", "ta", "bn", "gu", "te", "kn", "ml", "mixed", "und"]);
 const confidenceBand = z.enum(["HIGH", "MEDIUM", "LOW"]);
 const documentStep = z.enum(["PAGE_SPLIT", "OCR", "TRANSLATE", "EXTRACT", "MERGE"]);
+const extractedFactType = z.enum(["DOCUMENT_META", "DIAGNOSIS", "MEDICATION", "LAB_VALUE", "PROCEDURE", "ALLERGY"]);
 const documentStepError = z.enum(["PROVIDER_UNAVAILABLE", "RATE_LIMITED", "UNREADABLE", "UNSUPPORTED_LANGUAGE", "EXACT_COPY_VIOLATION", "TOO_LARGE", "INTERNAL"]);
 
 function contract<P extends z.ZodTypeAny>(c: EventContract<P>): EventContract<P> {
@@ -1397,6 +1398,16 @@ export const EVENT_CONTRACTS: EventContract[] = [
     type: "DocumentProcessingCompleted", version: 1, aggregateType: "DOCUMENT_PROCESSING", scope: "PERSON",
     sensitivity: "INTERNAL", producer: "document pipeline (doc-extract with nothing to review; doc-merge once every fact is decided)",
     payload: z.object({ processingId: id, documentId: id, personId: id, confirmed: z.number().int().min(0), corrected: z.number().int().min(0), rejected: z.number().int().min(0) }).strict(),
+  }),
+  contract({
+    type: "ExtractedFactReviewed", version: 1, aggregateType: "DOCUMENT_PROCESSING", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "document review (confirmFact, confirmFactField, correctFact, rejectFact, bulkReview: the person's own decision)",
+    payload: z.object({ factId: id, processingId: id, personId: id, factType: extractedFactType, decision: z.enum(["CONFIRMED", "CORRECTED", "REJECTED"]), via: z.enum(["SELF", "PROXY"]) }).strict(),
+  }),
+  contract({
+    type: "DocumentReprocessRequested", version: 1, aggregateType: "DOCUMENT_PROCESSING", scope: "PERSON",
+    sensitivity: "INTERNAL", producer: "document review (requestReprocess: the person asked for a fresh run)",
+    payload: z.object({ processingId: id, documentId: id, personId: id, reason: z.enum(["MODEL_UPGRADE", "PATIENT_REQUEST", "LANGUAGE_CHANGED"]) }).strict(),
   }),
 ];
 

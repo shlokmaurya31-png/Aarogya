@@ -10,8 +10,10 @@ const processingIdOf = (p: Record<string, unknown>) => String(p.processingId);
 
 export const docPageSplit: DomainEventConsumer = {
   name: "doc-page-split",
-  handles: ["PersonDocumentUploaded"],
+  handles: ["PersonDocumentUploaded", "DocumentReprocessRequested"],
   async handle(event) {
+    // A reprocess request names its new run; an upload makes (or finds) one.
+    if (event.eventType === "DocumentReprocessRequested") return void (await pageSplitStep(processingIdOf(event.payload)));
     const run = await runForUpload(String(event.payload.documentId));
     if (run) await pageSplitStep(run.id);
   },
