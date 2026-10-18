@@ -1,5 +1,6 @@
 import { Prisma, SafetySeverity } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { currentAllergyStatus } from "./clinicalRecords";
 
 /**
  * Clinical decision support — deliberately narrow (brief §20/§101, and
@@ -15,7 +16,7 @@ import { prisma } from "@/lib/db";
  * allow.
  */
 export interface SafetyFlag {
-  rule: "allergy-conflict" | "allergy-info-withdrawn" | "duplicate-active-medication" | "route-mismatch" | "frequency-mismatch";
+  rule: "allergy-conflict" | "allergy-info-withdrawn" | "allergy-status-unknown" | "duplicate-active-medication" | "route-mismatch" | "frequency-mismatch";
   severity: "warning" | "danger";
   message: string;
   sourceId: string;
@@ -52,6 +53,15 @@ export async function checkMedicationSafety(
   const withdrawn = await prisma.patientAllergyNotice.findFirst({ where: { patientId, kind: "WITHDRAWN_BY_PATIENT", resolvedAt: null }, select: { id: true } });
   if (withdrawn) {
     flags.push({ rule: "allergy-info-withdrawn", severity: "warning", message: "Allergy information withdrawn by the patient — ask about allergies.", sourceId: withdrawn.id });
+  }
+  // Week 4b: an UNKNOWN allergy status is never read as "none" — an empty allergy list proves nothing.
+  const allergyStatus = await currentAllergyStatus(patientId);
+  if (allergyStatus.status === "UNKNOWN") {
+    flags.push({
+      rule: "allergy-status-unknown", severity: "warning",
+      message: "Allergy status unknown: no allergies or \"no known allergies\" recorded. Ask about allergies before relying on this check.",
+      sourceId: allergyStatus.entryId ?? patientId,
+    });
   }
 
   const activeOrders = await prisma.medicationOrder.findMany({

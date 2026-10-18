@@ -1079,6 +1079,8 @@ model Facility {
   /// never reaches an AI provider while the real-data switch is off.
   dataClassification DataClassification @default(REAL)
 
+  allergyStatusEntries AllergyStatusEntry[]
+
   @@unique([organizationId, slug])
   @@index([organizationId])
   @@index([status])
@@ -2167,6 +2169,7 @@ model Patient {
   identifiers               PatientIdentifier[]
   emergencyContacts         PatientEmergencyContact[]
   allergies                 Allergy[]
+  allergyStatusEntries      AllergyStatusEntry[]
   problems                  Problem[]
   diagnoses                 Diagnosis[]
   episodesOfCare            EpisodeOfCare[]
@@ -2278,6 +2281,44 @@ model Allergy {
   patientProvidedRecordId String?
 
   @@index([patientId])
+}
+
+/// Week 4b (4a follow-up b): the record-level allergy status, as history.
+/// Append-only: the latest row is the status; no row means UNKNOWN (never
+/// assumed). NO_KNOWN_ALLERGIES is a clinician's assertion and is refused
+/// while an allergy is active; adding an allergy makes it HAS_ALLERGIES;
+/// inactivating the last one makes it UNKNOWN again (absence is never inferred).
+model AllergyStatusEntry {
+  id               String                    @id @default(cuid())
+  patient          Patient                   @relation(fields: [patientId], references: [id])
+  patientId        String
+  facility         Facility                  @relation(fields: [facilityId], references: [id])
+  facilityId       String
+  status           AllergyStatusAssertion
+  previousStatus   AllergyStatusAssertion?
+  reason           AllergyStatusChangeReason
+  recordedByUserId String?
+  recordedAt       DateTime                  @default(now())
+  /// 1, 2, 3… per patient, under a lock on the patient row: the history's order.
+  sequence         Int
+
+  @@unique([patientId, sequence])
+  @@index([facilityId])
+}
+
+enum AllergyStatusAssertion {
+  NO_KNOWN_ALLERGIES
+  UNKNOWN
+  HAS_ALLERGIES
+}
+
+enum AllergyStatusChangeReason {
+  /// A clinician recorded the status.
+  RECORDED
+  /// An allergy was recorded.
+  ALLERGY_ADDED
+  /// The last active allergy was inactivated or entered in error.
+  LAST_ALLERGY_INACTIVATED
 }
 
 /**
@@ -10746,14 +10787,14 @@ model DocumentProcessingStep {
 
 /// A page of the original, as its own single-page file (the original is never changed).
 model DocumentPage {
-  id           String             @id @default(cuid())
-  processing   DocumentProcessing @relation(fields: [processingId], references: [id], onDelete: Cascade)
-  processingId String
-  personId     String
-  pageNo       Int
-  storageRef   String
-  sha256       String
-  contentType  String
+  id            String             @id @default(cuid())
+  processing    DocumentProcessing @relation(fields: [processingId], references: [id], onDelete: Cascade)
+  processingId  String
+  personId      String
+  pageNo        Int
+  storageRef    String
+  sha256        String
+  contentType   String
   /// What was done to an image page before OCR (src/lib/documents/normalize.ts); null for PDF pages.
   normalization Json?
 

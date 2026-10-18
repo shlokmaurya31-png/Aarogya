@@ -68,6 +68,7 @@ const confidenceBand = z.enum(["HIGH", "MEDIUM", "LOW"]);
 const documentStep = z.enum(["PAGE_SPLIT", "OCR", "TRANSLATE", "EXTRACT", "MERGE"]);
 const extractedFactType = z.enum(["DOCUMENT_META", "DIAGNOSIS", "MEDICATION", "LAB_VALUE", "PROCEDURE", "ALLERGY"]);
 const patientProvidedKind = z.enum(["DIAGNOSIS", "MEDICATION_HISTORY", "LAB_RESULT", "PROCEDURE", "ALLERGY"]);
+const allergyStatusAssertion = z.enum(["NO_KNOWN_ALLERGIES", "UNKNOWN", "HAS_ALLERGIES"]);
 const documentStepError = z.enum(["PROVIDER_UNAVAILABLE", "RATE_LIMITED", "UNREADABLE", "UNSUPPORTED_LANGUAGE", "EXACT_COPY_VIOLATION", "TOO_LARGE", "INTERNAL"]);
 
 function contract<P extends z.ZodTypeAny>(c: EventContract<P>): EventContract<P> {
@@ -627,6 +628,16 @@ export const EVENT_CONTRACTS: EventContract[] = [
       verification: z.enum(["UNCONFIRMED", "CONFIRMED"]),
       criticality: z.enum(["LOW", "HIGH", "UNABLE_TO_ASSESS"]).optional(),
       source: z.enum(["CLINICIAN", "PATIENT_PROVIDED"]),
+    }).strict(),
+  }),
+  contract({
+    // Week 4b (4a follow-up b): the record-level allergy status changed. Aggregate: the patient's status.
+    type: "AllergyStatusRecorded", version: 1, aggregateType: "ALLERGY_STATUS", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "allergies (recordAllergyStatus: RECORDED; recordAllergy: ALLERGY_ADDED; updateAllergy: LAST_ALLERGY_INACTIVATED)",
+    payload: z.object({
+      entryId: id, patientId: id,
+      status: allergyStatusAssertion, previousStatus: allergyStatusAssertion.nullable(),
+      reason: z.enum(["RECORDED", "ALLERGY_ADDED", "LAST_ALLERGY_INACTIVATED"]),
     }).strict(),
   }),
   contract({
@@ -1439,6 +1450,15 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({
       conflictId: id, personId: id, patientId: id, kind: patientProvidedKind, patientProvidedRecordId: id,
       verifiedSourceType: z.enum(["LabResult", "Allergy", "MedicationOrder", "Diagnosis"]), verifiedSourceId: id,
+    }).strict(),
+  }),
+  contract({
+    // v2 (Week 4b): a verified "no known allergies" status can be the other side (AllergyStatusEntry).
+    type: "RecordConflictDetected", version: 2, aggregateType: "RECORD_CONFLICT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "document pipeline (doc-conflicts: a patient-provided entry disagrees with this facility's verified record; nothing is overwritten)",
+    payload: z.object({
+      conflictId: id, personId: id, patientId: id, kind: patientProvidedKind, patientProvidedRecordId: id,
+      verifiedSourceType: z.enum(["LabResult", "Allergy", "AllergyStatusEntry", "MedicationOrder", "Diagnosis"]), verifiedSourceId: id,
     }).strict(),
   }),
   contract({

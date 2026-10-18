@@ -50,6 +50,7 @@ export type AuditEventType =
   | "hospital.problem.added"
   | "hospital.allergy.added"
   | "hospital.allergy.updated"
+  | "hospital.allergy_status.recorded"
   | "hospital.episode.created"
   | "hospital.episode.closed"
   | "hospital.task.created"

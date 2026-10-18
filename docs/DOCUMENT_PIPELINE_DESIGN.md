@@ -531,7 +531,7 @@ What the code does where it differs from, or adds to, the sections above. Each i
 - **Dose, frequency and unit are optional in the fact schemas,** so an incomplete fact reaches the person flagged (one band lower) instead of being dropped.
 - **Nine languages** include Malayalam (the table in §10.1 names eight).
 - **Page images are not re-rendered:** a PDF page is copied into its own single-page PDF; an image upload is its own page. Orientation and resolution normalization need an image library the repository doesn't carry. *Superseded in Week 4b (§15.3).*
-- **The "no known allergies" conflict rule has nothing to read:** the schema has no verified NKDA record.
+- **The "no known allergies" conflict rule has nothing to read:** the schema has no verified NKDA record. *Superseded in Week 4b (§15.3).*
 - **Proxy review** stays out of Week 4a, as §9 says: routes resolve only the session's own Person.
 
 ### 15.2 Decisions taken while building
@@ -553,3 +553,9 @@ What the code does where it differs from, or adds to, the sections above. Each i
 
 - **Image pages are normalized before OCR** (`src/lib/documents/normalize.ts`, with `sharp`): the EXIF orientation is applied and then all metadata dropped (no camera, time or GPS tags reach storage or a provider); a tilt of up to ±10° is measured from the text lines' projection profile and undone, only when the measurement is clear; the long edge comes down to 2,400 px (never enlarged); the page is stored as JPEG (mozjpeg, quality 82). The upload itself is never touched; the normalized page is stored alongside it (`DocumentPage`, with a `normalization` record of what was done). A decompression bomb (over 80 megapixels) fails the run as `TOO_LARGE`; bytes that don't decode are `UNREADABLE`. Gate: `verify-postgres-image-normalization`.
 - **Not done (where not feasible):** PDF pages are still not rasterized (no PDF renderer is carried), and a page turned 90° or 180° with no EXIF tag is left to the OCR model, which reads rotated pages.
+- **A record-level allergy status** (`AllergyStatusEntry`: `NO_KNOWN_ALLERGIES`, `UNKNOWN` or `HAS_ALLERGIES`, append-only history ordered by a per-patient sequence, event `AllergyStatusRecorded`):
+  - no entry reads as `UNKNOWN` (or `HAS_ALLERGIES` while an allergy is active); "no known allergies" is never inferred, and no row was backfilled;
+  - a clinician records `NO_KNOWN_ALLERGIES` or `UNKNOWN` only while no allergy is active (a shared patient-reported one counts); recording an allergy makes the status `HAS_ALLERGIES`; inactivating the last one makes it `UNKNOWN`, never "no known allergies";
+  - the prescribing check flags an `UNKNOWN` status as a warning ("ask about allergies"), so an empty allergy list is never read as "none";
+  - **the "no known allergies" conflict rule is on:** a confirmed uploaded allergy conflicts with a facility record whose current status is "no known allergies" recorded after the document's date (or when the entry is undated), checked both when the entry is added and when the status is recorded; `RecordConflictDetected` v2 adds `AllergyStatusEntry` as the verified side. Pending clinical advisor, with the other conflict rules.
+  - Gate: `verify-postgres-allergy-status`.

@@ -67,6 +67,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
   const [problemText, setProblemText] = useState("");
   const [allergySubstance, setAllergySubstance] = useState("");
   const [allergySeverity, setAllergySeverity] = useState("moderate");
+  const [allergyStatus, setAllergyStatus] = useState<{ status: string; derived: boolean } | null>(null);
 
   // Order composer state
   const [drugName, setDrugName] = useState("");
@@ -86,6 +87,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
 
   const load = useCallback(() => {
     fetch(`/api/hospital/patients/${patientId}/chart`).then((r) => r.json()).then(setData);
+    fetch(`/api/hospital/patients/${patientId}/allergy-status`).then((r) => (r.ok ? r.json() : null)).then((d) => setAllergyStatus(d?.current ?? null));
   }, [patientId]);
   useEffect(load, [load]);
 
@@ -177,6 +179,15 @@ export function PatientChart({ patientId }: { patientId: string }) {
     push("Allergy recorded.", "emerald"); setAllergySubstance(""); load();
   }
 
+  async function recordStatus(status: "NO_KNOWN_ALLERGIES" | "UNKNOWN") {
+    const res = await fetch(`/api/hospital/patients/${patientId}/allergy-status`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    if (!res.ok) { push((await res.json()).error ?? "Failed to record the allergy status.", "red"); return; }
+    push(status === "NO_KNOWN_ALLERGIES" ? "Recorded: no known allergies." : "Recorded: allergy status unknown.", "emerald"); load();
+  }
+
   function loadTimeline() {
     fetch(`/api/hospital/patients/${patientId}/timeline`).then((r) => r.json()).then((d) => setTimeline(d.timeline ?? []));
   }
@@ -227,6 +238,13 @@ export function PatientChart({ patientId }: { patientId: string }) {
         </Card>
       )}
 
+      {allergyStatus && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-[11.5px]">
+          {allergyStatus.status === "NO_KNOWN_ALLERGIES" && <span className="rounded-md bg-emerald/10 px-2.5 py-1 text-emerald">No known allergies (recorded)</span>}
+          {allergyStatus.status === "UNKNOWN" && <span className="flex items-center gap-1.5 rounded-md bg-amber/10 px-2.5 py-1 text-amber"><ShieldAlert size={12} /> Allergy status unknown — ask about allergies</span>}
+          {allergyStatus.status === "HAS_ALLERGIES" && data.allergies.length === 0 && <span className="rounded-md bg-red/10 px-2.5 py-1 text-red">Has allergies</span>}
+        </div>
+      )}
       {data.allergies.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
           {data.allergies.map((a) => (
@@ -326,6 +344,12 @@ export function PatientChart({ patientId }: { patientId: string }) {
                   </select>
                   <button onClick={addAllergy} className="rounded-md bg-red px-4 py-1.5 text-[12.5px] font-medium text-white hover:brightness-110">Record</button>
                 </div>
+                {data.allergies.length === 0 && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button onClick={() => recordStatus("NO_KNOWN_ALLERGIES")} className="rounded-md border border-hairline px-3 py-1 text-[12px] hover:bg-black/[0.03]">No known allergies</button>
+                    <button onClick={() => recordStatus("UNKNOWN")} className="rounded-md border border-hairline px-3 py-1 text-[12px] hover:bg-black/[0.03]">Unknown</button>
+                  </div>
+                )}
               </Card>
             </>
           )}
