@@ -1293,7 +1293,7 @@ export const EVENT_CONTRACTS: EventContract[] = [
   contract({
     type: "PersonPatientUnlinked", version: 1, aggregateType: "PERSON_PATIENT_LINK", scope: "FACILITY",
     sensitivity: "SENSITIVE", producer: "person identity (unlinkByPerson; approveFacilityUnlink with two staff members)",
-    payload: z.object({ linkId: id, personId: id, patientId: id, by: z.enum(["PERSON", "FACILITY", "PLATFORM"]), reason: z.enum(["PERSON_REQUEST", "WRONG_PERSON", "FACILITY_MERGE", "PERSON_MERGE", "SECURITY"]) }).strict(),
+    payload: z.object({ linkId: id, personId: id, patientId: id, by: z.enum(["PERSON", "FACILITY", "PLATFORM"]), reason: z.enum(["PERSON_REQUEST", "WRONG_PERSON", "FACILITY_MERGE", "PERSON_MERGE", "SECURITY", "ACCOUNT_CLOSED"]) }).strict(),
   }),
   contract({
     type: "PersonLinkReverificationRequired", version: 1, aggregateType: "PERSON_PATIENT_LINK", scope: "FACILITY",
@@ -1319,6 +1319,21 @@ export const EVENT_CONTRACTS: EventContract[] = [
     type: "PersonDocumentWithdrawn", version: 1, aggregateType: "PERSON_DOCUMENT", scope: "PERSON",
     sensitivity: "INTERNAL", producer: "person identity (withdrawPersonDocument)",
     payload: z.object({ personId: id, documentId: id }).strict(),
+  }),
+  contract({
+    type: "PersonAccountClosed", version: 1, aggregateType: "PERSON", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "person identity (closePersonAccount: the person's own login, confirmed)",
+    payload: z.object({ personId: id, purgeAfter: iso }).strict(),
+  }),
+  contract({
+    type: "PersonAccountReopened", version: 1, aggregateType: "PERSON", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "person identity (reopenPersonAccount, within the 30-day grace period)",
+    payload: z.object({ personId: id }).strict(),
+  }),
+  contract({
+    type: "PersonDataPurged", version: 1, aggregateType: "PERSON", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "person identity (purgeClosedPersons: the runner, after the grace period; deferred under a legal hold)",
+    payload: z.object({ personId: id, documentsDeleted: z.number().int().min(0), documentsKept: z.number().int().min(0), linksEnded: z.number().int().min(0) }).strict(),
   }),
   contract({
     type: "PatientContactConfirmed", version: 1, aggregateType: "PATIENT", scope: "FACILITY",

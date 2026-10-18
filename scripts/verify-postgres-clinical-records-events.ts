@@ -22,6 +22,7 @@ import { openEncounter } from "../src/lib/hospital/encounter";
 import { recordVitals, recordIntakeOutput, recordDiagnosis, updateDiagnosis, recordAllergy, updateAllergy } from "../src/lib/hospital/clinicalRecords";
 import { createReferral, respondToReferral } from "../src/lib/hospital/referral";
 import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
+import { carries } from "./lib/payloadValues";
 
 let pass = 0;
 let fail = 0;
@@ -55,9 +56,9 @@ async function main() {
   all.push(...vN.map((e) => e.payload as Payload), ...vH);
   report("Vitals → ObservationRecorded v2 (VITALS), correlated by the encounter, no values",
     vN.length === 1 && vN[0].eventVersion === 2 && (vN[0].payload as Payload).observationKind === "VITALS" && (vN[0].payload as Payload).abnormal === false
-      && vN[0].correlationId === enc.id && !JSON.stringify(vN[0].payload).includes("98"));
+      && vN[0].correlationId === enc.id && !carries(vN[0].payload, "98"));
   report("…an abnormal set carries abnormal: true (facility threshold), never which value or the value",
-    vH[0]?.abnormal === true && high.abnormal.length === 1 && !JSON.stringify(vH[0]).includes("150") && !JSON.stringify(vH[0]).includes("hr"), JSON.stringify(vH[0]));
+    vH[0]?.abnormal === true && high.abnormal.length === 1 && !carries(vH[0], "150") && !carries(vH[0], "hr"), JSON.stringify(vH[0]));
   if (previous) await prisma.vitalThreshold.update({ where: key, data: { minValue: previous.minValue, maxValue: previous.maxValue } });
   else await prisma.vitalThreshold.delete({ where: key });
 
@@ -67,7 +68,7 @@ async function main() {
   const io = [...await payloads("ObservationRecorded", intake.id), ...await payloads("ObservationRecorded", output.id)];
   all.push(...io);
   report("Intake and output → ObservationRecorded INTAKE and OUTPUT, never the volume or notes",
-    io.map((p) => p.observationKind).join() === "INTAKE,OUTPUT" && !JSON.stringify(io).includes("500") && !JSON.stringify(io).includes("secret"));
+    io.map((p) => p.observationKind).join() === "INTAKE,OUTPUT" && !carries(io, "500") && !carries(io, "secret"));
 
   // 3. Diagnoses.
   const dx = await recordDiagnosis({ encounterId: enc.id, facilityId, staffId: doctor.id, diagnosis: `Secret diagnosis ${run}`, type: "PROVISIONAL", codeSystem: "ICD-10", code: "I21.4", codeDisplay: "NSTEMI", byUserId: by });
@@ -90,7 +91,7 @@ async function main() {
   all.push(...alE);
   report("Allergy: ADDED (MODERATE, UNCONFIRMED) → UPDATED (CONFIRMED, HIGH) → INACTIVATED; never the substance or reaction",
     alE.map((p) => `${p.action}:${p.verification}:${p.status}`).join() === "ADDED:UNCONFIRMED:ACTIVE,UPDATED:CONFIRMED:ACTIVE,INACTIVATED:CONFIRMED:INACTIVE"
-      && alE[1].criticality === "HIGH" && !JSON.stringify(alE).includes("Secretcillin") && !JSON.stringify(alE).includes("rash"));
+      && alE[1].criticality === "HIGH" && !carries(alE, "Secretcillin") && !carries(alE, "rash"));
   report("…an inactive allergy can't be changed", await rejects(updateAllergy({ allergyId: allergy.id, facilityId, severity: "severe", byUserId: by })));
 
   // 5. Referrals.

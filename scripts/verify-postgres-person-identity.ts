@@ -33,6 +33,12 @@
  *      each account's email; wrong codes merge nothing; everything the
  *      person owns moves to the survivor, the other login ends, different
  *      sharing choices both lapse (asked again); there is no staff path.
+ *  11. Account closure: an explicit confirmation; from closing, nothing is
+ *      visible to staff or the portal; reopening within the grace period
+ *      restores it; after the grace period a legal hold defers the purge;
+ *      the purge deletes the person's documents (rows and bytes), contacts
+ *      and choices, ends the links, keeps a facility-referenced upload
+ *      detached, and never touches facility records; it can't be reopened.
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-person-identity.ts
  */
@@ -50,6 +56,10 @@ import { mergePatients, unmergePatients } from "../src/lib/patient/merge";
 import { startPersonMerge, confirmPersonMerge } from "../src/lib/person/merge";
 import { hashPassword } from "../src/lib/auth/password";
 import { decidePersonConsent } from "../src/lib/person/consent";
+import { closePersonAccount, reopenPersonAccount, purgeClosedPersons } from "../src/lib/person/closure";
+import { uploadPersonDocument, staffPersonDocuments } from "../src/lib/person/documents";
+import { getStorageAdapter } from "../src/lib/storage";
+import { PDFDocument } from "pdf-lib";
 import { prisma } from "../src/lib/db";
 import { registerPatientAccount, connectFacilityRecord } from "../src/lib/patient/selfRegistration";
 import {
@@ -327,6 +337,45 @@ async function main() {
     && Boolean((await prisma.personMergeRecord.findFirst({ where: { personId: X.personId, sourcePersonId: Y.personId } }))?.snapshot));
   const routes = (await import("node:fs")).readdirSync("src/app/api/hospital", { recursive: true }).map(String);
   report("There is no staff route that merges Persons", !routes.some((r) => /person/i.test(r) && /merge/i.test(r)));
+
+  // ── 11. Account closure ──
+  const C = await acct("c");
+  const cRec = await mkRec("c");
+  await lnk(C.personId, cRec.id, C.userId);
+  await prisma.encounter.create({ data: { patientId: cRec.id, facilityId: PUNE, type: "OPD", status: "IN_CONSULTATION", chiefComplaint: "closure" } });
+  await decidePersonConsent({ userId: C.userId, purpose: "SHARE_UPLOADS_WITH_TREATING", decision: "GRANTED" });
+  const pdf = await PDFDocument.create(); pdf.addPage([100, 100]);
+  const cDoc = await uploadPersonDocument(C.userId, { bytes: Buffer.from(await pdf.save()), contentType: "application/pdf", originalName: "c.pdf", title: `Closure doc ${run}`, type: "REPORT" });
+  const facilityDoc = await prisma.clinicalDocument.create({ data: { facilityId: PUNE, patientId: cRec.id, type: "REPORT", title: `Facility doc ${run}`, uploadedByStaffId: B.id } });
+  const keptUpload = await prisma.clinicalDocument.create({ data: { facilityId: PUNE, patientId: cRec.id, type: "REPORT", title: `Evidence ${run}`, accessPolicy: "PATIENT_VISIBLE", uploadedByUserId: C.userId, personId: C.personId, storageRef: `local:patient-uploads/closure/${run}`, sha256: "d".repeat(64) } });
+  await prisma.credential.create({ data: { facilityId: PUNE, staffId: B.id, credentialType: "TRAINING", name: "closure evidence", createdByStaffId: B.id, documentId: keptUpload.id } });
+  const seesC = async () => (await staffPersonDocuments(PUNE, [cRec.id])).some((d) => d.id === cDoc.id);
+  report("Closure fixture: the treating facility sees the person's shared upload", await seesC());
+  report("Closing needs an explicit confirmation", await refused(closePersonAccount(C.userId, "yes")));
+  const closed = await closePersonAccount(C.userId, "CLOSE");
+  report("Closed: purge scheduled 30 days out", closed.status === "CLOSED" && Math.round((new Date(closed.purgeAfter).getTime() - Date.now()) / day) === 30);
+  report("…from that moment staff see nothing, and the login holds no record", !(await seesC()) && (await selfPatientIds(C.userId)).length === 0);
+  await reopenPersonAccount(C.userId);
+  report("Reopening within the grace period restores everything", await seesC() && (await selfPatientIds(C.userId)).includes(cRec.id));
+  await closePersonAccount(C.userId, "CLOSE");
+  await prisma.person.update({ where: { id: C.personId }, data: { purgeAfter: new Date(Date.now() - 1000) } });
+  const hold = await prisma.privacyRequest.create({ data: { facilityId: PUNE, patientId: cRec.id, requestType: "ERASURE", requesterType: "PATIENT", legalHold: true, legalHoldReason: "litigation" } });
+  const deferred = await purgeClosedPersons({});
+  report("After the grace period, a legal hold on a linked record defers the purge", deferred.deferredForLegalHold >= 1 && (await prisma.personDocument.count({ where: { personId: C.personId } })) === 1);
+  await prisma.privacyRequest.update({ where: { id: hold.id }, data: { legalHold: false } });
+  const purged = await purgeClosedPersons({});
+  report("With the hold lifted, the purge runs", purged.purged >= 1 && Boolean((await prisma.person.findUniqueOrThrow({ where: { id: C.personId } })).purgedAt));
+  report("…the person's documents are gone, rows and stored bytes",
+    (await prisma.personDocument.count({ where: { personId: C.personId } })) === 0 && await refused(getStorageAdapter().get(cDoc.storageRef)));
+  report("…their contacts, choices and access log are gone", (await prisma.personConsent.count({ where: { personId: C.personId } })) === 0 && (await prisma.personAccessLogEntry.count({ where: { personId: C.personId } })) === 0);
+  report("…their links ended (UNLINKED, ACCOUNT_CLOSED), with PersonPatientUnlinked",
+    (await prisma.personPatientLink.count({ where: { personId: C.personId, status: "UNLINKED", unlinkedReason: "ACCOUNT_CLOSED" } })) === 1
+      && (await prisma.domainEventOutbox.count({ where: { eventType: "PersonPatientUnlinked", personId: C.personId } })) >= 1);
+  report("…the facility record and its own documents are untouched", (await prisma.patient.count({ where: { id: cRec.id } })) === 1 && (await prisma.clinicalDocument.count({ where: { id: facilityDoc.id } })) === 1);
+  const keptAfter = await prisma.clinicalDocument.findUnique({ where: { id: keptUpload.id } });
+  report("…an upload a facility record references stays, detached from the person (records retention)", Boolean(keptAfter) && keptAfter!.personId === null);
+  report("…PersonDataPurged says what went", (await prisma.domainEventOutbox.count({ where: { eventType: "PersonDataPurged", aggregateId: C.personId } })) === 1);
+  report("A purged account can't be reopened", await refused(reopenPersonAccount(C.userId)));
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();

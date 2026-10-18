@@ -10258,6 +10258,7 @@ enum PersonUnlinkReason {
   FACILITY_MERGE
   PERSON_MERGE
   SECURITY
+  ACCOUNT_CLOSED
 }
 
 enum PersonAccessLogKind {
@@ -10271,6 +10272,8 @@ enum PersonAccessLogKind {
   RECORD_ACCESSED
   PERSON_MERGED
   LINK_SUPERSEDED
+  ACCOUNT_CLOSED
+  ACCOUNT_REOPENED
 }
 
 model Person {
@@ -10304,6 +10307,12 @@ model Person {
   mergeRecordsAsSource  PersonMergeRecord[]  @relation("PersonMergeRecordSource")
 
   personDocuments PersonDocument[]
+
+  /// Account closure: CLOSED at closedAt; patient-provided data is deleted at
+  /// purgeAfter (30 days later) unless reopened first; purgedAt once done.
+  closedAt   DateTime?
+  purgeAfter DateTime?
+  purgedAt   DateTime?
 
   @@index([mergedIntoPersonId])
 }

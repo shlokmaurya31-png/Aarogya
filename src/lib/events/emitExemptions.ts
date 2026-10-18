@@ -76,6 +76,7 @@ export const SENSITIVE_EVENTS: readonly string[] = [
   "ConsentRequestStatusChanged",
   // Phase 0: linking a facility record to a person says who the person is.
   "PersonPatientLinked", "PersonPatientUnlinked", "PersonMerged",
+  "PersonAccountClosed", "PersonAccountReopened", "PersonDataPurged",
   // A person's choice about who sees their data is a consent fact.
   "PersonConsentDecided",
 ];

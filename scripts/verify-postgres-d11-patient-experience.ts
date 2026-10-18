@@ -26,6 +26,7 @@ import { updateProfile } from "../src/lib/patient/experience/profile";
 import { getAbhaStatus } from "../src/lib/patient/experience/abha";
 import { ensurePrimaryMembership } from "../prisma/seedData/staffMembership";
 import { linkAccountForGate } from "./lib/personFixture";
+import { carries } from "./lib/payloadValues";
 
 let pass = 0, fail = 0; const failures: string[] = [];
 const ok = (l: string) => { pass++; console.log(`  ✓ ${l}`); };
@@ -205,7 +206,7 @@ async function main() {
     await updateProfile(s, { phone: "222", communicationPreference: "EMAIL" }, ctxA.userId);
     const ev = await prisma.domainEventOutbox.findFirst({ where: { eventType: "PatientDemographicsUpdated", aggregateId: s.patientId }, orderBy: { seq: "desc" } });
     const fields = (ev?.payload as { fields?: string[] } | undefined)?.fields ?? [];
-    if (!fields.includes("PHONE") || JSON.stringify(ev?.payload).includes("222")) throw new Error(`PatientDemographicsUpdated must name PHONE and carry no value: ${JSON.stringify(ev?.payload)}`);
+    if (!fields.includes("PHONE") || carries(ev?.payload, "222")) throw new Error(`PatientDemographicsUpdated must name PHONE and carry no value: ${JSON.stringify(ev?.payload)}`);
     const p = await prisma.patient.findUniqueOrThrow({ where: { id: ID.patA } });
     if (p.phone !== "222" || p.facilityId !== ID.fac || p.uhid !== "D11-A") throw new Error("field integrity violated");
   });
