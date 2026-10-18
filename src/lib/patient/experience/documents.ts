@@ -4,6 +4,8 @@ import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 import { BadRequestError } from "@/lib/auth/rbac";
 import { getStorageAdapter } from "@/lib/storage";
 import type { PatientAccessScope } from "../context";
+import { ownedPersonId } from "@/lib/person/access";
+import { uploadPersonDocument } from "@/lib/person/documents";
 
 /**
  * A patient uploads a document (an outside report, a referral letter, an ID)
@@ -25,6 +27,15 @@ export async function uploadPatientDocument(
 ) {
   // Self only: a delegate is read-only (resolveActScope already enforces it).
   if (!scope.isSelf) throw new BadRequestError("Only the patient can upload to their record.");
+  // Phase 0: the upload belongs to the uploader's Person (PersonDocument, tied
+  // to no facility); staff see it only through personAccess(). An account the
+  // identity migration hasn't moved yet keeps the old facility path below.
+  const ownerPersonId = await ownedPersonId(actorUserId);
+  if (ownerPersonId) {
+    const d = await uploadPersonDocument(actorUserId, input);
+    return { id: d.id, title: d.title, type: d.type, sha256: d.sha256, createdAt: d.uploadedAt.toISOString() };
+  }
+
   const title = input.title.trim().slice(0, 200);
   if (!title) throw new BadRequestError("A title is required.");
 
@@ -36,6 +47,7 @@ export async function uploadPatientDocument(
     originalName: input.originalName,
     scope: scope.patientId,
   });
+
 
   let doc;
   try {
@@ -50,12 +62,13 @@ export async function uploadPatientDocument(
           sha256: stored.sha256,
           accessPolicy: "PATIENT_VISIBLE",
           uploadedByUserId: actorUserId,
+          personId: ownerPersonId,
         },
       });
       // In the insert's transaction; the object was stored first, and a rolled-back
       // insert deletes it below (design §1.2 #55).
       await emitFacilityEvent(tx, {
-        type: "PatientDocumentUploaded", aggregateId: created.id, facilityId: scope.facilityId, actorUserId,
+        type: "PatientDocumentUploaded", aggregateId: created.id, facilityId: scope.facilityId, actorUserId, personId: ownerPersonId,
         payload: { documentId: created.id, patientId: scope.patientId, documentType: input.type, uploadedBy: "PATIENT" },
       });
       return created;

@@ -56,6 +56,8 @@ export async function versionStaffDocument(input: {
   return prisma.$transaction(async (tx) => {
     const prior = await tx.clinicalDocument.findUnique({ where: { id: input.documentId } });
     if (!prior || prior.facilityId !== input.facilityId) throw new NotFoundError("Document not found.");
+    // Phase 0: a patient's upload belongs to their Person; staff never version it.
+    if (prior.personId) throw new NotFoundError("Document not found.");
     if (prior.status !== "CURRENT") throw new BadRequestError("Only the current version of a document can be superseded.");
     const cas = await tx.clinicalDocument.updateMany({ where: { id: prior.id, status: "CURRENT" }, data: { status: "SUPERSEDED" } });
     if (cas.count !== 1) throw new BadRequestError("Document was updated by someone else — refresh and try again.");

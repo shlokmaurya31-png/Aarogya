@@ -70,7 +70,7 @@ async function seed() {
 async function fire(type: string, opts: { organizationId: string; facilityId?: string | null; aggregateId: string; payload: Record<string, unknown> }): Promise<DomainEventEnvelope> {
   const { eventId } = await emitDomainEvent(prisma, { type, aggregateId: opts.aggregateId, organizationId: opts.organizationId, facilityId: opts.facilityId ?? null, correlationId: `d9gate:${opts.aggregateId}`, payload: opts.payload });
   const r = await prisma.domainEventOutbox.findUniqueOrThrow({ where: { eventId } });
-  return { eventId: r.eventId, eventType: r.eventType, eventVersion: r.eventVersion, aggregateType: r.aggregateType, aggregateId: r.aggregateId, organizationId: r.organizationId, facilityId: r.facilityId, actorUserId: r.actorUserId, correlationId: r.correlationId, causationId: r.causationId, occurredAt: r.occurredAt, payload: r.payload as Record<string, unknown> };
+  return { eventId: r.eventId, eventType: r.eventType, eventVersion: r.eventVersion, aggregateType: r.aggregateType, aggregateId: r.aggregateId, organizationId: r.organizationId, facilityId: r.facilityId, personId: r.personId, actorUserId: r.actorUserId, correlationId: r.correlationId, causationId: r.causationId, occurredAt: r.occurredAt, payload: r.payload as Record<string, unknown> };
 }
 
 const icuDoc = (name = "ICU admission") => ({ name, trigger: { eventType: "AdmissionCreated", eventVersion: 1 }, steps: [

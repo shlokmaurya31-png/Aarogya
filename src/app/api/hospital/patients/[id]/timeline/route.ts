@@ -14,7 +14,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const patient = await prisma.patient.findUnique({ where: { id } });
     if (!patient || patient.facilityId !== facilityId) throw new NotFoundError("Patient not found.");
 
-    const timeline = await buildPatientTimeline(id);
+    const timeline = await buildPatientTimeline(id, { kind: "STAFF", facilityId });
 
     // Record-access logging (brief §29) — metadata only, never the payload itself.
     await recordAuditEvent(

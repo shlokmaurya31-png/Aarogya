@@ -25,6 +25,8 @@ export async function createRegisteredPatient(tx: Tx, input: {
   dobPrecision?: "DAY" | "MONTH" | "YEAR" | "ESTIMATED_FROM_AGE";
   userId?: string | null;
   actorUserId?: string | null;
+  /** Phase 0: staff entered the phone with the patient present (never true for self-registration). */
+  phoneConfirmed?: boolean;
 }) {
   const patient = await tx.patient.create({
     data: {
@@ -37,6 +39,7 @@ export async function createRegisteredPatient(tx: Tx, input: {
       dob: input.dob ?? undefined,
       ...(input.dobPrecision ? { dobPrecision: input.dobPrecision } : {}),
       userId: input.userId ?? undefined,
+      ...(input.phoneConfirmed && input.phone ? { phoneConfirmedAt: new Date(), phoneSetByStaffAt: new Date() } : {}),
     },
   });
   await emitDomainEvent(tx, {
@@ -74,6 +77,8 @@ export async function registerPatient(input: {
         bloodGroup: input.bloodGroup,
         ...(input.ageYears !== undefined ? { dob: estimatedDobFromAge(input.ageYears), dobPrecision: "ESTIMATED_FROM_AGE" as const } : {}),
         actorUserId: input.byUserId,
+        // The front desk entered the phone with the patient present (Phase 0: confirmed).
+        phoneConfirmed: true,
       })
     )
   );

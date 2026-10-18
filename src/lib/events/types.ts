@@ -110,15 +110,22 @@ export const AGGREGATE_TYPES = [
   "CLAIM_QUERY",
   "CLAIM_RECONCILIATION_EXCEPTION",
   "CREDIT",
+  // Phase 0 — person identity.
+  "PERSON",
+  "PERSON_PATIENT_LINK",
+  "PERSON_LINK_REQUEST",
+  "PERSON_DOCUMENT",
 ] as const;
 export type AggregateType = (typeof AGGREGATE_TYPES)[number];
 
 /**
  * Tenant scope of an event. ORGANIZATION/FACILITY events MUST carry an
  * organizationId (server-derived, never client-supplied); PLATFORM events are
- * explicitly cross-tenant operational facts and carry none.
+ * explicitly cross-tenant operational facts and carry none. PERSON events
+ * (Phase 0) are about a platform-level Person the patient owns: they carry a
+ * personId and no organization or facility.
  */
-export type EventScope = "ORGANIZATION" | "FACILITY" | "PLATFORM";
+export type EventScope = "ORGANIZATION" | "FACILITY" | "PLATFORM" | "PERSON";
 
 /**
  * Data-sensitivity classification. No event payload ever carries secrets, card
@@ -147,6 +154,11 @@ export interface EventContract<P extends z.ZodTypeAny = z.ZodTypeAny> {
   producer: string;
   /** Zod schema for the payload — `.strict()` so unknown keys are rejected. */
   payload: P;
+  /**
+   * A retired type: nothing emits it any more (emit refuses it), but events
+   * already in the outbox still dispatch and replay against this contract.
+   */
+  retired?: { since: string; replacedBy?: string };
 }
 
 /** Input to emitDomainEvent — the caller supplies the business fields only. */
@@ -158,6 +170,8 @@ export interface EmitEventInput {
   aggregateType?: AggregateType;
   organizationId?: string | null;
   facilityId?: string | null;
+  /** Required for PERSON-scoped events; optional on FACILITY events about a linked patient. */
+  personId?: string | null;
   actorUserId?: string | null;
   /** Groups events of one business operation; auto-generated if omitted. */
   correlationId?: string | null;
@@ -177,6 +191,7 @@ export interface DomainEventEnvelope {
   aggregateId: string;
   organizationId: string | null;
   facilityId: string | null;
+  personId: string | null;
   actorUserId: string | null;
   correlationId: string;
   causationId: string | null;

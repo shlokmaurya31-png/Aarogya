@@ -27,8 +27,10 @@ describe("docs/EVENT_CATALOGUE.md", () => {
     for (const c of getConsumers()) if (c.handles !== "*") for (const t of c.handles) expect(ALL_EVENT_TYPES).toContain(t);
   });
 
-  it("finds an emit site for every current event type", () => {
-    expect(ALL_EVENT_TYPES.filter((t) => !sites.get(t)?.length)).toEqual([]);
+  it("finds an emit site for every current event type, and none for a retired one", () => {
+    const retired = new Set(EVENT_CONTRACTS.filter((c) => c.retired).map((c) => c.type));
+    expect(ALL_EVENT_TYPES.filter((t) => !retired.has(t) && !sites.get(t)?.length)).toEqual([]);
+    expect([...retired].filter((t) => sites.get(t)?.length)).toEqual([]);
   });
 
   it("describes field types readably", () => {

@@ -1,3 +1,7 @@
+import { appendFile, mkdir } from "node:fs/promises";
+import path from "node:path";
+import { assertEmailProviderAllowed } from "./guard";
+
 /**
  * Transactional email. One provider, Resend, over its REST API (no SDK
  * dependency), enabled by RESEND_API_KEY + EMAIL_FROM.
@@ -21,7 +25,21 @@ export function emailConfigured() {
   return Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM);
 }
 
+/** EMAIL_PROVIDER=outbox (dev and gates): messages are appended here instead of sent. */
+export const EMAIL_OUTBOX_FILE = path.join(process.cwd(), ".data", "outbox", "email.jsonl");
+
 export async function sendEmail(message: EmailMessage): Promise<EmailResult> {
+  if (process.env.EMAIL_PROVIDER === "outbox") {
+    assertEmailProviderAllowed();
+    try {
+      await mkdir(path.dirname(EMAIL_OUTBOX_FILE), { recursive: true });
+      await appendFile(EMAIL_OUTBOX_FILE, JSON.stringify({ ...message, at: new Date().toISOString() }) + "\n");
+      return { delivered: true };
+    } catch (err) {
+      console.error("Email outbox write failed.", err);
+      return { delivered: false, reason: "failed" };
+    }
+  }
   if (!emailConfigured()) {
     if (process.env.NODE_ENV !== "production") {
       console.info(

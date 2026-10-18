@@ -68,6 +68,24 @@ describe("emit validation", () => {
     await expect(emitDomainEvent(client, { type: "PatientRegistered", aggregateId: "a", organizationId: "o", payload: { patientId: "p" } }))
       .rejects.toMatchObject({ code: "MISSING_FACILITY" });
   });
+  it("rejects a PERSON-scoped event with no person, or with a tenant", async () => {
+    const { client } = capture();
+    const payload = { personId: "p", source: "SELF_REGISTRATION" };
+    await expect(emitDomainEvent(client, { type: "PersonCreated", aggregateId: "p", payload }))
+      .rejects.toMatchObject({ code: "MISSING_PERSON" });
+    await expect(emitDomainEvent(client, { type: "PersonCreated", aggregateId: "p", personId: "p", facilityId: "f", payload }))
+      .rejects.toMatchObject({ code: "PERSON_TENANT" });
+    await expect(emitDomainEvent(client, { type: "PersonCreated", aggregateId: "p", personId: "p", organizationId: "o", payload }))
+      .rejects.toMatchObject({ code: "PERSON_TENANT" });
+  });
+  it("persists the person on a PERSON event and allows it on a FACILITY event, nowhere else", async () => {
+    const { client, rows } = capture();
+    await emitDomainEvent(client, { type: "PersonCreated", aggregateId: "p", personId: "p", payload: { personId: "p", source: "MIGRATION" } });
+    await emitDomainEvent(client, { type: "PersonPatientLinked", aggregateId: "l", organizationId: "o", facilityId: "f", personId: "p", payload: { linkId: "l", personId: "p", patientId: "x", method: "SELF_CREATED" } });
+    expect(rows.map((r) => [r.personId, r.organizationId ?? null, r.facilityId ?? null])).toEqual([["p", null, null], ["p", "o", "f"]]);
+    await expect(emitDomainEvent(client, { type: "PaymentReceived", aggregateId: "a", organizationId: "o", personId: "p", payload: { paymentId: "p", invoiceId: "i", amountMinor: 100, currency: "INR" } }))
+      .rejects.toMatchObject({ code: "PERSON_SCOPE" });
+  });
 });
 
 describe("emit envelope", () => {
@@ -333,5 +351,26 @@ describe("step-9c payload codes mirror their sources", () => {
     expect(options("HealthInformationExchangeRequested", "scopes")).toEqual([...CONSENT_SCOPES].sort());
     expect(options("ExternalIdentifierStatusChanged", "entityType")).toEqual([...EXTERNAL_ENTITY_TYPES].sort());
     expect(options("ExternalIdentifierStatusChanged", "system")).toEqual([...Object.keys(IDENTIFIER_SYSTEMS), "OTHER"].sort());
+  });
+});
+
+describe("Phase 0 person payload codes mirror their sources", () => {
+  const options = (type: string, key: string) => {
+    const shape = (getEventContract(type, 1)!.payload as unknown as { shape: Record<string, { options?: string[]; unwrap?: () => unknown }> }).shape;
+    let f = shape[key] as { options?: string[]; unwrap?: () => unknown };
+    while (!f.options && f.unwrap) f = f.unwrap() as typeof f;
+    return [...(f.options ?? [])].sort();
+  };
+  it("link methods mirror the Prisma enum", () => {
+    expect(options("PersonPatientLinked", "method")).toEqual(Object.values($Enums.PersonLinkMethod).sort());
+    expect(options("PersonPatientUnlinked", "by")).toEqual(Object.values($Enums.PersonUnlinkActor).sort());
+    expect(options("PersonPatientUnlinked", "reason")).toEqual(Object.values($Enums.PersonUnlinkReason).sort());
+    expect(options("PersonConsentDecided", "purpose")).toEqual(Object.values($Enums.PersonConsentPurpose).sort());
+    expect(options("PersonConsentDecided", "decision")).toEqual(Object.values($Enums.PersonConsentDecision).sort());
+  });
+  it("PERSON-scoped contracts carry a personId field", () => {
+    for (const c of EVENT_CONTRACTS.filter((x) => x.scope === "PERSON")) {
+      expect(Object.keys((c.payload as unknown as { shape: Record<string, unknown> }).shape)).toContain("personId");
+    }
   });
 });

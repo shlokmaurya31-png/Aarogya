@@ -14,7 +14,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const patient = await prisma.patient.findUnique({ where: { id } });
     if (!patient || patient.facilityId !== facilityId) throw new NotFoundError("Patient not found.");
 
-    const summary = await buildPatientSummary(id);
+    const summary = await buildPatientSummary(id, { kind: "STAFF", facilityId });
     await recordAuditEvent(
       "hospital.patient.viewed",
       session.userId,

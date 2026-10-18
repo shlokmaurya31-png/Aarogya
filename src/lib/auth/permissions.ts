@@ -80,6 +80,12 @@ export const PERMISSIONS = [
   "referral:respond",
   "patient:merge",
   "patient:duplicate:review",
+  // Phase 0 — person identity: verify a person's ID in person at the front
+  // desk (one staff member records, a different one approves), and ask for /
+  // approve a facility unlink (two staff members). Never granted to clinical
+  // roles, patients or Scholar.
+  "patient:identity:verify",
+  "patient:identity:unlink",
   "patient:self:read",
   // Phase D11 — Patient Experience. The patient's own self-service action gate
   // (book/cancel an appointment, grant/revoke consent, initiate a payment,
@@ -889,6 +895,8 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "document:manage",
     "patient:merge",
     "patient:duplicate:review",
+    "patient:identity:verify",
+    "patient:identity:unlink",
     "patient:checkin",
     "appointment:create",
     "appointment:update",
@@ -1057,6 +1065,8 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "patient:write",
     "patient:checkin",
     "patient:duplicate:review",
+    "patient:identity:verify",
+    "patient:identity:unlink",
     "encounter:create",
     "encounter:read",
     "appointment:create",

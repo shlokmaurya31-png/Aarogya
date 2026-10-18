@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { AlertCircle, CalendarDays, FileText, Receipt } from "lucide-react";
 import { Card, SectionTitle, Empty, Unavailable, usePatientData, formatDateTime, rupees } from "./ui";
+import { SharingChoice } from "./SharingChoice";
 
 type SectionState<T> = { status: "OK"; data: T } | { status: "UNAVAILABLE" };
 interface HomeData {
@@ -27,6 +28,8 @@ export function PatientHome() {
         <h1 className="text-[20px] font-semibold">Hello, {home.patientName}</h1>
         <p className="text-[13px] text-text-secondary">Here is what is happening with your care.</p>
       </div>
+
+      {home.isSelf && <SharingChoice />}
 
       {home.actionsRequired.length > 0 && (
         <Card className="border-amber/30 bg-amber/5">

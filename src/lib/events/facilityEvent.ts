@@ -18,6 +18,8 @@ export async function emitFacilityEvent(
     facilityId: string;
     actorUserId?: string | null;
     encounterId?: string | null;
+    /** The Person the patient is linked to, when the event concerns them (Phase 0). */
+    personId?: string | null;
     payload: Record<string, unknown>;
   },
 ) {
@@ -27,6 +29,7 @@ export async function emitFacilityEvent(
     aggregateType: input.aggregateType,
     organizationId: await facilityOrganizationId(tx, input.facilityId),
     facilityId: input.facilityId,
+    personId: input.personId ?? null,
     actorUserId: input.actorUserId ?? null,
     correlationId: input.encounterId ?? undefined,
     payload: input.payload,

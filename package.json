@@ -21,6 +21,7 @@
     "test": "vitest run",
     "verify:all": "tsx scripts/verify-all.ts",
     "docs:events": "tsx scripts/generate-event-catalogue.ts",
+    "identity:migrate": "tsx scripts/identity-migrate.ts",
     "staging:migrate": "tsx scripts/staging.ts migrate",
     "staging:seed": "tsx scripts/staging.ts seed",
     "staging:check": "tsx scripts/staging.ts check",

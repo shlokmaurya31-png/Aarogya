@@ -3,8 +3,10 @@
  * events. (Family acceptance/revocation, profile updates and account linking
  * are asserted in the D11 and self-registration gates, which drive them.)
  *
- *   1. PatientDocumentUploaded on a portal upload → the task-generator opens one
- *      DOCUMENT_REVIEW task (redelivery opens no second one).
+ *   1. PersonDocumentUploaded on a portal upload (Phase 0, part 2: the
+ *      person's own document) → once the person shares uploads and has a care
+ *      relationship, the task-generator opens one DOCUMENT_REVIEW task at that
+ *      facility (redelivery opens no second one).
  *   2. DocumentGenerated (document type, draft flag, never content).
  *   3. ClinicalNoteSigned on sign and on amend (naming the note replaced),
  *      never the content.
@@ -40,6 +42,8 @@ import { getEventContract } from "../src/lib/events/catalogue";
 import { runTick } from "../src/lib/runner/tick";
 import type { PatientAccessScope } from "../src/lib/patient/context";
 import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
+import { linkAccountForGate } from "./lib/personFixture";
+import { decidePersonConsent } from "../src/lib/person/consent";
 
 let pass = 0;
 let fail = 0;
@@ -57,20 +61,29 @@ async function main() {
   const doctor = await prisma.user.findFirstOrThrow({ where: { email: "doctor1@amc-demo.aarogya" }, include: { hospitalStaffProfile: true } });
   const staffId = doctor.hospitalStaffProfile!.id;
   const user = await prisma.user.create({ data: { email: `records-${run}@verify.aarogya`, passwordHash: "x", role: "PATIENT", displayName: "Records patient" } });
-  const patient = await prisma.patient.create({ data: { uhid: `REC-${run}`, facilityId, fullName: `Records ${run}`, sex: "F", userId: user.id } });
+  const patient = await prisma.patient.create({ data: { uhid: `REC-${run}`, facilityId, fullName: `Records ${run}`, sex: "F" } });
+  await linkAccountForGate(prisma, user.id, patient.id);
   const scope: PatientAccessScope = { patientId: patient.id, patientIds: [patient.id], facilityId, isSelf: true, allowedClasses: new Set(ALL) };
   const events = (type: string, aggregateId: string) => prisma.domainEventOutbox.findMany({ where: { eventType: type, aggregateId }, orderBy: { seq: "asc" } });
   const payloads = async (type: string, aggregateId: string) => (await events(type, aggregateId)).map((e) => e.payload as Record<string, unknown>);
 
-  // 1. Portal upload.
+  // 1. Portal upload. Phase 0: before the person chooses to share uploads with
+  // hospitals treating them, the care team gets no review task (not even the
+  // upload's existence); after they share, inside a care relationship (an open
+  // encounter), it opens once.
   const pdf = await PDFDocument.create();
   pdf.addPage([200, 100]).drawText(`report ${run}`, { x: 10, y: 50, size: 8 });
+  const hidden = await uploadPatientDocument(scope, user.id, { bytes: Buffer.from(await pdf.save()), contentType: "application/pdf", originalName: "h.pdf", title: `Unshared report ${run}`, type: "REPORT" });
+  await drain();
+  report("Before the person shares uploads, the upload opens no review task", (await prisma.task.count({ where: { idempotencyKey: `DOCUMENT_REVIEW:${hidden.id}` } })) === 0);
+  await openEncounter({ facilityId, patientId: patient.id, type: "OPD", chiefComplaint: "Upload review", byUserId: doctor.id });
+  await decidePersonConsent({ userId: user.id, purpose: "SHARE_UPLOADS_WITH_TREATING", decision: "GRANTED" });
   const up = await uploadPatientDocument(scope, user.id, { bytes: Buffer.from(await pdf.save()), contentType: "application/pdf", originalName: "r.pdf", title: `Outside report ${run}`, type: "REPORT" });
-  const uploaded = await payloads("PatientDocumentUploaded", up.id);
-  report("A portal upload emits PatientDocumentUploaded (type, uploader; no title)", uploaded.length === 1 && uploaded[0].documentType === "REPORT" && uploaded[0].uploadedBy === "PATIENT" && !JSON.stringify(uploaded).includes("Outside"));
+  const uploaded = await payloads("PersonDocumentUploaded", up.id);
+  report("A portal upload emits PersonDocumentUploaded (type; no title)", uploaded.length === 1 && uploaded[0].documentType === "REPORT" && !JSON.stringify(uploaded).includes("Outside"));
   await drain();
   const reviewKey = { facilityId_idempotencyKey: { facilityId, idempotencyKey: `DOCUMENT_REVIEW:${up.id}` } };
-  report("task-generator opens one DOCUMENT_REVIEW task for the care team", (await prisma.task.findUnique({ where: reviewKey }))?.status === "OPEN");
+  report("…after they share (and with an open encounter), task-generator opens one DOCUMENT_REVIEW task for the care team", (await prisma.task.findUnique({ where: reviewKey }))?.status === "OPEN");
 
   // 2. Generated document.
   const gen = await generateAndStoreDocument(
@@ -168,7 +181,7 @@ async function main() {
 
   // Redelivery creates no second review task.
   await drain();
-  const ids = (await prisma.domainEventOutbox.findMany({ where: { eventType: "PatientDocumentUploaded", aggregateId: up.id }, select: { eventId: true } })).map((e) => e.eventId);
+  const ids = (await prisma.domainEventOutbox.findMany({ where: { eventType: "PersonDocumentUploaded", aggregateId: up.id }, select: { eventId: true } })).map((e) => e.eventId);
   await prisma.domainEventDelivery.updateMany({ where: { eventId: { in: ids } }, data: { status: "PENDING" } });
   await prisma.domainEventOutbox.updateMany({ where: { eventId: { in: ids } }, data: { status: "PENDING", processedAt: null } });
   await drain();

@@ -2,13 +2,18 @@
  * Gate 2: one patient, one record, everywhere. Over real HTTP:
  *
  *   1. The front desk registers a patient in Hospital OS.
- *   2. The same person self-registers in the patient portal: a likely match,
- *      so a code goes to the phone on the hospital record; entering it links
- *      the account to that record. No second Patient is created.
+ *   2. The same person self-registers in the patient portal: a likely match.
+ *      The front desk set the record's phone minutes ago, so (insider-takeover
+ *      fix) no code goes to it: two staff verify the person's ID in person and
+ *      the person confirms. No second Patient is created.
  *   3. The front desk opens an encounter; the patient uploads a document.
+ *   5. Phase 0: the person connects a second facility; the portal shows both
+ *      records labelled by facility; the other facility's staff can't reach it.
  *   4. The portal, the Hospital OS chart and the hospital API all return the
  *      same patient ID, the same demographics, the same encounter and the
- *      same document.
+ *      same document (Phase 0: the hospital sees the patient's upload only
+ *      after the person chooses to share uploads with hospitals treating
+ *      them; hidden before the choice and after declining).
  *
  * Builds and starts the app (unless --no-build) with SMS_PROVIDER=outbox, so
  * the gate can read the code the server sent.
@@ -72,14 +77,26 @@ async function main() {
     // 2. The same person self-registers and verifies with the code sent to the record's phone.
     const self = await call("", "POST", "/api/patient/register",
       { fullName: person.fullName, email: `one-patient-${run}@verify.aarogya`, password: "OnePatient@123", sex: "F", phone: `+91 ${phone}` }, "10.88.0.1");
-    report("Self-registration finds the record and asks for the code", self.status === 200 && self.json.status === "VERIFICATION_REQUIRED", String(self.json.status));
-    report("…without revealing the record's ID", !JSON.stringify(self.json).includes(P));
+    report("Self-registration finds the record without revealing it", self.status === 200 && !JSON.stringify(self.json).includes(P));
+    // Insider-takeover fix: the front desk set this record's phone minutes ago,
+    // so no code may go to it for 7 days; the person verifies in person with
+    // two staff members instead.
+    report("…the phone was just set by staff, so it routes to in-person verification (no code)", self.json.status === "IN_PERSON_REQUIRED", String(self.json.status));
     const patientCookie = self.setCookie;
     const sent = (await readFile(OUTBOX, "utf8").catch(() => "")).trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as { to: string; text: string });
-    const code = sent.reverse().find((m) => m.to.replace(/\D/g, "").endsWith(phone))?.text.match(/\b(\d{6})\b/)?.[1];
-    report("The code went to the phone on the hospital record", Boolean(code));
-    const link = await call(patientCookie, "POST", "/api/patient/link", { code });
-    report("Entering the code links the account to the front desk's record", link.status === 200 && link.json.status === "LINKED" && link.json.patientId === P, JSON.stringify(link.json));
+    report("No code went to the record's phone during the hold", !sent.some((m) => m.to.replace(/\D/g, "").endsWith(phone) && /verification code/.test(m.text)));
+    const admin = await loginAs(base, "admin@amc-demo.aarogya", STAFF_PASSWORD);
+    const queue = await call(frontDesk, "GET", "/api/hospital/patient-link-requests");
+    const req = ((queue.json.requests ?? queue.json.linkRequests ?? queue.json) as { id: string; candidatePatient?: { id: string } }[]);
+    const reqId = (Array.isArray(req) ? req : []).find((r) => r.candidatePatient?.id === P)?.id;
+    report("The front desk sees the request waiting for in-person verification", Boolean(reqId), `HTTP ${queue.status}`);
+    const started = await call(frontDesk, "POST", `/api/hospital/patient-link-requests/${reqId}/in-person`, { idType: "AADHAAR", idLast4: "1234", reason: "PHONE_RECENTLY_CHANGED" });
+    const linkId = started.json.linkId as string | undefined;
+    report("Staff member A records the ID check (last 4 only)", started.status === 200 && Boolean(linkId), JSON.stringify(started.json).slice(0, 200));
+    const approved = await call(admin, "POST", `/api/hospital/person-links/${linkId}/approve`, {});
+    report("A different staff member approves", approved.status === 200, `HTTP ${approved.status}`);
+    const link = await call(patientCookie, "POST", `/api/patient/person/links/${linkId}/confirm`, {});
+    report("The person confirms: the account's Person is linked to the front desk's record", link.status === 200 && link.json.status === "LINKED" && link.json.patientId === P, JSON.stringify(link.json));
     const patientCols = (await prisma.$queryRaw<{ column_name: string }[]>`SELECT column_name FROM information_schema.columns WHERE table_name = 'Patient'`).map((c) => c.column_name);
     report("Patient stores no age (ageYears dropped; dobPrecision present, no dobEstimated)", !patientCols.includes("ageYears") && patientCols.includes("dobPrecision") && !patientCols.includes("dobEstimated"));
     const studentCols = (await prisma.$queryRaw<{ column_name: string }[]>`SELECT column_name FROM information_schema.columns WHERE table_name = 'StudentProfile'`).map((c) => c.column_name);
@@ -113,7 +130,7 @@ async function main() {
     const profile = await call(patientCookie, "GET", "/api/patient/profile");
     report("Portal profile: same demographics", profile.json.fullName === person.fullName && profile.json.sex === person.sex && profile.json.phone === person.phone && profile.json.bloodGroup === person.bloodGroup);
     const reports = await call(patientCookie, "GET", "/api/patient/reports");
-    report("Portal: the document", ((reports.json.reports as { id: string }[]) ?? []).some((r) => r.id === `document:${D}`));
+    report("Portal: the document (the person's own upload)", ((reports.json.reports as { id: string }[]) ?? []).some((r) => r.id === `upload:${D}`));
 
     const chart = await call(doctor, "GET", `/api/hospital/patients/${P}/chart`);
     const chartPatient = chart.json.patient as Record<string, unknown> | undefined;
@@ -123,8 +140,21 @@ async function main() {
     report("Hospital OS chart: same patient ID", chartPatient?.id === P, `HTTP ${chart.status}`);
     report("Hospital OS chart: same demographics", same(chartPatient));
     report("Hospital OS chart: the encounter", ((chart.json.encounters as { id: string }[]) ?? []).some((e) => e.id === E));
-    const docs = await call(doctor, "GET", `/api/hospital/documents?patientId=${P}`);
-    report("Hospital OS chart: the document", ((docs.json.documents as { id: string }[]) ?? []).some((d) => d.id === D));
+    // Phase 0: the upload belongs to the person. The hospital treating them
+    // sees it only once they choose "share my uploads with hospitals treating
+    // me" (no default), inside a care relationship (the open encounter).
+    const hasDoc = async () => (((await call(doctor, "GET", `/api/hospital/documents?patientId=${P}`)).json.personDocuments as { id: string }[]) ?? []).some((d) => d.id === D);
+    const overview = await call(patientCookie, "GET", "/api/patient/person");
+    report("Portal: the person is asked to choose upload sharing (no default)", overview.status === 200 && (overview.json.sharing as { choiceNeeded?: boolean })?.choiceNeeded === true && (overview.json.sharing as { uploadsWithTreatingHospitals?: unknown }).uploadsWithTreatingHospitals === null);
+    report("Hospital OS chart: the upload is hidden before the person chooses", !(await hasDoc()));
+    const declined = await call(patientCookie, "POST", "/api/patient/person/sharing", { decision: "DECLINED" });
+    report("Hospital OS chart: …and after they decline", declined.status === 200 && !(await hasDoc()));
+    const granted = await call(patientCookie, "POST", "/api/patient/person/sharing", { decision: "GRANTED" });
+    report("Hospital OS chart: the document, once they share with hospitals treating them", granted.status === 200 && (await hasDoc()));
+    const staffDl = await call(doctor, "GET", `/api/hospital/person-documents/${D}/download?patientId=${P}`);
+    report("Hospital OS: the upload downloads by a short-lived signed URL, through the resolver", staffDl.status === 200 && typeof staffDl.json.url === "string", `HTTP ${staffDl.status}`);
+    const ownDl = await call(patientCookie, "GET", `/api/patient/person/documents/${D}/download`);
+    report("Portal: the person downloads their own upload the same way", ownDl.status === 200 && typeof ownDl.json.url === "string");
 
     const api = await call(frontDesk, "GET", `/api/hospital/patients/${P}`);
     const apiPatient = api.json.patient as Record<string, unknown> | undefined;
@@ -132,6 +162,22 @@ async function main() {
     const search = await call(frontDesk, "GET", `/api/hospital/patients?q=${encodeURIComponent(hospitalPatient.uhid)}`);
     const found = ((search.json.patients as { id: string }[]) ?? []).map((p) => p.id);
     report("API: searching the UHID finds exactly this patient", found.length === 1 && found[0] === P, found.join(","));
+
+    // Phase 0: one Person, records at two facilities. The person connects
+    // Noida (no match there: a record is created and linked); the portal shows
+    // both, each labelled with its facility; Pune staff still can't reach the
+    // Noida record.
+    const connect = await call(patientCookie, "POST", "/api/patient/person/links", { facilityId: "fac-amc-noida", fullName: person.fullName, sex: person.sex });
+    const N = connect.json.patientId as string | undefined;
+    report("Person: connecting the Noida facility creates and links a record there", connect.status === 200 && connect.json.status === "LINKED_NEW" && Boolean(N), JSON.stringify(connect.json).slice(0, 200));
+    const overview2 = await call(patientCookie, "GET", "/api/patient/person");
+    const links = ((overview2.json.links as { status: string; facility: { id: string; name: string } }[]) ?? []).filter((l) => l.status === "ACTIVE");
+    report("Person: the portal lists both records, each labelled by facility",
+      links.length === 2 && new Set(links.map((l) => l.facility.id)).size === 2 && links.every((l) => Boolean(l.facility.name)));
+    const noidaReports = await call(patientCookie, "GET", `/api/patient/reports?patientId=${N}`);
+    report("Person: the Noida record is the person's own in the portal", noidaReports.status === 200);
+    const crossChart = await call(doctor, "GET", `/api/hospital/patients/${N}/chart`);
+    report("Person: Pune staff can't reach the person's Noida record", crossChart.status === 404, `HTTP ${crossChart.status}`);
 
     // D1: an ABHA added through the patient API is an ExternalIdentifier, and the API reads it back from there.
     const abha = `91-${run}-${phone.slice(-4)}`;

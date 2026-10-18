@@ -74,6 +74,11 @@ export const SENSITIVE_EVENTS: readonly string[] = [
   "PrivacyRequestStatusChanged", "InfectionExposureRecorded",
   // Consent facts are SENSITIVE (like ConsentGranted / ConsentRevoked).
   "ConsentRequestStatusChanged",
+  // Phase 0: linking a facility record to a person says who the person is.
+  "PersonPatientLinked", "PersonPatientUnlinked", "PersonMerged",
+  "PersonAccountClosed", "PersonAccountReopened", "PersonDataPurged",
+  // A person's choice about who sees their data is a consent fact.
+  "PersonConsentDecided",
 ];
 
 /**
@@ -100,6 +105,8 @@ export const EMITTING_HELPERS: Record<string, string[]> = {
   "src/lib/hospital/admission.ts#transferPatientInTx": ["PatientTransferred"],
   "src/lib/billing/payments.ts#emitPaymentFailed": ["PaymentFailed"],
   "src/lib/patient/registration.ts#createRegisteredPatient": ["PatientRegistered"],
+  // Phase 0: every verified link goes through it (sign-up, the code, and the request paths).
+  "src/lib/person/person.ts#recordActiveLink": ["PersonPatientLinked"],
   "src/lib/hospital/inventory/lots.ts#quarantineLot": ["StockLotStatusChanged"],
   "src/lib/hospital/billing/claims.ts#emitClaimSettled": ["ClaimSettled"],
   "src/lib/hospital/inventory/ledger.ts#postLedgerEntry": ["StockMoved", "StockBelowReorder"],
@@ -132,6 +139,17 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/billing/billingAccount.ts#syncProviderCustomer": { category: "INTEGRATION_PROTOCOL", reason: "payment-provider customer sync" },
   "src/lib/billing/billingAccount.ts#updateBillingAccount": { category: "OPERATIONAL_DETAIL", reason: "billing contact details; no money moves" },
   "src/lib/billing/bootstrap.ts#ensureBillingBootstrap": { category: "BOOKKEEPING", reason: "idempotent bootstrap / one-off migration" },
+  // Phase 0 — steps of linking/unlinking a record to a Person; the outcome is
+  // emitted when the link becomes ACTIVE (or is refused/ends) or UNLINKED.
+  "src/lib/person/linking.ts#submitSecondFactor": { category: "PROCESS_STEP", reason: "second factor checked, code sent (or moved to in-person); the outcome is the link", boundary: ["PersonPatientLinked"] },
+  "src/lib/person/linking.ts#startInPersonVerification": { category: "PROCESS_STEP", reason: "first staff member's ID check; a second approves and the person confirms", boundary: ["PersonPatientLinked"] },
+  "src/lib/person/linking.ts#approveInPersonVerification": { category: "PROCESS_STEP", reason: "second staff member's approval; the person still confirms", boundary: ["PersonPatientLinked"] },
+  "src/lib/person/linking.ts#offerAbhaLink": { category: "PROCESS_STEP", reason: "ABHA match offered; the person confirms (disabled until ABDM verification)", boundary: ["PersonPatientLinked"] },
+  "src/lib/person/linking.ts#startReverification": { category: "PROCESS_STEP", reason: "a migrated link's verification opened (same routes as a new link); the outcome is the link", boundary: ["PersonPatientLinked"] },
+  "src/lib/person/merge.ts#startPersonMerge": { category: "PROCESS_STEP", reason: "the other account's password checked and a code sent to each account; the outcome is the merge", boundary: ["PersonMerged"] },
+  "src/lib/person/documents.ts#movePersonUploads": { category: "BOOKKEEPING", reason: "one-off migration of existing uploads to PersonDocument (same bytes); refuses rather than guesses" },
+  "src/lib/person/documents.ts#personDocumentDownload": { category: "BOOKKEEPING", reason: "access log and audit of a staff read; no state change" },
+  "src/lib/person/linking.ts#requestFacilityUnlink": { category: "PROCESS_STEP", reason: "first staff member's unlink request; a second approves", boundary: ["PersonPatientUnlinked"] },
   "src/lib/billing/invoices.ts#addInvoiceLine": { category: "PROCESS_STEP", reason: "edit to a draft invoice; money moves on InvoiceFinalized", boundary: ["InvoiceFinalized", "InvoiceVoided"] },
   "src/lib/billing/invoices.ts#refreshInvoicePaymentStatus": { category: "BOOKKEEPING", reason: "derived status, decision log or provenance written as part of another operation" },
   "src/lib/billing/payments.ts#createPaymentAttempt": { category: "PROCESS_STEP", reason: "an attempt; its outcome is PaymentReceived / PaymentFailed", boundary: ["PaymentReceived", "PaymentFailed"] },

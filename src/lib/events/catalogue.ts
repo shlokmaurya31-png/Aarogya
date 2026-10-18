@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { EventContract } from "./types";
+import { PERSON_SOURCES, PERSON_LINK_METHODS } from "@/lib/person/vocab";
 
 /**
  * Phase D6 — the event catalogue (in-code schema registry).
@@ -60,6 +61,7 @@ const billingCreditStatus = z.enum(["ACTIVE", "APPLIED", "VOID"]);
 const billingCreditType = z.enum(["PROMOTIONAL", "MANUAL", "CORRECTION", "CONTRACT"]);
 const billingInvoiceStatus = z.enum(["DRAFT", "OPEN", "PARTIALLY_PAID", "PAID", "PAST_DUE", "VOID", "UNCOLLECTIBLE"]);
 const subscriptionStatus = z.enum(["TRIAL", "ACTIVE", "PAST_DUE", "GRACE", "SUSPENDED", "CANCELLED", "EXPIRED"]);
+const personLinkMethod = z.enum(PERSON_LINK_METHODS);
 
 function contract<P extends z.ZodTypeAny>(c: EventContract<P>): EventContract<P> {
   return c;
@@ -1163,7 +1165,10 @@ export const EVENT_CONTRACTS: EventContract[] = [
   }),
   contract({
     type: "PatientAccountLinked", version: 1, aggregateType: "PATIENT", scope: "FACILITY",
-    sensitivity: "INTERNAL", producer: "self-registration (verifyLinkOtp, decideLinkRequest LINK)",
+    sensitivity: "INTERNAL", producer: "self-registration (verifyLinkOtp, decideLinkRequest LINK) until Phase 0",
+    // Phase 0: accounts no longer link to facility records; Persons do, through
+    // a verified link, and the front desk can no longer link (part 1c).
+    retired: { since: "Phase 0 (2026-10-19)", replacedBy: "PersonPatientLinked" },
     payload: z.object({ patientId: id, linkRequestId: id, portalUserId: id, via: z.enum(["OTP", "FRONT_DESK"]) }).strict(),
   }),
   contract({
@@ -1270,6 +1275,75 @@ export const EVENT_CONTRACTS: EventContract[] = [
     type: "SubscriptionStatusChanged", version: 1, aggregateType: "SUBSCRIPTION", scope: "ORGANIZATION",
     sensitivity: "LOW", producer: "commercial subscriptions (transitionSubscription); entitlements follow it",
     payload: z.object({ subscriptionId: id, from: subscriptionStatus, to: subscriptionStatus }).strict(),
+  }),
+
+  // ── Person identity (Phase 0) ─────────────────────────────────────────────
+  // A Person belongs to no facility (PERSON scope); link events belong to the
+  // facility whose record was linked and carry the personId.
+  contract({
+    type: "PersonCreated", version: 1, aggregateType: "PERSON", scope: "PERSON",
+    sensitivity: "INTERNAL", producer: "person identity (createPersonForAccount: sign-up, the identity migration)",
+    payload: z.object({ personId: id, source: z.enum(PERSON_SOURCES) }).strict(),
+  }),
+  contract({
+    type: "PersonPatientLinked", version: 1, aggregateType: "PERSON_PATIENT_LINK", scope: "FACILITY",
+    sensitivity: "SENSITIVE", producer: "person identity (recordActiveLink: self-created at sign-up, phone code, in-person ID, ABHA)",
+    payload: z.object({ linkId: id, personId: id, patientId: id, method: personLinkMethod }).strict(),
+  }),
+  contract({
+    type: "PersonPatientUnlinked", version: 1, aggregateType: "PERSON_PATIENT_LINK", scope: "FACILITY",
+    sensitivity: "SENSITIVE", producer: "person identity (unlinkByPerson; approveFacilityUnlink with two staff members)",
+    payload: z.object({ linkId: id, personId: id, patientId: id, by: z.enum(["PERSON", "FACILITY", "PLATFORM"]), reason: z.enum(["PERSON_REQUEST", "WRONG_PERSON", "FACILITY_MERGE", "PERSON_MERGE", "SECURITY", "ACCOUNT_CLOSED"]) }).strict(),
+  }),
+  contract({
+    type: "PersonLinkReverificationRequired", version: 1, aggregateType: "PERSON_PATIENT_LINK", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "person identity (the identity migration: an existing account link without verification evidence)",
+    payload: z.object({ linkId: id, personId: id, patientId: id, reason: z.enum(["FRONT_DESK_LINK", "NO_EVIDENCE"]) }).strict(),
+  }),
+  contract({
+    type: "PersonPatientLinkSuperseded", version: 1, aggregateType: "PERSON_PATIENT_LINK", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "person identity (a facility merge carries or supersedes a record's link; an unmerge restores it)",
+    payload: z.object({ linkId: id, personId: id, patientId: id, replacedByLinkId: optId, cause: z.enum(["FACILITY_MERGE", "FACILITY_UNMERGE"]), mergeRecordId: id }).strict(),
+  }),
+  contract({
+    type: "PersonMerged", version: 1, aggregateType: "PERSON", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "person identity (confirmPersonMerge: one human proved control of both accounts)",
+    payload: z.object({ personId: id, sourcePersonId: id, mergeRecordId: id, method: z.enum(["BOTH_ACCOUNTS_PROVEN"]) }).strict(),
+  }),
+  contract({
+    type: "PersonDocumentUploaded", version: 1, aggregateType: "PERSON_DOCUMENT", scope: "PERSON",
+    sensitivity: "INTERNAL", producer: "person identity (uploadPersonDocument: the person's own upload, tied to no facility)",
+    payload: z.object({ personId: id, documentId: id, documentType: z.enum(["REPORT", "REFERRAL_LETTER", "ID_PROOF", "OTHER"]) }).strict(),
+  }),
+  contract({
+    type: "PersonDocumentWithdrawn", version: 1, aggregateType: "PERSON_DOCUMENT", scope: "PERSON",
+    sensitivity: "INTERNAL", producer: "person identity (withdrawPersonDocument)",
+    payload: z.object({ personId: id, documentId: id }).strict(),
+  }),
+  contract({
+    type: "PersonAccountClosed", version: 1, aggregateType: "PERSON", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "person identity (closePersonAccount: the person's own login, confirmed)",
+    payload: z.object({ personId: id, purgeAfter: iso }).strict(),
+  }),
+  contract({
+    type: "PersonAccountReopened", version: 1, aggregateType: "PERSON", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "person identity (reopenPersonAccount, within the 30-day grace period)",
+    payload: z.object({ personId: id }).strict(),
+  }),
+  contract({
+    type: "PersonDataPurged", version: 1, aggregateType: "PERSON", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "person identity (purgeClosedPersons: the runner, after the grace period; deferred under a legal hold)",
+    payload: z.object({ personId: id, documentsDeleted: z.number().int().min(0), documentsKept: z.number().int().min(0), linksEnded: z.number().int().min(0) }).strict(),
+  }),
+  contract({
+    type: "PatientContactConfirmed", version: 1, aggregateType: "PATIENT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "person identity (confirmPatientContact: staff confirm the record's phone with the patient present)",
+    payload: z.object({ patientId: id, contact: z.enum(["PHONE"]), via: z.enum(["STAFF_IN_PERSON"]) }).strict(),
+  }),
+  contract({
+    type: "PersonConsentDecided", version: 1, aggregateType: "PERSON", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "person identity (decidePersonConsent: the person's own choice, e.g. sharing uploads with treating hospitals)",
+    payload: z.object({ personId: id, consentId: id, purpose: z.enum(["SHARE_UPLOADS_WITH_TREATING"]), decision: z.enum(["GRANTED", "DECLINED"]), previous: z.enum(["NONE", "GRANTED", "DECLINED"]) }).strict(),
   }),
 ];
 

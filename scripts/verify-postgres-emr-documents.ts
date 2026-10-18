@@ -91,7 +91,7 @@ async function main() {
   // ── D: timeline composes documents + transfers ──
   {
     await prisma.clinicalDocument.create({ data: { facilityId: facility.id, patientId: patient.id, type: "REFERRAL_LETTER", title: `Timeline doc ${runId}`, uploadedByStaffId: staff.id } });
-    const timeline = await buildPatientTimeline(patient.id);
+    const timeline = await buildPatientTimeline(patient.id, { kind: "STAFF", facilityId: facility.id });
     const hasDoc = timeline.some((e) => e.sourceType === "ClinicalDocument");
     report("D: patient timeline includes ClinicalDocument entries", hasDoc, `entries=${timeline.length}`);
   }

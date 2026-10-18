@@ -3,6 +3,7 @@ import { z } from "zod";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import type { PatientAccessScope } from "../context";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
+import { notifyPreviousPhone } from "@/lib/person/linking";
 
 /**
  * Phase D11 — patient profile & preferences (brief §6, §46).
@@ -60,14 +61,14 @@ const ProfileUpdateSchema = z
   })
   .strict(); // reject any unexpected key outright
 
-export async function updateProfile(scope: PatientAccessScope, body: unknown): Promise<ProfileDTO> {
+export async function updateProfile(scope: PatientAccessScope, body: unknown, actorUserId: string): Promise<ProfileDTO> {
   if (!scope.isSelf) throw new NotFoundError();
   const parsed = ProfileUpdateSchema.safeParse(body);
   if (!parsed.success) throw new BadRequestError("Only contact and communication preferences can be updated.");
   const data = parsed.data;
   // Explicit field-by-field mapping — never spread the request body.
   const FIELD_CODES = { preferredName: "PREFERRED_NAME", phone: "PHONE", address: "ADDRESS", language: "LANGUAGE", communicationPreference: "COMMUNICATION_PREFERENCE" } as const;
-  await prisma.$transaction(async (tx) => {
+  const previous = await prisma.$transaction(async (tx) => {
     const before = await tx.patient.findUniqueOrThrow({ where: { id: scope.patientId }, select: { facilityId: true, preferredName: true, phone: true, address: true, language: true, communicationPreference: true } });
     await tx.patient.update({
       where: { id: scope.patientId },
@@ -77,6 +78,9 @@ export async function updateProfile(scope: PatientAccessScope, body: unknown): P
         address: data.address ?? undefined,
         language: data.language ?? undefined,
         communicationPreference: data.communicationPreference ?? undefined,
+        // Phase 0: a phone the patient changes here is not confirmed by anyone,
+        // so it can't receive a link code until staff confirm it.
+        ...(data.phone != null && data.phone !== before.phone ? { phoneConfirmedAt: null } : {}),
       },
     });
     // Which fields changed (codes), never the values.
@@ -88,6 +92,9 @@ export async function updateProfile(scope: PatientAccessScope, body: unknown): P
         payload: { patientId: scope.patientId, changeKind: "PROFILE", fields },
       });
     }
+    return { facilityId: before.facilityId, phone: data.phone != null && data.phone !== before.phone ? before.phone : null };
   });
+  // Every phone change tells the previous number (insider-takeover fix; no clinical or facility detail).
+  if (previous.phone) await notifyPreviousPhone({ patientId: scope.patientId, facilityId: previous.facilityId, previousPhone: previous.phone, changedBy: "PATIENT", byUserId: actorUserId });
   return getProfile(scope);
 }

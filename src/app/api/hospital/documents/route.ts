@@ -6,6 +6,9 @@ import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { buildAuthorizationActor } from "@/lib/auth/authorize/context";
 import { authorizeAccess } from "@/lib/auth/authorize/engine";
+import { staffDocumentVisibility } from "@/lib/person/access";
+import { staffPersonDocuments } from "@/lib/person/documents";
+import { resolvePatientIdsForRead } from "@/lib/patient/merge";
 
 /** Document metadata foundation (brief §26) — metadata-only this phase, see docs/CLINICAL_CORE.md §8. */
 export async function GET(req: NextRequest) {
@@ -19,8 +22,10 @@ export async function GET(req: NextRequest) {
     if (!patient || patient.facilityId !== facilityId) throw new NotFoundError("Patient not found.");
 
     const includeSuperseded = searchParams.get("includeSuperseded") === "true";
+    // Phase 0: a patient's uploads reach staff only under personAccess.
+    const visible = await staffDocumentVisibility(facilityId, [patientId]);
     const documents = await prisma.clinicalDocument.findMany({
-      where: { patientId, ...(includeSuperseded ? {} : { status: "CURRENT" }) },
+      where: { AND: [{ patientId, ...(includeSuperseded ? {} : { status: "CURRENT" }) }, visible] },
       orderBy: { createdAt: "desc" },
     });
 
@@ -34,8 +39,11 @@ export async function GET(req: NextRequest) {
     // turns on the ACTOR-to-PATIENT relationship, which is identical for every
     // row here, so evaluating per document would be N identical queries for one
     // answer.
+    // Phase 0: the person's own uploads, only as personAccess allows (patient-provided).
+    const personDocuments = (await staffPersonDocuments(facilityId, await resolvePatientIdsForRead(patientId)))
+      .map((d) => ({ id: d.id, type: d.type, title: d.title, uploadedAt: d.uploadedAt, origin: "PATIENT_PROVIDED" as const }));
     const restricted = documents.filter((d) => d.accessPolicy === "RESTRICTED");
-    if (restricted.length === 0) return { documents, restrictedWithheld: 0 };
+    if (restricted.length === 0) return { documents, personDocuments, restrictedWithheld: 0 };
 
     const actor = await buildAuthorizationActor(searchParams.get("facilityId") ?? undefined);
     const decision = await authorizeAccess({
@@ -43,7 +51,7 @@ export async function GET(req: NextRequest) {
       action: "document.read.restricted",
       resource: { type: "DOCUMENT", facilityId, patientId, dataClass: "HIGHLY_SENSITIVE" },
     });
-    if (decision.decision === "ALLOW") return { documents, restrictedWithheld: 0 };
+    if (decision.decision === "ALLOW") return { documents, personDocuments, restrictedWithheld: 0 };
 
     // Withheld, not errored: the caller legitimately sees the unrestricted
     // documents. The count is returned so the UI can say "2 restricted
@@ -51,6 +59,7 @@ export async function GET(req: NextRequest) {
     // silently hiding clinical data is its own safety problem.
     return {
       documents: documents.filter((d) => d.accessPolicy !== "RESTRICTED"),
+      personDocuments,
       restrictedWithheld: restricted.length,
       restrictedDecision: decision.decision,
     };

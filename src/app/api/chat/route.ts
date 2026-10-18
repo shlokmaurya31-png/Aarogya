@@ -94,7 +94,7 @@ export async function POST(req: NextRequest) {
       const { facilityId } = await requireFacilityStaff("clinical:chart:read");
       const patient = await prisma.patient.findUnique({ where: { id: patientId }, select: { facilityId: true } });
       if (!patient || patient.facilityId !== facilityId) throw new NotFoundError("Patient not found.");
-      context = await clinicianAssistantContext(patientId);
+      context = await clinicianAssistantContext(patientId, facilityId);
       await recordAuditEvent("hospital.patient.viewed", userId, { patientId, view: "ai-assistant" }, { facilityId, patientId });
     } else {
       // Scholar and staff without an open chart: no patient record at all.

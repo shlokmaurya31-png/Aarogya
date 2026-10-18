@@ -2,6 +2,7 @@ import { dispatchPendingDomainEvents, type DispatchResult } from "@/lib/events/d
 import { tickWorkflows, type TickResult } from "@/lib/workflows/engine";
 import { sweepMedicationSchedule, type SweepResult } from "@/lib/hospital/marSweep";
 import { sweepDelegationExpiry } from "@/lib/patient/experience/delegationSweep";
+import { purgeClosedPersons } from "@/lib/person/closure";
 import { registerAllConsumers } from "./consumers";
 
 /**
@@ -30,6 +31,8 @@ export interface RunTickResult {
   workflows: TickResult;
   mar: SweepResult;
   delegations: { expired: number };
+  /** Phase 0: closed accounts whose 30-day grace period has ended. */
+  closures: { purged: number; deferredForLegalHold: number; documentsDeleted: number; documentsKept: number };
   durationMs: number;
   /** True when a batch limit was hit, i.e. there may be more work now. */
   moreWork: boolean;
@@ -52,6 +55,7 @@ export async function runTick(opts: RunTickOptions = {}): Promise<RunTickResult>
     ? await sweepMedicationSchedule({ now: opts.now, batchSize: marBatchSize })
     : { missed: 0 };
   const delegations = Date.now() - started < budgetMs ? await sweepDelegationExpiry({ now: opts.now }) : { expired: 0 };
+  const closures = Date.now() - started < budgetMs ? await purgeClosedPersons({ now: opts.now }) : { purged: 0, deferredForLegalHold: 0, documentsDeleted: 0, documentsKept: 0 };
 
   return {
     consumers,
@@ -59,6 +63,7 @@ export async function runTick(opts: RunTickOptions = {}): Promise<RunTickResult>
     workflows,
     mar,
     delegations,
+    closures,
     durationMs: Date.now() - started,
     moreWork: events.claimed >= eventBatchSize || workflows.timersFired >= workflowBatchSize || workflows.instancesRun >= workflowBatchSize || mar.missed >= marBatchSize,
   };

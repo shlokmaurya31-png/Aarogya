@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { resolvePatientIdsForRead } from "./merge";
 import { activePatientExternalIdentifiers } from "./identifiers";
+import { documentVisibilityFor, personDocumentsFor, type DocumentViewer } from "@/lib/person/access";
 
 /**
  * Server-side patient summary (brief §31) — aggregates only entities that
@@ -8,8 +9,11 @@ import { activePatientExternalIdentifiers } from "./identifiers";
  * for capabilities not yet built (e.g. no "active care plans" section,
  * since CarePlan doesn't exist this phase — see docs/CLINICAL_CORE.md).
  */
-export async function buildPatientSummary(patientId: string) {
+/** `viewer` decides which patient uploads appear (Phase 0, personAccess): required, so no caller can skip it. */
+export async function buildPatientSummary(patientId: string, viewer: DocumentViewer) {
   const patientIds = await resolvePatientIdsForRead(patientId);
+  const documentsVisible = await documentVisibilityFor(viewer, patientIds);
+  const personDocuments = (await personDocumentsFor(viewer, patientIds)).slice(0, 5).map((d) => ({ id: d.id, type: d.type, title: d.title, uploadedAt: d.uploadedAt, origin: "PATIENT_PROVIDED" as const }));
 
   const [patient, activeProblems, activeAllergies, activeMedications, recentVitals, recentEncounters, pendingLabOrders, pendingImagingOrders, recentNotes, activeCarePlans, currentLocation, activeAdmission, recentDocuments] =
     await Promise.all([
@@ -58,7 +62,7 @@ export async function buildPatientSummary(patientId: string) {
         orderBy: { admittedAt: "desc" },
       }),
       prisma.clinicalDocument.findMany({
-        where: { patientId: { in: patientIds }, status: "CURRENT" },
+        where: { AND: [{ patientId: { in: patientIds }, status: "CURRENT" }, documentsVisible] },
         orderBy: { createdAt: "desc" },
         take: 5,
       }),
@@ -82,5 +86,7 @@ export async function buildPatientSummary(patientId: string) {
     currentLocation,
     activeAdmission,
     recentDocuments,
+    // Phase 0: the person's own uploads, as the viewer may see them (patient-provided).
+    personDocuments,
   };
 }

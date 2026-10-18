@@ -103,6 +103,13 @@ const EXACT: Record<string, KeySpec> = {
   "mar.missed_grace": duration({ default: 3600, description: "How long after its scheduled time a dose may still be recorded before the MAR sweep marks it missed (default 60m)." }),
   "billing.auto_write_off.enabled": boolean({ default: false, description: "Whether small-balance auto write-off is enabled." }),
   // Batch 5: how charges posted after the invoice is issued are collected.
+  // Phase 0: how long after the last encounter a facility counts as "treating"
+  // the patient for person-level data (uploads the person chose to share).
+  // Per facility; the platform maximum is 90 days.
+  "identity.care_window_opd_days": number({ scopes: ["ORGANIZATION", "FACILITY"], default: 30, min: 0, max: 90, description: "Days after the last outpatient (non-IPD) encounter during which the facility has a care relationship with the patient (max 90)." }),
+  "identity.care_window_ipd_days": number({ scopes: ["ORGANIZATION", "FACILITY"], default: 30, min: 0, max: 90, description: "Days after discharge during which the facility has a care relationship with the patient; the admission itself always counts (max 90)." }),
+  // Phase 0 (insider-takeover fix): a phone staff set or changed can't receive a link code for this long.
+  "identity.staff_phone_hold_days": number({ scopes: ["ORGANIZATION", "FACILITY"], default: 7, min: 0, max: 90, description: "Days after staff set or change a record's phone during which it can't receive a link code (in-person verification still works)." }),
   "billing.late_charge.document_type": enumSpec(["SUPPLEMENTARY_INVOICE", "DEBIT_NOTE"], { scopes: ["ORGANIZATION", "FACILITY"], default: "SUPPLEMENTARY_INVOICE", description: "Document that collects charges posted after the encounter's invoice is issued, linked to the original." }),
 };
 
