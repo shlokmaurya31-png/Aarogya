@@ -11100,21 +11100,29 @@ model RagChunk {
 /// Half precision, kept on the heap row (no TOAST), so the exact scan over one
 /// patient stays inside the latency budget (docs/RAG_DESIGN.md §16.2).
 model RagEmbedding {
-  id               String                 @id @default(cuid())
-  chunk            RagChunk               @relation(fields: [chunkId], references: [id], onDelete: Cascade)
-  chunkId          String
-  embeddingModel   String
-  embeddingVersion Int
-  dims             Int
+  id                String                 @id @default(cuid())
+  chunk             RagChunk               @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+  chunkId           String
+  embeddingModel    String
+  embeddingVersion  Int
+  dims              Int
   /// An untyped pgvector halfvec (half precision, any dimension), stored inline;
   /// CHECK vector_dims(embedding) = dims. Distances are computed exactly over it.
-  embedding        Unsupported("halfvec")
-  ownerType        RagOwnerType
-  facilityId       String?
-  patientId        String?
-  personId         String?
-  status           RagDocumentStatus      @default(ACTIVE)
-  createdAt        DateTime               @default(now())
+  embedding         Unsupported("halfvec")
+  ownerType         RagOwnerType
+  facilityId        String?
+  patientId         String?
+  personId          String?
+  status            RagDocumentStatus      @default(ACTIVE)
+  /// The rest of the chunk's filter columns, copied from it by a trigger on insert (never
+  /// written by the app, so they can't disagree): the vector search filters on this row alone.
+  categories        RagCategory[]
+  sensitiveCategory RagSensitiveCategory?
+  audience          RagAudience
+  origin            RagOrigin
+  recordedAt        DateTime
+  sourceId          String
+  createdAt         DateTime               @default(now())
 
   @@unique([chunkId, embeddingModel, embeddingVersion])
   @@index([patientId, embeddingModel, embeddingVersion])

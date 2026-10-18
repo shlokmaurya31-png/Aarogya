@@ -5,6 +5,7 @@
  *     no facility; patient-provided sources belong to a Person; at least one
  *     category; a withdrawn document says why;
  *   - one document per source version; chunks and embeddings go with it;
+ *     an embedding's filter columns are always its chunk's (a trigger);
  *   - the vector has the dimension it says; any dimension is allowed (no
  *     fixed column), so a new model needs no migration; vectors are half
  *     precision and stay on the heap row (the latency budget needs it);
@@ -65,6 +66,13 @@ async function main() {
   report("Any dimension is stored without a schema change (3 and 1024 side by side)",
     (await emb(`e-${tag}-2`, 3, "[1,2,3]")) === 1 && (await emb(`e-${tag}-3`, 1024, `[${Array.from({ length: 1024 }, (_, i) => (i % 7) / 7).join(",")}]`)) === 1);
   report("One embedding per chunk, model and version", await refused(emb(`e-${tag}-4`, 3, "[3,2,1]")));
+  // A writer claiming other filter values is overruled by the chunk's own (trigger).
+  await prisma.$executeRaw`INSERT INTO "RagEmbedding" ("id", "chunkId", "embeddingModel", "embeddingVersion", "dims", "embedding", "ownerType", "personId", "categories", "audience", "origin", "recordedAt", "sourceId") VALUES (${`e-${tag}-5`}, ${chunk.id}, 'm-lie', 1, 3, '[1,1,1]'::halfvec, 'PERSON', ${person.id}, ARRAY['UPLOADS']::"RagCategory"[], 'PATIENT_VISIBLE', 'PATIENT_PROVIDED', now(), 'elsewhere')`;
+  const copied = await prisma.ragEmbedding.findFirstOrThrow({ where: { chunkId: chunk.id, embeddingModel: "m-lie" } });
+  report("An embedding's filter columns are always its chunk's (a trigger copies them, whatever the writer sent)",
+    copied.ownerType === "FACILITY_PATIENT" && copied.personId === null && copied.patientId === patient.id && copied.categories.join() === "LABS" && copied.audience === "STAFF_ONLY" && copied.origin === "VERIFIED" && copied.sourceId === sid);
+  await prisma.ragChunk.update({ where: { id: chunk.id }, data: { personId: person.id } });
+  report("…and follow the chunk when its Person is set", (await prisma.ragEmbedding.findMany({ where: { chunkId: chunk.id } })).every((e) => e.personId === person.id));
   await prisma.ragDocument.delete({ where: { id: doc.id } });
   report("Deleting a document deletes its chunks and their embeddings (a hard delete)",
     (await prisma.ragChunk.count({ where: { documentId: doc.id } })) === 0 && (await prisma.ragEmbedding.count({ where: { chunkId: chunk.id } })) === 0);

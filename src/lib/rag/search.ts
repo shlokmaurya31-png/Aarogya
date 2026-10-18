@@ -16,40 +16,35 @@ export interface Candidate { chunkId: string; vectorRank: number | null; similar
 
 export interface EmbeddingSpaceRef { model: string; version: number }
 
-function segmentSql(seg: ScopeSegment): Prisma.Sql | null {
+function segmentSql(seg: ScopeSegment, t: Prisma.Sql): Prisma.Sql | null {
   const owner: Prisma.Sql[] = [];
   if (seg.facility && seg.facility.patientIds.length && seg.facility.facilityIds.length) {
-    owner.push(Prisma.sql`(c."ownerType" = 'FACILITY_PATIENT' AND c."patientId" = ANY(${seg.facility.patientIds}::text[]) AND c."facilityId" = ANY(${seg.facility.facilityIds}::text[]))`);
+    owner.push(Prisma.sql`(${t}."ownerType" = 'FACILITY_PATIENT' AND ${t}."patientId" = ANY(${seg.facility.patientIds}::text[]) AND ${t}."facilityId" = ANY(${seg.facility.facilityIds}::text[]))`);
   }
-  if (seg.personId) owner.push(Prisma.sql`(c."ownerType" = 'PERSON' AND c."personId" = ${seg.personId})`);
+  if (seg.personId) owner.push(Prisma.sql`(${t}."ownerType" = 'PERSON' AND ${t}."personId" = ${seg.personId})`);
   if (!owner.length || !seg.categories.length || !seg.audiences.length || !seg.origins.length) return null;
   const parts: Prisma.Sql[] = [
     Prisma.sql`(${Prisma.join(owner, " OR ")})`,
-    Prisma.sql`c."categories" <@ ${seg.categories}::"RagCategory"[]`,
-    seg.sensitive.length ? Prisma.sql`(c."sensitiveCategory" IS NULL OR c."sensitiveCategory" = ANY(${seg.sensitive}::"RagSensitiveCategory"[]))` : Prisma.sql`c."sensitiveCategory" IS NULL`,
-    Prisma.sql`c."audience" = ANY(${seg.audiences}::"RagAudience"[])`,
-    Prisma.sql`c."origin" = ANY(${seg.origins}::"RagOrigin"[])`,
+    Prisma.sql`${t}."categories" <@ ${seg.categories}::"RagCategory"[]`,
+    seg.sensitive.length ? Prisma.sql`(${t}."sensitiveCategory" IS NULL OR ${t}."sensitiveCategory" = ANY(${seg.sensitive}::"RagSensitiveCategory"[]))` : Prisma.sql`${t}."sensitiveCategory" IS NULL`,
+    Prisma.sql`${t}."audience" = ANY(${seg.audiences}::"RagAudience"[])`,
+    Prisma.sql`${t}."origin" = ANY(${seg.origins}::"RagOrigin"[])`,
   ];
-  if (seg.recordedFrom) parts.push(Prisma.sql`c."recordedAt" >= ${seg.recordedFrom}`);
-  if (seg.recordedTo) parts.push(Prisma.sql`c."recordedAt" <= ${seg.recordedTo}`);
-  if (seg.sourceIds) parts.push(seg.sourceIds.length ? Prisma.sql`c."sourceId" = ANY(${seg.sourceIds}::text[])` : Prisma.sql`false`);
+  if (seg.recordedFrom) parts.push(Prisma.sql`${t}."recordedAt" >= ${seg.recordedFrom}`);
+  if (seg.recordedTo) parts.push(Prisma.sql`${t}."recordedAt" <= ${seg.recordedTo}`);
+  if (seg.sourceIds) parts.push(seg.sourceIds.length ? Prisma.sql`${t}."sourceId" = ANY(${seg.sourceIds}::text[])` : Prisma.sql`false`);
   return Prisma.sql`(${Prisma.join(parts, " AND ")})`;
 }
 
-/** The owners the scope can reach, on the embedding row `e` (lets the scan use its (patient | person, model, version) index). */
-function ownerSql(scope: RetrievalScope): Prisma.Sql {
-  const patientIds = [...new Set(scope.segments.flatMap((g) => g.facility?.patientIds ?? []))];
-  const personIds = [...new Set(scope.segments.flatMap((g) => (g.personId ? [g.personId] : [])))];
-  const parts: Prisma.Sql[] = [];
-  if (patientIds.length) parts.push(Prisma.sql`e."patientId" = ANY(${patientIds}::text[])`);
-  if (personIds.length) parts.push(Prisma.sql`e."personId" = ANY(${personIds}::text[])`);
-  return parts.length ? Prisma.sql`(${Prisma.join(parts, " OR ")})` : Prisma.sql`false`;
-}
-
-/** The scope as one predicate on chunk `c` (ACTIVE only); `false` when nothing is admitted. */
-export function scopeSql(scope: RetrievalScope): Prisma.Sql {
-  const segs = scope.segments.map(segmentSql).filter((x): x is Prisma.Sql => x !== null);
-  return segs.length ? Prisma.sql`c."status" = 'ACTIVE' AND (${Prisma.join(segs, " OR ")})` : Prisma.sql`false`;
+/**
+ * The scope as one predicate (ACTIVE only; `false` when nothing is admitted),
+ * on chunk `c` — or on embedding `e`, which carries the same filter columns
+ * (copied from its chunk by a trigger), so the vector search never joins.
+ */
+export function scopeSql(scope: RetrievalScope, alias: "c" | "e" = "c"): Prisma.Sql {
+  const t = Prisma.raw(alias);
+  const segs = scope.segments.map((g) => segmentSql(g, t)).filter((x): x is Prisma.Sql => x !== null);
+  return segs.length ? Prisma.sql`${t}."status" = 'ACTIVE' AND (${Prisma.join(segs, " OR ")})` : Prisma.sql`false`;
 }
 
 /** A word list as an OR tsquery, each word sanitized to letters and digits; a stemmed English word matches as a prefix ("allerg:*"). */
@@ -70,10 +65,10 @@ export function candidateSql(input: CandidateQuery): Prisma.Sql {
   const vec = vectorLiteral(input.queryVector);
   return Prisma.sql`
     WITH vec0 AS (
-      SELECT c."id" AS "chunkId", e."embedding" <=> ${vec}::halfvec AS distance
-      FROM "RagEmbedding" e JOIN "RagChunk" c ON c."id" = e."chunkId"
-      WHERE e."embeddingModel" = ${input.space.model} AND e."embeddingVersion" = ${input.space.version} AND ${ownerSql(input.scope)} AND ${where}
-      ORDER BY distance, c."id"
+      SELECT e."chunkId", e."embedding" <=> ${vec}::halfvec AS distance
+      FROM "RagEmbedding" e
+      WHERE e."embeddingModel" = ${input.space.model} AND e."embeddingVersion" = ${input.space.version} AND ${scopeSql(input.scope, "e")}
+      ORDER BY distance, e."chunkId"
       LIMIT ${limit}
     ), vec AS (
       SELECT "chunkId", 1 - distance AS similarity, row_number() OVER (ORDER BY distance, "chunkId") AS rank FROM vec0
