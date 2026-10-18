@@ -17,6 +17,10 @@ import { registerPatientAccount } from "../src/lib/patient/selfRegistration";
 import { Prisma } from "@prisma/client";
 import { candidateSearch, candidateSql } from "../src/lib/rag/search";
 import { ALL_CATEGORIES, type RetrievalScope } from "../src/lib/rag/scope";
+import { retrieve } from "../src/lib/rag/retrieve";
+import { activeSpace } from "../src/lib/rag/embed";
+import { aiAssistancePermit } from "../src/lib/ai/realData";
+import type { AiAccess } from "../src/lib/rag/access";
 
 let pass = 0;
 let fail = 0;
@@ -94,6 +98,23 @@ async function main() {
   report(`p95 under ${P95_BUDGET_MS} ms (exact cosine scan + keyword search, filters first)`, p95 < P95_BUDGET_MS, `p95 ${p95.toFixed(1)} ms`);
   report("Every query returned candidates, from both the vector and the keyword side", total >= 200 * 40, `${total} candidates`);
   report("Not one candidate of the other patient (filters applied before ranking)", foreign === 0, `${foreign}`);
+  // The whole retrieval (embed the question, candidates, fusion, rerank, threshold, live facts) for chart Q&A.
+  const gate = await aiAssistancePermit({ facilityId: a.facilityId, patientId: a.patientId });
+  if (!gate.allowed) throw new Error(`gate: ${gate.reason}`);
+  const access = { mode: "CHART_QA", audience: "STAFF", path: "TREATING", scope, subject: { patientId: a.patientId, patientIds: [a.patientId], facilityId: a.facilityId, organizationId: a.organizationId, personId: null }, callerFacilityId: a.facilityId, callerOrganizationId: a.organizationId, live: { patientIds: [a.patientId], facilityIds: [a.facilityId], medications: true, allergies: true, patientProvidedAllergies: false, nurseView: false }, permit: gate.permit, real: false } as AiAccess;
+  // Retrieval reads the active space; the fixture's rows are in mock-hash-1024 v1, so this is measured only while that space is active.
+  if ((await activeSpace()).embeddingModel === "mock-hash-1024" && (await activeSpace()).embeddingVersion === 1) {
+    for (let i = 0; i < 5; i++) await retrieve(access, { question: `${queries[i % queries.length].join(" ")} result` });
+    const full: number[] = [];
+    for (let i = 0; i < 100; i++) {
+      const t = performance.now();
+      await retrieve(access, { question: `${queries[i % queries.length].join(" ")} result` });
+      full.push(performance.now() - t);
+    }
+    console.log(`  full retrieval: p50 ${pct(full, 50).toFixed(1)} ms, p95 ${pct(full, 95).toFixed(1)} ms (100 questions)`);
+    report(`The whole retrieval for a question, p95 under ${P95_BUDGET_MS} ms`, pct(full, 95) < P95_BUDGET_MS, `p95 ${pct(full, 95).toFixed(1)} ms`);
+  }
+
   // The real query's plan, for the other (smaller) patient: reached through an index on the
   // patient, never a scan that reads every patient's rows.
   const bScope: RetrievalScope = { segments: [{ ...scope.segments[0], facility: { patientIds: [b.patientId], facilityIds: [b.facilityId] } }] };
