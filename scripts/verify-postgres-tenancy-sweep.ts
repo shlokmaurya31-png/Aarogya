@@ -36,7 +36,8 @@
  *   6. Phase 0 — the PERSON segment: person-scoped rows (Person, accounts,
  *      contacts, identifiers, consents, access log, documents, merge
  *      requests and records) belong to no tenant; no hospital route returns
- *      one to any staff or organization actor.
+ *      one to any staff or organization actor. Week 4b: the AI index's and AI
+ *      interactions' PERSON-owned rows too.
  * A route that is not probed and not on the documented allowlist fails the
  * gate.
  *
@@ -55,7 +56,7 @@ import { listRegistry } from "../src/lib/config/registry";
 import { ensureFixture, ownershipWhere, type Tenant } from "../prisma/seedData/tenancyFixtures";
 import { startServer, loginAs } from "./lib/appServer";
 import { ensurePrimaryMembership } from "../prisma/seedData/staffMembership";
-import { PERSON_SCOPED_MODELS } from "../src/lib/person/tenancy";
+import { MIXED_OWNER_MODELS, PERSON_SCOPED_MODELS } from "../src/lib/person/tenancy";
 
 const ROOT = path.resolve(__dirname, "..");
 const API_ROOT = path.join(ROOT, "src", "app", "api", "hospital");
@@ -599,9 +600,20 @@ async function seedPersonSegment(): Promise<Map<string, string>> {
     const req = await prisma.personMergeRequest.create({ data: { personId: pa, sourcePersonId: pb, initiatedByUserId: "sweep", targetCodeHash: "x", sourceCodeHash: "y", expiresAt: new Date(), status: "EXPIRED" } });
     await prisma.personMergeRecord.create({ data: { personId: pa, sourcePersonId: pb, method: "BOTH_ACCOUNTS_PROVEN", requestId: req.id, actorUserId: "sweep", snapshot: {} } });
   }
+  // Week 4b — the AI index and AI interactions: their PERSON-owned rows belong to no tenant either.
+  if (!(await prisma.ragDocument.count({ where: { personId: pa, ownerType: "PERSON" } }))) {
+    const doc = await prisma.ragDocument.create({ data: { ownerType: "PERSON", personId: pa, sourceType: "PATIENT_PROVIDED_RECORD", sourceId: `sweep-${pa}`, sourceVersion: 1, origin: "PATIENT_PROVIDED", contentHash: "sweep", categories: ["UPLOADS"], audience: "PATIENT_VISIBLE", title: `${MARKER} rag document`, recordedAt: new Date(), embeddingModel: "mock-hash-1024", embeddingDim: 1024 } });
+    const chunk = await prisma.ragChunk.create({ data: { documentId: doc.id, chunkNo: 0, ownerType: "PERSON", personId: pa, categories: ["UPLOADS"], origin: "PATIENT_PROVIDED", audience: "PATIENT_VISIBLE", sourceType: "PATIENT_PROVIDED_RECORD", sourceId: doc.sourceId, recordedAt: new Date(), context: "[sweep]", text: `${MARKER} rag chunk`, tokenCount: 3 } });
+    await prisma.$executeRaw`INSERT INTO "RagEmbedding" ("id", "chunkId", "embeddingModel", "embeddingVersion", "dims", "embedding", "ownerType", "personId") VALUES (${`sweep-emb-${pa}`}, ${chunk.id}, 'mock-hash-1024', 1, 3, '[1,0,0]'::halfvec, 'PERSON', ${pa})`;
+    await prisma.aiInteraction.create({ data: { userId: "sweep", role: "PATIENT", personId: pa, mode: "EXPLAIN_REPORT", language: "en", model: "mock", embeddingModel: "mock-hash-1024", embeddingVersion: 1, outcome: "NO_RECORD", latencyMs: 1, metadataExpiresAt: new Date(Date.now() + 365 * 86_400_000) } });
+  }
   const rows = new Map<string, string>();
   for (const model of PERSON_SCOPED_MODELS) {
     const found: { id: string }[] = await delegate(model).findMany({ select: { id: true } });
+    for (const r of found) rows.set(r.id, model);
+  }
+  for (const model of MIXED_OWNER_MODELS) {
+    const found: { id: string }[] = await delegate(model).findMany({ where: { personId: { not: null }, facilityId: null }, select: { id: true } });
     for (const r of found) rows.set(r.id, model);
   }
   return rows;
