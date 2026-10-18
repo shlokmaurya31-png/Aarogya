@@ -31,7 +31,8 @@
     "verification:migrate": "tsx scripts/migrate-verification-uploads.ts",
     "worker": "tsx scripts/worker.ts",
     "eval:documents": "tsx scripts/eval-documents.ts",
-    "eval:documents:real": "tsx scripts/eval-documents-real.ts"
+    "eval:documents:real": "tsx scripts/eval-documents-real.ts",
+    "rag:reembed": "tsx scripts/rag-reembed.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

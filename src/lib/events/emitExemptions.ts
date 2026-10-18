@@ -149,6 +149,10 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/person/linking.ts#offerAbhaLink": { category: "PROCESS_STEP", reason: "ABHA match offered; the person confirms (disabled until ABDM verification)", boundary: ["PersonPatientLinked"] },
   "src/lib/person/linking.ts#startReverification": { category: "PROCESS_STEP", reason: "a migrated link's verification opened (same routes as a new link); the outcome is the link", boundary: ["PersonPatientLinked"] },
   "src/lib/person/merge.ts#startPersonMerge": { category: "PROCESS_STEP", reason: "the other account's password checked and a code sent to each account; the outcome is the merge", boundary: ["PersonMerged"] },
+  // Week 4b — the AI index is derived data, rebuilt from the record (docs/RAG_DESIGN.md §4.1).
+  "src/lib/rag/embed.ts#writeEmbeddings": { category: "CONSUMER_OUTPUT", reason: "embeddings of indexed chunks, derived data written by the rag-indexer and the re-embed job (idempotent)" },
+  "src/lib/rag/remove.ts#removeOwnerIndex": { category: "CONSUMER_OUTPUT", reason: "hard delete of derived index rows for an owner the AI may not use (consent withdrawn, closure, erasure); the triggering change emitted its own event" },
+  "src/lib/rag/reembed.ts#purgeRetiredEmbeddings": { category: "BOOKKEEPING", reason: "derived data of a retired embedding space, deleted after its grace period; the retirement itself emitted RagEmbeddingSpaceChanged" },
   "src/lib/documents/pipelineState.ts#createRun": { category: "BOOKKEEPING", reason: "a pipeline run's state rows; the step consumer emits the step's event" },
   "src/lib/documents/pipelineState.ts#moveRun": { category: "BOOKKEEPING", reason: "a pipeline run's state; the step consumer emits the step's event" },
   "src/lib/documents/pipelineState.ts#claimStep": { category: "BOOKKEEPING", reason: "claiming a pipeline step (compare-and-set)" },

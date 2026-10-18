@@ -4,6 +4,7 @@ import { sweepMedicationSchedule, type SweepResult } from "@/lib/hospital/marSwe
 import { sweepDelegationExpiry } from "@/lib/patient/experience/delegationSweep";
 import { purgeClosedPersons } from "@/lib/person/closure";
 import { resumeStalledDocumentSteps } from "@/lib/documents/pipeline";
+import { purgeRetiredEmbeddings, runReembedTick } from "@/lib/rag/reembed";
 import { registerAllConsumers } from "./consumers";
 
 /**
@@ -15,7 +16,9 @@ import { registerAllConsumers } from "./consumers";
  *   3. sweep the MAR: DUE doses past their grace become MISSED (§3.4);
  *   4. expire family delegations past their expiresAt (§3.4);
  *   5. purge closed accounts past their grace period (Phase 0);
- *   6. resume document-pipeline steps whose claim went stale (Week 4a).
+ *   6. resume document-pipeline steps whose claim went stale (Week 4a);
+ *   7. one re-embed batch per embedding space being built, and the purge of
+ *      retired spaces' embeddings after their grace period (Week 4b).
  * Safe to run concurrently with itself: every claim is SKIP LOCKED + token
  * guarded and every consumer is idempotent.
  */
@@ -38,6 +41,8 @@ export interface RunTickResult {
   closures: { purged: number; deferredForLegalHold: number; documentsDeleted: number; documentsKept: number };
   /** Week 4a: document-pipeline steps resumed after a stale claim. */
   documents: { resumed: number };
+  /** Week 4b: chunks embedded into spaces being built; retired embeddings purged. */
+  embeddings: { embedded: number; purged: number };
   durationMs: number;
   /** True when a batch limit was hit, i.e. there may be more work now. */
   moreWork: boolean;
@@ -62,6 +67,9 @@ export async function runTick(opts: RunTickOptions = {}): Promise<RunTickResult>
   const delegations = Date.now() - started < budgetMs ? await sweepDelegationExpiry({ now: opts.now }) : { expired: 0 };
   const closures = Date.now() - started < budgetMs ? await purgeClosedPersons({ now: opts.now }) : { purged: 0, deferredForLegalHold: 0, documentsDeleted: 0, documentsKept: 0 };
   const documents = Date.now() - started < budgetMs ? await resumeStalledDocumentSteps({ now: opts.now }) : { resumed: 0 };
+  const embeddings = Date.now() - started < budgetMs
+    ? { embedded: (await runReembedTick()).embedded, purged: (await purgeRetiredEmbeddings({ now: opts.now })).deleted }
+    : { embedded: 0, purged: 0 };
 
   return {
     consumers,
@@ -71,6 +79,7 @@ export async function runTick(opts: RunTickOptions = {}): Promise<RunTickResult>
     delegations,
     closures,
     documents,
+    embeddings,
     durationMs: Date.now() - started,
     moreWork: events.claimed >= eventBatchSize || workflows.timersFired >= workflowBatchSize || workflows.instancesRun >= workflowBatchSize || mar.missed >= marBatchSize,
   };

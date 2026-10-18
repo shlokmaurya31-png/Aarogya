@@ -643,6 +643,15 @@ export const EVENT_CONTRACTS: EventContract[] = [
     }).strict(),
   }),
   contract({
+    // Week 4b: an embedding space of the AI index was created (BUILDING), switched to (ACTIVE) or retired (docs/RAG_DESIGN.md §5.8).
+    type: "RagEmbeddingSpaceChanged", version: 1, aggregateType: "RAG_EMBEDDING_SPACE", scope: "PLATFORM",
+    sensitivity: "LOW", producer: "AI index (startReembed: BUILDING; activateEmbeddingSpace: ACTIVE, and RETIRED for the space it replaces)",
+    payload: z.object({
+      spaceId: id, embeddingModel: z.string().min(1).max(100), embeddingVersion: z.number().int().min(1), provider: z.enum(["mock", "voyage", "india-hosted"]),
+      dims: z.number().int().min(1).max(16000), status: z.enum(["BUILDING", "ACTIVE", "RETIRED"]), previous: z.enum(["BUILDING", "ACTIVE", "RETIRED"]).nullable(),
+    }).strict(),
+  }),
+  contract({
     type: "ReferralStatusChanged", version: 1, aggregateType: "REFERRAL", scope: "FACILITY",
     sensitivity: "INTERNAL", producer: "referrals (createReferral: PLACED; respondToReferral)",
     payload: z.object({

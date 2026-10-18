@@ -659,3 +659,12 @@ What the code does where it differs from, or adds to, the sections above. Each i
 - **Mixed owners:** `RagDocument`, `RagChunk`, `RagEmbedding` and `AiInteraction` are owned row by row by a facility record or by a Person (`MIXED_OWNER_MODELS`); a Person merge re-points them; the tenancy sweep treats their PERSON rows like the person-scoped models.
 - **Reviewer roles:** `CLINICAL_ADVISOR` and `SAFETY_OFFICER` (platform-level) hold only `ai:interaction:review` and `ai:interaction:text:read`; `ai:record:ask` (the staff modes) is for doctors and nurses; `ai:embedding:manage` for the platform admin.
 - **Retained text is at most 90 days by a CHECK**, and complete or absent (ciphertext, key version, scope and expiry together).
+
+### 16.3 Step 4: embeddings and the re-embed job
+
+- **The provider is the embedding space's** (`RagEmbeddingSpace.provider`), never a request's: `mock` (feature hashing, the model name carries the dimension: `mock-hash-1024`), `voyage` (`voyage-multilingual-2`, 1024, with `rerank-2`; needs `VOYAGE_API_KEY`), `india-hosted` (the slot exists; it refuses, deferred).
+- **Every embedding or rerank call needs an AI permit** from `aiAssistancePermit` (`src/lib/ai/realData.ts`): an explicit `AI_ASSISTANCE` decline refuses even synthetic data; synthetic data needs nothing more; real data needs the switch on and the Person's grant (a facility record's Person is its ACTIVE link's; a record with no Person can't consent and is refused).
+- **Voyage refuses a permit for real data** outright, until the cross-border check for that processor is done and the guard is changed on purpose.
+- **The mock reranker's score is BM25 squashed to 0..1** (`1 − e^(−bm25/2)`), so the per-mode thresholds read the same scale as Voyage's relevance scores; they are calibrated on the evaluation (§10).
+- **The re-embed** (`npm run rag:reembed`, and one batch per building space each runner tick) refuses a provider that can't embed now before writing anything; the switch (`activateEmbeddingSpace`) needs 100% coverage, re-checked inside its transaction, retires the old space in the same transaction, and emits `RagEmbeddingSpaceChanged` (platform, new) and an audit event. A retired space's embeddings are deleted after a 7-day grace period by the runner.
+- **An owner the AI may not use is removed from the index, not skipped** (`removeOwnerIndex`, a hard delete): found by the gate in a full run, where a REAL Person's rows (a fixture) were skipped on every batch and blocked coverage for good. The index never holds data the gate refuses.

@@ -121,6 +121,8 @@ export const AGGREGATE_TYPES = [
   "RECORD_CONFLICT",
   // Week 4b — the record-level allergy status (aggregate id: the patient).
   "ALLERGY_STATUS",
+  // Week 4b — an embedding space of the AI index (platform).
+  "RAG_EMBEDDING_SPACE",
 ] as const;
 export type AggregateType = (typeof AGGREGATE_TYPES)[number];
 

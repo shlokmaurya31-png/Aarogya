@@ -51,6 +51,8 @@ export type AuditEventType =
   | "hospital.allergy.added"
   | "hospital.allergy.updated"
   | "hospital.allergy_status.recorded"
+  | "ai.embedding_space.activated"
+  | "ai.interaction.text_read"
   | "hospital.episode.created"
   | "hospital.episode.closed"
   | "hospital.task.created"
