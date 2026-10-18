@@ -33,6 +33,7 @@
 12. Order of wiring, each step with its gate
 13. Decisions taken for you
 14. Open questions
+15. As built (Week 4a)
 
 ---
 
@@ -513,3 +514,37 @@ None. The three raised in revision 2 are answered (2026-10-17):
 - WHO INN is a curated, versioned import refreshed yearly;
 - brands come after the pilot;
 - withdrawn allergies get the content-free flag, the warning and the point-of-care prompt (§3).
+
+## 15. As built (Week 4a, 2026-10-18)
+
+What the code does where it differs from, or adds to, the sections above. Each item takes the more conservative option.
+
+### 15.1 Departures
+
+- **Routes live under `/api/patient/person/`** (`documents/:id/processing`, `documents/:id/pages/:n`, `documents/:id/reprocess`, `facts…`, `records…`), next to the Phase 0 person routes, because `/api/patient/documents` and `/api/patient/records` already serve the facility-scoped portal.
+- **`PersonDocument.processingId` is a relation, not a column:** a document has its runs (`processings`), the latest one is its status.
+- **An exact-copy failure in translation fails the page, not the run** (§5.2 over §4.3): the failed translation is stored with the translator's raw placeholder output only and never shown; extraction reads the original anyway.
+- **`DocumentTranslated` also counts `exactCopyFailures`.**
+- **`PatientProvidedRecordUpdated` has a third change, `SUPERSEDED`:** a re-run of the same document that confirms an identical entry supersedes the old one (its bridged allergies move over).
+- **`AllergyListUpdated` v2** adds `source` and makes `severity` optional; `Allergy.severity` is nullable only for patient-provided rows (CHECK).
+- **`RecordConflictAcknowledged`** (new) records a clinician acknowledging or resolving a conflict.
+- **Dose, frequency and unit are optional in the fact schemas,** so an incomplete fact reaches the person flagged (one band lower) instead of being dropped.
+- **Nine languages** include Malayalam (the table in §10.1 names eight).
+- **Page images are not re-rendered:** a PDF page is copied into its own single-page PDF; an image upload is its own page. Orientation and resolution normalization need an image library the repository doesn't carry.
+- **The "no known allergies" conflict rule has nothing to read:** the schema has no verified NKDA record.
+- **Proxy review** stays out of Week 4a, as §9 says: routes resolve only the session's own Person.
+
+### 15.2 Decisions taken while building
+
+- **Claude runs only with both `ANTHROPIC_API_KEY` and `DOCUMENT_AI_PROVIDER=claude`.** A key set for other features never turns the pipeline on.
+- **A processing permit** (issued only by the real-data gate) is required by every provider call; a missing or forged one is refused.
+- **The person's identifiers are masked before any provider sees text:** display name, contacts, linked records' names, UHIDs and phones, and any ABHA- or mobile-shaped number.
+- **ID-proof uploads are never processed.**
+- **A fact whose exact-copy check failed can't be confirmed as extracted;** the person corrects it to what the page says, or rejects it.
+- **Bulk review is all or nothing.**
+- **Exact fields must occur as whole tokens** ("11" does not occur in "11.2").
+- **Dates on documents are read day-first** (`dd/mm/yyyy`, the Indian convention) or ISO; anything else is no date.
+- **A patient-reported allergy without a severity is bridged with no severity** and criticality `UNABLE_TO_ASSESS`; the prescribing check treats it as a danger. A withdrawn one is replaced by the prompt "Allergy information withdrawn by the patient — ask about allergies".
+- **A closed account's bridged allergies are taken back** (and again at purge), keeping clinician-confirmed ones.
+- **Stalled steps are resumed by the runner:** a crashing step gives its claim back; a killed worker's claim goes stale after 10 minutes and the tick's sweep resumes it.
+- **The timeline shows confirmed entries** ("Lab result from the patient's document: …", with "handwritten" where it applies) under the same rule as the uploads they came from. The RAG index hooks (§12 step 9) wait for Week 4b, which builds the index.

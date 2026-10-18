@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { resolvePatientIdsForRead } from "./merge";
 import { TRANSFER_WITH_LOCATIONS, transferRouteLabel } from "@/lib/hospital/admission";
 import { documentVisibilityFor, personDocumentsFor, type DocumentViewer } from "@/lib/person/access";
+import { describePatientProvided, patientProvidedRecordsFor } from "@/lib/documents/merge";
 
 /**
  * The longitudinal timeline (brief §32) is built by reading every typed
@@ -42,6 +43,8 @@ export async function buildPatientTimeline(patientId: string, viewer: DocumentVi
   const patientIds = await resolvePatientIdsForRead(patientId);
   const documentsVisible = await documentVisibilityFor(viewer, patientIds);
   const personDocuments = await personDocumentsFor(viewer, patientIds);
+  // Week 4a: confirmed patient-provided entries, under the same rule as the uploads they came from.
+  const provided = await patientProvidedRecordsFor(viewer, patientIds);
 
   const [encounters, diagnoses, problems, allergies, vitals, notes, medOrders, labOrders, imagingOrders, tasks, referrals, admissions, specimens, labResults, imagingStudies, imagingReports, transfers, documents] =
     await Promise.all([
@@ -296,6 +299,17 @@ export async function buildPatientTimeline(patientId: string, viewer: DocumentVi
       actor: undefined,
       sourceType: "PersonDocument",
       sourceId: doc.id,
+    });
+  }
+  for (const r of provided) {
+    entries.push({
+      id: `patient-provided-${r.id}`,
+      timestamp: (r.effectiveDate ?? r.createdAt).toISOString(),
+      type: "Patient-provided",
+      summary: describePatientProvided(r),
+      actor: undefined,
+      sourceType: "PatientProvidedRecord",
+      sourceId: r.id,
     });
   }
 

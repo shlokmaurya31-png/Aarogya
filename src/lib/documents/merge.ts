@@ -224,6 +224,32 @@ export async function rebridgePerson(personId: string, change: { patientId?: str
 
 // ── Who sees the entries (§3, Person design §8.3) ───────────────────────────
 
+/**
+ * The entries a viewer sees for these facility records: staff under the
+ * opt-in and care relationship (above); the patient side, the linked
+ * person's own (as for their uploads).
+ */
+export async function patientProvidedRecordsFor(viewer: { kind: "STAFF"; facilityId: string } | { kind: "PATIENT" }, patientIds: string[]) {
+  if (viewer.kind === "STAFF") return staffPatientProvidedRecords(viewer.facilityId, patientIds);
+  const links = await prisma.personPatientLink.findMany({ where: { patientId: { in: patientIds }, status: "ACTIVE" }, select: { personId: true } });
+  if (!links.length) return [];
+  return prisma.patientProvidedRecord.findMany({ where: { personId: { in: [...new Set(links.map((l) => l.personId))] }, status: "ACTIVE" }, orderBy: [{ effectiveDate: "desc" }, { createdAt: "desc" }] });
+}
+
+/** How an entry reads on the timeline: what it is, from the patient's document, its values as confirmed. */
+export function describePatientProvided(r: Pick<PatientProvidedRecord, "kind" | "value" | "handwritten">): string {
+  const v = r.value as Record<string, string | undefined>;
+  const hw = r.handwritten ? ", handwritten" : "";
+  const join = (...xs: (string | undefined)[]) => xs.filter(Boolean).join(" ");
+  switch (r.kind) {
+    case "LAB_RESULT": return `Lab result from the patient's document${hw}: ${join(v.analyte, v.value, v.unit)}`;
+    case "MEDICATION_HISTORY": return `Medication from the patient's document${hw}: ${join(v.form, v.name, v.dose, v.frequency)}`;
+    case "DIAGNOSIS": return `Diagnosis from the patient's document${hw}: ${v.text}`;
+    case "PROCEDURE": return `Procedure from the patient's document${hw}: ${v.text}`;
+    case "ALLERGY": return `Allergy from the patient's document${hw}: ${v.substance}`;
+  }
+}
+
 /** The person's own entries: always visible to them. */
 export async function listOwnRecords(userId: string) {
   const personId = await requireOwnedPerson(userId);

@@ -62,6 +62,7 @@ import { decidePersonConsent } from "../src/lib/person/consent";
 import { staffPersonDocuments, withdrawPersonDocument } from "../src/lib/person/documents";
 import { fixtureById, fixturePdf } from "../src/lib/documents/fixtures";
 import { bulkReview, listOwnFacts } from "../src/lib/documents/review";
+import { buildPatientTimeline } from "../src/lib/patient/timeline";
 
 let pass = 0;
 let fail = 0;
@@ -145,6 +146,7 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
   let processingId = "";
   let secondDocumentId = "";
   let providedBeforeReview = -1;
+  let timelineBeforeReview = -1;
   if (opts.full) {
     const portalUser = await prisma.user.create({ data: { email: `cj-${run}@verify.aarogya`, passwordHash: "x", role: "PATIENT", displayName: "Journey patient" } });
     await linkAccountForGate(prisma, portalUser.id, patient.id);
@@ -162,6 +164,7 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
     // The person reviews it: the printed lab values are HIGH, so they confirm them together; doc-merge
     // makes them patient-provided entries. Before that, nothing extracted is in the record.
     providedBeforeReview = await prisma.patientProvidedRecord.count({ where: { personId: journeyPersonId } });
+    timelineBeforeReview = (await buildPatientTimeline(patient.id, { kind: "STAFF", facilityId })).filter((e) => e.sourceType === "PatientProvidedRecord").length;
     const facts = await listOwnFacts(portalUser.id, { processingId });
     await bulkReview(portalUser.id, { decisions: facts.map((f) => ({ factId: f.id, version: f.version, decision: "CONFIRM" })) });
     await drain();
@@ -306,7 +309,7 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
       identifierId = (await linkExternalIdentifier({ facilityId, entityType: "PATIENT", entityId: patient.id, system: IDENTIFIER_SYSTEMS.ABHA_NUMBER, value: `CJ-ABHA-${run}`, byUserId: by })).id;
     });
   }
-  return { facilityId, patientId: patient.id, encounterId: enc.id, orderId, resultId, surgeryId, usageId, bloodIssueId, uploadedDocumentId, journeyPersonId, processingId, secondDocumentId, providedBeforeReview, steps, registered, openAfter8, critTask, billing, drugItemId, wasteId, wasteBalance, identifierId };
+  return { facilityId, patientId: patient.id, encounterId: enc.id, orderId, resultId, surgeryId, usageId, bloodIssueId, uploadedDocumentId, journeyPersonId, processingId, secondDocumentId, providedBeforeReview, timelineBeforeReview, steps, registered, openAfter8, critTask, billing, drugItemId, wasteId, wasteBalance, identifierId };
 }
 
 async function main() {
@@ -385,6 +388,16 @@ async function main() {
   const provided = await prisma.patientProvidedRecord.findMany({ where: { personId: a.journeyPersonId, status: "ACTIVE" } });
   report("8b …nothing entered the record before review; once confirmed, the four lab values are patient-provided entries and the run is COMPLETED",
     a.providedBeforeReview === 0 && provided.length === 4 && provided.every((r) => r.kind === "LAB_RESULT" && r.source === "PATIENT_PROVIDED" && r.documentId === a.uploadedDocumentId) && run8b?.status === "COMPLETED");
+  // …and the timeline: the confirmed entries, labelled as from the patient's document, for the treating
+  // clinician (opt-in and the open encounter) and on the patient's side; none before the review.
+  const staffTimeline = (await buildPatientTimeline(a.patientId, { kind: "STAFF", facilityId: a.facilityId })).filter((e) => e.sourceType === "PatientProvidedRecord");
+  const ownTimeline = (await buildPatientTimeline(a.patientId, { kind: "PATIENT" })).filter((e) => e.sourceType === "PatientProvidedRecord");
+  report("8b …on the timeline: the four entries for the treating clinician and the patient, labelled, values as confirmed; none before review",
+    a.timelineBeforeReview === 0 && staffTimeline.length === 4 && ownTimeline.length === 4
+      && staffTimeline.some((e) => e.summary === "Lab result from the patient's document: Creatinine 1.42 mg/dL") && staffTimeline.every((e) => e.type === "Patient-provided" && e.timestamp.startsWith("2026-02-05")),
+    `${a.timelineBeforeReview}/${staffTimeline.length}/${ownTimeline.length}`);
+  const otherFacility = a.facilityId === "fac-amc-pune" ? "fac-amc-noida" : "fac-amc-pune";
+  report("8b …another facility's timeline of the record shows none of them", (await buildPatientTimeline(a.patientId, { kind: "STAFF", facilityId: otherFacility })).every((e) => e.sourceType !== "PatientProvidedRecord"));
   const run8w = await prisma.documentProcessing.findFirst({ where: { documentId: a.secondDocumentId } });
   report("8b …the withdrawn second upload: its run CANCELLED, its pending facts discarded",
     run8w?.status === "CANCELLED" && (await prisma.extractedFact.count({ where: { processingId: run8w.id } })) === 0);
