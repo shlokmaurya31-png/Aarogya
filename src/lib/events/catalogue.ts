@@ -1388,6 +1388,16 @@ export const EVENT_CONTRACTS: EventContract[] = [
     sensitivity: "INTERNAL", producer: "document pipeline (any step: a permanent error, or retries exhausted; the original is kept)",
     payload: z.object({ processingId: id, documentId: id, personId: id, step: documentStep, errorCode: documentStepError }).strict(),
   }),
+  contract({
+    type: "DocumentFactsExtracted", version: 1, aggregateType: "DOCUMENT_PROCESSING", scope: "PERSON",
+    sensitivity: "INTERNAL", producer: "document pipeline (doc-extract: facts from the original text, with confidence; the run awaits the person's review)",
+    payload: z.object({ processingId: id, documentId: id, personId: id, factCount: z.number().int().min(0), lowConfidenceCount: z.number().int().min(0) }).strict(),
+  }),
+  contract({
+    type: "DocumentProcessingCompleted", version: 1, aggregateType: "DOCUMENT_PROCESSING", scope: "PERSON",
+    sensitivity: "INTERNAL", producer: "document pipeline (doc-extract with nothing to review; doc-merge once every fact is decided)",
+    payload: z.object({ processingId: id, documentId: id, personId: id, confirmed: z.number().int().min(0), corrected: z.number().int().min(0), rejected: z.number().int().min(0) }).strict(),
+  }),
 ];
 
 const KEY = (type: string, version: number) => `${type}@${version}`;

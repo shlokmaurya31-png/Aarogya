@@ -39,7 +39,8 @@ export interface TranslationProvider {
 }
 export interface FactExtractor {
   readonly id: "claude" | "mock";
-  extract(page: { text: string; layout: Line[]; language: string }, permit: ProcessingPermit): Promise<{ facts: CandidateFact[]; model: string }>;
+  /** `pass: 2`: a second, differently worded pass (handwritten pages); disagreement forces LOW. */
+  extract(page: { text: string; layout: Line[]; language: string }, permit: ProcessingPermit, opts?: { pass?: 2 }): Promise<{ facts: CandidateFact[]; model: string }>;
 }
 export interface MedicineTagger {
   readonly id: "claude" | "mock";

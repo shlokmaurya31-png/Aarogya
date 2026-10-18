@@ -361,9 +361,9 @@ async function main() {
   report("8b Outside report (shared with treating hospitals): PersonDocumentUploaded once, visible to the treating facility, exactly one review task", uploadedEvents === 1 && listed === 1 && reviewTasks === 1, `${uploadedEvents}/${listed}/${reviewTasks}`);
   // Week 4a: the pipeline read it (synthetic Person, mock providers): pages, text, a translation for an English reader.
   const run8b = await prisma.documentProcessing.findUnique({ where: { id: a.processingId }, include: { steps: true, texts: { include: { translations: true } } } });
-  const stepsDone = (run8b?.steps ?? []).filter((s) => ["PAGE_SPLIT", "OCR", "TRANSLATE"].includes(s.step) && s.status === "DONE").length;
-  report("8b …the document pipeline split, read (hi) and translated it (exact-copy check passed)",
-    stepsDone === 3 && run8b?.texts[0]?.language === "hi" && run8b.texts[0].translations[0]?.exactCopyCheck === "PASSED", run8b?.steps.map((s) => `${s.step}:${s.status}`).join(" "));
+  const stepsDone = (run8b?.steps ?? []).filter((s) => ["PAGE_SPLIT", "OCR", "TRANSLATE", "EXTRACT"].includes(s.step) && s.status === "DONE").length;
+  report("8b …the document pipeline split, read (hi), translated (exact-copy check passed) and extracted it; the facts await the person's review",
+    stepsDone === 4 && run8b?.texts[0]?.language === "hi" && run8b.texts[0].translations[0]?.exactCopyCheck === "PASSED" && run8b.status === "AWAITING_REVIEW", run8b?.steps.map((s) => `${s.step}:${s.status}`).join(" "));
   const doses = await prisma.medicationAdministration.count({ where: { medicationOrderId: a.orderId } });
   report("mar-scheduler scheduled the BD doses once", doses === 3, String(doses));
   const otCharges = await prisma.charge.count({ where: { OR: [{ sourceType: "Surgery", sourceId: a.surgeryId }, { sourceType: "SurgeryItemUsage", sourceId: a.usageId }, { sourceType: "IcuAdmission" }], encounterId: a.encounterId } });

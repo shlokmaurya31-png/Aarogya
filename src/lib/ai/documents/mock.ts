@@ -114,11 +114,11 @@ const RULES = {
   date: labelled(["date"]),
   doctor: /^(Dr\.\s+[A-Z][\w.' -]+)$/u,
   reg: /^Reg\.\s*No\.\s*(\S+)$/u,
-  med: /^(Tab\.|Cap\.|Syp\.|Inj\.)\s+(.+?)\s+(\d+(?:\.\d+)?\s?(?:mg|mcg|g|ml|mL|IU|units))\s+(\d(?:-\d){2,3}|OD|BD|TDS|QID|HS|SOS|STAT)(?:\s+x\s+(\d+\s+(?:days|weeks|months)))?$/u,
+  med: /^(Tab\.|Cap\.|Syp\.|Inj\.)\s+(.+?)\s+(\d+(?:\.\d+)?\s?(?:mg|mcg|g|ml|mL|IU|units))\s+(\d(?:-\d){2,3}|OD|BD|TDS|QID|HS|SOS|STAT|WEEKLY)(?:\s+x\s+(\d+\s+(?:days|weeks|months)))?$/u,
   lab: new RegExp(`^([A-Za-z][A-Za-z0-9 .\\-]*?)\\s+(\\d+(?:\\.\\d+)?)\\s+(${[...UNITS].sort((a, b) => b.length - a.length).map(esc).join("|")})(?:\\s+\\(([^)]+)\\))?(?:\\s+(H|L))?$`, "u"),
 };
 const TITLES: [LabelKey, (typeof DOCUMENT_TYPES)[number]][] = [["labReport", "LAB_REPORT"], ["prescription", "PRESCRIPTION"], ["dischargeSummary", "DISCHARGE_SUMMARY"], ["imagingReport", "IMAGING_REPORT"]];
-const FREQ_CODE: Record<string, string> = { "1-0-0": "OD", "0-0-1": "HS", "1-0-1": "BD", "1-1-1": "TDS", "1-1-1-1": "QID", OD: "OD", BD: "BD", TDS: "TDS", QID: "QID", HS: "HS", SOS: "SOS", STAT: "STAT" };
+const FREQ_CODE: Record<string, string> = { "1-0-0": "OD", "0-0-1": "HS", "1-0-1": "BD", "1-1-1": "TDS", "1-1-1-1": "QID", OD: "OD", BD: "BD", TDS: "TDS", QID: "QID", HS: "HS", SOS: "SOS", STAT: "STAT", WEEKLY: "WEEKLY" };
 
 export const mockExtraction: FactExtractor = {
   id: "mock",

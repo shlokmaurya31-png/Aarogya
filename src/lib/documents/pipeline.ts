@@ -5,19 +5,21 @@ import { getStorageAdapter } from "@/lib/storage";
 import { emitDomainEvent } from "@/lib/events/emit";
 import { PermanentEventError, RetryableEventError } from "@/lib/events/types";
 import { documentProcessingPermit } from "@/lib/ai/realData";
-import { DocumentProviderError, getDocumentProviders, type Line, type OcrResult, type ProcessingPermit } from "@/lib/ai/documents";
+import { DocumentProviderError, getDocumentProviders, type CandidateFact, type Line, type OcrResult, type ProcessingPermit } from "@/lib/ai/documents";
 import { medicineDictionary } from "@/lib/medicines/reference";
 import { claimStep, createRun, finishStep, moveRun, MAX_STEP_ATTEMPTS, STALE_CLAIM_MS, TERMINAL_RUN } from "./pipelineState";
 import { mask, noInventedNumbers, placeholdersIntact, protectedSpans, restore, type Span } from "./protect";
 import { detectLanguage, isSupportedLanguage } from "./language";
 import { bandOf, LOW_THRESHOLD } from "./confidence";
 import { identifierSpans, personIdentifiers } from "./identifiers";
+import { assessCandidates, maskIdentifierLines } from "./assess";
 
 type Tx = Prisma.TransactionClient;
 
 /**
- * Week 4a — the pipeline's steps 1–3 (docs/DOCUMENT_PIPELINE_DESIGN.md §1, §4):
- * page split, OCR (with language detection) and translation, each run by its
+ * Week 4a — the pipeline's steps (docs/DOCUMENT_PIPELINE_DESIGN.md §1, §4):
+ * page split, OCR (with language detection), translation and fact extraction
+ * (from the original text, never a translation), each run by its
  * consumer (src/lib/consumers/documentPipeline.ts).
  *
  * Every step:
@@ -372,7 +374,79 @@ export async function translateStep(processingId: string) {
   return releasingOnCrash(processingId, "TRANSLATE", () => translateStepInner(processingId));
 }
 
-const STEP_FN: Partial<Record<DocumentStepKind, (processingId: string) => Promise<void>>> = { PAGE_SPLIT: pageSplitStep, OCR: ocrStep, TRANSLATE: translateStep };
+// ── Step 4: fact extraction (from the original text, never a translation) ──
+
+export async function extractStep(processingId: string) {
+  return releasingOnCrash(processingId, "EXTRACT", () => extractStepInner(processingId));
+}
+
+async function extractStepInner(processingId: string) {
+  const run = await loadRun(processingId);
+  if (TERMINAL_RUN.includes(run.status)) return;
+  const permit = await gate(run);
+  if (!permit) return;
+  if (!(await claim(run, "EXTRACT"))) return;
+  const { extraction } = getDocumentProviders();
+  // The original OCR text: translations are never read here.
+  const texts = await prisma.extractedText.findMany({ where: { processingId }, orderBy: { pageNo: "asc" }, select: { pageNo: true, text: true, layout: true, language: true, handwritten: true, confidence: true } });
+  const done = new Set((await prisma.extractedFact.findMany({ where: { processingId }, select: { pageNo: true }, distinct: ["pageNo"] })).map((f) => f.pageNo));
+  const identifiers = await personIdentifiers(run.personId);
+  let model = "";
+  for (const t of texts) {
+    if (done.has(t.pageNo)) continue;
+    const layout = t.layout as unknown as Line[];
+    // The person's identifiers never reach the extractor; placeholders come back restored.
+    const ids = maskIdentifierLines(layout.map((l) => l.text), (s) => identifierSpans(s, identifiers));
+    const maskedLayout = layout.map((l, i) => ({ ...l, text: ids.masked[i] }));
+    const page = { text: ids.masked.join("\n"), layout: maskedLayout, language: t.language };
+    let first: CandidateFact[];
+    let second: CandidateFact[] | undefined;
+    try {
+      const r = await extraction.extract(page, permit);
+      first = r.facts;
+      model = r.model;
+      // Handwritten pages: a second pass with a different prompt; disagreement on an exact field forces LOW (§7).
+      if (t.handwritten) second = (await extraction.extract(page, permit, { pass: 2 })).facts;
+    } catch (err) {
+      const code = providerCode(err);
+      if (!code) throw err;
+      return stepError(run, "EXTRACT", code);
+    }
+    const restore = (cs: CandidateFact[]) => cs.map((c) => ({ ...c, value: ids.restoreDeep(c.value) as Record<string, unknown>, sourceText: ids.restoreText(c.sourceText) }));
+    const { facts } = assessCandidates({ pageNo: t.pageNo, text: t.text, layout, handwritten: t.handwritten, confidence: t.confidence }, restore(first), second && restore(second));
+    const ok = await ifStillRunning(() => prisma.$transaction(async (tx) => {
+      await assertRunning(tx, processingId, "EXTRACT");
+      // A page with no facts writes nothing; a resume asks the extractor about that page again.
+      if (facts.length) await tx.extractedFact.createMany({
+        data: facts.map((f) => ({
+          processingId, personId: run.personId, factType: f.factType, value: f.value as Prisma.InputJsonValue, confidence: f.confidence, confidenceBand: f.confidenceBand,
+          handwritten: f.handwritten, pageNo: f.pageNo, region: (f.region ?? undefined) as Prisma.InputJsonValue | undefined, sourceText: f.sourceText, exactCopyCheck: f.exactCopyCheck,
+        })),
+      });
+      return true;
+    }));
+    if (!ok) return;
+  }
+  await ifStillRunning(() => prisma.$transaction(async (tx) => {
+    await assertRunning(tx, processingId, "EXTRACT");
+    const facts = await tx.extractedFact.findMany({ where: { processingId }, select: { confidenceBand: true } });
+    await finishStep(tx, processingId, "EXTRACT", { status: "DONE" }, { provider: extraction.id, model: model || undefined });
+    await emitDomainEvent(tx, {
+      type: "DocumentFactsExtracted", aggregateId: processingId, personId: run.personId,
+      payload: { processingId, documentId: run.documentId, personId: run.personId, factCount: facts.length, lowConfidenceCount: facts.filter((f) => f.confidenceBand === "LOW").length },
+    });
+    if (facts.length) {
+      await moveRun(tx, processingId, "AWAITING_REVIEW");
+    } else {
+      // Nothing to review: the run is complete; the original stays as it is.
+      await tx.documentProcessingStep.updateMany({ where: { processingId, step: "MERGE", status: "PENDING" }, data: { status: "SKIPPED", finishedAt: new Date(), version: { increment: 1 } } });
+      await moveRun(tx, processingId, "COMPLETED");
+      await emitDomainEvent(tx, { type: "DocumentProcessingCompleted", aggregateId: processingId, personId: run.personId, payload: { processingId, documentId: run.documentId, personId: run.personId, confirmed: 0, corrected: 0, rejected: 0 } });
+    }
+  }));
+}
+
+const STEP_FN: Partial<Record<DocumentStepKind, (processingId: string) => Promise<void>>> = { PAGE_SPLIT: pageSplitStep, OCR: ocrStep, TRANSLATE: translateStep, EXTRACT: extractStep };
 
 /**
  * The runner's sweep: steps whose claim went stale (a worker killed mid-step,

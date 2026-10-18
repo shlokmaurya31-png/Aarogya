@@ -2,6 +2,12 @@
  * Week 4a — the document pipeline, end to end on the mock providers
  * (docs/DOCUMENT_PIPELINE_DESIGN.md §12).
  *
+ * Part 2 (step 5, extraction): from the original text (never the
+ * translation, never the person's name); every fact PENDING; printed lab
+ * values verbatim and HIGH; handwritten facts labelled, at most MEDIUM, a
+ * misread line LOW with its value as read; a page with nothing to review
+ * completes the run.
+ *
  * Part 1 (steps 1–4: page split → OCR → language → translation):
  *   - a synthetic Person's upload runs through the real dispatcher: pages,
  *     text with the detected language, a translation whose protected values
@@ -73,7 +79,7 @@ const eventsOf = (processingId: string, type: string) => prisma.domainEventOutbo
 
 /** Wraps the configured providers to record what each one was sent. */
 function recording(inner: DocumentProviders, opts: { crashOnPage?: string } = {}) {
-  const sent = { translate: [] as string[], tag: [] as string[], ocrPages: [] as string[], pagesOf: (personId: string) => sent.ocrPages.filter((m) => m.startsWith(`${personId}:`)).map((m) => m.slice(personId.length + 1)).join(",") };
+  const sent = { translate: [] as string[], tag: [] as string[], extract: [] as string[], ocrPages: [] as string[], pagesOf: (personId: string) => sent.ocrPages.filter((m) => m.startsWith(`${personId}:`)).map((m) => m.slice(personId.length + 1)).join(",") };
   let crashed = false;
   const p: DocumentProviders = {
     ocr: { id: "mock", async ocrPage(page, hints, permit) {
@@ -84,7 +90,7 @@ function recording(inner: DocumentProviders, opts: { crashOnPage?: string } = {}
       return inner.ocr.ocrPage(page, hints, permit);
     } },
     translation: { id: "mock", async translate(text, from, to, o, permit) { sent.translate.push(text); return inner.translation.translate(text, from, to, o, permit); } },
-    extraction: inner.extraction,
+    extraction: { id: "mock", async extract(page, permit, o) { sent.extract.push(page.text); return inner.extraction.extract(page, permit, o); } },
     tagging: { id: "mock", async tagMedicines(text, permit) { sent.tag.push(text); return inner.tagging.tagMedicines(text, permit); } },
   };
   return { p, sent };
@@ -118,16 +124,52 @@ async function main() {
   report("One event per step, PERSON-scoped", evs.every((e) => e.length === 1 && e[0].personId === p1.personId && e[0].facilityId === null));
   report("Event payloads carry no text, values or names", evs.flat().every((e) => !["Creatinine", "1.42", hi.patientName, "जाँच"].some((n) => carries(e.payload, n))));
 
+  // Part 2: extraction, from the original text.
+  const r1b = await runOf(d1.id);
+  const facts1 = await prisma.extractedFact.findMany({ where: { processingId: r1!.id } });
+  report("Extraction ran: the run awaits the person's review", r1b?.status === "AWAITING_REVIEW" && stepStatus(r1b, "EXTRACT") === "DONE" && stepStatus(r1b, "MERGE") === "PENDING");
+  report(`Every printed fact was found (${hi.expected.length}), all PENDING, none merged`, facts1.length === hi.expected.length && facts1.every((f) => f.reviewStatus === "PENDING" && !f.recordEntryId));
+  report("The extractor read the original (Hindi) text, never the translation", rec.sent.extract.length === 1 && rec.sent.extract[0].includes("जाँच रिपोर्ट") && !rec.sent.extract[0].includes("Laboratory Report"));
+  report("…and never the person's name (a placeholder in its place)", !rec.sent.extract[0].includes(hi.patientName) && rec.sent.extract[0].includes("⟦I1⟧"));
+  const labFacts = facts1.filter((f) => f.factType === "LAB_VALUE");
+  report("Lab values: exact-copy PASSED, HIGH (printed), source line verbatim on the page, value verbatim in it",
+    labFacts.length === 4 && labFacts.every((f) => { const v = f.value as Record<string, string>; return f.exactCopyCheck === "PASSED" && f.confidenceBand === "HIGH" && text!.text.split("\n").includes(f.sourceText) && f.sourceText.includes(v.value) && f.sourceText.includes(v.unit); }));
+  const fx1 = await eventsOf(r1!.id, "DocumentFactsExtracted");
+  report("DocumentFactsExtracted once, with counts only", fx1.length === 1 && (fx1[0].payload as { factCount: number }).factCount === hi.expected.length && !carries(fx1[0].payload, "Creatinine"));
+
+  // A handwritten prescription: labelled, at most MEDIUM, misread lines LOW.
+  setDocumentProvidersForTest(null);
+  mockControl.reset();
+  const hw = fixtureById("rx-hw-en-1")!;
+  const p2 = await person();
+  const d2 = await upload(p2.userId, await fixturePdf(hw));
+  await drain();
+  const r2 = await runOf(d2.id);
+  const facts2 = await prisma.extractedFact.findMany({ where: { processingId: r2!.id } });
+  report("Handwritten: every fact labelled handwritten, none HIGH", facts2.length > 0 && facts2.every((f) => f.handwritten && f.confidenceBand !== "HIGH"), facts2.map((f) => f.confidenceBand).join(","));
+  const amox = facts2.find((f) => f.factType === "MEDICATION" && String((f.value as { name: string }).name).startsWith("Amox"));
+  report("…the misread line (OCR confidence 0.62) is LOW, its value verbatim as read (never 'corrected')", amox?.confidenceBand === "LOW" && (amox.value as { name: string }).name === "Amoxicilin");
+
+  // Nothing to review: the run completes on its own.
+  setDocumentProvidersForTest({ ...mocks, extraction: { id: "mock", async extract() { return { facts: [], model: "mock-1" }; } } });
+  const pz = await person();
+  const dz = await upload(pz.userId, await fixturePdf(fixtureById("lab-en-cbc")!));
+  await drain();
+  const rz = await runOf(dz.id);
+  report("No facts on the page: the run is COMPLETED (MERGE SKIPPED) with DocumentProcessingCompleted",
+    rz?.status === "COMPLETED" && stepStatus(rz, "MERGE") === "SKIPPED" && (await eventsOf(rz.id, "DocumentProcessingCompleted")).length === 1);
+  setDocumentProvidersForTest(rec.p);
+
   // 2. Redelivery creates nothing.
-  const before = { pages: await prisma.documentPage.count(), texts: await prisma.extractedText.count(), trs: await prisma.translation.count(), ocr: rec.sent.ocrPages.length };
+  const before = { pages: await prisma.documentPage.count(), texts: await prisma.extractedText.count(), trs: await prisma.translation.count(), facts: await prisma.extractedFact.count(), ocr: rec.sent.ocrPages.length, ex: rec.sent.extract.length };
   const uploaded = await prisma.domainEventOutbox.findFirstOrThrow({ where: { aggregateId: d1.id, eventType: "PersonDocumentUploaded" } });
-  for (const e of [uploaded, ...evs.flat()]) {
+  for (const e of [uploaded, ...evs.flat(), ...fx1]) {
     for (const c of getConsumersFor(e.eventType).filter((x) => x.name.startsWith("doc-"))) {
       await c.handle({ eventId: e.id, eventType: e.eventType, eventVersion: e.eventVersion, aggregateType: e.aggregateType, aggregateId: e.aggregateId, organizationId: null, facilityId: null, personId: e.personId, actorUserId: null, correlationId: e.id, causationId: null, occurredAt: e.occurredAt, payload: e.payload as Record<string, unknown> });
     }
   }
   report("Redelivering every event creates nothing and calls no provider",
-    (await prisma.documentPage.count()) === before.pages && (await prisma.extractedText.count()) === before.texts && (await prisma.translation.count()) === before.trs && rec.sent.ocrPages.length === before.ocr
+    (await prisma.documentPage.count()) === before.pages && (await prisma.extractedText.count()) === before.texts && (await prisma.translation.count()) === before.trs && (await prisma.extractedFact.count()) === before.facts && rec.sent.ocrPages.length === before.ocr && rec.sent.extract.length === before.ex
       && (await prisma.documentProcessing.count({ where: { documentId: d1.id } })) === 1);
 
   // 3a. A step that crashes on page 2: it gives its claim back; the retry resumes at page 2.

@@ -17,11 +17,11 @@ export const FACT_VALUE_SCHEMAS = {
   DOCUMENT_META: z.object({ documentType: z.enum(DOCUMENT_TYPES), documentDate: opt, doctorName: opt, registrationNo: opt, facilityName: opt }).strict(),
   DIAGNOSIS: z.object({ text, icd10: z.string().regex(/^[A-Z]\d{2}(\.\d{1,2})?$/).optional(), status: z.enum(["ACTIVE", "RESOLVED", "HISTORY"]).optional(), onsetDate: opt }).strict(),
   MEDICATION: z.object({
-    name: text, strength: opt, form: opt, dose: text, route: opt, frequency: text,
+    name: text, strength: opt, form: opt, dose: opt, route: opt, frequency: opt,
     frequencyCode: z.enum(FREQUENCY_CODES).optional(), duration: opt, instructions: opt,
   }).strict(),
   LAB_VALUE: z.object({
-    analyte: text, value: text, numericValue: z.number().finite().optional(), unit: text, referenceRange: opt,
+    analyte: text, value: text, numericValue: z.number().finite().optional(), unit: opt, referenceRange: opt,
     flag: z.enum(["H", "L", "N"]).optional(), specimenDate: opt,
   }).strict(),
   PROCEDURE: z.object({ text, date: opt, facilityName: opt }).strict(),
@@ -40,7 +40,11 @@ export const EXACT_FIELDS: Record<ExtractedFactType, readonly string[]> = {
   ALLERGY: ["substance"],
 };
 
-/** The fields whose absence makes a fact incomplete (§7: one band lower). */
+/**
+ * The fields whose absence makes a fact incomplete (§7: one band lower). They
+ * are optional in the schema so an incomplete fact reaches the person, flagged,
+ * to correct or reject, rather than being silently dropped.
+ */
 export const COMPLETENESS_FIELDS: Partial<Record<ExtractedFactType, readonly string[]>> = {
   MEDICATION: ["dose", "frequency"],
   LAB_VALUE: ["unit"],

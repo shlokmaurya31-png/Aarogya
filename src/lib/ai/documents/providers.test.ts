@@ -128,7 +128,8 @@ describe("mock tagging and schemas", () => {
   });
   it("fact values are strict", () => {
     expect(FACT_VALUE_SCHEMAS.ALLERGY.safeParse({ substance: "Penicillin", note: "x" }).success).toBe(false);
-    expect(FACT_VALUE_SCHEMAS.MEDICATION.safeParse({ name: "Metformin", frequency: "1-0-1" }).success).toBe(false);
+    expect(FACT_VALUE_SCHEMAS.MEDICATION.safeParse({ frequency: "1-0-1" }).success).toBe(false);
+    expect(FACT_VALUE_SCHEMAS.LAB_VALUE.safeParse({ analyte: "Hb", value: "12", unit: "g/dL", comment: "x" }).success).toBe(false);
   });
 });
 

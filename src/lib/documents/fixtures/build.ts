@@ -25,7 +25,7 @@ interface Common {
   brands?: string[];
 }
 
-const FREQ: Record<string, "OD" | "BD" | "TDS" | "QID" | "HS" | "SOS"> = { "1-0-0": "OD", "0-0-1": "HS", "1-0-1": "BD", "1-1-1": "TDS", "1-1-1-1": "QID", OD: "OD", BD: "BD", TDS: "TDS", QID: "QID", HS: "HS", SOS: "SOS" };
+const FREQ: Record<string, "OD" | "BD" | "TDS" | "QID" | "HS" | "SOS" | "WEEKLY"> = { "1-0-0": "OD", "0-0-1": "HS", "1-0-1": "BD", "1-1-1": "TDS", "1-1-1-1": "QID", OD: "OD", BD: "BD", TDS: "TDS", QID: "QID", HS: "HS", SOS: "SOS", WEEKLY: "WEEKLY" };
 
 class Writer {
   lines: FixtureLine[] = [];

@@ -1,5 +1,5 @@
 import type { DomainEventConsumer } from "@/lib/events/consumers";
-import { ocrStep, pageSplitStep, runForUpload, translateStep } from "@/lib/documents/pipeline";
+import { extractStep, ocrStep, pageSplitStep, runForUpload, translateStep } from "@/lib/documents/pipeline";
 
 /**
  * Week 4a — the document pipeline's consumers (docs/DOCUMENT_PIPELINE_DESIGN.md
@@ -30,5 +30,13 @@ export const docTranslate: DomainEventConsumer = {
   handles: ["DocumentTextExtracted"],
   async handle(event) {
     await translateStep(processingIdOf(event.payload));
+  },
+};
+
+export const docExtract: DomainEventConsumer = {
+  name: "doc-extract",
+  handles: ["DocumentTranslated"],
+  async handle(event) {
+    await extractStep(processingIdOf(event.payload));
   },
 };
