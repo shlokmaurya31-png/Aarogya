@@ -34,8 +34,9 @@
  *      workflow tasks) count as the organization's: a facility user of another
  *      organization never receives one, and the task route answers 404.
  *   6. Phase 0 — the PERSON segment: person-scoped rows (Person, accounts,
- *      contacts, identifiers, consents, access log) belong to no tenant; no
- *      hospital route returns one to any staff or organization actor.
+ *      contacts, identifiers, consents, access log, documents, merge
+ *      requests and records) belong to no tenant; no hospital route returns
+ *      one to any staff or organization actor.
  * A route that is not probed and not on the documented allowlist fails the
  * gate.
  *
@@ -590,6 +591,13 @@ async function seedPersonSegment(): Promise<Map<string, string>> {
     if (!(await prisma.personIdentifier.count({ where: { personId } }))) await prisma.personIdentifier.create({ data: { personId, system: "ABHA_ADDRESS", valueHash: `sweep-${tag}`, valueLast4: "abcd" } });
     if (!(await prisma.personConsent.count({ where: { personId } }))) await prisma.personConsent.create({ data: { personId, purpose: "SHARE_UPLOADS_WITH_TREATING", decision: "DECLINED", decidedByUserId: user.id } });
     if (!(await prisma.personAccessLogEntry.count({ where: { personId } }))) await prisma.personAccessLogEntry.create({ data: { personId, kind: "PERSON_CREATED" } });
+    if (!(await prisma.personDocument.count({ where: { personId } }))) await prisma.personDocument.create({ data: { personId, type: "REPORT", title: `${MARKER} person document ${tag}`, storageRef: `patient-uploads/${personId}/sweep-${tag}`, sha256: "e".repeat(64), uploadedByUserId: user.id } });
+  }
+  // A merge request and record between the two (person-scoped too).
+  const [pa, pb] = await Promise.all(["a", "b"].map(async (tag) => (await prisma.personAccount.findUniqueOrThrow({ where: { userId: (await prisma.user.findUniqueOrThrow({ where: { email: `tenancy-sweep-person-${tag}@sweep.aarogya` } })).id } })).personId));
+  if (!(await prisma.personMergeRequest.count({ where: { personId: pa } }))) {
+    const req = await prisma.personMergeRequest.create({ data: { personId: pa, sourcePersonId: pb, initiatedByUserId: "sweep", targetCodeHash: "x", sourceCodeHash: "y", expiresAt: new Date(), status: "EXPIRED" } });
+    await prisma.personMergeRecord.create({ data: { personId: pa, sourcePersonId: pb, method: "BOTH_ACCOUNTS_PROVEN", requestId: req.id, actorUserId: "sweep", snapshot: {} } });
   }
   const rows = new Map<string, string>();
   for (const model of PERSON_SCOPED_MODELS) {

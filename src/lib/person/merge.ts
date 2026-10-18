@@ -178,6 +178,7 @@ async function mergePersonsTx(tx: Tx, req: { id: string; personId: string; sourc
     identifiers: await ids(tx.personIdentifier.findMany({ where: { personId: from }, select: { id: true } })),
     accessLog: await ids(tx.personAccessLogEntry.findMany({ where: { personId: from }, select: { id: true } })),
     uploads: await ids(tx.clinicalDocument.findMany({ where: { personId: from }, select: { id: true } })),
+    documents: await ids(tx.personDocument.findMany({ where: { personId: from }, select: { id: true } })),
     consents: [] as { id: string; action: "REPOINTED" | "SUPERSEDED" }[],
     endedAccounts: await ids(tx.personAccount.findMany({ where: { personId: from, endedAt: null }, select: { id: true } })),
   };
@@ -187,6 +188,7 @@ async function mergePersonsTx(tx: Tx, req: { id: string; personId: string; sourc
   await tx.personIdentifier.updateMany({ where: { personId: from }, data: { personId: to } });
   await tx.personAccessLogEntry.updateMany({ where: { personId: from }, data: { personId: to } });
   await tx.clinicalDocument.updateMany({ where: { personId: from }, data: { personId: to } });
+  await tx.personDocument.updateMany({ where: { personId: from }, data: { personId: to } });
   // Choices: the same choice carries; two different choices both lapse, so the
   // person is asked again (never silently pick one).
   const now = new Date();

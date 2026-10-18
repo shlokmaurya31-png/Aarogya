@@ -327,6 +327,9 @@ async function main() {
   const merged = await confirmPersonMerge(X.userId, mr.requestId, { thisAccountCode: cx!, otherAccountCode: cy! });
   const yAfter = await prisma.person.findUniqueOrThrow({ where: { id: Y.personId } });
   report("Both codes: MERGED into the surviving Person", merged.status === "MERGED" && yAfter.status === "MERGED" && yAfter.mergedIntoPersonId === X.personId);
+  report("…every model that carries a personId is re-pointed by the merge (none left on the merged Person)",
+    (await Promise.all([prisma.personPatientLink.count({ where: { personId: Y.personId } }), prisma.personContact.count({ where: { personId: Y.personId } }), prisma.personIdentifier.count({ where: { personId: Y.personId } }),
+      prisma.personAccessLogEntry.count({ where: { personId: Y.personId } }), prisma.personConsent.count({ where: { personId: Y.personId } }), prisma.personDocument.count({ where: { personId: Y.personId } }), prisma.clinicalDocument.count({ where: { personId: Y.personId } })])).every((n) => n === 0));
   report("…the other Person's link, contact and access log moved to the survivor",
     (await prisma.personPatientLink.findUniqueOrThrow({ where: { id: ly.id } })).personId === X.personId
       && (await prisma.personContact.count({ where: { personId: X.personId, value: Y.email } })) === 1 && (await prisma.personAccessLogEntry.count({ where: { personId: Y.personId } })) === 0);

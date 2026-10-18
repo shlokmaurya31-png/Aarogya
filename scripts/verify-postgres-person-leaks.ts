@@ -1,3 +1,5 @@
+process.env.EMAIL_PROVIDER = "outbox";
+
 /**
  * Phase 0, part 1 (e): the person leak gate. Zero tolerance.
  *
@@ -20,6 +22,11 @@
  *   Person A's own login, at any point            → nothing of B's
  *   staff asking for B's profile/contacts/log     → nothing, ever
  *
+ * Part 2 adds: a facility merge carries visibility to the target record and
+ * an unmerge takes it back; after a Person merge the merged-away login sees
+ * nothing and different sharing choices lapse; a closed account's uploads
+ * vanish for staff at once, and after the purge the bytes are gone too.
+ *
  * The canary never appearing where it shouldn't is the pass condition; it
  * appearing for B themselves and for treating staff after sharing proves the
  * check sees it when present.
@@ -39,6 +46,15 @@ import { personOverview } from "../src/lib/person/overview";
 import { decidePersonConsent } from "../src/lib/person/consent";
 import { unlinkByPerson } from "../src/lib/person/linking";
 import type { PatientAccessScope } from "../src/lib/patient/context";
+import { readFile } from "node:fs/promises";
+import { EMAIL_OUTBOX_FILE } from "../src/lib/email/send";
+import { hashPassword } from "../src/lib/auth/password";
+import { mergePatients, unmergePatients } from "../src/lib/patient/merge";
+import { startPersonMerge, confirmPersonMerge } from "../src/lib/person/merge";
+import { closePersonAccount, purgeClosedPersons } from "../src/lib/person/closure";
+import { uploadPersonDocument } from "../src/lib/person/documents";
+import { selfPatientIds } from "../src/lib/person/self";
+import { getStorageAdapter } from "../src/lib/storage";
 
 let pass = 0;
 let fail = 0;
@@ -131,6 +147,57 @@ async function main() {
   await unlinkByPerson(b.userId, puneLink.id);
   report("B unlinks Pune: Pune staff see nothing, even while sharing", !(await sees(PUNE, pb)));
   report("…A never saw anything of B's", !(await aSees()) && personA !== personB);
+
+  // ── Part 2: merges and closure ──
+  const admin = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { user: { role: "HOSPITAL_ADMIN" } }, select: { id: true, userId: true } });
+  const pdfBytes = async () => { const { PDFDocument } = await import("pdf-lib"); const d = await PDFDocument.create(); d.addPage([100, 100]); return Buffer.from(await d.save()); };
+  const fresh = async (tag: string) => {
+    const r = await registerPatientAccount({ fullName: `Leak ${tag} ${run}`, email: `leak-${tag}-${run}@verify.aarogya`, passwordHash: await hashPassword(`Leak@${run}`), sex: "F", dob: new Date("1966-06-06") });
+    if (r.status !== "LINKED_NEW") throw new Error(`fixture ${tag}`);
+    await prisma.encounter.create({ data: { patientId: r.patientId, facilityId: PUNE, type: "OPD", status: "IN_CONSULTATION", chiefComplaint: "leak part 2" } });
+    await decidePersonConsent({ userId: r.userId, purpose: "SHARE_UPLOADS_WITH_TREATING", decision: "GRANTED" });
+    const doc = await uploadPersonDocument(r.userId, { bytes: await pdfBytes(), contentType: "application/pdf", originalName: `${tag}.pdf`, title: `Report ${CANARY}-${tag}`, type: "REPORT" });
+    return { ...r, doc };
+  };
+  const seesDoc = async (patientId: string, docId: string) => (await staffPersonDocuments(PUNE, [patientId])).some((d) => d.id === docId);
+
+  // Facility merge: visibility follows the carried link; unmerge takes it back.
+  const g = await fresh("g");
+  const gTarget = await prisma.patient.create({ data: { uhid: `LEAKG-${run}`, facilityId: PUNE, fullName: `Leak G target ${run}`, sex: "F" } });
+  await prisma.encounter.create({ data: { patientId: gTarget.id, facilityId: PUNE, type: "OPD", status: "IN_CONSULTATION", chiefComplaint: "leak part 2" } });
+  report("Before a facility merge, the target record shows nothing of the person's", !(await seesDoc(gTarget.id, g.doc.id)));
+  await mergePatients({ sourcePatientId: g.patientId, targetPatientId: gTarget.id, actorStaffId: admin.id, actorUserId: admin.userId, reason: "duplicate" });
+  report("After it, staff see the person's upload through the surviving record", await seesDoc(gTarget.id, g.doc.id));
+  await unmergePatients({ patientId: g.patientId, actorStaffId: admin.id, actorUserId: admin.userId, reason: "wrong" });
+  report("After the unmerge, the other record shows nothing of the person's again", !(await seesDoc(gTarget.id, g.doc.id)) && await seesDoc(g.patientId, g.doc.id));
+
+  // Person merge: the merged-away login sees nothing; different choices lapse.
+  const d = await fresh("d"); const e = await fresh("e");
+  await decidePersonConsent({ userId: e.userId, purpose: "SHARE_UPLOADS_WITH_TREATING", decision: "DECLINED" });
+  const req = await startPersonMerge(d.userId, { otherEmail: `leak-e-${run}@verify.aarogya`, otherPassword: `Leak@${run}` });
+  const code = async (to: string) => {
+    for (const l of (await readFile(EMAIL_OUTBOX_FILE, "utf8")).trim().split("\n").reverse()) { const m = JSON.parse(l) as { to: string; text: string }; if (m.to === to) return /\b(\d{6})\b/.exec(m.text)![1]; }
+    return "";
+  };
+  await confirmPersonMerge(d.userId, req.requestId, { thisAccountCode: await code(`leak-d-${run}@verify.aarogya`), otherAccountCode: await code(`leak-e-${run}@verify.aarogya`) });
+  report("After a Person merge, the merged-away login holds no record and sees nothing", (await selfPatientIds(e.userId)).length === 0
+    && await personDocumentDownload({ kind: "OWNER", userId: e.userId }, e.doc.id).then(() => false, () => true));
+  report("…the survivor owns both uploads", await personDocumentDownload({ kind: "OWNER", userId: d.userId }, e.doc.id).then(() => true, () => false));
+  report("…and because the two sharing choices differed, staff see neither until the person chooses again",
+    !(await seesDoc(d.patientId, d.doc.id)) && !(await seesDoc(e.patientId, e.doc.id)));
+
+  // Closure: gone for staff at once; after the purge, the bytes too.
+  const f = await fresh("f");
+  report("Control: staff see the person's upload before closure", await seesDoc(f.patientId, f.doc.id));
+  await closePersonAccount(f.userId, "CLOSE");
+  const staffDl = () => personDocumentDownload({ kind: "STAFF", userId: admin.userId, facilityId: PUNE, patientId: f.patientId }, f.doc.id).then(() => false, () => true);
+  report("A closed account's uploads are gone for staff at once (list and signed URL)", !(await seesDoc(f.patientId, f.doc.id)) && await staffDl());
+  report("…and its own login sees nothing either", (await selfPatientIds(f.userId)).length === 0);
+  const fPerson = (await prisma.personAccount.findUniqueOrThrow({ where: { userId: f.userId } })).personId;
+  await prisma.person.update({ where: { id: fPerson }, data: { purgeAfter: new Date(Date.now() - 1000) } });
+  await purgeClosedPersons({});
+  report("After the purge, the upload's row and bytes are gone", (await prisma.personDocument.count({ where: { id: f.doc.id } })) === 0 && await getStorageAdapter().get(f.doc.storageRef).then(() => false, () => true));
+  report("…and the canary appears in no staff view of the record", !(await staffViews(PUNE, f.patientId)).includes(`${CANARY}-f`));
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();
