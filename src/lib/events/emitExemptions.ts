@@ -79,6 +79,8 @@ export const SENSITIVE_EVENTS: readonly string[] = [
   "PersonAccountClosed", "PersonAccountReopened", "PersonDataPurged",
   // A person's choice about who sees their data is a consent fact.
   "PersonConsentDecided",
+  // Week 4a: what a person confirmed from their outside records (document pipeline §4.2).
+  "ExtractedFactReviewed", "PatientProvidedRecordAdded", "PatientProvidedRecordUpdated",
 ];
 
 /**
@@ -147,6 +149,11 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/person/linking.ts#offerAbhaLink": { category: "PROCESS_STEP", reason: "ABHA match offered; the person confirms (disabled until ABDM verification)", boundary: ["PersonPatientLinked"] },
   "src/lib/person/linking.ts#startReverification": { category: "PROCESS_STEP", reason: "a migrated link's verification opened (same routes as a new link); the outcome is the link", boundary: ["PersonPatientLinked"] },
   "src/lib/person/merge.ts#startPersonMerge": { category: "PROCESS_STEP", reason: "the other account's password checked and a code sent to each account; the outcome is the merge", boundary: ["PersonMerged"] },
+  "src/lib/documents/pipelineState.ts#createRun": { category: "BOOKKEEPING", reason: "a pipeline run's state rows; the step consumer emits the step's event" },
+  "src/lib/documents/pipelineState.ts#moveRun": { category: "BOOKKEEPING", reason: "a pipeline run's state; the step consumer emits the step's event" },
+  "src/lib/documents/pipelineState.ts#claimStep": { category: "BOOKKEEPING", reason: "claiming a pipeline step (compare-and-set)" },
+  "src/lib/documents/pipelineState.ts#finishStep": { category: "BOOKKEEPING", reason: "a pipeline step's state; the step consumer emits the step's event" },
+  "src/lib/medicines/reference.ts#importInnVersion": { category: "REFERENCE_DATA", reason: "a whole WHO INN list version, imported once (medicine-name protection)" },
   "src/lib/person/documents.ts#movePersonUploads": { category: "BOOKKEEPING", reason: "one-off migration of existing uploads to PersonDocument (same bytes); refuses rather than guesses" },
   "src/lib/person/documents.ts#personDocumentDownload": { category: "BOOKKEEPING", reason: "access log and audit of a staff read; no state change" },
   "src/lib/person/linking.ts#requestFacilityUnlink": { category: "PROCESS_STEP", reason: "first staff member's unlink request; a second approves", boundary: ["PersonPatientUnlinked"] },

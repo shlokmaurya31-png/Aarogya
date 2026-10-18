@@ -62,6 +62,13 @@ const billingCreditType = z.enum(["PROMOTIONAL", "MANUAL", "CORRECTION", "CONTRA
 const billingInvoiceStatus = z.enum(["DRAFT", "OPEN", "PARTIALLY_PAID", "PAID", "PAST_DUE", "VOID", "UNCOLLECTIBLE"]);
 const subscriptionStatus = z.enum(["TRIAL", "ACTIVE", "PAST_DUE", "GRACE", "SUSPENDED", "CANCELLED", "EXPIRED"]);
 const personLinkMethod = z.enum(PERSON_LINK_METHODS);
+// Week 4a — the document pipeline's closed codes.
+const documentLanguage = z.enum(["en", "hi", "mr", "ta", "bn", "gu", "te", "kn", "ml", "mixed", "und"]);
+const confidenceBand = z.enum(["HIGH", "MEDIUM", "LOW"]);
+const documentStep = z.enum(["PAGE_SPLIT", "OCR", "TRANSLATE", "EXTRACT", "MERGE"]);
+const extractedFactType = z.enum(["DOCUMENT_META", "DIAGNOSIS", "MEDICATION", "LAB_VALUE", "PROCEDURE", "ALLERGY"]);
+const patientProvidedKind = z.enum(["DIAGNOSIS", "MEDICATION_HISTORY", "LAB_RESULT", "PROCEDURE", "ALLERGY"]);
+const documentStepError = z.enum(["PROVIDER_UNAVAILABLE", "RATE_LIMITED", "UNREADABLE", "UNSUPPORTED_LANGUAGE", "EXACT_COPY_VIOLATION", "TOO_LARGE", "INTERNAL"]);
 
 function contract<P extends z.ZodTypeAny>(c: EventContract<P>): EventContract<P> {
   return c;
@@ -607,6 +614,19 @@ export const EVENT_CONTRACTS: EventContract[] = [
       severity: z.enum(["MILD", "MODERATE", "SEVERE"]),
       verification: z.enum(["UNCONFIRMED", "CONFIRMED"]),
       criticality: z.enum(["LOW", "HIGH", "UNABLE_TO_ASSESS"]).optional(),
+    }).strict(),
+  }),
+  contract({
+    // v2 (Week 4a): who it came from; a patient-reported allergy may have no severity (never guessed).
+    type: "AllergyListUpdated", version: 2, aggregateType: "ALLERGY", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "allergies (recordAllergy, updateAllergy); the document pipeline's allergy bridge (source PATIENT_PROVIDED)",
+    payload: z.object({
+      allergyId: id, patientId: id, action: z.enum(["ADDED", "UPDATED", "INACTIVATED"]),
+      status: z.enum(["ACTIVE", "INACTIVE", "ENTERED_IN_ERROR"]),
+      severity: z.enum(["MILD", "MODERATE", "SEVERE"]).optional(),
+      verification: z.enum(["UNCONFIRMED", "CONFIRMED"]),
+      criticality: z.enum(["LOW", "HIGH", "UNABLE_TO_ASSESS"]).optional(),
+      source: z.enum(["CLINICIAN", "PATIENT_PROVIDED"]),
     }).strict(),
   }),
   contract({
@@ -1344,6 +1364,87 @@ export const EVENT_CONTRACTS: EventContract[] = [
     type: "PersonConsentDecided", version: 1, aggregateType: "PERSON", scope: "PERSON",
     sensitivity: "SENSITIVE", producer: "person identity (decidePersonConsent: the person's own choice, e.g. sharing uploads with treating hospitals)",
     payload: z.object({ personId: id, consentId: id, purpose: z.enum(["SHARE_UPLOADS_WITH_TREATING"]), decision: z.enum(["GRANTED", "DECLINED"]), previous: z.enum(["NONE", "GRANTED", "DECLINED"]) }).strict(),
+  }),
+  contract({
+    // v2 (Week 4a): the purposes of the real-data switch, and scopes.
+    type: "PersonConsentDecided", version: 2, aggregateType: "PERSON", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "person identity (decidePersonConsent: sharing uploads, document processing, AI assistance, AI text retention)",
+    payload: z.object({
+      personId: id, consentId: id, purpose: z.enum(["SHARE_UPLOADS_WITH_TREATING", "DOCUMENT_PROCESSING", "AI_ASSISTANCE", "AI_TEXT_RETENTION"]),
+      decision: z.enum(["GRANTED", "DECLINED"]), previous: z.enum(["NONE", "GRANTED", "DECLINED"]), scopes: z.array(z.enum(["SAFETY_REVIEW"])),
+    }).strict(),
+  }),
+  // ── Document pipeline (Week 4a) ───────────────────────────────────────────
+  // PERSON-scoped: a Person's own documents belong to no facility. Ids, closed
+  // codes and counts only: no text, values, names or languages beyond codes.
+  contract({
+    type: "DocumentPagesPrepared", version: 1, aggregateType: "DOCUMENT_PROCESSING", scope: "PERSON",
+    sensitivity: "INTERNAL", producer: "document pipeline (doc-page-split: pages split from the upload; the original untouched)",
+    payload: z.object({ processingId: id, documentId: id, personId: id, pageCount: z.number().int().min(1) }).strict(),
+  }),
+  contract({
+    type: "DocumentTextExtracted", version: 1, aggregateType: "DOCUMENT_PROCESSING", scope: "PERSON",
+    sensitivity: "INTERNAL", producer: "document pipeline (doc-ocr: text and language per page)",
+    payload: z.object({
+      processingId: id, documentId: id, personId: id, pageCount: z.number().int().min(1),
+      languages: z.array(documentLanguage), handwritten: z.boolean(), confidenceBand,
+    }).strict(),
+  }),
+  contract({
+    type: "DocumentTranslated", version: 1, aggregateType: "DOCUMENT_PROCESSING", scope: "PERSON",
+    sensitivity: "INTERNAL", producer: "document pipeline (doc-translate: protected values masked; a translation failing the exact-copy check is never shown)",
+    payload: z.object({
+      processingId: id, documentId: id, personId: id, targetLanguage: documentLanguage,
+      translatedPages: z.number().int().min(0), exactCopyFailures: z.number().int().min(0), skipped: z.boolean(),
+    }).strict(),
+  }),
+  contract({
+    type: "DocumentProcessingFailed", version: 1, aggregateType: "DOCUMENT_PROCESSING", scope: "PERSON",
+    sensitivity: "INTERNAL", producer: "document pipeline (any step: a permanent error, or retries exhausted; the original is kept)",
+    payload: z.object({ processingId: id, documentId: id, personId: id, step: documentStep, errorCode: documentStepError }).strict(),
+  }),
+  contract({
+    type: "DocumentFactsExtracted", version: 1, aggregateType: "DOCUMENT_PROCESSING", scope: "PERSON",
+    sensitivity: "INTERNAL", producer: "document pipeline (doc-extract: facts from the original text, with confidence; the run awaits the person's review)",
+    payload: z.object({ processingId: id, documentId: id, personId: id, factCount: z.number().int().min(0), lowConfidenceCount: z.number().int().min(0) }).strict(),
+  }),
+  contract({
+    type: "DocumentProcessingCompleted", version: 1, aggregateType: "DOCUMENT_PROCESSING", scope: "PERSON",
+    sensitivity: "INTERNAL", producer: "document pipeline (doc-extract with nothing to review; doc-merge once every fact is decided)",
+    payload: z.object({ processingId: id, documentId: id, personId: id, confirmed: z.number().int().min(0), corrected: z.number().int().min(0), rejected: z.number().int().min(0) }).strict(),
+  }),
+  contract({
+    type: "ExtractedFactReviewed", version: 1, aggregateType: "DOCUMENT_PROCESSING", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "document review (confirmFact, confirmFactField, correctFact, rejectFact, bulkReview: the person's own decision)",
+    payload: z.object({ factId: id, processingId: id, personId: id, factType: extractedFactType, decision: z.enum(["CONFIRMED", "CORRECTED", "REJECTED"]), via: z.enum(["SELF", "PROXY"]) }).strict(),
+  }),
+  contract({
+    type: "DocumentReprocessRequested", version: 1, aggregateType: "DOCUMENT_PROCESSING", scope: "PERSON",
+    sensitivity: "INTERNAL", producer: "document review (requestReprocess: the person asked for a fresh run)",
+    payload: z.object({ processingId: id, documentId: id, personId: id, reason: z.enum(["MODEL_UPGRADE", "PATIENT_REQUEST", "LANGUAGE_CHANGED"]) }).strict(),
+  }),
+  contract({
+    type: "PatientProvidedRecordAdded", version: 1, aggregateType: "PATIENT_PROVIDED_RECORD", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "document pipeline (doc-merge: a confirmed or corrected fact becomes a patient-provided entry)",
+    payload: z.object({ recordId: id, personId: id, kind: patientProvidedKind, factId: id, documentId: id }).strict(),
+  }),
+  contract({
+    type: "PatientProvidedRecordUpdated", version: 1, aggregateType: "PATIENT_PROVIDED_RECORD", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "document pipeline (withdrawPatientRecord; the upload withdrawn; a re-run supersedes an entry)",
+    payload: z.object({ recordId: id, personId: id, kind: patientProvidedKind, change: z.enum(["CORRECTED", "WITHDRAWN", "SUPERSEDED"]) }).strict(),
+  }),
+  contract({
+    type: "RecordConflictDetected", version: 1, aggregateType: "RECORD_CONFLICT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "document pipeline (doc-conflicts: a patient-provided entry disagrees with this facility's verified record; nothing is overwritten)",
+    payload: z.object({
+      conflictId: id, personId: id, patientId: id, kind: patientProvidedKind, patientProvidedRecordId: id,
+      verifiedSourceType: z.enum(["LabResult", "Allergy", "MedicationOrder", "Diagnosis"]), verifiedSourceId: id,
+    }).strict(),
+  }),
+  contract({
+    type: "RecordConflictAcknowledged", version: 1, aggregateType: "RECORD_CONFLICT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "document pipeline (acknowledgeConflict: a clinician saw it, or resolved it by recording a verified entry)",
+    payload: z.object({ conflictId: id, patientId: id, status: z.enum(["ACKNOWLEDGED", "RESOLVED_BY_CLINICIAN"]), staffId: id }).strict(),
   }),
 ];
 

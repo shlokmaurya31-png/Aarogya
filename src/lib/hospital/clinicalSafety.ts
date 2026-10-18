@@ -15,7 +15,7 @@ import { prisma } from "@/lib/db";
  * allow.
  */
 export interface SafetyFlag {
-  rule: "allergy-conflict" | "duplicate-active-medication" | "route-mismatch" | "frequency-mismatch";
+  rule: "allergy-conflict" | "allergy-info-withdrawn" | "duplicate-active-medication" | "route-mismatch" | "frequency-mismatch";
   severity: "warning" | "danger";
   message: string;
   sourceId: string;
@@ -31,17 +31,27 @@ export async function checkMedicationSafety(
   const flags: SafetyFlag[] = [];
   const needle = (genericName || drugName).toLowerCase();
 
-  const allergies = await prisma.allergy.findMany({ where: { patientId }, orderBy: [{ recordedAt: "asc" }, { id: "asc" }] });
+  // Week 4a: a patient-reported allergy counts while it is shared (ACTIVE); one the patient
+  // withdrew is replaced by the content-free notice below.
+  const allergies = await prisma.allergy.findMany({ where: { patientId, NOT: { source: "PATIENT_PROVIDED", status: { not: "ACTIVE" } } }, orderBy: [{ recordedAt: "asc" }, { id: "asc" }] });
   for (const allergy of allergies) {
     const substance = allergy.substance.toLowerCase();
     if (needle.includes(substance) || substance.includes(needle)) {
+      const reported = allergy.source === "PATIENT_PROVIDED";
       flags.push({
         rule: "allergy-conflict",
-        severity: allergy.severity === "SEVERE" ? "danger" : "warning",
-        message: `Patient has a documented ${allergy.severity} allergy to "${allergy.substance}"${allergy.reaction ? ` (reaction: ${allergy.reaction})` : ""}.`,
+        // An unknown severity is never assumed mild.
+        severity: allergy.severity === "SEVERE" || allergy.severity === null ? "danger" : "warning",
+        message: reported
+          ? `Patient-reported allergy to "${allergy.substance}" (from an uploaded document, ${allergy.verification === "CONFIRMED" ? "confirmed" : "not yet confirmed by a clinician"}${allergy.severity ? `, ${allergy.severity}` : ", severity not recorded"})${allergy.reaction ? ` (reaction: ${allergy.reaction})` : ""}. Confirm with the patient.`
+          : `Patient has a documented ${allergy.severity} allergy to "${allergy.substance}"${allergy.reaction ? ` (reaction: ${allergy.reaction})` : ""}.`,
         sourceId: allergy.id,
       });
     }
+  }
+  const withdrawn = await prisma.patientAllergyNotice.findFirst({ where: { patientId, kind: "WITHDRAWN_BY_PATIENT", resolvedAt: null }, select: { id: true } });
+  if (withdrawn) {
+    flags.push({ rule: "allergy-info-withdrawn", severity: "warning", message: "Allergy information withdrawn by the patient — ask about allergies.", sourceId: withdrawn.id });
   }
 
   const activeOrders = await prisma.medicationOrder.findMany({

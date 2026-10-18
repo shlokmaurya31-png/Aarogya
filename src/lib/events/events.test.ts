@@ -365,7 +365,8 @@ describe("Phase 0 person payload codes mirror their sources", () => {
     expect(options("PersonPatientLinked", "method")).toEqual(Object.values($Enums.PersonLinkMethod).sort());
     expect(options("PersonPatientUnlinked", "by")).toEqual(Object.values($Enums.PersonUnlinkActor).sort());
     expect(options("PersonPatientUnlinked", "reason")).toEqual(Object.values($Enums.PersonUnlinkReason).sort());
-    expect(options("PersonConsentDecided", "purpose")).toEqual(Object.values($Enums.PersonConsentPurpose).sort());
+    const v2 = (getEventContract("PersonConsentDecided", 2)!.payload as unknown as { shape: Record<string, { options: string[] }> }).shape;
+    expect([...v2.purpose.options].sort()).toEqual(Object.values($Enums.PersonConsentPurpose).sort());
     expect(options("PersonConsentDecided", "decision")).toEqual(Object.values($Enums.PersonConsentDecision).sort());
   });
   it("PERSON-scoped contracts carry a personId field", () => {

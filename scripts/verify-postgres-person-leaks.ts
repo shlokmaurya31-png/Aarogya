@@ -3,7 +3,8 @@ process.env.EMAIL_PROVIDER = "outbox";
 /**
  * Phase 0, part 1 (e): the person leak gate. Zero tolerance.
  *
- * Person B's own data carries a unique canary: an upload's title, a contact
+ * Person B's own data carries a unique canary: an upload's title, a
+ * patient-provided entry's value (Week 4a), a contact
  * and the access log. Then every staff-side surface that can show a
  * patient's documents (the documents list's filter, timeline, summary, the
  * clinician AI context) and every other account is asked, in each state:
@@ -34,6 +35,8 @@ process.env.EMAIL_PROVIDER = "outbox";
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-person-leaks.ts
  */
 import { prisma } from "../src/lib/db";
+import { listOwnRecords, staffPatientProvidedRecords } from "../src/lib/documents/merge";
+import { facilityConflicts, listOwnConflicts } from "../src/lib/documents/conflicts";
 import { registerPatientAccount, connectFacilityRecord } from "../src/lib/patient/selfRegistration";
 import { uploadPatientDocument } from "../src/lib/patient/experience/documents";
 import { listReports } from "../src/lib/patient/experience/reports";
@@ -88,6 +91,10 @@ async function main() {
       return uploadPatientDocument(scopeB, b.userId, { bytes: Buffer.from(await pdf.save()), contentType: "application/pdf", originalName: "leak.pdf", title: `Report ${CANARY}`, type: "REPORT" });
     });
   report("Fixture: B's upload is B's own PersonDocument", (await prisma.personDocument.findUniqueOrThrow({ where: { id: up.id } })).personId === personB);
+  // Week 4a: a confirmed patient-provided entry of B's, with the canary in its value.
+  const canaryRecord = await prisma.patientProvidedRecord.create({ data: { personId: personB, kind: "LAB_RESULT", value: { analyte: `Canary ${CANARY}`, value: "1", unit: "mg/dL" }, factId: `leak-fact-${run}`, documentId: up.id, pageNo: 1 } });
+  // …and a conflict about it at B's facility record (its display carries the entry's value).
+  await prisma.recordConflict.create({ data: { personId: personB, facilityId: PUNE, patientId: pb, kind: "LAB_RESULT", patientProvidedRecordId: canaryRecord.id, verifiedSourceType: "LabResult", verifiedSourceId: `leak-result-${run}` } });
 
   // Every staff-side surface, as text.
   const staffViews = async (facilityId: string, patientId: string) => {
@@ -97,19 +104,21 @@ async function main() {
     ];
     const [timeline, summary] = await Promise.all([buildPatientTimeline(patientId, { kind: "STAFF", facilityId }), buildPatientSummary(patientId, { kind: "STAFF", facilityId })]);
     const ai = await clinicianAssistantContext(patientId, facilityId);
-    return JSON.stringify({ docs, timeline, summary, ai });
+    const provided = await staffPatientProvidedRecords(facilityId, [patientId]);
+    const conflicts = await facilityConflicts(facilityId, [patientId]);
+    return JSON.stringify({ docs, timeline, summary, ai, provided, conflicts });
   };
   const sees = async (facilityId: string, patientId: string) => (await staffViews(facilityId, patientId)).includes(CANARY);
   const aSees = async () => {
     const own = await personOverview(a.userId);
     const scopeA: PatientAccessScope = { patientId: a.patientId, patientIds: [a.patientId], facilityId: PUNE, isSelf: true, allowedClasses: new Set(ALL) };
-    return JSON.stringify({ own, reports: await listReports(scopeA), access: await personAccess({ kind: "OWNER", userId: a.userId }, personB, "UPLOADS") }).includes(CANARY)
+    return JSON.stringify({ own, reports: await listReports(scopeA), access: await personAccess({ kind: "OWNER", userId: a.userId }, personB, "UPLOADS"), provided: await listOwnRecords(a.userId), conflicts: await listOwnConflicts(a.userId) }).includes(CANARY)
       || (await personAccess({ kind: "OWNER", userId: a.userId }, personB, "PROFILE")) !== null;
   };
   const staffProfile = async (facilityId: string) => (await personAccess({ kind: "STAFF", userId: "staff", facilityId }, personB, "PROFILE")) !== null;
 
   // Positive controls: B sees their own canaries.
-  const bOwn = JSON.stringify({ o: await personOverview(b.userId), r: await listReports(scopeB) });
+  const bOwn = JSON.stringify({ o: await personOverview(b.userId), r: await listReports(scopeB), p: await listOwnRecords(b.userId) });
   report("Control: B sees their own upload", bOwn.includes(CANARY));
 
   report("B hasn't chosen: Pune staff see nothing of the upload", !(await sees(PUNE, pb)));

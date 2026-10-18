@@ -6,6 +6,7 @@ import { getStorageAdapter } from "@/lib/storage";
 import { emitDomainEvent } from "@/lib/events/emit";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 import { requireOwnedPerson } from "./access";
+import { withdrawAllergyBridges } from "@/lib/documents/merge";
 
 /**
  * Phase 0, part 2 — account closure (docs/PERSON_IDENTITY_DESIGN.md §15 Q6).
@@ -118,6 +119,14 @@ export async function purgeClosedPersons(opts: { now?: Date; batchSize?: number 
           payload: { linkId: l.id, personId, patientId: l.patientId, by: "PERSON", reason: "ACCOUNT_CLOSED" },
         });
       }
+      // Week 4a: the pipeline's derived data and the person's confirmed facts go
+      // with their documents. Conflicts that a clinician resolved stay with the
+      // facility record (they name only ids); open ones are withdrawn.
+      await tx.recordConflict.deleteMany({ where: { personId, status: { not: "RESOLVED_BY_CLINICIAN" } } });
+      // Bridged allergies no clinician confirmed are taken back (with the facility's notice) before their entries go.
+      await withdrawAllergyBridges(tx, personId, {});
+      await tx.patientProvidedRecord.deleteMany({ where: { personId } });
+      await tx.documentProcessing.deleteMany({ where: { personId } });
       await tx.personDocument.deleteMany({ where: { personId } });
       await tx.clinicalDocument.deleteMany({ where: { id: { in: deleteLegacy.map((d) => d.id) } } });
       // Referenced uploads are now the facility record's: kept, detached from the Person.

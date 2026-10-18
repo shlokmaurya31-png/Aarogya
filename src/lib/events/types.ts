@@ -115,6 +115,10 @@ export const AGGREGATE_TYPES = [
   "PERSON_PATIENT_LINK",
   "PERSON_LINK_REQUEST",
   "PERSON_DOCUMENT",
+  // Week 4a — the document pipeline.
+  "DOCUMENT_PROCESSING",
+  "PATIENT_PROVIDED_RECORD",
+  "RECORD_CONFLICT",
 ] as const;
 export type AggregateType = (typeof AGGREGATE_TYPES)[number];
 

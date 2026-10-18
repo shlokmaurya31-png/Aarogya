@@ -164,8 +164,9 @@ export async function seedHospital(prisma: PrismaClient) {
 
   const facility = await prisma.facility.upsert({
     where: { id: "fac-amc-pune" },
-    update: {},
-    create: { id: "fac-amc-pune", name: "Aarogya Medical Centre", city: "Pune", organizationId: org.id },
+    // Week 4a: the demo facilities hold synthetic data only.
+    update: { dataClassification: "SYNTHETIC" },
+    create: { id: "fac-amc-pune", name: "Aarogya Medical Centre", city: "Pune", organizationId: org.id, dataClassification: "SYNTHETIC" },
   });
   const imagingResources = await seedImagingResources(prisma, facility.id, "AMC");
 

@@ -21,6 +21,14 @@ export const PERSON_SCOPED_MODELS = [
   "PersonMergeRequest",
   "PersonMergeRecord",
   "PersonDocument",
+  // Week 4a — the document pipeline.
+  "DocumentProcessing",
+  "DocumentProcessingStep",
+  "DocumentPage",
+  "ExtractedText",
+  "Translation",
+  "ExtractedFact",
+  "PatientProvidedRecord",
 ] as const;
 
 /** Facility-owned models that reference a Person. */
@@ -32,4 +40,6 @@ export const FACILITY_MODELS_WITH_PERSON = [
   // stores them); personId is the owner, and staff reads go through
   // staffDocumentVisibility(). Part 2 moves them to a person-level model.
   "ClinicalDocument",
+  // Week 4a: a conflict between a person's record and a facility's verified one.
+  "RecordConflict",
 ] as const;

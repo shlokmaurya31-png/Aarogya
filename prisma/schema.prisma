@@ -1075,6 +1075,10 @@ model Facility {
 
   personPatientLinks PersonPatientLink[]
 
+  /// Week 4a: REAL unless the seed marks a demo facility SYNTHETIC. Real data
+  /// never reaches an AI provider while the real-data switch is off.
+  dataClassification DataClassification @default(REAL)
+
   @@unique([organizationId, slug])
   @@index([organizationId])
   @@index([status])
@@ -2258,12 +2262,20 @@ model Allergy {
   patientId    String
   substance    String
   reaction     String?
-  severity     Severity
+  /// Required for a clinician's allergy (CHECK); a patient-reported one may
+  /// arrive without it (Week 4a), never guessed: its criticality is UNABLE_TO_ASSESS.
+  severity     Severity?
   /// FHIR AllergyIntolerance.criticality: potential for a serious reaction (distinct from a past reaction's severity).
   criticality  AllergyCriticality?
   status       AllergyStatus       @default(ACTIVE) // "ACTIVE" | "INACTIVE" | "ENTERED_IN_ERROR"
   verification AllergyVerification @default(UNCONFIRMED) // "UNCONFIRMED" | "CONFIRMED"
   recordedAt   DateTime            @default(now())
+
+  /// Week 4a: who it came from. Patient-provided allergies arrive UNCONFIRMED,
+  /// only where the person shares uploads with this facility, so prescribing
+  /// checks see them; a clinician confirms or marks them entered in error.
+  source                  AllergySource @default(CLINICIAN)
+  patientProvidedRecordId String?
 
   @@index([patientId])
 }
@@ -10314,6 +10326,14 @@ model Person {
   purgeAfter DateTime?
   purgedAt   DateTime?
 
+  /// Week 4a: REAL by default; SYNTHETIC only for demo and gate Persons. The
+  /// document pipeline and the AI process a REAL Person's data only with the
+  /// real-data switch on AND the matching consent (DOCUMENT_PROCESSING, AI_ASSISTANCE).
+  dataClassification DataClassification @default(REAL)
+
+  documentProcessings    DocumentProcessing[]
+  patientProvidedRecords PatientProvidedRecord[]
+
   @@index([mergedIntoPersonId])
 }
 
@@ -10424,6 +10444,14 @@ model PersonAccessLogEntry {
 
 enum PersonConsentPurpose {
   SHARE_UPLOADS_WITH_TREATING
+  DOCUMENT_PROCESSING
+  AI_ASSISTANCE
+  AI_TEXT_RETENTION
+}
+
+enum DataClassification {
+  REAL
+  SYNTHETIC
 }
 
 enum PersonConsentDecision {
@@ -10451,6 +10479,9 @@ model PersonConsent {
   decidedByUserId String
   supersededAt    DateTime?
   createdAt       DateTime              @default(now())
+
+  /// AI_TEXT_RETENTION only: SAFETY_REVIEW lets safety reviewers read retained text.
+  scopes String[] @default([])
 
   @@index([personId, purpose, status])
 }
@@ -10537,5 +10568,317 @@ model PersonDocument {
   createdAt                   DateTime             @default(now())
   updatedAt                   DateTime             @updatedAt
 
+  processings DocumentProcessing[]
+
   @@index([personId, status])
+}
+
+enum MedicineReferenceSource {
+  NLEM_2022
+  WHO_INN
+}
+
+/// Week 4a: medicine-name reference data that protects medicine names from
+/// translation. WHO INN lists are imported as whole versions (one version per
+/// import; scripts/import-who-inn.ts); NLEM 2022 ships in code. Platform
+/// reference data: no tenant.
+model MedicineReference {
+  id         String                  @id @default(cuid())
+  source     MedicineReferenceSource
+  version    String
+  name       String
+  normalized String
+  createdAt  DateTime                @default(now())
+
+  @@unique([source, version, normalized])
+  @@index([source, normalized])
+}
+
+// ═══ Week 4a — the document pipeline (docs/DOCUMENT_PIPELINE_DESIGN.md) ═══
+// Person-scoped (personId, no facility) except RecordConflict and
+// PatientAllergyNotice, which belong to the facility whose record they concern.
+
+enum AllergySource {
+  CLINICIAN
+  PATIENT_PROVIDED
+}
+
+enum DocumentProcessingStatus {
+  QUEUED
+  RUNNING
+  AWAITING_REVIEW
+  COMPLETED
+  FAILED
+  CANCELLED
+  SKIPPED
+}
+
+enum DocumentStepKind {
+  PAGE_SPLIT
+  OCR
+  TRANSLATE
+  EXTRACT
+  MERGE
+}
+
+enum DocumentStepStatus {
+  PENDING
+  RUNNING
+  DONE
+  SKIPPED
+  FAILED
+}
+
+enum DocumentStepError {
+  PROVIDER_UNAVAILABLE
+  RATE_LIMITED
+  UNREADABLE
+  UNSUPPORTED_LANGUAGE
+  EXACT_COPY_VIOLATION
+  TOO_LARGE
+  INTERNAL
+  REAL_DATA_DISABLED
+  CONSENT_REQUIRED
+}
+
+enum ExactCopyCheck {
+  PASSED
+  FAILED
+}
+
+enum ExtractedFactType {
+  DOCUMENT_META
+  DIAGNOSIS
+  MEDICATION
+  LAB_VALUE
+  PROCEDURE
+  ALLERGY
+}
+
+enum ConfidenceBand {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum FactReviewStatus {
+  PENDING
+  CONFIRMED
+  CORRECTED
+  REJECTED
+}
+
+enum ReviewedVia {
+  SELF
+  PROXY
+}
+
+enum PatientProvidedKind {
+  DIAGNOSIS
+  MEDICATION_HISTORY
+  LAB_RESULT
+  PROCEDURE
+  ALLERGY
+}
+
+enum PatientProvidedStatus {
+  ACTIVE
+  WITHDRAWN
+  SUPERSEDED
+}
+
+enum RecordConflictStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED_BY_CLINICIAN
+}
+
+enum PatientAllergyNoticeKind {
+  WITHDRAWN_BY_PATIENT
+}
+
+/// One run of the pipeline over one person document.
+model DocumentProcessing {
+  id             String                   @id @default(cuid())
+  person         Person                   @relation(fields: [personId], references: [id])
+  personId       String
+  document       PersonDocument           @relation(fields: [documentId], references: [id])
+  documentId     String
+  run            Int                      @default(1)
+  status         DocumentProcessingStatus @default(QUEUED)
+  /// Why a run was SKIPPED (REAL_DATA_DISABLED, CONSENT_REQUIRED).
+  skipReason     DocumentStepError?
+  targetLanguage String
+  pageCount      Int?
+  startedAt      DateTime                 @default(now())
+  completedAt    DateTime?
+  version        Int                      @default(1)
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+
+  steps DocumentProcessingStep[]
+  pages DocumentPage[]
+  texts ExtractedText[]
+  facts ExtractedFact[]
+
+  @@unique([documentId, run])
+  @@index([personId, status])
+}
+
+model DocumentProcessingStep {
+  id            String             @id @default(cuid())
+  processing    DocumentProcessing @relation(fields: [processingId], references: [id], onDelete: Cascade)
+  processingId  String
+  personId      String
+  step          DocumentStepKind
+  status        DocumentStepStatus @default(PENDING)
+  attempts      Int                @default(0)
+  lastErrorCode DocumentStepError?
+  provider      String?
+  model         String?
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  version       Int                @default(1)
+
+  @@unique([processingId, step])
+  @@index([personId])
+}
+
+/// A page of the original, as its own single-page file (the original is never changed).
+model DocumentPage {
+  id           String             @id @default(cuid())
+  processing   DocumentProcessing @relation(fields: [processingId], references: [id], onDelete: Cascade)
+  processingId String
+  personId     String
+  pageNo       Int
+  storageRef   String
+  sha256       String
+  contentType  String
+
+  @@unique([processingId, pageNo])
+  @@index([personId])
+}
+
+model ExtractedText {
+  id           String             @id @default(cuid())
+  processing   DocumentProcessing @relation(fields: [processingId], references: [id], onDelete: Cascade)
+  processingId String
+  personId     String
+  pageNo       Int
+  text         String
+  layout       Json               @default("[]")
+  language     String
+  script       String
+  handwritten  Boolean            @default(false)
+  confidence   Float
+  provider     String
+  model        String
+  createdAt    DateTime           @default(now())
+
+  translations Translation[]
+
+  @@unique([processingId, pageNo])
+  @@index([personId])
+}
+
+model Translation {
+  id              String         @id @default(cuid())
+  extractedText   ExtractedText  @relation(fields: [extractedTextId], references: [id], onDelete: Cascade)
+  extractedTextId String
+  personId        String
+  targetLanguage  String
+  text            String
+  protectedSpans  Json           @default("[]")
+  exactCopyCheck  ExactCopyCheck
+  provider        String
+  model           String
+  createdAt       DateTime       @default(now())
+
+  @@unique([extractedTextId, targetLanguage])
+  @@index([personId])
+}
+
+model ExtractedFact {
+  id               String             @id @default(cuid())
+  processing       DocumentProcessing @relation(fields: [processingId], references: [id], onDelete: Cascade)
+  processingId     String
+  personId         String
+  factType         ExtractedFactType
+  value            Json
+  confidence       Float
+  confidenceBand   ConfidenceBand
+  handwritten      Boolean            @default(false)
+  pageNo           Int
+  region           Json?
+  /// The exact original span the fact came from (verbatim from the page's text).
+  sourceText       String
+  exactCopyCheck   ExactCopyCheck
+  reviewStatus     FactReviewStatus   @default(PENDING)
+  reviewedValue    Json?
+  /// Handwritten facts: the fields the person confirmed one by one.
+  confirmedFields  String[]           @default([])
+  reviewedByUserId String?
+  reviewedAt       DateTime?
+  reviewedVia      ReviewedVia?
+  recordEntryId    String?            @unique
+  version          Int                @default(1)
+  createdAt        DateTime           @default(now())
+
+  @@index([personId, reviewStatus])
+  @@index([processingId])
+}
+
+/// A fact the person confirmed (or corrected) from their upload: theirs, labelled patient-provided.
+model PatientProvidedRecord {
+  id            String                @id @default(cuid())
+  person        Person                @relation(fields: [personId], references: [id])
+  personId      String
+  kind          PatientProvidedKind
+  value         Json
+  source        String                @default("PATIENT_PROVIDED")
+  factId        String                @unique
+  documentId    String
+  pageNo        Int
+  region        Json?
+  handwritten   Boolean               @default(false)
+  effectiveDate DateTime?
+  status        PatientProvidedStatus @default(ACTIVE)
+  version       Int                   @default(1)
+  createdAt     DateTime              @default(now())
+  withdrawnAt   DateTime?
+
+  @@index([personId, kind, status])
+}
+
+/// A disagreement between a patient-provided record and a facility's verified one.
+model RecordConflict {
+  id                      String               @id @default(cuid())
+  personId                String
+  facilityId              String
+  patientId               String
+  kind                    PatientProvidedKind
+  patientProvidedRecordId String
+  verifiedSourceType      String
+  verifiedSourceId        String
+  status                  RecordConflictStatus @default(OPEN)
+  detectedAt              DateTime             @default(now())
+  acknowledgedByStaffId   String?
+  acknowledgedAt          DateTime?
+
+  @@unique([patientProvidedRecordId, verifiedSourceType, verifiedSourceId])
+  @@index([facilityId, patientId, status])
+  @@index([personId, status])
+}
+
+/// A content-free notice on a facility record: the patient withdrew shared allergy information.
+model PatientAllergyNotice {
+  id                String                   @id @default(cuid())
+  facilityId        String
+  patientId         String
+  kind              PatientAllergyNoticeKind
+  createdAt         DateTime                 @default(now())
+  resolvedAt        DateTime?
+  resolvedByStaffId String?
+
+  @@index([facilityId, patientId])
 }

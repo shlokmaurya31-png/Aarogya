@@ -3,6 +3,7 @@ import { tickWorkflows, type TickResult } from "@/lib/workflows/engine";
 import { sweepMedicationSchedule, type SweepResult } from "@/lib/hospital/marSweep";
 import { sweepDelegationExpiry } from "@/lib/patient/experience/delegationSweep";
 import { purgeClosedPersons } from "@/lib/person/closure";
+import { resumeStalledDocumentSteps } from "@/lib/documents/pipeline";
 import { registerAllConsumers } from "./consumers";
 
 /**
@@ -12,7 +13,9 @@ import { registerAllConsumers } from "./consumers";
  *      per-aggregate order by seq; reaps abandoned claims first);
  *   2. fire due workflow timers and run runnable workflow instances;
  *   3. sweep the MAR: DUE doses past their grace become MISSED (§3.4);
- *   4. expire family delegations past their expiresAt (§3.4).
+ *   4. expire family delegations past their expiresAt (§3.4);
+ *   5. purge closed accounts past their grace period (Phase 0);
+ *   6. resume document-pipeline steps whose claim went stale (Week 4a).
  * Safe to run concurrently with itself: every claim is SKIP LOCKED + token
  * guarded and every consumer is idempotent.
  */
@@ -33,6 +36,8 @@ export interface RunTickResult {
   delegations: { expired: number };
   /** Phase 0: closed accounts whose 30-day grace period has ended. */
   closures: { purged: number; deferredForLegalHold: number; documentsDeleted: number; documentsKept: number };
+  /** Week 4a: document-pipeline steps resumed after a stale claim. */
+  documents: { resumed: number };
   durationMs: number;
   /** True when a batch limit was hit, i.e. there may be more work now. */
   moreWork: boolean;
@@ -56,6 +61,7 @@ export async function runTick(opts: RunTickOptions = {}): Promise<RunTickResult>
     : { missed: 0 };
   const delegations = Date.now() - started < budgetMs ? await sweepDelegationExpiry({ now: opts.now }) : { expired: 0 };
   const closures = Date.now() - started < budgetMs ? await purgeClosedPersons({ now: opts.now }) : { purged: 0, deferredForLegalHold: 0, documentsDeleted: 0, documentsKept: 0 };
+  const documents = Date.now() - started < budgetMs ? await resumeStalledDocumentSteps({ now: opts.now }) : { resumed: 0 };
 
   return {
     consumers,
@@ -64,6 +70,7 @@ export async function runTick(opts: RunTickOptions = {}): Promise<RunTickResult>
     mar,
     delegations,
     closures,
+    documents,
     durationMs: Date.now() - started,
     moreWork: events.claimed >= eventBatchSize || workflows.timersFired >= workflowBatchSize || workflows.instancesRun >= workflowBatchSize || mar.missed >= marBatchSize,
   };

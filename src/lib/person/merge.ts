@@ -199,6 +199,8 @@ async function mergePersonsTx(tx: Tx, req: { id: string; personId: string; sourc
     accessLog: await ids(tx.personAccessLogEntry.findMany({ where: { personId: from }, select: { id: true } })),
     uploads: await ids(tx.clinicalDocument.findMany({ where: { personId: from }, select: { id: true } })),
     documents: await ids(tx.personDocument.findMany({ where: { personId: from }, select: { id: true } })),
+    patientProvidedRecords: await ids(tx.patientProvidedRecord.findMany({ where: { personId: from }, select: { id: true } })),
+    extractedFacts: await ids(tx.extractedFact.findMany({ where: { personId: from }, select: { id: true } })),
     consents: [] as { id: string; action: "REPOINTED" | "SUPERSEDED" }[],
     endedAccounts: await ids(tx.personAccount.findMany({ where: { personId: from, endedAt: null }, select: { id: true } })),
   };
@@ -209,6 +211,15 @@ async function mergePersonsTx(tx: Tx, req: { id: string; personId: string; sourc
   await tx.personAccessLogEntry.updateMany({ where: { personId: from }, data: { personId: to } });
   await tx.clinicalDocument.updateMany({ where: { personId: from }, data: { personId: to } });
   await tx.personDocument.updateMany({ where: { personId: from }, data: { personId: to } });
+  // Week 4a: the document pipeline's rows and the person's confirmed facts.
+  await tx.documentProcessing.updateMany({ where: { personId: from }, data: { personId: to } });
+  await tx.documentProcessingStep.updateMany({ where: { personId: from }, data: { personId: to } });
+  await tx.documentPage.updateMany({ where: { personId: from }, data: { personId: to } });
+  await tx.extractedText.updateMany({ where: { personId: from }, data: { personId: to } });
+  await tx.translation.updateMany({ where: { personId: from }, data: { personId: to } });
+  await tx.extractedFact.updateMany({ where: { personId: from }, data: { personId: to } });
+  await tx.patientProvidedRecord.updateMany({ where: { personId: from }, data: { personId: to } });
+  await tx.recordConflict.updateMany({ where: { personId: from }, data: { personId: to } });
   // Choices: the same choice carries; two different choices both lapse, so the
   // person is asked again (never silently pick one).
   const now = new Date();

@@ -85,7 +85,7 @@ export async function clinicianAssistantContext(patientId: string, facilityId: s
   const ok = <T,>(data: T[]): SectionState<T[]> => ({ status: "OK", data });
   return [
     `CHART: ${p.fullName}, ${p.sex}${age !== null ? `, ${age}y` : ""}${p.bloodGroup ? `, ${p.bloodGroup}` : ""} (UHID ${p.uhid})`,
-    section("ALLERGIES", ok(s.activeAllergies), (a) => `${a.substance}${a.reaction ? ` (${a.reaction})` : ""}, ${a.severity}, ${a.verification.toLowerCase()}`),
+    section("ALLERGIES", ok(s.activeAllergies), (a) => `${a.substance}${a.reaction ? ` (${a.reaction})` : ""}, ${a.severity ?? "severity not recorded"}, ${a.verification.toLowerCase()}${a.source === "PATIENT_PROVIDED" ? ", patient-reported" : ""}`),
     section("ACTIVE PROBLEMS", ok(s.activeProblems), (pr) => `${pr.diagnosis}${pr.severity ? `, ${pr.severity}` : ""}${pr.onsetDate ? ` since ${day(pr.onsetDate)}` : ""}`),
     section("ACTIVE MEDICATIONS", ok(s.activeMedications), (m) => `${m.drugName} ${m.dose}, ${m.frequency} (${m.status})`),
     section("RECENT VITALS", ok(s.recentVitals), (v) =>
