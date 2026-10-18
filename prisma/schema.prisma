@@ -2262,7 +2262,9 @@ model Allergy {
   patientId    String
   substance    String
   reaction     String?
-  severity     Severity
+  /// Required for a clinician's allergy (CHECK); a patient-reported one may
+  /// arrive without it (Week 4a), never guessed: its criticality is UNABLE_TO_ASSESS.
+  severity     Severity?
   /// FHIR AllergyIntolerance.criticality: potential for a serious reaction (distinct from a past reaction's severity).
   criticality  AllergyCriticality?
   status       AllergyStatus       @default(ACTIVE) // "ACTIVE" | "INACTIVE" | "ENTERED_IN_ERROR"

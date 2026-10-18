@@ -59,8 +59,9 @@ import { draftInvoiceForAccount, addChargeToInvoice, issueInvoice, draftSuppleme
 import { createCharge } from "../src/lib/hospital/billing/chargeCapture";
 import { linkAccountForGate } from "./lib/personFixture";
 import { decidePersonConsent } from "../src/lib/person/consent";
-import { staffPersonDocuments } from "../src/lib/person/documents";
+import { staffPersonDocuments, withdrawPersonDocument } from "../src/lib/person/documents";
 import { fixtureById, fixturePdf } from "../src/lib/documents/fixtures";
+import { bulkReview, listOwnFacts } from "../src/lib/documents/review";
 
 let pass = 0;
 let fail = 0;
@@ -142,6 +143,8 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
   let uploadedDocumentId = "";
   let journeyPersonId = "";
   let processingId = "";
+  let secondDocumentId = "";
+  let providedBeforeReview = -1;
   if (opts.full) {
     const portalUser = await prisma.user.create({ data: { email: `cj-${run}@verify.aarogya`, passwordHash: "x", role: "PATIENT", displayName: "Journey patient" } });
     await linkAccountForGate(prisma, portalUser.id, patient.id);
@@ -156,6 +159,18 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
     uploadedDocumentId = (await uploadPatientDocument(scope, portalUser.id, { bytes: await fixturePdf(fixtureById("lab-hi-kft")!), contentType: "application/pdf", originalName: "outside.pdf", title: "Outside kidney function report", type: "REPORT" })).id;
     await drain();
     processingId = (await prisma.documentProcessing.findFirst({ where: { documentId: uploadedDocumentId } }))?.id ?? "";
+    // The person reviews it: the printed lab values are HIGH, so they confirm them together; doc-merge
+    // makes them patient-provided entries. Before that, nothing extracted is in the record.
+    providedBeforeReview = await prisma.patientProvidedRecord.count({ where: { personId: journeyPersonId } });
+    const facts = await listOwnFacts(portalUser.id, { processingId });
+    await bulkReview(portalUser.id, { decisions: facts.map((f) => ({ factId: f.id, version: f.version, decision: "CONFIRM" })) });
+    await drain();
+    // …and withdraws a second, mistaken upload: its run and anything derived from it go too.
+    const second = await uploadPatientDocument(scope, portalUser.id, { bytes: await fixturePdf(fixtureById("lab-en-cbc")!), contentType: "application/pdf", originalName: "wrong.pdf", title: "Wrong report", type: "REPORT" });
+    await drain();
+    await withdrawPersonDocument(portalUser.id, second.id);
+    await drain();
+    secondDocumentId = second.id;
   }
 
   let orderId = "";
@@ -291,7 +306,7 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
       identifierId = (await linkExternalIdentifier({ facilityId, entityType: "PATIENT", entityId: patient.id, system: IDENTIFIER_SYSTEMS.ABHA_NUMBER, value: `CJ-ABHA-${run}`, byUserId: by })).id;
     });
   }
-  return { facilityId, patientId: patient.id, encounterId: enc.id, orderId, resultId, surgeryId, usageId, bloodIssueId, uploadedDocumentId, journeyPersonId, processingId, steps, registered, openAfter8, critTask, billing, drugItemId, wasteId, wasteBalance, identifierId };
+  return { facilityId, patientId: patient.id, encounterId: enc.id, orderId, resultId, surgeryId, usageId, bloodIssueId, uploadedDocumentId, journeyPersonId, processingId, secondDocumentId, providedBeforeReview, steps, registered, openAfter8, critTask, billing, drugItemId, wasteId, wasteBalance, identifierId };
 }
 
 async function main() {
@@ -339,6 +354,9 @@ async function main() {
       // 8b: the upload and the document pipeline's run (PERSON events).
       { eventType: "PersonDocumentUploaded", aggregateId: a.uploadedDocumentId },
       { aggregateType: "DOCUMENT_PROCESSING", aggregateId: a.processingId },
+      // …the review, the entries, the sharing choice, the withdrawn second upload (and its run).
+      { personId: a.journeyPersonId, eventType: { in: ["PersonConsentDecided", "PatientProvidedRecordAdded", "PersonDocumentUploaded", "PersonDocumentWithdrawn", "RecordConflictDetected"] } },
+      { personId: a.journeyPersonId, aggregateType: "DOCUMENT_PROCESSING" },
     ] },
     orderBy: { seq: "asc" },
   });
@@ -361,9 +379,15 @@ async function main() {
   report("8b Outside report (shared with treating hospitals): PersonDocumentUploaded once, visible to the treating facility, exactly one review task", uploadedEvents === 1 && listed === 1 && reviewTasks === 1, `${uploadedEvents}/${listed}/${reviewTasks}`);
   // Week 4a: the pipeline read it (synthetic Person, mock providers): pages, text, a translation for an English reader.
   const run8b = await prisma.documentProcessing.findUnique({ where: { id: a.processingId }, include: { steps: true, texts: { include: { translations: true } } } });
-  const stepsDone = (run8b?.steps ?? []).filter((s) => ["PAGE_SPLIT", "OCR", "TRANSLATE", "EXTRACT"].includes(s.step) && s.status === "DONE").length;
-  report("8b …the document pipeline split, read (hi), translated (exact-copy check passed) and extracted it; the facts await the person's review",
-    stepsDone === 4 && run8b?.texts[0]?.language === "hi" && run8b.texts[0].translations[0]?.exactCopyCheck === "PASSED" && run8b.status === "AWAITING_REVIEW", run8b?.steps.map((s) => `${s.step}:${s.status}`).join(" "));
+  const stepsDone = (run8b?.steps ?? []).filter((s) => s.status === "DONE").length;
+  report("8b …the document pipeline split, read (hi), translated (exact-copy check passed) and extracted it",
+    stepsDone === 5 && run8b?.texts[0]?.language === "hi" && run8b.texts[0].translations[0]?.exactCopyCheck === "PASSED", run8b?.steps.map((s) => `${s.step}:${s.status}`).join(" "));
+  const provided = await prisma.patientProvidedRecord.findMany({ where: { personId: a.journeyPersonId, status: "ACTIVE" } });
+  report("8b …nothing entered the record before review; once confirmed, the four lab values are patient-provided entries and the run is COMPLETED",
+    a.providedBeforeReview === 0 && provided.length === 4 && provided.every((r) => r.kind === "LAB_RESULT" && r.source === "PATIENT_PROVIDED" && r.documentId === a.uploadedDocumentId) && run8b?.status === "COMPLETED");
+  const run8w = await prisma.documentProcessing.findFirst({ where: { documentId: a.secondDocumentId } });
+  report("8b …the withdrawn second upload: its run CANCELLED, its pending facts discarded",
+    run8w?.status === "CANCELLED" && (await prisma.extractedFact.count({ where: { processingId: run8w.id } })) === 0);
   const doses = await prisma.medicationAdministration.count({ where: { medicationOrderId: a.orderId } });
   report("mar-scheduler scheduled the BD doses once", doses === 3, String(doses));
   const otCharges = await prisma.charge.count({ where: { OR: [{ sourceType: "Surgery", sourceId: a.surgeryId }, { sourceType: "SurgeryItemUsage", sourceId: a.usageId }, { sourceType: "IcuAdmission" }], encounterId: a.encounterId } });

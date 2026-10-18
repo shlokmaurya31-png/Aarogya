@@ -119,12 +119,12 @@ async function patientIn(tx: Tx, patientId: string, facilityId: string) {
   return patient;
 }
 
-async function emitAllergy(tx: Tx, a: { id: string; patientId: string; status: AllergyStatus; severity: string; verification: string; criticality: string | null }, action: "ADDED" | "UPDATED" | "INACTIVATED", facilityId: string, byUserId: string) {
+async function emitAllergy(tx: Tx, a: { id: string; patientId: string; status: AllergyStatus; severity: string | null; verification: string; criticality: string | null; source: "CLINICIAN" | "PATIENT_PROVIDED" }, action: "ADDED" | "UPDATED" | "INACTIVATED", facilityId: string, byUserId: string) {
   await emitFacilityEvent(tx, {
     type: "AllergyListUpdated", aggregateId: a.id, facilityId, actorUserId: byUserId,
     payload: {
-      allergyId: a.id, patientId: a.patientId, action, status: a.status, severity: a.severity, verification: a.verification,
-      ...(a.criticality ? { criticality: a.criticality } : {}),
+      allergyId: a.id, patientId: a.patientId, action, status: a.status, ...(a.severity ? { severity: a.severity } : {}), verification: a.verification,
+      ...(a.criticality ? { criticality: a.criticality } : {}), source: a.source,
     },
   });
 }

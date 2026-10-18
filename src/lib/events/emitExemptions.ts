@@ -80,7 +80,7 @@ export const SENSITIVE_EVENTS: readonly string[] = [
   // A person's choice about who sees their data is a consent fact.
   "PersonConsentDecided",
   // Week 4a: what a person confirmed from their outside records (document pipeline §4.2).
-  "ExtractedFactReviewed",
+  "ExtractedFactReviewed", "PatientProvidedRecordAdded", "PatientProvidedRecordUpdated",
 ];
 
 /**

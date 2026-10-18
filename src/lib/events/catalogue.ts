@@ -67,6 +67,7 @@ const documentLanguage = z.enum(["en", "hi", "mr", "ta", "bn", "gu", "te", "kn",
 const confidenceBand = z.enum(["HIGH", "MEDIUM", "LOW"]);
 const documentStep = z.enum(["PAGE_SPLIT", "OCR", "TRANSLATE", "EXTRACT", "MERGE"]);
 const extractedFactType = z.enum(["DOCUMENT_META", "DIAGNOSIS", "MEDICATION", "LAB_VALUE", "PROCEDURE", "ALLERGY"]);
+const patientProvidedKind = z.enum(["DIAGNOSIS", "MEDICATION_HISTORY", "LAB_RESULT", "PROCEDURE", "ALLERGY"]);
 const documentStepError = z.enum(["PROVIDER_UNAVAILABLE", "RATE_LIMITED", "UNREADABLE", "UNSUPPORTED_LANGUAGE", "EXACT_COPY_VIOLATION", "TOO_LARGE", "INTERNAL"]);
 
 function contract<P extends z.ZodTypeAny>(c: EventContract<P>): EventContract<P> {
@@ -613,6 +614,19 @@ export const EVENT_CONTRACTS: EventContract[] = [
       severity: z.enum(["MILD", "MODERATE", "SEVERE"]),
       verification: z.enum(["UNCONFIRMED", "CONFIRMED"]),
       criticality: z.enum(["LOW", "HIGH", "UNABLE_TO_ASSESS"]).optional(),
+    }).strict(),
+  }),
+  contract({
+    // v2 (Week 4a): who it came from; a patient-reported allergy may have no severity (never guessed).
+    type: "AllergyListUpdated", version: 2, aggregateType: "ALLERGY", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "allergies (recordAllergy, updateAllergy); the document pipeline's allergy bridge (source PATIENT_PROVIDED)",
+    payload: z.object({
+      allergyId: id, patientId: id, action: z.enum(["ADDED", "UPDATED", "INACTIVATED"]),
+      status: z.enum(["ACTIVE", "INACTIVE", "ENTERED_IN_ERROR"]),
+      severity: z.enum(["MILD", "MODERATE", "SEVERE"]).optional(),
+      verification: z.enum(["UNCONFIRMED", "CONFIRMED"]),
+      criticality: z.enum(["LOW", "HIGH", "UNABLE_TO_ASSESS"]).optional(),
+      source: z.enum(["CLINICIAN", "PATIENT_PROVIDED"]),
     }).strict(),
   }),
   contract({
@@ -1408,6 +1422,16 @@ export const EVENT_CONTRACTS: EventContract[] = [
     type: "DocumentReprocessRequested", version: 1, aggregateType: "DOCUMENT_PROCESSING", scope: "PERSON",
     sensitivity: "INTERNAL", producer: "document review (requestReprocess: the person asked for a fresh run)",
     payload: z.object({ processingId: id, documentId: id, personId: id, reason: z.enum(["MODEL_UPGRADE", "PATIENT_REQUEST", "LANGUAGE_CHANGED"]) }).strict(),
+  }),
+  contract({
+    type: "PatientProvidedRecordAdded", version: 1, aggregateType: "PATIENT_PROVIDED_RECORD", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "document pipeline (doc-merge: a confirmed or corrected fact becomes a patient-provided entry)",
+    payload: z.object({ recordId: id, personId: id, kind: patientProvidedKind, factId: id, documentId: id }).strict(),
+  }),
+  contract({
+    type: "PatientProvidedRecordUpdated", version: 1, aggregateType: "PATIENT_PROVIDED_RECORD", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "document pipeline (withdrawPatientRecord; the upload withdrawn; a re-run supersedes an entry)",
+    payload: z.object({ recordId: id, personId: id, kind: patientProvidedKind, change: z.enum(["CORRECTED", "WITHDRAWN", "SUPERSEDED"]) }).strict(),
   }),
 ];
 

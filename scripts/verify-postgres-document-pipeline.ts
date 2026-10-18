@@ -2,6 +2,15 @@
  * Week 4a — the document pipeline, end to end on the mock providers
  * (docs/DOCUMENT_PIPELINE_DESIGN.md §12).
  *
+ * Part 4 (step 7, merge): only confirmed or corrected facts become entries
+ * (PATIENT_PROVIDED, with provenance; exact fields equal the source spans);
+ * once per fact; the run completes; the treating facility sees entries only
+ * with the opt-in AND a care relationship; a confirmed allergy is bridged as
+ * UNCONFIRMED (severity never guessed) where shared and reaches the
+ * prescribing check; withdrawing the opt-in inactivates it with a
+ * content-free notice; a clinician-confirmed one stays; withdrawing an entry
+ * or the upload withdraws (and cancels) what came from it.
+ *
  * Part 3 (step 6, review): owner only, another Person's fact or document is a
  * 404; a fact is decided once under concurrency; a correction is shown back
  * before it is stored as typed, and refused by the schema when invalid; bulk
@@ -33,7 +42,6 @@
 import { PDFDocument } from "pdf-lib";
 import { prisma } from "../src/lib/db";
 import { registerPatientAccount } from "../src/lib/patient/selfRegistration";
-import { uploadPersonDocument } from "../src/lib/person/documents";
 import { dispatchPendingDomainEvents } from "../src/lib/events/dispatcher";
 import { registerAllConsumers } from "../src/lib/runner/consumers";
 import { getConsumersFor } from "../src/lib/events/consumers";
@@ -47,6 +55,12 @@ import { documentProcessingPermit } from "../src/lib/ai/realData";
 import type { ProcessingPermit } from "../src/lib/ai/documents";
 import { bulkReview, confirmFact, confirmFactField, correctFact, listOwnFacts, rejectFact } from "../src/lib/documents/review";
 import { COULD_NOT_READ, pageView, processingStatus, requestReprocess } from "../src/lib/documents/patientView";
+import { listOwnRecords, mergeReviewedFact, staffPatientProvidedRecords, withdrawPatientRecord } from "../src/lib/documents/merge";
+import { EXACT_FIELDS } from "../src/lib/documents/factSchemas";
+import { decidePersonConsent } from "../src/lib/person/consent";
+import { uploadPersonDocument, withdrawPersonDocument } from "../src/lib/person/documents";
+import { checkMedicationSafety } from "../src/lib/hospital/clinicalSafety";
+import { updateAllergy } from "../src/lib/hospital/clinicalRecords";
 
 let pass = 0;
 let fail = 0;
@@ -399,6 +413,100 @@ async function main() {
   report("Reprocess after a failure: a second run, through the pipeline again (the original still unreadable: FAILED)",
     again.run === 2 && runs5.length === 2 && runs5[1].status === "FAILED" && (await prisma.domainEventOutbox.count({ where: { aggregateId: again.processingId, eventType: "DocumentReprocessRequested" } })) === 1);
   report("An unknown reason or another Person's document is refused", await refusedP(requestReprocess(p5.userId, d5.id, "MODEL_UPGRADE")) && await notFound(requestReprocess(other.userId, d5.id, "PATIENT_REQUEST")));
+
+  // ── Part 4: confirmed facts into the record ──
+  await drain();
+  const recs = await prisma.patientProvidedRecord.findMany({ where: { personId: pr.personId } });
+  const decided = await prisma.extractedFact.findMany({ where: { processingId: rr!.id } });
+  const shouldMerge = decided.filter((f) => (f.reviewStatus === "CONFIRMED" || f.reviewStatus === "CORRECTED") && f.factType !== "DOCUMENT_META");
+  report("Only confirmed or corrected facts became entries (never DOCUMENT_META, never a rejected one)",
+    recs.length === shouldMerge.length && recs.every((r) => shouldMerge.some((f) => f.id === r.factId)) && !recs.some((r) => decided.find((f) => f.id === r.factId)?.reviewStatus === "REJECTED"));
+  report("Each entry: PATIENT_PROVIDED, with provenance (fact, document, page, region) and the date from the document",
+    recs.every((r) => r.source === "PATIENT_PROVIDED" && r.documentId === dr.id && r.pageNo === 1 && !!r.region && r.effectiveDate?.toISOString().slice(0, 10) === "2026-01-21"));
+  const byFact = new Map(decided.map((f) => [f.id, f]));
+  report("Exact fields of confirmed entries equal the source spans byte for byte; a corrected entry holds the correction",
+    recs.every((r) => {
+      const f = byFact.get(r.factId)!;
+      const v = r.value as Record<string, unknown>;
+      if (f.reviewStatus === "CORRECTED") return JSON.stringify(v) === JSON.stringify(f.reviewedValue);
+      return EXACT_FIELDS[f.factType].every((k) => v[k] === undefined || f.sourceText.includes(String(v[k])));
+    }));
+  const runDone = await runOf(dr.id);
+  const completed = await eventsOf(rr!.id, "DocumentProcessingCompleted");
+  report("Every fact decided: the run is COMPLETED (MERGE DONE), DocumentProcessingCompleted with the counts",
+    runDone?.status === "COMPLETED" && stepStatus(runDone, "MERGE") === "DONE" && completed.length === 1 && (completed[0].payload as { corrected: number }).corrected === 1);
+  const added = await prisma.domainEventOutbox.findMany({ where: { eventType: "PatientProvidedRecordAdded", personId: pr.personId } });
+  report("PatientProvidedRecordAdded once per entry, ids and codes only", added.length === recs.length && added.every((e) => !["Metformin", "500 mg", "diabetes"].some((n) => carries(e.payload, n))));
+  const factsAfter = await prisma.extractedFact.count({ where: { processingId: rr!.id, recordEntryId: { not: null } } });
+  for (const e of await prisma.domainEventOutbox.findMany({ where: { aggregateId: rr!.id, eventType: "ExtractedFactReviewed" } })) {
+    await mergeReviewedFact((e.payload as { factId: string }).factId);
+  }
+  report("Merging again creates nothing (one entry per fact)", (await prisma.patientProvidedRecord.count({ where: { personId: pr.personId } })) === recs.length && (await prisma.extractedFact.count({ where: { processingId: rr!.id, recordEntryId: { not: null } } })) === factsAfter);
+
+  // Visibility: the treating facility sees entries only with the opt-in and a care relationship.
+  const link = await prisma.personPatientLink.findFirstOrThrow({ where: { personId: pr.personId, status: "ACTIVE" }, include: { patient: { select: { facilityId: true } } } });
+  const fac = link.patient.facilityId;
+  report("Without the opt-in, the treating facility sees no entry (no default)", (await staffPatientProvidedRecords(fac, [link.patientId])).length === 0);
+  await decidePersonConsent({ userId: pr.userId, purpose: "SHARE_UPLOADS_WITH_TREATING", decision: "GRANTED" });
+  await drain();
+  report("With the opt-in but no care relationship: still nothing", (await staffPatientProvidedRecords(fac, [link.patientId])).length === 0);
+  await prisma.encounter.create({ data: { patientId: link.patientId, facilityId: fac, type: "OPD", status: "IN_CONSULTATION", chiefComplaint: "pipeline gate" } });
+  const seen = await staffPatientProvidedRecords(fac, [link.patientId]);
+  report("With both: the entries, labelled PATIENT_PROVIDED", seen.length === recs.length && seen.every((r) => r.source === "PATIENT_PROVIDED"));
+  report("The person always sees their own entries", (await listOwnRecords(pr.userId)).length === recs.length);
+
+  // The allergy bridge: a confirmed patient-reported allergy reaches prescribing checks where shared.
+  const ax = fixtureById("rx-en-2")!;
+  const pa = await person();
+  await upload(pa.userId, await fixturePdf(ax));
+  await drain();
+  const axFacts = await listOwnFacts(pa.userId);
+  await bulkReview(pa.userId, { decisions: axFacts.map((f) => ({ factId: f.id, version: f.version, decision: "CONFIRM" })) });
+  await drain();
+  const aLink = await prisma.personPatientLink.findFirstOrThrow({ where: { personId: pa.personId, status: "ACTIVE" }, include: { patient: { select: { facilityId: true } } } });
+  const aRec = await prisma.patientProvidedRecord.findFirstOrThrow({ where: { personId: pa.personId, kind: "ALLERGY" } });
+  report("A confirmed allergy without the opt-in is not bridged", (await prisma.allergy.count({ where: { patientProvidedRecordId: aRec.id } })) === 0);
+  await decidePersonConsent({ userId: pa.userId, purpose: "SHARE_UPLOADS_WITH_TREATING", decision: "GRANTED" });
+  await drain();
+  const bridged = await prisma.allergy.findFirst({ where: { patientProvidedRecordId: aRec.id } });
+  report("With the opt-in: bridged to the linked record as UNCONFIRMED, PATIENT_PROVIDED, severity not guessed",
+    bridged?.patientId === aLink.patientId && bridged.verification === "UNCONFIRMED" && bridged.source === "PATIENT_PROVIDED" && bridged.severity === null && bridged.criticality === "UNABLE_TO_ASSESS" && bridged.substance === "Aspirin");
+  const flags = await checkMedicationSafety(aLink.patientId, "Aspirin");
+  report("…and the prescribing allergy check sees it (as a danger: severity unknown, patient-reported)", flags.some((f) => f.rule === "allergy-conflict" && f.severity === "danger" && f.sourceId === bridged!.id));
+  await decidePersonConsent({ userId: pa.userId, purpose: "SHARE_UPLOADS_WITH_TREATING", decision: "DECLINED" });
+  await drain();
+  const after = await prisma.allergy.findUniqueOrThrow({ where: { id: bridged!.id } });
+  const notice = await prisma.patientAllergyNotice.findFirst({ where: { patientId: aLink.patientId, resolvedAt: null } });
+  report("Opt-in withdrawn: the unconfirmed bridged allergy goes INACTIVE, with a content-free notice in its place",
+    after.status === "INACTIVE" && notice?.kind === "WITHDRAWN_BY_PATIENT" && notice.facilityId === aLink.patient.facilityId);
+  report("…announced as AllergyListUpdated INACTIVATED (source PATIENT_PROVIDED), no substance in the payload",
+    (await prisma.domainEventOutbox.findMany({ where: { aggregateId: bridged!.id, eventType: "AllergyListUpdated" } })).some((e) => (e.payload as { action: string; source?: string }).action === "INACTIVATED" && (e.payload as { source?: string }).source === "PATIENT_PROVIDED" && !carries(e.payload, "Aspirin")));
+  await decidePersonConsent({ userId: pa.userId, purpose: "SHARE_UPLOADS_WITH_TREATING", decision: "GRANTED" });
+  await drain();
+  const back = await prisma.allergy.findUniqueOrThrow({ where: { id: bridged!.id } });
+  report("Opt-in given again: the same bridged row is active again (no duplicate)", back.status === "ACTIVE" && (await prisma.allergy.count({ where: { patientProvidedRecordId: aRec.id } })) === 1);
+  const clinician = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { department: { facilityId: aLink.patient.facilityId } }, select: { userId: true } });
+  await updateAllergy({ allergyId: back.id, facilityId: aLink.patient.facilityId, verification: "CONFIRMED", byUserId: clinician.userId });
+  await withdrawPatientRecord(pa.userId, aRec.id);
+  await drain();
+  const keptAllergy = await prisma.allergy.findUniqueOrThrow({ where: { id: back.id } });
+  const withdrawn = await prisma.patientProvidedRecord.findUniqueOrThrow({ where: { id: aRec.id } });
+  report("The person withdraws the entry: WITHDRAWN (PatientProvidedRecordUpdated); a clinician-confirmed allergy stays the facility's",
+    withdrawn.status === "WITHDRAWN" && !!withdrawn.withdrawnAt && keptAllergy.status === "ACTIVE" && keptAllergy.verification === "CONFIRMED"
+      && (await prisma.domainEventOutbox.count({ where: { aggregateId: aRec.id, eventType: "PatientProvidedRecordUpdated" } })) === 1);
+  report("Another Person can't withdraw an entry", await notFound(withdrawPatientRecord(other.userId, recs[0].id)));
+
+  // Withdrawing the upload: its derived entries are withdrawn too.
+  await withdrawPersonDocument(pr.userId, dr.id);
+  await drain();
+  report("Withdrawing the upload withdraws its entries", (await prisma.patientProvidedRecord.count({ where: { documentId: dr.id, status: "ACTIVE" } })) === 0);
+  const pw = await person();
+  const dw = await upload(pw.userId, await fixturePdf(fixtureById("lab-en-thyroid") ?? hi));
+  await drain();
+  await withdrawPersonDocument(pw.userId, dw.id);
+  await drain();
+  const rw = await runOf(dw.id);
+  report("…and a run awaiting review is CANCELLED, its PENDING facts discarded", rw?.status === "CANCELLED" && (await prisma.extractedFact.count({ where: { processingId: rw.id } })) === 0);
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();

@@ -1,5 +1,6 @@
 import type { DomainEventConsumer } from "@/lib/events/consumers";
 import { extractStep, ocrStep, pageSplitStep, runForUpload, translateStep } from "@/lib/documents/pipeline";
+import { mergeReviewedFact, rebridgePerson, withdrawDocumentDerived } from "@/lib/documents/merge";
 
 /**
  * Week 4a — the document pipeline's consumers (docs/DOCUMENT_PIPELINE_DESIGN.md
@@ -40,5 +41,33 @@ export const docExtract: DomainEventConsumer = {
   handles: ["DocumentTranslated"],
   async handle(event) {
     await extractStep(processingIdOf(event.payload));
+  },
+};
+
+export const docMerge: DomainEventConsumer = {
+  name: "doc-merge",
+  handles: ["ExtractedFactReviewed"],
+  async handle(event) {
+    await mergeReviewedFact(String(event.payload.factId));
+  },
+};
+
+/** Patient-provided allergies follow the sharing choice and the person's links (§3). */
+export const docAllergyBridge: DomainEventConsumer = {
+  name: "doc-allergy-bridge",
+  handles: ["PersonConsentDecided", "PersonPatientLinked", "PersonPatientUnlinked", "PersonAccountClosed", "PersonAccountReopened"],
+  async handle(event) {
+    const p = event.payload as { personId: string; purpose?: string; patientId?: string };
+    if (event.eventType === "PersonConsentDecided" && p.purpose !== "SHARE_UPLOADS_WITH_TREATING") return;
+    await rebridgePerson(p.personId, event.eventType === "PersonPatientUnlinked" ? { patientId: p.patientId, ended: true } : {});
+  },
+};
+
+/** The person withdrew an upload: its run is cancelled and its entries withdrawn (§4.3). */
+export const docWithdrawal: DomainEventConsumer = {
+  name: "doc-withdrawal",
+  handles: ["PersonDocumentWithdrawn"],
+  async handle(event) {
+    await withdrawDocumentDerived(String(event.payload.documentId));
   },
 };

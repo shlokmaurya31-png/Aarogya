@@ -295,7 +295,7 @@ export interface AllergySource {
   patientId: string;
   substance: string;
   reaction?: string | null;
-  severity: string;
+  severity: string | null;
   status: string;
   verification: string;
   recordedAt: Date;

@@ -34,6 +34,14 @@ export const SAMPLES: DocumentFixture[] = [
     ],
   }),
   prescription({
+    id: "rx-en-2", language: "en", facility: "City Care Clinic, Surat", date: "03/02/2026", patient: "Farah Khan",
+    doctor: { name: "Dr. Imran Qureshi", reg: "GMC-33019" }, diagnosis: "Iron Deficiency Anaemia", allergy: "Aspirin",
+    meds: [
+      { form: "Tab.", name: "Ferrous Sulphate", dose: "200 mg", frequency: "1-0-1", duration: "60 days" },
+      { form: "Tab.", name: "Folic Acid", dose: "5 mg", frequency: "1-0-0", duration: "60 days" },
+    ],
+  }),
+  prescription({
     id: "rx-hw-en-1", language: "en", handwritten: true, facility: "Rao Family Clinic, Hyderabad", date: "03/04/2026", patient: "Kiran Reddy",
     doctor: { name: "Dr. Srinivas Rao" }, diagnosis: "Acute Pharyngitis", brands: ["Dolo"],
     meds: [

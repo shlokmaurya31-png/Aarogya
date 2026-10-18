@@ -116,7 +116,9 @@ export async function buildPatientTimeline(patientId: string, viewer: DocumentVi
       id: `allergy-${a.id}`,
       timestamp: a.recordedAt.toISOString(),
       type: "Allergy",
-      summary: `Allergy recorded: ${a.substance} (${a.severity})`,
+      summary: a.source === "PATIENT_PROVIDED"
+        ? `Allergy reported by the patient (${a.verification === "CONFIRMED" ? "confirmed" : "unconfirmed"}): ${a.substance}${a.severity ? ` (${a.severity})` : ""}`
+        : `Allergy recorded: ${a.substance} (${a.severity})`,
       sourceType: "Allergy",
       sourceId: a.id,
     });
