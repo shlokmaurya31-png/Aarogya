@@ -7,7 +7,8 @@
  * discharge (with a discharge hold), invoice → claim draft, a late charge and
  * its supplementary invoice, and access and identity (break-glass, an ABHA
  * link). Final for Week 3 (batch 8): every consumer takes part. Week 4b: the
- * rag-indexer indexes the journey's record.
+ * rag-indexer indexes the journey's record, and the treating doctor asks the
+ * AI about the patient (cited, logged, nothing written).
  *
  * Drives the real service functions, drains the runner after each step and
  * asserts, by correlationId = the encounter:
@@ -59,6 +60,7 @@ import { generateAndStoreDocument } from "../src/lib/documents/service";
 import { draftInvoiceForAccount, addChargeToInvoice, issueInvoice, draftSupplementaryInvoice } from "../src/lib/hospital/billing/invoices";
 import { createCharge } from "../src/lib/hospital/billing/chargeCapture";
 import { linkAccountForGate } from "./lib/personFixture";
+import { askAi } from "../src/lib/rag/ask";
 import { decidePersonConsent } from "../src/lib/person/consent";
 import { staffPersonDocuments, withdrawPersonDocument } from "../src/lib/person/documents";
 import { fixtureById, fixturePdf } from "../src/lib/documents/fixtures";
@@ -310,7 +312,7 @@ async function journey(facilityId: string, label: string, opts: { full: boolean 
       identifierId = (await linkExternalIdentifier({ facilityId, entityType: "PATIENT", entityId: patient.id, system: IDENTIFIER_SYSTEMS.ABHA_NUMBER, value: `CJ-ABHA-${run}`, byUserId: by })).id;
     });
   }
-  return { facilityId, patientId: patient.id, encounterId: enc.id, orderId, resultId, surgeryId, usageId, bloodIssueId, uploadedDocumentId, journeyPersonId, processingId, secondDocumentId, providedBeforeReview, timelineBeforeReview, steps, registered, openAfter8, critTask, billing, drugItemId, wasteId, wasteBalance, identifierId };
+  return { doctorUserId: doctor.userId, facilityId, patientId: patient.id, encounterId: enc.id, orderId, resultId, surgeryId, usageId, bloodIssueId, uploadedDocumentId, journeyPersonId, processingId, secondDocumentId, providedBeforeReview, timelineBeforeReview, steps, registered, openAfter8, critTask, billing, drugItemId, wasteId, wasteBalance, identifierId };
 }
 
 async function main() {
@@ -423,6 +425,15 @@ async function main() {
   const ragUnconfirmed = await prisma.ragChunk.count({ where: { personId: a.journeyPersonId, sourceType: "PATIENT_DOCUMENT", text: { contains: "1.42" } } });
   report("Week 4b: the rag-indexer indexed the journey: the released result, the four confirmed entries (patient-provided), the discharge summary; no unconfirmed value",
     ragResult === 1 && ragProvided === 4 && ragDischarge === 1 && ragUnconfirmed === 0, `${ragResult}/${ragProvided}/${ragDischarge}/${ragUnconfirmed}`);
+  // …and "ask the AI about this patient": the treating doctor's chart question, answered from the
+  // journey's record with the critical troponin cited (verified), the interaction logged, nothing written.
+  const eventsBeforeAsk = await prisma.domainEventOutbox.count();
+  const askResult = await askAi({ kind: "STAFF", userId: a.doctorUserId, role: "DOCTOR", facilityId: a.facilityId }, { mode: "CHART_QA", patientId: a.patientId, question: "What was the troponin result?" });
+  const askRow = await prisma.aiInteraction.findUnique({ where: { id: askResult.meta.interactionId } });
+  report("Week 4b: asking the AI about the journey's patient: answered, the troponin (2.1) cited from the released result, labelled verified; logged; no event, nothing written",
+    askResult.outcome === "ANSWERED" && askResult.sentences.some((x) => x.text.includes("2.1") && x.labels.includes("verified")) && askResult.citations.some((c) => c.sourceType === "LAB_RESULT" && c.sourceId === a.resultId)
+      && askRow?.outcome === "ANSWERED" && askRow.patientId === a.patientId && (await prisma.domainEventOutbox.count()) === eventsBeforeAsk,
+    askResult.outcome);
 
   // 8c reorder, 9c waste, 15 identity (events not correlated by the encounter).
   const reorder = side.filter((e) => e.eventType === "StockBelowReorder");

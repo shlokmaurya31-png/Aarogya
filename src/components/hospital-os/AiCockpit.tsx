@@ -7,6 +7,7 @@ import {
   Pill, Receipt, LayoutGrid, ArrowRight, Brain, ShieldCheck, FileText, Activity,
 } from "lucide-react";
 import { AiConversation, configForRole } from "@/components/ai/PortalAssistant";
+import { CockpitRecordAi } from "@/components/ai/CockpitRecordAi";
 
 /**
  * AiCockpit — the AI-first home of Hospital OS. AI leads; the rest of the OS
@@ -112,6 +113,7 @@ export function AiCockpit({
             </div>
           </div>
           <AiConversation config={config} pageLabel={`AI Cockpit · ${facilityName}`} minHeight={300} maxHeight={420} />
+          {(role === "DOCTOR" || role === "NURSE") && <div className="mt-5"><CockpitRecordAi /></div>}
         </motion.div>
 
         {/* Secondary: quick actions + capabilities */}

@@ -135,7 +135,7 @@ async function main() {
   const qa = await askAi(doctor.actor, { mode: "CHART_QA", patientId: P.patientId, question: "What was the hemoglobin?" }, { onMeta: () => { streamed.push("meta"); }, onSentence: () => { streamed.push("sentence"); } });
   report("Chart Q&A: ANSWERED, the AI-generated label, the hemoglobin value cited", qa.outcome === "ANSWERED" && qa.meta.label === ADVISORY_LABEL && qa.sentences.some((s) => s.text.includes("11.2 g/dL") && s.citations.length > 0));
   report("…every factual line cites retrieved sources and is labelled verified; citations link into the record",
-    qa.sentences.every((s) => s.kind !== "FACT" || (s.citations.length > 0 && s.labels.includes("verified"))) && qa.citations.every((c) => c.origin === "VERIFIED" && c.link.startsWith("/hospital-os/patients/")));
+    qa.sentences.every((s) => s.kind !== "FACT" || (s.citations.length > 0 && s.labels.includes("verified"))) && qa.citations.every((c) => c.origin === "VERIFIED" && c.link.startsWith("/hospital-os/doctor/patients/")));
   report("…streamed: the meta first, then the sentences as they passed", streamed[0] === "meta" && streamed.slice(1).every((x) => x === "sentence") && streamed.length === qa.sentences.length + 1);
   const row = await prisma.aiInteraction.findUniqueOrThrow({ where: { id: qa.meta.interactionId } });
   report("The interaction: metadata (mode, path ids, scores, cited ⊆ retrieved, model, space), staff text encrypted for at most 90 days",

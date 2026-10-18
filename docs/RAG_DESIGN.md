@@ -1,6 +1,6 @@
 # Retrieval-augmented answers over the patient record: design (Week 4b)
 
-- **Status:** Design, revision 3, for review. No code yet.
+- **Status:** Revision 3, **built in Week 4b** (2026-10-18; §16 records what the code does where it differs). Real data stays off.
 - **Revision 3 (2026-10-17):**
   - person-owned sources (`docs/PERSON_IDENTITY_DESIGN.md`, Phase 0);
   - product decisions 2–11 applied (§13.2): the reviewer roles, deferred India-hosted embeddings with a re-embed job instead of a fixed vector column, same-organization consent through the existing consent model, guardian consents lapsing at 18, items pending the clinical advisor.
@@ -723,3 +723,12 @@ What the code does where it differs from, or adds to, the sections above. Each i
 - **Found and fixed on the way (first run 26/30):** imaging modality codes weren't expanded ("XRAY" never matched "X-ray"; §5.3 says codes are expanded); the keyword side had no stemming ("allergic" missed "Allergy": a small English suffix stripper now makes stemmed words prefix matches); live facts didn't count towards "no record" (a question about allergies answered by the live allergy list was refused); the brief and the handoff didn't carry recent results (the newest result per test is now always in them); the mock reranker didn't weigh how much of the question a passage covers.
 - **Thresholds calibrated** on this set with the offline reranker: staff modes 0.50, patient modes 0.55 (every correctly answered question scored ≥ 0.617; the one false match 0.424). They must be recalibrated on the real reranker's scale (Voyage) before real data; the real run reports the values in force.
 - **Real run (2026-10-18): ready, not run** — the Anthropic key in `.env.local` is refused for insufficient credit, and there is no Voyage key.
+
+### 16.9 Step 10: the screens
+
+- **One panel, three places** (`src/components/ai/RecordAi.tsx`): the AI-generated label, each line with its citation numbers and labels, the cited entries with links into the record (staff), outcomes in plain words; staff answers stream line by line, patient answers arrive whole.
+  - **Hospital OS AI Cockpit:** for doctors and nurses, "Ask about a patient's record", choosing among their current patients (active encounters).
+  - **The chart** (`/hospital-os/doctor/patients/:id`): the modes the role may use; the doctor's next appointment with the patient is the visit brief's reason (`GET /api/ai/me`).
+  - **The patient portal:** "Explain" on every released report and upload (`/patient/reports`), the health timeline and questions for the next visit (`/patient/records`), in the patient's language (eleven to choose from).
+- **Proxy switcher:** not built — proxies are refused until households (5b) add `USE_AI`.
+- **Tests:** the stream parser (unit), every mode over HTTP and through the service (`verify-postgres-ai-ask`), and the core journey now asks the AI about its patient (answered, the critical troponin cited as verified, logged, no event, nothing written). The screens were checked by the type checker, lint and the production build, not by a browser run.

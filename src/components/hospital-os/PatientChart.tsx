@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { ChartAi } from "@/components/ai/ChartAi";
 import { useSearchParams } from "next/navigation";
 import { AlertTriangle, FlaskConical, ScanLine, Pill, FileText, ShieldAlert, Stethoscope, History, ClipboardList, Send, Activity, Inbox } from "lucide-react";
 import { Card, CardLabel } from "@/components/ui/Card";
@@ -238,6 +239,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
         </Card>
       )}
 
+      <div className="mt-3"><ChartAi patientId={patientId} /></div>
       {allergyStatus && (
         <div className="mt-3 flex flex-wrap items-center gap-2 text-[11.5px]">
           {allergyStatus.status === "NO_KNOWN_ALLERGIES" && <span className="rounded-md bg-emerald/10 px-2.5 py-1 text-emerald">No known allergies (recorded)</span>}

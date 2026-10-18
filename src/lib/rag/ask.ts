@@ -97,7 +97,7 @@ async function subjectIdentifiers(access: AiAccess): Promise<string[]> {
 }
 
 function link(audience: "STAFF" | "PATIENT", patientId: string, s: { sourceType: string; sourceId: string }) {
-  return audience === "STAFF" ? `/hospital-os/patients/${patientId}?entry=${s.sourceType}:${s.sourceId}` : `/patient/records?entry=${s.sourceType}:${s.sourceId}`;
+  return audience === "STAFF" ? `/hospital-os/doctor/patients/${patientId}?entry=${s.sourceType}:${s.sourceId}` : `/patient/records?entry=${s.sourceType}:${s.sourceId}`;
 }
 
 /**
