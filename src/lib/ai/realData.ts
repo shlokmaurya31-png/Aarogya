@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/db";
+import { issuePermit } from "./documents/permit";
+import type { ProcessingPermit } from "./documents/types";
 
 /**
  * Week 4a — the real-data switch (docs/DOCUMENT_PIPELINE_DESIGN.md §11,
@@ -26,4 +28,13 @@ export async function mayProcessPersonData(personId: string, purpose: RealDataPu
   if (!realDataEnabled(env)) return { allowed: false, reason: "REAL_DATA_DISABLED" };
   const consent = await prisma.personConsent.findFirst({ where: { personId, purpose, status: "ACTIVE" }, select: { decision: true } });
   return consent?.decision === "GRANTED" ? { allowed: true } : { allowed: false, reason: "CONSENT_REQUIRED" };
+}
+
+/**
+ * The document pipeline's gate: a ProcessingPermit (the only way to call a
+ * document provider) when mayProcessPersonData allows DOCUMENT_PROCESSING.
+ */
+export async function documentProcessingPermit(personId: string, env = process.env): Promise<{ allowed: true; permit: ProcessingPermit } | { allowed: false; reason: RealDataRefusal }> {
+  const r = await mayProcessPersonData(personId, "DOCUMENT_PROCESSING", env);
+  return r.allowed ? { allowed: true, permit: issuePermit(personId) } : r;
 }
