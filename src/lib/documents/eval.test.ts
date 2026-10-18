@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { getDocumentProviders } from "@/lib/ai/documents";
 import { issuePermit } from "@/lib/ai/documents/permit";
 import { FIXTURES } from "./fixtures";
-import { meetsTargets, runEvaluation, TARGETS } from "./eval";
+import { meetsTargets, runEvaluation, sameField, TARGETS } from "./eval";
 import { evaluationDictionary } from "./steps";
 
 /**
@@ -44,4 +44,20 @@ describe("document evaluation set", () => {
     expect(r.printed).toBeGreaterThanOrEqual(TARGETS.printed);
     expect(r.translationFailures).toBe(0);
   }, 60_000);
+});
+
+describe("field comparison", () => {
+  it("exact fields must be identical, byte for byte", () => {
+    expect(sameField("LAB_VALUE", "value", "11.2", "11.2")).toBe(true);
+    expect(sameField("LAB_VALUE", "value", "11.20", "11.2")).toBe(false);
+    expect(sameField("LAB_VALUE", "unit", "g/dl", "g/dL")).toBe(false);
+    expect(sameField("MEDICATION", "name", "amoxicillin", "Amoxicillin")).toBe(false);
+  });
+  it("other fields are compared for meaning: dates as dates, numbers as numbers, codes ignoring case", () => {
+    expect(sameField("DOCUMENT_META", "documentDate", "2026-03-12", "12/03/2026")).toBe(true);
+    expect(sameField("DOCUMENT_META", "documentDate", "2026-12-03", "12/03/2026")).toBe(false);
+    expect(sameField("LAB_VALUE", "numericValue", 7800, "7800")).toBe(true);
+    expect(sameField("LAB_VALUE", "flag", "h", "H")).toBe(true);
+    expect(sameField("MEDICATION", "frequencyCode", undefined, "OD")).toBe(false);
+  });
 });

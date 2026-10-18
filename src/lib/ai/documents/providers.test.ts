@@ -151,6 +151,16 @@ describe("Claude providers (stubbed client: no network)", async () => {
     expect(r.facts).toHaveLength(1);
     expect(r.model).toBe("claude-haiku-5-5");
   });
+  it("maps provider errors to closed codes; an account refusal (no credit) is transient, never UNREADABLE", async () => {
+    const { errorCode } = await import("./claude");
+    const Anthropic = (await import("@anthropic-ai/sdk")).default;
+    const bad = (message: string) => Anthropic.APIError.generate(400, { type: "error", error: { type: "invalid_request_error", message } }, message, new Headers());
+    expect(errorCode(bad("Your credit balance is too low to access the Anthropic API."), "UNREADABLE").code).toBe("PROVIDER_UNAVAILABLE");
+    expect(errorCode(bad("Could not process image"), "UNREADABLE").code).toBe("UNREADABLE");
+    expect(errorCode(bad("tools.0: invalid schema"), "INTERNAL").code).toBe("INTERNAL");
+    expect(errorCode(Anthropic.APIError.generate(413, undefined, "too large", new Headers()), "UNREADABLE").code).toBe("TOO_LARGE");
+    expect(errorCode(Anthropic.APIError.generate(529, undefined, "overloaded", new Headers()), "UNREADABLE").code).toBe("PROVIDER_UNAVAILABLE");
+  });
   it("OCR retry uses the retry model; no permit, no call", async () => {
     const { c, calls } = stub({ lines: [{ text: "Hb 12.1 g/dL", bbox: [0, 0, 1, 0.1], confidence: 0.8 }], language: "en", script: "Latn", handwritten: true, confidence: 0.8 });
     const r = await claudeOcr(c).ocrPage({ bytes: Buffer.from("%PDF"), contentType: "application/pdf" }, { retry: true }, permit);
