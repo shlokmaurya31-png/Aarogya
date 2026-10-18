@@ -100,12 +100,18 @@ function link(audience: "STAFF" | "PATIENT", patientId: string, s: { sourceType:
   return audience === "STAFF" ? `/hospital-os/patients/${patientId}?entry=${s.sourceType}:${s.sourceId}` : `/patient/records?entry=${s.sourceType}:${s.sourceId}`;
 }
 
-/** EXPLAIN_REPORT on the patient's own upload: its read text, unconfirmed, read directly (§2), never from the index. */
+/**
+ * EXPLAIN_REPORT on the patient's own upload. While its facts await review:
+ * its read text, read directly (§2), never from the index, every line
+ * "not yet confirmed by you". Once the review is done: null, and the
+ * confirmed entries (patient-provided) are explained instead.
+ */
 async function unconfirmedUpload(access: AiAccess, documentId: string): Promise<Source[] | null> {
   if (access.path !== "OWN" || !access.subject.personId) return null;
   const doc = await prisma.personDocument.findFirst({ where: { id: documentId, personId: access.subject.personId, status: "CURRENT", type: { not: "ID_PROOF" } }, select: { id: true, title: true, uploadedAt: true } });
   if (!doc) return null;
-  const run = await prisma.documentProcessing.findFirst({ where: { documentId: doc.id }, orderBy: { run: "desc" }, select: { texts: { orderBy: { pageNo: "asc" }, select: { pageNo: true, text: true, handwritten: true } } } });
+  const run = await prisma.documentProcessing.findFirst({ where: { documentId: doc.id }, orderBy: { run: "desc" }, select: { status: true, texts: { orderBy: { pageNo: "asc" }, select: { pageNo: true, text: true, handwritten: true } } } });
+  if (run?.status === "COMPLETED") return null;
   return (run?.texts ?? []).map((t, i) => ({
     n: i + 1, chunkId: `upload:${doc.id}:${t.pageNo}`, context: `[Your uploaded report · ${doc.title} · page ${t.pageNo} · not yet confirmed by you]`, text: t.text,
     origin: "PATIENT_PROVIDED", sourceType: "PATIENT_DOCUMENT", sourceId: doc.id, recordedAt: doc.uploadedAt, handwritten: t.handwritten, unconfirmed: true,
@@ -206,6 +212,11 @@ async function run(actor: AiActor, req: AskRequest, hooks: AskHooks, started: nu
         const n = Number((await prisma.$queryRaw<{ n: bigint }[]>(Prisma.sql`SELECT count(*) AS n FROM "RagChunk" c WHERE ${scopeSql(access.scope)} AND c."sourceId" = ${req.documentId!}`))[0].n);
         if (!n) throw new AskError(404, "NOT_FOUND");
         reportSourceIds = [req.documentId!];
+        // The patient's own reviewed upload: its confirmed entries are the report.
+        if (access.path === "OWN" && access.subject.personId) {
+          const confirmed = await prisma.patientProvidedRecord.findMany({ where: { personId: access.subject.personId, documentId: req.documentId!, status: "ACTIVE" }, select: { id: true } });
+          reportSourceIds.push(...confirmed.map((r) => r.id));
+        }
       }
       const visitReason = req.appointmentId ? (await prisma.appointment.findFirst({ where: { id: req.appointmentId, patientId: { in: access.subject.patientIds } }, select: { reason: true } }))?.reason ?? undefined : undefined;
       retrieval = await retrieve(access, { question: req.question, visitReason, reportSourceIds });

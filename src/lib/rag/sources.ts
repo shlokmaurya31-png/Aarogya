@@ -32,6 +32,9 @@ async function facilityOwner(patientId: string, encounterId?: string | null): Pr
 
 const gone: Loaded = { action: "WITHDRAW", reason: "SOURCE_DELETED" };
 
+/** Imaging modality codes as their display names (codes are expanded, §5.3). */
+const MODALITY: Record<string, string> = { XRAY: "X-ray", CT: "CT scan", MRI: "MRI", USG: "Ultrasound", MAMMOGRAPHY: "Mammography", INTERVENTIONAL: "Interventional radiology" };
+
 export async function loadSource(ref: SourceRef): Promise<Loaded> {
   const id = ref.sourceId;
   switch (ref.sourceType) {
@@ -60,7 +63,7 @@ export async function loadSource(ref: SourceRef): Promise<Loaded> {
       if (r.status === "SUPERSEDED" || !r.isCurrent) return { action: "WITHDRAW", reason: "AMENDED" };
       const owner = await facilityOwner(r.imagingOrder.patientId, r.imagingOrder.encounterId);
       if (!owner) return gone;
-      const study = [r.imagingOrder.modality, r.imagingOrder.studyDescription].filter(Boolean).join(" ") || "Imaging";
+      const study = [MODALITY[r.imagingOrder.modality] ?? r.imagingOrder.modality, r.imagingOrder.studyDescription].filter(Boolean).join(" ") || "Imaging";
       return { action: "INDEX", owner, input: { sourceType: "IMAGING_REPORT", study, indication: r.indication, technique: r.technique, findings: r.findings, impression: r.impression, recommendations: r.recommendations, at: r.reportedAt, amended: r.status === "AMENDED" }, supersedes: r.previousVersionId ? [{ sourceType: "IMAGING_REPORT", sourceId: r.previousVersionId }] : [] };
     }
     case "DIAGNOSIS": {

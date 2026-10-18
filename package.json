@@ -33,7 +33,9 @@
     "eval:documents": "tsx scripts/eval-documents.ts",
     "eval:documents:real": "tsx scripts/eval-documents-real.ts",
     "rag:reembed": "tsx scripts/rag-reembed.ts",
-    "rag:backfill": "tsx scripts/rag-backfill.ts"
+    "rag:backfill": "tsx scripts/rag-backfill.ts",
+    "eval:rag": "tsx scripts/eval-rag.ts",
+    "eval:rag:real": "tsx scripts/eval-rag.ts --provider real"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

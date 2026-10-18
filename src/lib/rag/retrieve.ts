@@ -19,13 +19,14 @@ import { sensitiveCategoryOf } from "./sensitivity";
  *   4    the top 30 reranked (the space's reranker, 0..1), keeping 8 (12 for
  *        the brief, the handoff and the timeline, which also always get the
  *        latest vitals day, the allergy and problem lists, and the live
- *        medicines);
+ *        medicines; the brief and the handoff, the newest result of each
+ *        test or study too);
  *   5    ties by recency; "latest", "last" or "current" favour the newest;
  *   6    a verified chunk ranks above a patient-provided one on the same
  *        footing;
- *   7.3  "no record found" when a question's best score is under the mode's
- *        threshold and no keyword match covered the question — the model is
- *        then not asked;
+ *   7.3  "no record found" when a question's best score (indexed chunks and
+ *        live facts alike) is under the mode's threshold and no keyword match
+ *        covered the question — the model is then not asked;
  *   7.4  live facts: active medicines (and, for a nurse, doses due or missed)
  *        and the active allergy list, read now, cited by id.
  */
@@ -84,6 +85,20 @@ export async function modeThreshold(mode: AiMode, organizationId: string | null,
 type ChunkRow = Omit<RetrievedChunk, "score">;
 const CHUNK_SELECT = { id: true, documentId: true, context: true, heading: true, text: true, origin: true, sourceType: true, sourceId: true, recordedAt: true, handwritten: true, translatedText: true, translationLanguage: true } as const;
 const toRow = (c: { id: string } & Omit<ChunkRow, "chunkId">): ChunkRow => ({ chunkId: c.id, documentId: c.documentId, context: c.context, heading: c.heading, text: c.text, origin: c.origin, sourceType: c.sourceType, sourceId: c.sourceId, recordedAt: c.recordedAt, handwritten: c.handwritten, translatedText: c.translatedText, translationLanguage: c.translationLanguage });
+
+/** The newest chunk of each title (test or study name), newest first, at most `n`. */
+function latestPerTitle(rows: ChunkRow[], n: number): ChunkRow[] {
+  const seen = new Set<string>();
+  const out: ChunkRow[] = [];
+  for (const r of [...rows].sort((a, b) => b.recordedAt.getTime() - a.recordedAt.getTime())) {
+    const title = r.context.split(" · ")[1] ?? r.context;
+    if (seen.has(title)) continue;
+    seen.add(title);
+    out.push(r);
+    if (out.length >= n) break;
+  }
+  return out;
+}
 
 /** Chunks in the scope of these source types (the context the brief, handoff and timeline always get). */
 async function contextChunks(scope: RetrievalScope, types: RagSourceType[], take: number): Promise<ChunkRow[]> {
@@ -168,15 +183,20 @@ export async function retrieve(access: AiAccess, input: { question?: string; vis
     const have = new Set(chunks.map((c) => c.chunkId));
     const vitals = (await contextChunks(scope, ["OBSERVATION"], 1));
     const lists = await contextChunks(scope, ["ALLERGY", "ALLERGY_STATUS", "PROBLEM", "DIAGNOSIS"], 10);
-    for (const c of [...vitals, ...lists]) if (!have.has(c.chunkId)) { chunks.push({ ...c, score: 0 }); have.add(c.chunkId); }
+    // The brief's and the handoff's objective section: the newest result of each test or study.
+    const results = access.mode === "HEALTH_TIMELINE" ? [] : latestPerTitle(await contextChunks(scope, ["LAB_RESULT", "IMAGING_REPORT"], 40), 8);
+    for (const c of [...vitals, ...lists, ...results]) if (!have.has(c.chunkId)) { chunks.push({ ...c, score: 0 }); have.add(c.chunkId); }
   }
   if (access.mode === "HEALTH_TIMELINE") chunks.sort((a, b) => a.recordedAt.getTime() - b.recordedAt.getTime() || a.chunkId.localeCompare(b.chunkId));
   const live = access.mode === "EXPLAIN_REPORT" ? [] : await liveFacts(access);
+  // Live facts are evidence too ("Is she on warfarin?" never depends on the index, §7.4): scored by the same reranker.
+  const liveScores = input.question && live.length && provider.rerank ? await provider.rerank(query, live.map((l) => `${l.context}\n${l.text}`), access.permit) : [];
+  const best = Math.max(topScore ?? -1, ...liveScores.map((x) => x.score));
 
   const threshold = await modeThreshold(access.mode, access.callerOrganizationId ?? access.subject.organizationId, access.callerFacilityId ?? access.subject.facilityId);
   const covered = terms.length > 0 && candidates.some((c) => c.matchedTerms >= terms.length);
   const noRecord = input.question
-    ? (topScore === null || topScore < threshold) && !covered
+    ? (best < threshold) && !covered
     : chunks.length === 0 && live.length === 0;
-  return { chunks: noRecord ? [] : chunks, live: noRecord ? [] : live, topScore, threshold, noRecord, space: { model: space.embeddingModel, version: space.embeddingVersion }, candidateIds: candidates.map((c) => c.chunkId) };
+  return { chunks: noRecord ? [] : chunks, live: noRecord ? [] : live, topScore: best >= 0 ? best : null, threshold, noRecord, space: { model: space.embeddingModel, version: space.embeddingVersion }, candidateIds: candidates.map((c) => c.chunkId) };
 }

@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import type { RetrievalScope, ScopeSegment } from "./scope";
+import { stem } from "./stem";
 
 /**
  * Week 4b — candidate search over the index (docs/RAG_DESIGN.md §7.1–§7.2):
@@ -51,10 +52,10 @@ export function scopeSql(scope: RetrievalScope): Prisma.Sql {
   return segs.length ? Prisma.sql`c."status" = 'ACTIVE' AND (${Prisma.join(segs, " OR ")})` : Prisma.sql`false`;
 }
 
-/** A word list as an OR tsquery, each word sanitized to letters and digits. */
+/** A word list as an OR tsquery, each word sanitized to letters and digits; a stemmed English word matches as a prefix ("allerg:*"). */
 export function orTsQuery(terms: readonly string[]): string {
   const clean = [...new Set(terms.map((t) => t.toLowerCase().normalize("NFKC").replace(/[^\p{L}\p{N}]+/gu, "")).filter((t) => t.length > 1))];
-  return clean.join(" | ");
+  return clean.map((t) => { const s = stem(t); return s !== t ? `${s}:*` : t; }).join(" | ");
 }
 
 export const vectorLiteral = (v: readonly number[]) => `[${v.map((x) => (Number.isFinite(x) ? x : 0)).join(",")}]`;

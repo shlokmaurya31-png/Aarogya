@@ -20,19 +20,24 @@ export interface ModeSpec {
   context: boolean;
   model: AiModelKey;
   threshold: `ai.threshold.${string}`;
-  /** Default threshold in thousandths (the config registry's default). */
+  /**
+   * Default threshold in thousandths (the config registry's default), calibrated on the
+   * evaluation set with the offline reranker (docs/RAG_DESIGN.md §16.8): every correctly
+   * answered question scored ≥ 0.617, the one false match 0.424. Recalibrate on the real
+   * reranker's scale before real data.
+   */
   defaultThreshold: number;
   /** Words at most (CHART_QA: 150). */
   maxWords: number;
 }
 
 export const MODES: Record<AiMode, ModeSpec> = {
-  VISIT_BRIEF: { audience: "STAFF", keep: 12, context: true, model: "visit_brief", threshold: "ai.threshold.visit_brief", defaultThreshold: 300, maxWords: 450 },
-  CHART_QA: { audience: "STAFF", keep: 8, context: false, model: "chart_qa", threshold: "ai.threshold.chart_qa", defaultThreshold: 300, maxWords: 150 },
-  NURSE_HANDOFF: { audience: "STAFF", keep: 12, context: true, model: "nurse_handoff", threshold: "ai.threshold.nurse_handoff", defaultThreshold: 300, maxWords: 400 },
-  EXPLAIN_REPORT: { audience: "PATIENT", keep: 8, context: false, model: "explain_report", threshold: "ai.threshold.explain_report", defaultThreshold: 450, maxWords: 350 },
-  HEALTH_TIMELINE: { audience: "PATIENT", keep: 12, context: true, model: "health_timeline", threshold: "ai.threshold.health_timeline", defaultThreshold: 450, maxWords: 450 },
-  PREVISIT_QUESTIONS: { audience: "PATIENT", keep: 8, context: false, model: "previsit_questions", threshold: "ai.threshold.previsit_questions", defaultThreshold: 450, maxWords: 200 },
+  VISIT_BRIEF: { audience: "STAFF", keep: 12, context: true, model: "visit_brief", threshold: "ai.threshold.visit_brief", defaultThreshold: 500, maxWords: 450 },
+  CHART_QA: { audience: "STAFF", keep: 8, context: false, model: "chart_qa", threshold: "ai.threshold.chart_qa", defaultThreshold: 500, maxWords: 150 },
+  NURSE_HANDOFF: { audience: "STAFF", keep: 12, context: true, model: "nurse_handoff", threshold: "ai.threshold.nurse_handoff", defaultThreshold: 500, maxWords: 400 },
+  EXPLAIN_REPORT: { audience: "PATIENT", keep: 8, context: false, model: "explain_report", threshold: "ai.threshold.explain_report", defaultThreshold: 550, maxWords: 350 },
+  HEALTH_TIMELINE: { audience: "PATIENT", keep: 12, context: true, model: "health_timeline", threshold: "ai.threshold.health_timeline", defaultThreshold: 550, maxWords: 450 },
+  PREVISIT_QUESTIONS: { audience: "PATIENT", keep: 8, context: false, model: "previsit_questions", threshold: "ai.threshold.previsit_questions", defaultThreshold: 550, maxWords: 200 },
 };
 
 export function isAiMode(m: unknown): m is AiMode {
