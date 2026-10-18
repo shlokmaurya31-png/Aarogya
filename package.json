@@ -32,7 +32,8 @@
     "worker": "tsx scripts/worker.ts",
     "eval:documents": "tsx scripts/eval-documents.ts",
     "eval:documents:real": "tsx scripts/eval-documents-real.ts",
-    "rag:reembed": "tsx scripts/rag-reembed.ts"
+    "rag:reembed": "tsx scripts/rag-reembed.ts",
+    "rag:backfill": "tsx scripts/rag-backfill.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

@@ -6,7 +6,8 @@
  * waste held then rejected, the portal upload (8b), pre-authorization,
  * discharge (with a discharge hold), invoice → claim draft, a late charge and
  * its supplementary invoice, and access and identity (break-glass, an ABHA
- * link). Final for Week 3 (batch 8): every consumer takes part.
+ * link). Final for Week 3 (batch 8): every consumer takes part. Week 4b: the
+ * rag-indexer indexes the journey's record.
  *
  * Drives the real service functions, drains the runner after each step and
  * asserts, by correlationId = the encounter:
@@ -415,6 +416,13 @@ async function main() {
   const consumersSeen = new Set((await prisma.domainEventDelivery.findMany({ where: { eventId: { in: ids }, status: "PROCESSED" }, select: { consumerName: true }, distinct: ["consumerName"] })).map((d) => d.consumerName));
   const missing = EXPECTED_CONSUMERS.filter((c) => !consumersSeen.has(c));
   report(`Every registered consumer (${EXPECTED_CONSUMERS.length}) processed journey events`, missing.length === 0, missing.join(",") || [...consumersSeen].sort().join(","));
+  // Week 4b: the rag-indexer kept the AI index in step with the journey (replay included: one document each).
+  const ragResult = await prisma.ragDocument.count({ where: { sourceType: "LAB_RESULT", sourceId: a.resultId, status: "ACTIVE" } });
+  const ragProvided = await prisma.ragDocument.count({ where: { personId: a.journeyPersonId, ownerType: "PERSON", sourceType: "PATIENT_PROVIDED_RECORD", status: "ACTIVE" } });
+  const ragDischarge = await prisma.ragDocument.count({ where: { sourceType: "DISCHARGE_SUMMARY", patientId: a.patientId, status: "ACTIVE" } });
+  const ragUnconfirmed = await prisma.ragChunk.count({ where: { personId: a.journeyPersonId, sourceType: "PATIENT_DOCUMENT", text: { contains: "1.42" } } });
+  report("Week 4b: the rag-indexer indexed the journey: the released result, the four confirmed entries (patient-provided), the discharge summary; no unconfirmed value",
+    ragResult === 1 && ragProvided === 4 && ragDischarge === 1 && ragUnconfirmed === 0, `${ragResult}/${ragProvided}/${ragDischarge}/${ragUnconfirmed}`);
 
   // 8c reorder, 9c waste, 15 identity (events not correlated by the encounter).
   const reorder = side.filter((e) => e.eventType === "StockBelowReorder");

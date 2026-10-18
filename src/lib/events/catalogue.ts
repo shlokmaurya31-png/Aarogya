@@ -1388,6 +1388,14 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({ personId: id, consentId: id, purpose: z.enum(["SHARE_UPLOADS_WITH_TREATING"]), decision: z.enum(["GRANTED", "DECLINED"]), previous: z.enum(["NONE", "GRANTED", "DECLINED"]) }).strict(),
   }),
   contract({
+    // Week 4b: a choice decided before the person turned 18 lapsed to "needs your confirmation" (decision 10).
+    type: "PersonConsentLapsed", version: 1, aggregateType: "PERSON", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "person identity (sweepConsentLapses: the runner, on the 18th birthday)",
+    payload: z.object({
+      personId: id, consentId: id, purpose: z.enum(["SHARE_UPLOADS_WITH_TREATING", "DOCUMENT_PROCESSING", "AI_ASSISTANCE", "AI_TEXT_RETENTION"]), reason: z.enum(["TURNED_18"]),
+    }).strict(),
+  }),
+  contract({
     // v2 (Week 4a): the purposes of the real-data switch, and scopes.
     type: "PersonConsentDecided", version: 2, aggregateType: "PERSON", scope: "PERSON",
     sensitivity: "SENSITIVE", producer: "person identity (decidePersonConsent: sharing uploads, document processing, AI assistance, AI text retention)",

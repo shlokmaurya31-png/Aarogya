@@ -7,6 +7,7 @@ import { chargeCapture } from "@/lib/consumers/chargeCapture";
 import { stockMovement } from "@/lib/consumers/stockMovement";
 import { claimDrafting } from "@/lib/consumers/claimDrafting";
 import { dischargeReadiness } from "@/lib/consumers/dischargeReadiness";
+import { ragIndexer } from "@/lib/consumers/ragIndexer";
 import { docAllergyBridge, docConflicts, docExtract, docMerge, docOcr, docPageSplit, docTranslate, docWithdrawal } from "@/lib/consumers/documentPipeline";
 
 /**
@@ -15,7 +16,7 @@ import { docAllergyBridge, docConflicts, docExtract, docMerge, docOcr, docPageSp
  * dispatch without, say, the workflow engine (previously a side-effect import
  * in individual routes). Idempotent: registration is keyed by name.
  */
-export const EXPECTED_CONSUMERS = ["observability-projection", "workflow-engine", "task-generator", "mar-scheduler", "notification-dispatch", "charge-capture", "stock-movement", "claim-drafting", "discharge-readiness", "doc-page-split", "doc-ocr", "doc-translate", "doc-extract", "doc-merge", "doc-allergy-bridge", "doc-withdrawal", "doc-conflicts"] as const;
+export const EXPECTED_CONSUMERS = ["observability-projection", "workflow-engine", "task-generator", "mar-scheduler", "notification-dispatch", "charge-capture", "stock-movement", "claim-drafting", "discharge-readiness", "doc-page-split", "doc-ocr", "doc-translate", "doc-extract", "doc-merge", "doc-allergy-bridge", "doc-withdrawal", "doc-conflicts", "rag-indexer"] as const;
 
 export function registerAllConsumers(): string[] {
   registerConsumer(workflowConsumer);
@@ -34,5 +35,6 @@ export function registerAllConsumers(): string[] {
   registerConsumer(docAllergyBridge);
   registerConsumer(docWithdrawal);
   registerConsumer(docConflicts);
+  registerConsumer(ragIndexer);
   return getConsumerNames();
 }

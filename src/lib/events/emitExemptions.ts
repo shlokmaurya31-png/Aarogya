@@ -151,6 +151,11 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/person/merge.ts#startPersonMerge": { category: "PROCESS_STEP", reason: "the other account's password checked and a code sent to each account; the outcome is the merge", boundary: ["PersonMerged"] },
   // Week 4b — the AI index is derived data, rebuilt from the record (docs/RAG_DESIGN.md §4.1).
   "src/lib/rag/embed.ts#writeEmbeddings": { category: "CONSUMER_OUTPUT", reason: "embeddings of indexed chunks, derived data written by the rag-indexer and the re-embed job (idempotent)" },
+  "src/lib/rag/indexer.ts#indexSource": { category: "CONSUMER_OUTPUT", reason: "the rag-indexer's derived index (documents, chunks, embeddings) of a source whose own change emitted its event" },
+  "src/lib/rag/indexer.ts#withdrawSource": { category: "CONSUMER_OUTPUT", reason: "the rag-indexer retiring a voided, superseded or withdrawn source's derived index rows" },
+  "src/lib/rag/indexer.ts#setPersonOnFacilityIndex": { category: "CONSUMER_OUTPUT", reason: "the rag-indexer following a link change (PersonPatientLinked/Unlinked) on derived index rows" },
+  "src/lib/rag/backfill.ts#backfillFacility": { category: "BOOKKEEPING", reason: "the backfill's resumable cursor; it emits no events by design (docs/RAG_DESIGN.md §5.7)" },
+  "src/lib/rag/interactions.ts#purgeProxyAiText": { category: "CONSUMER_OUTPUT", reason: "retained AI text of a family member whose access was revoked (FamilyAccessRevoked already emitted)" },
   "src/lib/rag/remove.ts#removeOwnerIndex": { category: "CONSUMER_OUTPUT", reason: "hard delete of derived index rows for an owner the AI may not use (consent withdrawn, closure, erasure); the triggering change emitted its own event" },
   "src/lib/rag/reembed.ts#purgeRetiredEmbeddings": { category: "BOOKKEEPING", reason: "derived data of a retired embedding space, deleted after its grace period; the retirement itself emitted RagEmbeddingSpaceChanged" },
   "src/lib/documents/pipelineState.ts#createRun": { category: "BOOKKEEPING", reason: "a pipeline run's state rows; the step consumer emits the step's event" },

@@ -43,20 +43,22 @@ export async function documentProcessingPermit(personId: string, env = process.e
 
 // ── Week 4b: the AI over the record (docs/RAG_DESIGN.md §11) ─────────────────
 
-export type AiRefusal = RealDataRefusal | "AI_DECLINED" | "NOT_FOUND";
+export type AiRefusal = RealDataRefusal | "AI_DECLINED" | "AI_CONSENT_LAPSED" | "NOT_FOUND";
 
 /** Whose data, for the AI: a facility record (its facility's classification) or a Person's own. */
 export type AiDataOwner = { facilityId: string; patientId: string } | { personId: string };
 
-/** The person's current AI_ASSISTANCE decision. */
-async function aiDecision(personId: string): Promise<"GRANTED" | "DECLINED" | null> {
-  const row = await prisma.personConsent.findFirst({ where: { personId, purpose: "AI_ASSISTANCE", status: "ACTIVE" }, select: { decision: true } });
-  return row?.decision ?? null;
+/** The person's current AI_ASSISTANCE decision; LAPSED when their last one lapsed at 18 and they haven't chosen since. */
+export async function aiDecision(personId: string): Promise<"GRANTED" | "DECLINED" | "LAPSED" | null> {
+  const row = await prisma.personConsent.findFirst({ where: { personId, purpose: "AI_ASSISTANCE", status: { in: ["ACTIVE", "LAPSED"] } }, orderBy: { decidedAt: "desc" }, select: { decision: true, status: true } });
+  if (!row) return null;
+  return row.status === "LAPSED" ? "LAPSED" : row.decision;
 }
 
 /**
  * May the AI index, embed or answer over this owner's data? An explicit
- * decline always refuses, synthetic data included. SYNTHETIC data needs
+ * decline, or a consent that lapsed at 18, always refuses, synthetic data
+ * included. SYNTHETIC data needs
  * nothing more. REAL data needs the switch on AND the Person's AI_ASSISTANCE
  * consent (a facility record's Person is its ACTIVE link's; a record with no
  * Person can't consent, so it is refused).
@@ -68,6 +70,7 @@ export async function mayUseAiOver(owner: AiDataOwner, env = process.env): Promi
     if (person.status !== "ACTIVE") return { allowed: false, reason: "PERSON_NOT_ACTIVE" };
     const decision = await aiDecision(owner.personId);
     if (decision === "DECLINED") return { allowed: false, reason: "AI_DECLINED" };
+    if (decision === "LAPSED") return { allowed: false, reason: "AI_CONSENT_LAPSED" };
     if (person.dataClassification === "SYNTHETIC") return { allowed: true, real: false, personId: owner.personId };
     if (!realDataEnabled(env)) return { allowed: false, reason: "REAL_DATA_DISABLED" };
     return decision === "GRANTED" ? { allowed: true, real: true, personId: owner.personId } : { allowed: false, reason: "CONSENT_REQUIRED" };
@@ -77,6 +80,7 @@ export async function mayUseAiOver(owner: AiDataOwner, env = process.env): Promi
   const link = await prisma.personPatientLink.findFirst({ where: { patientId: owner.patientId, facilityId: owner.facilityId, status: "ACTIVE" }, select: { personId: true, person: { select: { status: true } } } });
   const decision = link ? await aiDecision(link.personId) : null;
   if (decision === "DECLINED") return { allowed: false, reason: "AI_DECLINED" };
+  if (decision === "LAPSED") return { allowed: false, reason: "AI_CONSENT_LAPSED" };
   if (facility.dataClassification === "SYNTHETIC") return { allowed: true, real: false, personId: link?.personId ?? null };
   if (!realDataEnabled(env)) return { allowed: false, reason: "REAL_DATA_DISABLED" };
   if (!link || link.person.status !== "ACTIVE") return { allowed: false, reason: "CONSENT_REQUIRED" };

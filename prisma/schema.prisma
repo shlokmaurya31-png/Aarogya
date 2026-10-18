@@ -10511,6 +10511,8 @@ enum PersonConsentDecision {
 enum PersonConsentStatus {
   ACTIVE
   SUPERSEDED
+  /// Week 4b: decided before the person turned 18 (by a guardian, in effect); counts as not granted until they choose again.
+  LAPSED
 }
 
 /// A choice the person makes about their own data (Phase 0: "share my uploads
@@ -10530,7 +10532,8 @@ model PersonConsent {
   createdAt       DateTime              @default(now())
 
   /// AI_TEXT_RETENTION only: SAFETY_REVIEW lets safety reviewers read retained text.
-  scopes String[] @default([])
+  scopes   String[]  @default([])
+  lapsedAt DateTime?
 
   @@index([personId, purpose, status])
 }
@@ -11097,8 +11100,8 @@ model RagChunk {
 /// Half precision, kept on the heap row (no TOAST), so the exact scan over one
 /// patient stays inside the latency budget (docs/RAG_DESIGN.md §16.2).
 model RagEmbedding {
-  id               String                @id @default(cuid())
-  chunk            RagChunk              @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+  id               String                 @id @default(cuid())
+  chunk            RagChunk               @relation(fields: [chunkId], references: [id], onDelete: Cascade)
   chunkId          String
   embeddingModel   String
   embeddingVersion Int
@@ -11110,8 +11113,8 @@ model RagEmbedding {
   facilityId       String?
   patientId        String?
   personId         String?
-  status           RagDocumentStatus     @default(ACTIVE)
-  createdAt        DateTime              @default(now())
+  status           RagDocumentStatus      @default(ACTIVE)
+  createdAt        DateTime               @default(now())
 
   @@unique([chunkId, embeddingModel, embeddingVersion])
   @@index([patientId, embeddingModel, embeddingVersion])
@@ -11221,4 +11224,14 @@ model AiTextReadLog {
 
   @@index([readAt])
   @@index([interactionId])
+}
+
+/// Week 4b — the backfill's resumable cursor, per facility and source type (docs/RAG_DESIGN.md §5.7).
+model RagBackfillCursor {
+  facilityId   String
+  sourceType   RagSourceType
+  lastSourceId String
+  updatedAt    DateTime      @updatedAt
+
+  @@id([facilityId, sourceType])
 }

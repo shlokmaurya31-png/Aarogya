@@ -5,6 +5,8 @@ import { sweepDelegationExpiry } from "@/lib/patient/experience/delegationSweep"
 import { purgeClosedPersons } from "@/lib/person/closure";
 import { resumeStalledDocumentSteps } from "@/lib/documents/pipeline";
 import { purgeRetiredEmbeddings, runReembedTick } from "@/lib/rag/reembed";
+import { purgeLapsedAiIndexes } from "@/lib/rag/indexer";
+import { sweepConsentLapses } from "@/lib/person/consentLapse";
 import { registerAllConsumers } from "./consumers";
 
 /**
@@ -18,7 +20,9 @@ import { registerAllConsumers } from "./consumers";
  *   5. purge closed accounts past their grace period (Phase 0);
  *   6. resume document-pipeline steps whose claim went stale (Week 4a);
  *   7. one re-embed batch per embedding space being built, and the purge of
- *      retired spaces' embeddings after their grace period (Week 4b).
+ *      retired spaces' embeddings after their grace period (Week 4b);
+ *   8. consents decided before an 18th birthday lapse; the AI index of a
+ *      lapsed AI consent goes after its 90-day window (Week 4b).
  * Safe to run concurrently with itself: every claim is SKIP LOCKED + token
  * guarded and every consumer is idempotent.
  */
@@ -43,6 +47,8 @@ export interface RunTickResult {
   documents: { resumed: number };
   /** Week 4b: chunks embedded into spaces being built; retired embeddings purged. */
   embeddings: { embedded: number; purged: number };
+  /** Week 4b: consents lapsed at 18; AI index documents removed after a lapse window. */
+  consents: { lapsed: number; aiIndexPurged: number };
   durationMs: number;
   /** True when a batch limit was hit, i.e. there may be more work now. */
   moreWork: boolean;
@@ -70,6 +76,9 @@ export async function runTick(opts: RunTickOptions = {}): Promise<RunTickResult>
   const embeddings = Date.now() - started < budgetMs
     ? { embedded: (await runReembedTick()).embedded, purged: (await purgeRetiredEmbeddings({ now: opts.now })).deleted }
     : { embedded: 0, purged: 0 };
+  const consents = Date.now() - started < budgetMs
+    ? { lapsed: (await sweepConsentLapses({ now: opts.now })).lapsed, aiIndexPurged: (await purgeLapsedAiIndexes({ now: opts.now })).purged }
+    : { lapsed: 0, aiIndexPurged: 0 };
 
   return {
     consumers,
@@ -80,6 +89,7 @@ export async function runTick(opts: RunTickOptions = {}): Promise<RunTickResult>
     closures,
     documents,
     embeddings,
+    consents,
     durationMs: Date.now() - started,
     moreWork: events.claimed >= eventBatchSize || workflows.timersFired >= workflowBatchSize || workflows.instancesRun >= workflowBatchSize || mar.missed >= marBatchSize,
   };
