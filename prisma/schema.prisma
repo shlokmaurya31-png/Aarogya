@@ -10559,3 +10559,24 @@ model PersonDocument {
 
   @@index([personId, status])
 }
+
+enum MedicineReferenceSource {
+  NLEM_2022
+  WHO_INN
+}
+
+/// Week 4a: medicine-name reference data that protects medicine names from
+/// translation. WHO INN lists are imported as whole versions (one version per
+/// import; scripts/import-who-inn.ts); NLEM 2022 ships in code. Platform
+/// reference data: no tenant.
+model MedicineReference {
+  id         String                  @id @default(cuid())
+  source     MedicineReferenceSource
+  version    String
+  name       String
+  normalized String
+  createdAt  DateTime                @default(now())
+
+  @@unique([source, version, normalized])
+  @@index([source, normalized])
+}
