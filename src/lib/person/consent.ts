@@ -12,27 +12,34 @@ import { requireOwnedPerson } from "./access";
  * supersedes the current choice. PersonConsentDecided says which way, never
  * anything else.
  */
-export async function decidePersonConsent(input: { userId: string; purpose: string; decision: string }) {
+export const CONSENT_SCOPES: Record<string, readonly string[]> = { AI_TEXT_RETENTION: ["SAFETY_REVIEW"] };
+
+export async function decidePersonConsent(input: { userId: string; purpose: string; decision: string; scopes?: string[] }) {
   const purpose = parseEnum($Enums.PersonConsentPurpose, input.purpose, "purpose");
   const decision = parseEnum($Enums.PersonConsentDecision, input.decision, "decision");
+  // Scopes exist only where a purpose defines them (AI_TEXT_RETENTION: SAFETY_REVIEW), and only with a grant.
+  const scopes = [...new Set(input.scopes ?? [])].sort();
+  const allowedScopes = CONSENT_SCOPES[purpose] ?? [];
+  if (scopes.some((x) => !allowedScopes.includes(x))) throw new BadRequestError(`Scopes for ${purpose}: ${allowedScopes.join(", ") || "none"}.`);
+  if (decision === "DECLINED" && scopes.length) throw new BadRequestError("A declined choice has no scopes.");
   const personId = await requireOwnedPerson(input.userId);
   const result = await prisma.$transaction(async (tx) => {
     const current = await tx.personConsent.findFirst({ where: { personId, purpose, status: "ACTIVE" } });
-    if (current?.decision === decision) return { consent: current, changed: false };
+    if (current?.decision === decision && [...current.scopes].sort().join() === scopes.join()) return { consent: current, changed: false };
     if (current) {
       const r = await tx.personConsent.updateMany({ where: { id: current.id, status: "ACTIVE" }, data: { status: "SUPERSEDED", supersededAt: new Date() } });
       if (r.count !== 1) throw new ConflictError("This choice changed concurrently. Refresh and try again.");
     }
-    const consent = await tx.personConsent.create({ data: { personId, purpose, decision, decidedByUserId: input.userId } });
+    const consent = await tx.personConsent.create({ data: { personId, purpose, decision, scopes, decidedByUserId: input.userId } });
     await tx.personAccessLogEntry.create({ data: { personId, kind: "CONSENT_DECIDED", actorUserId: input.userId, detail: { consentId: consent.id, purpose, decision } } });
     await emitDomainEvent(tx, {
       type: "PersonConsentDecided", aggregateId: personId, personId, actorUserId: input.userId,
-      payload: { personId, consentId: consent.id, purpose, decision, previous: current?.decision ?? "NONE" },
+      payload: { personId, consentId: consent.id, purpose, decision, previous: current?.decision ?? "NONE", scopes },
     });
     return { consent, changed: true };
   });
   if (result.changed) await recordAuditEvent("person.consent.decided", input.userId, { personId, purpose, decision });
-  return { purpose, decision: result.consent.decision, decidedAt: result.consent.decidedAt.toISOString() };
+  return { purpose, decision: result.consent.decision, scopes: result.consent.scopes, decidedAt: result.consent.decidedAt.toISOString() };
 }
 
 export function assertDecision(value: unknown): "GRANTED" | "DECLINED" {

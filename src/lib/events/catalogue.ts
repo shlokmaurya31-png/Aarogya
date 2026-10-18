@@ -1345,6 +1345,15 @@ export const EVENT_CONTRACTS: EventContract[] = [
     sensitivity: "SENSITIVE", producer: "person identity (decidePersonConsent: the person's own choice, e.g. sharing uploads with treating hospitals)",
     payload: z.object({ personId: id, consentId: id, purpose: z.enum(["SHARE_UPLOADS_WITH_TREATING"]), decision: z.enum(["GRANTED", "DECLINED"]), previous: z.enum(["NONE", "GRANTED", "DECLINED"]) }).strict(),
   }),
+  contract({
+    // v2 (Week 4a): the purposes of the real-data switch, and scopes.
+    type: "PersonConsentDecided", version: 2, aggregateType: "PERSON", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "person identity (decidePersonConsent: sharing uploads, document processing, AI assistance, AI text retention)",
+    payload: z.object({
+      personId: id, consentId: id, purpose: z.enum(["SHARE_UPLOADS_WITH_TREATING", "DOCUMENT_PROCESSING", "AI_ASSISTANCE", "AI_TEXT_RETENTION"]),
+      decision: z.enum(["GRANTED", "DECLINED"]), previous: z.enum(["NONE", "GRANTED", "DECLINED"]), scopes: z.array(z.enum(["SAFETY_REVIEW"])),
+    }).strict(),
+  }),
 ];
 
 const KEY = (type: string, version: number) => `${type}@${version}`;

@@ -26,8 +26,9 @@ export async function seedPhase1Extensions(prisma: PrismaClient) {
   const org = await prisma.organization.findFirstOrThrow({ where: { name: "Aarogya Health Network" } });
   const noida = await prisma.facility.upsert({
     where: { id: "fac-amc-noida" },
-    update: {},
-    create: { id: "fac-amc-noida", name: "Aarogya Noida Hospital", city: "Noida", organizationId: org.id },
+    // Week 4a: the demo facilities hold synthetic data only.
+    update: { dataClassification: "SYNTHETIC" },
+    create: { id: "fac-amc-noida", name: "Aarogya Noida Hospital", city: "Noida", organizationId: org.id, dataClassification: "SYNTHETIC" },
   });
 
   const noidaDeptDefs = [

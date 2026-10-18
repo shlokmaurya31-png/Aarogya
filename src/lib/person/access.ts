@@ -47,7 +47,7 @@ export async function ownedPersonId(userId: string): Promise<string | null> {
 }
 
 /** The person's current decision on a person-level consent purpose, or null if they haven't chosen. */
-export async function personDecision(personId: string, purpose: typeof SHARE_UPLOADS): Promise<"GRANTED" | "DECLINED" | null> {
+export async function personDecision(personId: string, purpose: "SHARE_UPLOADS_WITH_TREATING" | "DOCUMENT_PROCESSING" | "AI_ASSISTANCE" | "AI_TEXT_RETENTION"): Promise<"GRANTED" | "DECLINED" | null> {
   const row = await prisma.personConsent.findFirst({ where: { personId, purpose, status: "ACTIVE" }, select: { decision: true } });
   return row?.decision ?? null;
 }

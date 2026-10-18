@@ -1075,6 +1075,10 @@ model Facility {
 
   personPatientLinks PersonPatientLink[]
 
+  /// Week 4a: REAL unless the seed marks a demo facility SYNTHETIC. Real data
+  /// never reaches an AI provider while the real-data switch is off.
+  dataClassification DataClassification @default(REAL)
+
   @@unique([organizationId, slug])
   @@index([organizationId])
   @@index([status])
@@ -10314,6 +10318,11 @@ model Person {
   purgeAfter DateTime?
   purgedAt   DateTime?
 
+  /// Week 4a: REAL by default; SYNTHETIC only for demo and gate Persons. The
+  /// document pipeline and the AI process a REAL Person's data only with the
+  /// real-data switch on AND the matching consent (DOCUMENT_PROCESSING, AI_ASSISTANCE).
+  dataClassification DataClassification @default(REAL)
+
   @@index([mergedIntoPersonId])
 }
 
@@ -10424,6 +10433,14 @@ model PersonAccessLogEntry {
 
 enum PersonConsentPurpose {
   SHARE_UPLOADS_WITH_TREATING
+  DOCUMENT_PROCESSING
+  AI_ASSISTANCE
+  AI_TEXT_RETENTION
+}
+
+enum DataClassification {
+  REAL
+  SYNTHETIC
 }
 
 enum PersonConsentDecision {
@@ -10451,6 +10468,9 @@ model PersonConsent {
   decidedByUserId String
   supersededAt    DateTime?
   createdAt       DateTime              @default(now())
+
+  /// AI_TEXT_RETENTION only: SAFETY_REVIEW lets safety reviewers read retained text.
+  scopes String[] @default([])
 
   @@index([personId, purpose, status])
 }

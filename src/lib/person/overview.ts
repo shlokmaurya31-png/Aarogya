@@ -21,6 +21,8 @@ export async function personOverview(userId: string) {
   return {
     person: { ...person, createdAt: person.createdAt.toISOString() },
     links: links.map((l) => ({ id: l.id, status: l.status, method: l.method, facility: l.facility, linkedAt: l.linkedAt?.toISOString() ?? null, unlinkedAt: l.unlinkedAt?.toISOString() ?? null })),
+    // Week 4a: every person-level choice (no defaults: null = not chosen).
+    consents: Object.fromEntries(await Promise.all((["SHARE_UPLOADS_WITH_TREATING", "DOCUMENT_PROCESSING", "AI_ASSISTANCE", "AI_TEXT_RETENTION"] as const).map(async (p) => [p, await personDecision(personId, p)]))),
     sharing: {
       uploadsWithTreatingHospitals: decision,
       // No pre-selected answer: until the person chooses, they are asked (at
