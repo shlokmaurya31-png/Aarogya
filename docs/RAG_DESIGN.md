@@ -38,6 +38,7 @@
 13. Product decisions
 14. Decisions taken for you
 15. Open questions
+16. As built (Week 4b)
 
 ---
 
@@ -635,3 +636,15 @@ None open. Answered 2026-10-17:
 - the lapse window is 90 days;
 - reviewers read staff text, and patient text only with an explicit safety-review opt-in (§4.3);
 - the latency budget is p95 < 150 ms at 20,000 chunks, enforced by a gate (§12).
+
+## 16. As built (Week 4b, 2026-10-18)
+
+What the code does where it differs from, or adds to, the sections above. Each item takes the more conservative option.
+
+### 16.1 Step 2: model configuration and the answer boundary
+
+- **The answer boundary is its own provider family** (`src/lib/ai/record`: `RecordAnswerProvider.answerFromRecord`), next to the document providers, rather than a fifth method on the Scholar/assistant `AIProvider`. Same reasons as the pipeline's: its own permit (`AiPermit`, issued only by the real-data gate), its own provider switch, and no way for a Scholar code path to reach patient data.
+- **Claude only with both a key and `RECORD_AI_PROVIDER=claude`**; otherwise the deterministic mock. **The mock refuses a permit for real data**, so a real patient's record is only ever answered by the configured model, and a provider failure is a 503 (`RecordAiUnavailableError`), never the mock.
+- **Model ids per mode** (`ai.model.<mode>`) are read like the pipeline's (`AI_MODEL_<KEY>`, Claude ids only), not through the config registry, whose scopes are organization, facility and department; a model is a platform choice.
+- **The mock is extractive:** every factual sentence is a source line copied verbatim and cited; patient-facing answers open with a fixed line from a phrasebook in the eleven app languages (`src/lib/rag/phrases.ts`, no numbers, pending clinical advisor).
+- **Config keys:** `ai.enabled` (off by default), `ai.threshold.<mode>` (thousandths of the best rerank score; patient-mode defaults above every staff default), `ai.staff_text_retention_days` (90, at most 90), `ai.daily_request_budget`, `ai.lapsed_consent_index_days` (90).
