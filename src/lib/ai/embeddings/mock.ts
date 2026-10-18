@@ -34,9 +34,12 @@ export function hashEmbed(text: string, dims: number): number[] {
   return norm === 0 ? v : v.map((x) => x / norm);
 }
 
-/** BM25 (k1 1.2, b 0.75) of each document for the query, over this candidate set. */
+/** Function words a question is made of; they say nothing about which entry answers it. */
+const QUERY_STOP = new Set(["a", "an", "the", "is", "are", "was", "were", "be", "been", "of", "in", "on", "at", "to", "for", "and", "or", "with", "what", "which", "when", "who", "how", "does", "do", "did", "has", "have", "had", "any", "this", "that", "it", "its", "her", "his", "their", "my", "me", "i", "patient", "patient's", "s", "tell", "show", "about"]);
+
+/** BM25 (k1 1.2, b 0.75) of each document for the query's content words, over this candidate set. */
 export function bm25(query: string, documents: string[]): number[] {
-  const q = [...new Set(tokens(query))];
+  const q = [...new Set(tokens(query).filter((w) => !QUERY_STOP.has(w)))];
   const docs = documents.map(tokens);
   const avg = docs.reduce((n, d) => n + d.length, 0) / Math.max(1, docs.length);
   const df = new Map(q.map((w) => [w, docs.filter((d) => d.includes(w)).length]));

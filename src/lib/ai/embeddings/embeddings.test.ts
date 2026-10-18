@@ -29,6 +29,8 @@ describe("mock embeddings", () => {
     expect(best.index).toBe(1);
     expect(r.every((x) => x.score >= 0 && x.score < 1)).toBe(true);
     expect(bm25("absent", ["a b c"])[0]).toBe(0);
+    // Function words in a question never make a document relevant.
+    expect(bm25("what is the blood group?", ["see the allergy list", "it is what it is"])).toEqual([0, 0]);
   });
   it("need a permit", async () => {
     await expect(mockEmbeddings().embed(["x"], "query", {} as AiPermit)).rejects.toThrow(/permit/);

@@ -20,8 +20,10 @@
  *   6  a sensitive category not opted in      only its scopes)
  *      (HIV)                              12  an unconfirmed extracted fact
  *
- * Extended at step 8 to the prompt, the answer, the citations and the
- * interaction record (verify-postgres-ai-ask).
+ * Every allowed request also goes through POST /api/ai/ask's service
+ * (askAi, the mock model, which echoes its sources): the canary must be in
+ * none of the prompt's sources, the answer, the citations, the interaction's
+ * retrieved and cited chunks, or its stored text (decrypted).
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-rag-leaks.ts
  */
@@ -42,6 +44,10 @@ import { AiAccessError, resolveAiAccess, type AiActor, type AccessRequest } from
 import { retrieve } from "../src/lib/rag/retrieve";
 import { scopeSql } from "../src/lib/rag/search";
 import type { AiMode } from "../src/lib/rag/modes";
+import { randomBytes } from "node:crypto";
+import { askAi } from "../src/lib/rag/ask";
+import { decryptText } from "../src/lib/rag/textCrypto";
+import { getRecordAnswerProvider, setRecordAnswerProviderForTest, type AnswerRequest } from "../src/lib/ai/record";
 
 let pass = 0;
 let fail = 0;
@@ -107,13 +113,33 @@ async function lab(p: { encounterId: string | null; patientId: string; facilityI
 
 type Outcome = { refused: string | null; texts: string; scopeRows: (word: string) => Promise<number> };
 
-/** Asks as `actor` for `word`: what retrieval returns (all text), or the refusal. */
+/** Everything the provider was sent in this run (the prompt's sources), recorded. */
+const sent: AnswerRequest[] = [];
+const cool = (userId: string) => prisma.$executeRaw`UPDATE "AiInteraction" SET "createdAt" = "createdAt" - interval '2 minutes', "textExpiresAt" = "textExpiresAt" - interval '2 minutes' WHERE "userId" = ${userId} AND "createdAt" > now() - interval '2 minutes'`;
+
+/** The full request through askAi: the prompt, the answer, the citations and the interaction (its text decrypted), as one string. */
+async function askThrough(actor: AiActor, req: Omit<AccessRequest, "mode"> & { mode: AiMode }, word: string): Promise<string> {
+  await cool(actor.userId);
+  const from = sent.length;
+  const r = await askAi(actor, { mode: req.mode, patientId: req.patientId, shareId: req.shareId, ...(req.mode === "CHART_QA" ? { question: `${word} details` } : {}), ...(req.period ? { period: { from: req.period.from?.toISOString().slice(0, 10), to: req.period.to?.toISOString().slice(0, 10) } } : {}) });
+  const row = await prisma.aiInteraction.findUniqueOrThrow({ where: { id: r.meta.interactionId } });
+  const ids = [...row.retrievedChunkIds, ...row.citedChunkIds];
+  const chunkTexts = (await prisma.ragChunk.findMany({ where: { id: { in: ids } }, select: { text: true, context: true } })).map((c) => `${c.context}\n${c.text}`);
+  // The asker's own question names the canary; what the system added must not: the prompt's sources,
+  // the answer, the citations, the interaction's chunks and its stored answer.
+  const stored = row.answerCiphertext ? decryptText(row.answerCiphertext, row.keyVersion!) : "";
+  return [JSON.stringify(sent.slice(from).map((x) => x.sources)), JSON.stringify(r.sentences), JSON.stringify(r.citations), ...chunkTexts, stored].join("\n");
+}
+
+/** Asks as `actor` for `word`: what retrieval returns (all text) and everything the full request touched, or the refusal. */
 async function ask(actor: AiActor, req: Omit<AccessRequest, "mode"> & { mode?: AiMode }, word: string): Promise<Outcome> {
   try {
-    const access = await resolveAiAccess(actor, { mode: req.mode ?? (actor.kind === "PATIENT" ? "HEALTH_TIMELINE" : "CHART_QA"), ...req });
+    const mode = req.mode ?? (actor.kind === "PATIENT" ? "HEALTH_TIMELINE" : "CHART_QA");
+    const access = await resolveAiAccess(actor, { mode, ...req });
     const r = await retrieve(access, { question: `${word} details` });
     const r2 = await retrieve(access, {});
-    const texts = [...r.chunks, ...r2.chunks].map((c) => `${c.context}\n${c.text}`).concat([...r.live, ...r2.live].map((l) => `${l.context}\n${l.text}`)).join("\n");
+    const through = await askThrough(actor, { ...req, mode }, word);
+    const texts = [...r.chunks, ...r2.chunks].map((c) => `${c.context}\n${c.text}`).concat([...r.live, ...r2.live].map((l) => `${l.context}\n${l.text}`)).join("\n") + "\n" + through;
     const scopeRows = async (w: string) => Number((await prisma.$queryRaw<{ n: bigint }[]>(Prisma.sql`SELECT count(*) AS n FROM "RagChunk" c WHERE ${scopeSql(access.scope)} AND (c."text" ILIKE ${`%${w}%`} OR c."context" ILIKE ${`%${w}%`})`))[0].n);
     return { refused: null, texts, scopeRows };
   } catch (err) {
@@ -131,6 +157,11 @@ const present = (o: Outcome, word: string) => o.refused === null && o.texts.toLo
 async function main() {
   registerAllConsumers();
   setDocumentProvidersForTest(null);
+  // The gate's own text key (staff text is kept, so the stored text is checked too), and a recording provider.
+  process.env.AI_TEXT_KEY_VERSION = "1";
+  process.env.AI_TEXT_KEY_1 = randomBytes(32).toString("base64");
+  const mock = getRecordAnswerProvider({});
+  setRecordAnswerProviderForTest({ id: "mock", async answerFromRecord(req, permit) { sent.push(req); return mock.answerFromRecord(req, permit); } });
   const dP = await staffOf(PUNE, "DOCTOR");
   const nP = await staffOf(PUNE, "NURSE");
   const dN = await staffOf(NOIDA, "DOCTOR");

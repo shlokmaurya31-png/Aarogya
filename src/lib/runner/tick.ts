@@ -6,6 +6,7 @@ import { purgeClosedPersons } from "@/lib/person/closure";
 import { resumeStalledDocumentSteps } from "@/lib/documents/pipeline";
 import { purgeRetiredEmbeddings, runReembedTick } from "@/lib/rag/reembed";
 import { purgeLapsedAiIndexes } from "@/lib/rag/indexer";
+import { purgeExpiredAiInteractions } from "@/lib/rag/interactions";
 import { sweepConsentLapses } from "@/lib/person/consentLapse";
 import { registerAllConsumers } from "./consumers";
 
@@ -22,7 +23,8 @@ import { registerAllConsumers } from "./consumers";
  *   7. one re-embed batch per embedding space being built, and the purge of
  *      retired spaces' embeddings after their grace period (Week 4b);
  *   8. consents decided before an 18th birthday lapse; the AI index of a
- *      lapsed AI consent goes after its 90-day window (Week 4b).
+ *      lapsed AI consent goes after its 90-day window; retained AI text past
+ *      its expiry is cleared and AI metadata past a year deleted (Week 4b).
  * Safe to run concurrently with itself: every claim is SKIP LOCKED + token
  * guarded and every consumer is idempotent.
  */
@@ -49,6 +51,8 @@ export interface RunTickResult {
   embeddings: { embedded: number; purged: number };
   /** Week 4b: consents lapsed at 18; AI index documents removed after a lapse window. */
   consents: { lapsed: number; aiIndexPurged: number };
+  /** Week 4b: retained AI text cleared at expiry; AI interaction metadata deleted after a year. */
+  aiInteractions: { textPurged: number; deleted: number };
   durationMs: number;
   /** True when a batch limit was hit, i.e. there may be more work now. */
   moreWork: boolean;
@@ -79,6 +83,7 @@ export async function runTick(opts: RunTickOptions = {}): Promise<RunTickResult>
   const consents = Date.now() - started < budgetMs
     ? { lapsed: (await sweepConsentLapses({ now: opts.now })).lapsed, aiIndexPurged: (await purgeLapsedAiIndexes({ now: opts.now })).purged }
     : { lapsed: 0, aiIndexPurged: 0 };
+  const aiInteractions = Date.now() - started < budgetMs ? await purgeExpiredAiInteractions({ now: opts.now }) : { textPurged: 0, deleted: 0 };
 
   return {
     consumers,
@@ -90,6 +95,7 @@ export async function runTick(opts: RunTickOptions = {}): Promise<RunTickResult>
     documents,
     embeddings,
     consents,
+    aiInteractions,
     durationMs: Date.now() - started,
     moreWork: events.claimed >= eventBatchSize || workflows.timersFired >= workflowBatchSize || workflows.instancesRun >= workflowBatchSize || mar.missed >= marBatchSize,
   };
