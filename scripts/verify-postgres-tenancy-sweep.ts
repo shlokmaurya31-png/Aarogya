@@ -362,6 +362,9 @@ const SEGMENT_MODELS: Record<string, string> = {
   "patient-link-requests/[id]": "PatientLinkRequest",
   "person-links/[id]": "PersonPatientLink",
   "person-documents/[id]": "PersonDocument",
+  // Week 4c: person-scoped; staff reach them only as requester or recipient.
+  "access-requests/[id]": "AccessRequest",
+  "shares/[id]": "RecordShare",
 };
 
 type SegmentTarget = { kind: "record"; model: string } | { kind: "static"; values: string[] } | { kind: "unmapped" };

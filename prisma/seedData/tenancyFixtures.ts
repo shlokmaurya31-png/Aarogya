@@ -48,6 +48,9 @@ const INERT: Record<string, Record<string, unknown>> = {
   WorkflowTimer: { status: "COMPLETED" },
   DomainEventOutbox: { status: "PROCESSED" },
   DomainEventDelivery: { status: "PROCESSED" },
+  // Week 4c: a share and a request name at least one category (CHECK); ended, so nothing reads through them.
+  RecordShare: { categories: ["LABS"], status: "ENDED" },
+  AccessRequest: { categories: ["LABS"], status: "CANCELLED" },
 };
 
 const FILL_OPTIONAL: Record<string, string[]> = {
