@@ -17,12 +17,25 @@ export type TextLayerVerdict = "USABLE" | "EMPTY" | "GARBAGE";
 
 /** How text taken from a PDF's own text layer is recorded on ExtractedText. */
 export const TEXT_LAYER_PROVIDER = "pdf-text-layer";
-export const TEXT_LAYER_MODEL = "pdfjs-dist@6.4.299";
+export const TEXT_LAYER_MODEL = "pdfjs-dist@5.6.205";
 export const TEXT_LAYER_CONFIDENCE = 0.99;
 
 type PdfJs = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
 let lib: Promise<PdfJs> | null = null;
-const pdfjs = () => (lib ??= import("pdfjs-dist/legacy/build/pdf.mjs"));
+/**
+ * pdf.js draws with the global Path2D / DOMMatrix / ImageData; in Node those
+ * must be @napi-rs/canvas's own, or its context rejects the paths. They are
+ * installed once, before pdf.js loads.
+ */
+async function loadPdfJs(): Promise<PdfJs> {
+  const napi = await import("@napi-rs/canvas");
+  const g = globalThis as Record<string, unknown>;
+  g.Path2D = napi.Path2D;
+  g.DOMMatrix ??= napi.DOMMatrix;
+  g.ImageData ??= napi.ImageData;
+  return import("pdfjs-dist/legacy/build/pdf.mjs");
+}
+const pdfjs = () => (lib ??= loadPdfJs());
 const STANDARD_FONTS = path.join(process.cwd(), "node_modules", "pdfjs-dist", "standard_fonts") + path.sep;
 
 async function open(bytes: Buffer) {

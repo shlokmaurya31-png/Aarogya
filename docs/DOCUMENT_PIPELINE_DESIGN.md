@@ -568,7 +568,7 @@ What the code does where it differs from, or adds to, the sections above. Each i
 
 ### 15.4 Week 4c: scanned and mixed PDFs (2026-10-19)
 
-- **Each PDF page's own text layer is read first** (`src/lib/documents/pdfPages.ts`, pdf.js `pdfjs-dist`, Apache-2.0; pinned). Items are grouped into lines by baseline, ordered top to bottom and left to right, and given normalized boxes; abutting runs are joined without a space. The micro sign, which pdf.js returns as Greek mu, is put back where it prefixes a unit (µL, µg), so values copy exactly.
+- **Each PDF page's own text layer is read first** (`src/lib/documents/pdfPages.ts`, pdf.js `pdfjs-dist` 5.6.205, Apache-2.0; pinned (6.x needs Node 22.13+; CI and the runtime are Node 20)). Items are grouped into lines by baseline, ordered top to bottom and left to right, and given normalized boxes; abutting runs are joined without a space. The micro sign, which pdf.js returns as Greek mu, is put back where it prefixes a unit (µL, µg), so values copy exactly.
 - **The verdict on a page's layer:**
   - `USABLE`: the layer is the page's text. It's stored as `ExtractedText` with provider `pdf-text-layer`, confidence 0.99, not handwritten. No provider sees the page.
   - `EMPTY`: fewer than 20 letters or digits (a scan, perhaps with a stray page number).
