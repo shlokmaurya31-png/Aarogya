@@ -4,6 +4,8 @@ import { BadRequestError, ConflictError, NotFoundError } from "@/lib/auth/rbac";
 import { sendEmail } from "@/lib/email/send";
 import { getStorageAdapter } from "@/lib/storage";
 import { emitDomainEvent } from "@/lib/events/emit";
+import { endShareTx } from "@/lib/sharing/shares";
+import { declinePendingRequestsTx } from "@/lib/sharing/requests";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 import { requireOwnedPerson } from "./access";
 import { withdrawAllergyBridges } from "@/lib/documents/merge";
@@ -49,6 +51,9 @@ export async function closePersonAccount(userId: string, confirm: string) {
     const r = await tx.person.updateMany({ where: { id: personId, status: "ACTIVE" }, data: { status: "CLOSED", closedAt: now, purgeAfter, version: { increment: 1 } } });
     if (r.count !== 1) throw new ConflictError("This account changed concurrently. Refresh and try again.");
     await tx.personAccessLogEntry.create({ data: { personId, kind: "ACCOUNT_CLOSED", actorUserId: userId, detail: { purgeAfter: purgeAfter.toISOString() } } });
+    // Week 4c: closing ends every share the person gave and declines what is waiting; reopening doesn't bring them back.
+    for (const s of await tx.recordShare.findMany({ where: { personId, status: { in: ["PENDING", "ACTIVE"] } }, select: { id: true } })) await endShareTx(tx, s.id, "REVOKED", "PERSON_CLOSED", userId);
+    await declinePendingRequestsTx(tx, personId, userId);
     await emitDomainEvent(tx, { type: "PersonAccountClosed", aggregateId: personId, personId, actorUserId: userId, payload: { personId, purgeAfter: purgeAfter.toISOString() } });
   });
   await recordAuditEvent("person.account.closed", userId, { personId, purgeAfter: purgeAfter.toISOString() });
@@ -136,6 +141,9 @@ export async function purgeClosedPersons(opts: { now?: Date; batchSize?: number 
       await tx.personContact.deleteMany({ where: { personId } });
       await tx.personIdentifier.deleteMany({ where: { personId } });
       await tx.personConsent.deleteMany({ where: { personId } });
+      // Week 4c: the person's shares and the requests about them.
+      await tx.accessRequest.deleteMany({ where: { personId } });
+      await tx.recordShare.deleteMany({ where: { personId } });
       await tx.personAccessLogEntry.deleteMany({ where: { personId } });
       await tx.personAccount.updateMany({ where: { personId, endedAt: null }, data: { endedAt: now } });
       await tx.person.update({ where: { id: personId }, data: { purgedAt: now, displayName: "Closed account", dateOfBirth: null, dobPrecision: null, sex: null, version: { increment: 1 } } });

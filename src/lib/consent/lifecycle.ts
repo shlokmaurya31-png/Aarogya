@@ -11,7 +11,7 @@ import {
 } from "@/lib/hospital/interoperability/shared";
 import { decideConsent } from "./evaluate";
 import { parseEnum } from "@/lib/enumValue";
-import { $Enums } from "@prisma/client";
+import { $Enums, type Prisma } from "@prisma/client";
 
 /**
  * Phase C1 — consent lifecycle (D2: the single consent model, src/lib/consent).
@@ -174,42 +174,47 @@ export async function grantConsent(input: {
 export async function revokeConsent(input: {
   facilityId: string; consentId: string; reason?: string; revokedByStaffId?: string; byUserId: string;
 }) {
-  return prisma.$transaction(async (tx) => {
-    const consent = await tx.interopConsent.findUnique({ where: { id: input.consentId } });
-    if (!consent || consent.facilityId !== input.facilityId) throw new NotFoundError("Consent not found.");
-    if (!isTransitionAllowed(CONSENT_TRANSITIONS, consent.status, "REVOKED")) {
-      throw new BadRequestError(`A consent in ${consent.status} cannot be revoked.`);
-    }
-    if (input.revokedByStaffId) await assertStaffInFacility(tx, input.revokedByStaffId, input.facilityId);
+  return prisma.$transaction((tx) => revokeConsentTx(tx, input));
+}
 
-    const r = await tx.interopConsent.updateMany({
-      where: { id: consent.id, status: consent.status, version: consent.version },
-      data: {
-        status: "REVOKED", revokedAt: new Date(), revokedReason: input.reason,
-        revokedByStaffId: input.revokedByStaffId, version: { increment: 1 },
-      },
-    });
-    if (r.count !== 1) throw new ConsentConcurrencyError();
+/** revokeConsent inside the caller's transaction (Week 4c: revoke-all revokes every patient-granted consent in one). */
+export async function revokeConsentTx(tx: Prisma.TransactionClient, input: {
+  facilityId: string; consentId: string; reason?: string; revokedByStaffId?: string; byUserId: string;
+}) {
+  const consent = await tx.interopConsent.findUnique({ where: { id: input.consentId } });
+  if (!consent || consent.facilityId !== input.facilityId) throw new NotFoundError("Consent not found.");
+  if (!isTransitionAllowed(CONSENT_TRANSITIONS, consent.status, "REVOKED")) {
+    throw new BadRequestError(`A consent in ${consent.status} cannot be revoked.`);
+  }
+  if (input.revokedByStaffId) await assertStaffInFacility(tx, input.revokedByStaffId, input.facilityId);
 
-    await tx.auditEvent.create({
-      data: {
-        type: "hospital.interop.consentRevoked",
-        userId: input.byUserId,
-        detail: { consentId: consent.id, reason: input.reason ?? null },
-        facilityId: consent.facilityId,
-        patientId: consent.patientId,
-      },
-    });
-    await emitDomainEvent(tx, {
-      type: "ConsentRevoked",
-      aggregateId: consent.id,
-      organizationId: await facilityOrganizationId(tx, consent.facilityId),
-      facilityId: consent.facilityId,
-      actorUserId: input.byUserId,
-      payload: { consentId: consent.id, patientId: consent.patientId },
-    });
-    return tx.interopConsent.findUniqueOrThrow({ where: { id: consent.id }, include: { scopes: true } });
+  const r = await tx.interopConsent.updateMany({
+    where: { id: consent.id, status: consent.status, version: consent.version },
+    data: {
+      status: "REVOKED", revokedAt: new Date(), revokedReason: input.reason,
+      revokedByStaffId: input.revokedByStaffId, version: { increment: 1 },
+    },
   });
+  if (r.count !== 1) throw new ConsentConcurrencyError();
+
+  await tx.auditEvent.create({
+    data: {
+      type: "hospital.interop.consentRevoked",
+      userId: input.byUserId,
+      detail: { consentId: consent.id, reason: input.reason ?? null },
+      facilityId: consent.facilityId,
+      patientId: consent.patientId,
+    },
+  });
+  await emitDomainEvent(tx, {
+    type: "ConsentRevoked",
+    aggregateId: consent.id,
+    organizationId: await facilityOrganizationId(tx, consent.facilityId),
+    facilityId: consent.facilityId,
+    actorUserId: input.byUserId,
+    payload: { consentId: consent.id, patientId: consent.patientId },
+  });
+  return tx.interopConsent.findUniqueOrThrow({ where: { id: consent.id }, include: { scopes: true } });
 }
 
 /** Decline or cancel a pending request; both are terminal. */

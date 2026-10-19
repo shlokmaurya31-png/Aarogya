@@ -323,9 +323,60 @@ Each step lands with its gate.
 11. **Consult-view refreshes don't log;** opening it does.
 12. **No placeholder for withheld items:** absent, not "hidden".
 
-## 13. As built
+## 13. As built (Week 4c, 2026-10-19)
 
-Written after the build (§13 is filled by the Week 4c build commit).
+**Code:**
+- `src/lib/sharing/` holds the library:
+  - `categories.ts` (the one mapping);
+  - `shares.ts` (life of a share and the expiry sweep);
+  - `resolve.ts` (`resolveShare`, the one place a share becomes a scope);
+  - `history.ts` (`shareHistory`);
+  - `view.ts`;
+  - `requests.ts`;
+  - `revokeAll.ts`;
+  - `accessLog.ts`.
+- Migration `20261023110000_record_sharing` is additive, with CHECKs for at least one category and a forward period, and a partial unique index for one open request per requester and person.
+- Five events, v1, PERSON scope, SENSITIVE.
+- Two runner sweeps: share expiry and request expiry.
+
+**Routes:**
+- **Patient:**
+  - `POST /api/patient/access-session` (now with the share choice);
+  - `/api/patient/person/shares` and `/shares/[id]/end`;
+  - `/access-requests` and `/access-requests/[id]/decide`;
+  - `/access-log`;
+  - `/revoke-all`.
+- **Staff:**
+  - `/api/hospital/access-requests` (+ `/[id]/cancel`);
+  - `/api/hospital/shares/[id]`;
+  - the consult view `/api/hospital/patient-access/[id]` now scoped.
+
+**Screens:**
+- the patient's share page (choices, requests, shares, access log, revoke all);
+- the doctor's consult view (only shared sections, with the AI panel);
+- "Records from other hospitals" on the chart;
+- the shared-record page for an approved request.
+
+**Gates:**
+- `verify-postgres-record-sharing` (27);
+- `verify-postgres-access-requests` (33);
+- `verify-postgres-sensitive-categories` (16);
+- `verify-postgres-revoke-all` (18);
+- `verify-postgres-rag-leaks` section 13 (16 new checks, each with its control);
+- core journey (3 new checks).
+
+**Departures from the text above:**
+1. **Staff download of a person's document through a share is not wired.** The shared view lists the uploads' titles and their confirmed entries, but the staff download route still needs the care relationship and "share uploads" choice (§8 table). Recorded in the pre-launch checklist.
+2. **The request notification is sent inline** (an email from `requestAccess`, after the commit) rather than through a `task-generator` consumer. It says only that a request is waiting.
+3. **Codes issued before 4c read the default code scope in the consult view too.** That is narrower than what they showed before: no notes, diagnoses, vitals or encounters, and no sensitive items. `getSessionHistory` (the whole record) is removed.
+4. **Allergies, the safety minimum, are not limited by a share's period.** They are current state. Sensitive ones are still filtered.
+5. **The unredeemed code window stays 30 minutes.** A share's validity (1–24 hours, default 24) bounds the visit, and extensions never pass it.
+
+**Also changed:**
+- **Live facts in retrieval:** allergies are now sensitivity-filtered on every path, a no-op where every category is allowed. A share's period also limits live medicines.
+- **Closing an account** ends the person's live shares (`PERSON_CLOSED`) and declines waiting requests. The purge deletes shares and requests.
+- **A person merge** carries shares and requests over.
+- **Two tx-level helpers were extracted** so revoke-all runs in one transaction: `recordPersonConsentTx` and `revokeConsentTx`.
 
 ## 14. Open questions
 

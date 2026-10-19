@@ -2,56 +2,25 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  ShieldCheck, Loader2, LogOut, AlertTriangle, Pill, FlaskConical, Activity,
-  ClipboardList, Stethoscope, TriangleAlert, CheckCircle2, Clock, KeyRound,
-} from "lucide-react";
+import { ShieldCheck, Loader2, LogOut, AlertTriangle, CheckCircle2, Clock, KeyRound } from "lucide-react";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { ageLabel } from "@/lib/patient/age";
 import { ChartAi } from "@/components/ai/ChartAi";
+import { SharedRecordSections, type SharedRecordData } from "./SharedRecordSections";
 
 // Mirror of the server windows (src/lib/patient/accessSession.ts).
 const WARN_THRESHOLD_MS = 1000 * 60 * 3;
 
-interface HistoryData {
+/** Week 4c: the shared record (only what the patient's code shares) and the session. */
+interface HistoryData extends SharedRecordData {
   session: { id: string; status: string; redeemedAt: string | null; doctorName: string | null; activeExpiresAt: string | null; extensionCount?: number };
-  patient: {
-    id: string; fullName: string; uhid: string; sex: string; dob: string | null; dobPrecision?: string; bloodGroup: string | null;
-    allergies: { id: string; substance?: string; reaction?: string | null; severity?: string | null }[];
-    problems: { id: string; description?: string; name?: string; status?: string | null }[];
-    diagnoses: { id: string; description?: string; code?: string | null; createdAt: string }[];
-    encounters: {
-      id: string; type: string; status: string; chiefComplaint: string | null; registeredAt: string;
-      department: { name: string } | null;
-      attendingStaff: { user: { displayName: string } | null } | null;
-    }[];
-    medicationOrders: { id: string; drugName: string; dose: string; status: string; createdAt: string }[];
-  };
-  vitals: { id: string; recordedAt: string; spo2: number | null; heartRate?: number | null; temperature?: number | null }[];
-  labResults: {
-    id: string; resultedAt: string; value?: string | null; valueText?: string | null; flag?: string | null;
-    catalogTest?: { name: string } | null;
-    labOrder?: { catalogTest?: { name: string } | null } | null;
-  }[];
+  patient: { id: string; fullName: string; uhid: string; sex: string; dob: string | null; dobPrecision?: string; bloodGroup: string | null };
 }
 
 function fmt(iso: string | null | undefined) {
   if (!iso) return "—";
   return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-}
-
-function Section({ icon, title, count, children }: { icon: React.ReactNode; title: string; count?: number; children: React.ReactNode }) {
-  return (
-    <div className="rounded-2xl border border-hairline bg-card p-4">
-      <div className="mb-2.5 flex items-center gap-2">
-        <span className="text-brand [&>svg]:size-[15px]">{icon}</span>
-        <p className="text-[13px] font-semibold">{title}</p>
-        {typeof count === "number" && <span className="text-[11px] text-text-tertiary">({count})</span>}
-      </div>
-      {children}
-    </div>
-  );
 }
 
 export function ConsultSession({ sessionId }: { sessionId: string }) {
@@ -181,7 +150,7 @@ export function ConsultSession({ sessionId }: { sessionId: string }) {
           <div>
             <p className="text-[14px] font-semibold">{p.fullName} · <span className="font-normal text-text-secondary">{p.uhid}</span></p>
             <p className="text-[12px] text-text-tertiary">
-              {p.sex}{p.dob ? `, ${ageLabel(p)}y` : ""}{p.bloodGroup ? ` · ${p.bloodGroup}` : ""} · Access granted by patient code · opened {fmt(data.session.redeemedAt)}
+              {p.sex}{p.dob ? `, ${ageLabel(p)}y` : ""}{p.bloodGroup ? ` · ${p.bloodGroup}` : ""} · Shared by the patient&apos;s code · opened {fmt(data.session.redeemedAt)}
             </p>
           </div>
         </div>
@@ -218,84 +187,7 @@ export function ConsultSession({ sessionId }: { sessionId: string }) {
       {/* The AI over what this code shares (visit brief, chart Q&A); the server checks the share on every request. */}
       {data.session.status === "ACTIVE" && <ChartAi patientId={p.id} shareId={data.session.id} title="Visit brief from the shared record (cited, advisory)" />}
 
-      <div className="grid gap-4 md:grid-cols-2">
-        {/* Allergies — safety first */}
-        <Section icon={<TriangleAlert />} title="Allergies" count={p.allergies.length}>
-          {p.allergies.length ? (
-            <ul className="space-y-1 text-[12.5px]">
-              {p.allergies.map((a) => (
-                <li key={a.id} className="text-danger">
-                  {a.substance ?? "Allergen"}{a.reaction ? ` — ${a.reaction}` : ""}{a.severity ? ` (${a.severity})` : ""}
-                </li>
-              ))}
-            </ul>
-          ) : <p className="text-[12.5px] text-text-tertiary">No known allergies recorded.</p>}
-        </Section>
-
-        {/* Problems */}
-        <Section icon={<ClipboardList />} title="Problems" count={p.problems.length}>
-          {p.problems.length ? (
-            <ul className="space-y-1 text-[12.5px] text-text-secondary">
-              {p.problems.map((pr) => <li key={pr.id}>{pr.description ?? pr.name}{pr.status ? ` · ${pr.status}` : ""}</li>)}
-            </ul>
-          ) : <p className="text-[12.5px] text-text-tertiary">None recorded.</p>}
-        </Section>
-
-        {/* Medications */}
-        <Section icon={<Pill />} title="Medications" count={p.medicationOrders.length}>
-          {p.medicationOrders.length ? (
-            <ul className="space-y-1 text-[12.5px] text-text-secondary">
-              {p.medicationOrders.slice(0, 12).map((m) => <li key={m.id}>{m.drugName} {m.dose} <span className="text-text-tertiary">· {m.status}</span></li>)}
-            </ul>
-          ) : <p className="text-[12.5px] text-text-tertiary">No medication orders.</p>}
-        </Section>
-
-        {/* Recent labs */}
-        <Section icon={<FlaskConical />} title="Recent labs" count={data.labResults.length}>
-          {data.labResults.length ? (
-            <ul className="space-y-1 text-[12.5px] text-text-secondary">
-              {data.labResults.slice(0, 12).map((l) => (
-                <li key={l.id} className={l.flag && l.flag !== "NORMAL" ? "text-amber" : ""}>
-                  {(l.catalogTest?.name ?? l.labOrder?.catalogTest?.name ?? "Test")}: {l.value ?? l.valueText ?? "—"}{l.flag && l.flag !== "NORMAL" ? ` (${l.flag})` : ""}
-                </li>
-              ))}
-            </ul>
-          ) : <p className="text-[12.5px] text-text-tertiary">No results on file.</p>}
-        </Section>
-      </div>
-
-      {/* Encounters timeline */}
-      <Section icon={<Stethoscope />} title="Encounter history" count={p.encounters.length}>
-        {p.encounters.length ? (
-          <ul className="space-y-2">
-            {p.encounters.map((e) => (
-              <li key={e.id} className="flex items-start gap-2 border-b border-hairline pb-2 last:border-0 last:pb-0">
-                <Activity size={13} className="mt-0.5 shrink-0 text-brand" />
-                <div className="text-[12.5px]">
-                  <p className="font-medium">{e.type} · <span className="font-normal text-text-secondary">{e.status}</span></p>
-                  <p className="text-text-tertiary">
-                    {fmt(e.registeredAt)}{e.department ? ` · ${e.department.name}` : ""}{e.attendingStaff?.user ? ` · ${e.attendingStaff.user.displayName}` : ""}
-                    {e.chiefComplaint ? ` — ${e.chiefComplaint}` : ""}
-                  </p>
-                </div>
-              </li>
-            ))}
-          </ul>
-        ) : <p className="text-[12.5px] text-text-tertiary">No encounters recorded.</p>}
-      </Section>
-
-      {/* Vitals */}
-      <Section icon={<Activity />} title="Recent vitals" count={data.vitals.length}>
-        {data.vitals.length ? (
-          <div className="flex flex-wrap gap-2 text-[12px]">
-            {data.vitals.slice(0, 8).map((v) => (
-              <span key={v.id} className="rounded-lg border border-hairline bg-fill-subtle px-2.5 py-1 text-text-secondary">
-                {fmt(v.recordedAt)}{v.spo2 != null ? ` · SpO₂ ${v.spo2}%` : ""}
-              </span>
-            ))}
-          </div>
-        ) : <p className="text-[12.5px] text-text-tertiary">No vitals recorded.</p>}
-      </Section>
+      <SharedRecordSections data={data} />
     </div>
   );
 }

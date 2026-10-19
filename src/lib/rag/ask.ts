@@ -4,6 +4,7 @@ import { getRecordAnswerProvider, RecordAiUnavailableError, type AnswerSentence,
 import { identifierSpans, personIdentifiers } from "@/lib/documents/identifiers";
 import { EmbeddingUnavailableError } from "@/lib/ai/embeddings";
 import { AiAccessError, resolveAiAccess, type AiAccess, type AiActor } from "./access";
+import { logRecordAccess } from "@/lib/sharing/accessLog";
 import { ADVISORY_LABEL, MODES, type AiMode } from "./modes";
 import { phrase } from "./phrases";
 import { retrieve, type LiveFact, type RetrievedChunk } from "./retrieve";
@@ -166,6 +167,16 @@ async function run(actor: AiActor, req: AskRequest, hooks: AskHooks, started: nu
   if (req.mode === "CHART_QA" && !req.question) throw new AskError(400, "QUESTION_REQUIRED");
   if (req.mode === "EXPLAIN_REPORT" && !req.documentId) throw new AskError(400, "DOCUMENT_REQUIRED");
   if (req.question && req.mode !== "CHART_QA" && req.mode !== "EXPLAIN_REPORT") throw new AskError(400, "QUESTION_NOT_ALLOWED");
+  // Week 4c: a staff request that reaches the person's data (a share, or their uploads through the treating hospital) is in their access log.
+  if (actor.kind === "STAFF") {
+    const personId = access.share?.personId ?? (access.scope.segments.some((g) => g.personId) ? access.subject.personId : null);
+    if (personId) {
+      await logRecordAccess({
+        personId, actorUserId: actor.userId, facilityId: actor.facilityId, surface: "AI_ASK", shareId: access.shareId ?? null, categories: access.share?.categories,
+        via: access.share?.via ?? (access.path === "ORG_CONSENT" ? "ORG_CONSENT" : "TREATING"),
+      });
+    }
+  }
   const language = req.language && /^[a-z]{2}$/.test(req.language) ? req.language : spec.audience === "PATIENT" ? (await preferredLanguage(access)) : "en";
   const space = await prisma.ragEmbeddingSpace.findFirstOrThrow({ where: { status: "ACTIVE" } });
   const interactionId = randomUUID();

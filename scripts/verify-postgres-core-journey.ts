@@ -60,7 +60,10 @@ import { generateAndStoreDocument } from "../src/lib/documents/service";
 import { draftInvoiceForAccount, addChargeToInvoice, issueInvoice, draftSupplementaryInvoice } from "../src/lib/hospital/billing/invoices";
 import { createCharge } from "../src/lib/hospital/billing/chargeCapture";
 import { linkAccountForGate } from "./lib/personFixture";
-import { askAi } from "../src/lib/rag/ask";
+import { askAi, AskError } from "../src/lib/rag/ask";
+import { issueAccessCode, redeemAccessCode } from "../src/lib/patient/accessSession";
+import { parseShareChoice } from "../src/lib/sharing/categories";
+import { revokeAllAccess } from "../src/lib/sharing/revokeAll";
 import { decidePersonConsent } from "../src/lib/person/consent";
 import { staffPersonDocuments, withdrawPersonDocument } from "../src/lib/person/documents";
 import { fixtureById, fixturePdf } from "../src/lib/documents/fixtures";
@@ -434,6 +437,25 @@ async function main() {
     askResult.outcome === "ANSWERED" && askResult.sentences.some((x) => x.text.includes("2.1") && x.labels.includes("verified")) && askResult.citations.some((c) => c.sourceType === "LAB_RESULT" && c.sourceId === a.resultId)
       && askRow?.outcome === "ANSWERED" && askRow.patientId === a.patientId && (await prisma.domainEventOutbox.count()) === eventsBeforeAsk,
     askResult.outcome);
+
+  // Week 4c: the patient shares labs only with a visiting doctor by code; the visit brief cites only labs
+  // (and allergies); the access is in the person's log; revoke-all, and the share reads nothing.
+  {
+    const owner = (await prisma.personAccount.findFirstOrThrow({ where: { personId: a.journeyPersonId, role: "OWNER" } })).userId;
+    const visiting = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { department: { facilityId: otherFacility }, user: { role: "DOCTOR" } }, select: { id: true, userId: true } });
+    const issued = await issueAccessCode(a.patientId, owner, "core journey", { choice: parseShareChoice({ categories: ["LABS"] }) });
+    const visit = await redeemAccessCode({ code: issued.code, doctorUserId: visiting.userId, doctorStaffId: visiting.id, doctorName: "Visiting doctor", facilityId: otherFacility });
+    const visitingActor = { kind: "STAFF" as const, userId: visiting.userId, role: "DOCTOR" as const, facilityId: otherFacility };
+    const brief = await askAi(visitingActor, { mode: "VISIT_BRIEF", patientId: a.patientId, shareId: visit!.id });
+    report("Week 4c: a LABS-only code: the visiting doctor's visit brief cites the troponin, and only lab results and allergies",
+      brief.outcome === "ANSWERED" && brief.citations.some((c) => c.sourceId === a.resultId) && brief.citations.every((c) => c.sourceType === "LAB_RESULT" || c.sourceType === "ALLERGY"),
+      brief.citations.map((c) => c.sourceType).join(","));
+    report("Week 4c: …the person's access log shows that doctor, by their code, on the AI",
+      (await prisma.personAccessLogEntry.count({ where: { personId: a.journeyPersonId, kind: "RECORD_ACCESSED", actorUserId: visiting.userId, AND: [{ detail: { path: ["via"], equals: "SHARE_CODE" } }, { detail: { path: ["surface"], equals: "AI_ASK" } }] } })) === 1);
+    await revokeAllAccess(owner, "REVOKE");
+    const after = await askAi(visitingActor, { mode: "VISIT_BRIEF", patientId: a.patientId, shareId: visit!.id }).then(() => "answered", (e) => (e instanceof AskError ? String(e.status) : "error"));
+    report("Week 4c: …after revoke-all, the share reads nothing (404)", after === "404", after);
+  }
 
   // 8c reorder, 9c waste, 15 identity (events not correlated by the encounter).
   const reorder = side.filter((e) => e.eventType === "StockBelowReorder");

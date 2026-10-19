@@ -733,3 +733,17 @@ What the code does where it differs from, or adds to, the sections above. Each i
   - **The patient portal:** "Explain" on every released report and upload (`/patient/reports`), the health timeline and questions for the next visit (`/patient/records`), in the patient's language (eleven to choose from).
 - **Proxy switcher:** not built — proxies are refused until households (5b) add `USE_AI`.
 - **Tests:** the stream parser (unit), every mode over HTTP and through the service (`verify-postgres-ai-ask`), and the core journey now asks the AI about its patient (answered, the critical troponin cited as verified, logged, no event, nothing written). The screens were checked by the type checker, lint and the production build, not by a browser run.
+
+### 16.10 Week 4c: the SHARE path uses the share's scope (2026-10-19)
+
+The 4b stand-in is replaced. The SHARE path now resolves the share through `src/lib/sharing/resolve.ts` (a code session or an approved request; docs/CONSENT_SHARING_DESIGN.md §8):
+- **categories:** the share's, with ALLERGIES;
+- **sensitive opt-ins:** the share's;
+- **period:** the share's, intersected with the request's;
+- **uploads:** a PERSON segment (patient-provided origin) only with UPLOADS.
+
+**Live facts follow the share:** medicines only with PRESCRIPTIONS and within the period; patient-provided allergies only with UPLOADS. Sensitive allergies are filtered on every path.
+
+**The person's access log:** a staff request that reaches the person's data writes a `RECORD_ACCESSED` entry (`surface: AI_ASK`) with the way in.
+
+**Leak gate:** section 13 (real codes; one canary per limit, each with a control).

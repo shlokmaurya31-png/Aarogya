@@ -157,6 +157,7 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/rag/backfill.ts#backfillFacility": { category: "BOOKKEEPING", reason: "the backfill's resumable cursor; it emits no events by design (docs/RAG_DESIGN.md §5.7)" },
   "src/lib/rag/interactions.ts#purgeProxyAiText": { category: "CONSUMER_OUTPUT", reason: "retained AI text of a family member whose access was revoked (FamilyAccessRevoked already emitted)" },
   "src/lib/rag/interactions.ts#logInteraction": { category: "BOOKKEEPING", reason: "the AI interaction log (metadata and encrypted text), BOOKKEEPING by design (docs/RAG_DESIGN.md §3.3); no record changes" },
+  "src/lib/sharing/accessLog.ts#logRecordAccess": { category: "BOOKKEEPING", reason: "a read of the person's record in their access log (docs/CONSENT_SHARING_DESIGN.md §7.1): part of the read, no record changes" },
   "src/lib/rag/interactions.ts#logRateLimited": { category: "BOOKKEEPING", reason: "metadata of a refused AI request (outcome RATE_LIMITED), part of the interaction log" },
   "src/lib/rag/interactions.ts#purgeExpiredAiInteractions": { category: "BOOKKEEPING", reason: "retention sweep of the AI interaction log (text at expiry, metadata after a year)" },
   "src/lib/rag/interactions.ts#readInteractionText": { category: "BOOKKEEPING", reason: "access log and audit of a reviewer's read of retained AI text; no state change" },

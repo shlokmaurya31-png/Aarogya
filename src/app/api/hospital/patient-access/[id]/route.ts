@@ -2,7 +2,8 @@ import { NextRequest } from "next/server";
 import { withApiErrors, NotFoundError } from "@/lib/auth/rbac";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { prisma } from "@/lib/db";
-import { getSessionHistory, enforceActiveExpiry } from "@/lib/patient/accessSession";
+import { enforceActiveExpiry } from "@/lib/patient/accessSession";
+import { viewSharedRecord } from "@/lib/sharing/view";
 
 /** A 410 Gone — the session existed but its consent window has lapsed. */
 class SessionExpiredError extends Error {
@@ -13,13 +14,14 @@ class SessionExpiredError extends Error {
 }
 
 /**
- * GET — the full patient history for an ACTIVE access session. Access is gated
- * by the session (the patient's code IS the consent) and by the session
- * belonging to THIS clinician — not by facility scoping.
+ * GET — the shared record for an ACTIVE access session (Week 4c): only what the
+ * patient's code shares (docs/CONSENT_SHARING_DESIGN.md §8), for the clinician
+ * who redeemed it, while the consult is open. The first opening is written to
+ * the person's access log.
  */
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return withApiErrors(async () => {
-    const { session } = await requireFacilityStaff("clinical:chart:read");
+    const { session, facilityId } = await requireFacilityStaff("clinical:chart:read");
     const { id } = await params;
 
     const found = await prisma.patientAccessSession.findUnique({ where: { id } });
@@ -31,8 +33,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     const accessSession = await enforceActiveExpiry(found);
     if (accessSession.status !== "ACTIVE") throw new SessionExpiredError();
 
-    const history = await getSessionHistory(accessSession.patientId);
-    if (!history) throw new NotFoundError("Patient not found.");
+    const { history } = await viewSharedRecord({ userId: session.userId, facilityId, role: session.role }, accessSession.id, "CONSULT_VIEW");
 
     return {
       session: {

@@ -9272,6 +9272,10 @@ model PatientAccessSession {
   endedAt         DateTime?
   endedBy         String? // "DOCTOR" | "PATIENT" | "SYSTEM"
 
+  /// Week 4c: the share this code carries (categories, period, sensitive opt-ins); null for codes issued before 4c.
+  shareId String?      @unique
+  share   RecordShare? @relation(fields: [shareId], references: [id])
+
   version   Int      @default(1)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -10334,6 +10338,12 @@ enum PersonAccessLogKind {
   LINK_SUPERSEDED
   ACCOUNT_CLOSED
   ACCOUNT_REOPENED
+  /// Week 4c: consent sharing.
+  SHARE_CREATED
+  SHARE_ENDED
+  ACCESS_REQUESTED
+  ACCESS_REQUEST_DECIDED
+  ACCESS_REVOKED_ALL
 }
 
 model Person {
@@ -10367,6 +10377,9 @@ model Person {
   mergeRecordsAsSource  PersonMergeRecord[]  @relation("PersonMergeRecordSource")
 
   personDocuments PersonDocument[]
+  /// Week 4c: shares the person gave and access requests about them (docs/CONSENT_SHARING_DESIGN.md).
+  recordShares    RecordShare[]
+  accessRequests  AccessRequest[]
 
   /// Account closure: CLOSED at closedAt; patient-provided data is deleted at
   /// purgeAfter (30 days later) unless reopened first; purgedAt once done.
@@ -11253,4 +11266,115 @@ model RagBackfillCursor {
   updatedAt    DateTime      @updatedAt
 
   @@id([facilityId, sourceType])
+}
+
+// ── Week 4c: consent sharing (docs/CONSENT_SHARING_DESIGN.md) ───────────────
+
+enum RecordShareKind {
+  CODE
+  REQUEST
+}
+
+enum RecordShareStatus {
+  PENDING
+  ACTIVE
+  ENDED
+  EXPIRED
+  REVOKED
+}
+
+enum ShareCategory {
+  PRESCRIPTIONS
+  LABS
+  IMAGING
+  DISCHARGE_SUMMARIES
+  UPLOADS
+}
+
+enum SharePurpose {
+  CONSULTATION
+  SECOND_OPINION
+  FOLLOW_UP
+  REFERRAL
+  OTHER
+}
+
+enum ShareEndReason {
+  VISIT_ENDED
+  EXPIRED
+  PATIENT_ENDED
+  REVOKE_ALL
+  PERSON_CLOSED
+}
+
+enum AccessRequesterKind {
+  DOCTOR
+  FACILITY
+}
+
+enum AccessRequestStatus {
+  REQUESTED
+  APPROVED
+  DECLINED
+  CANCELLED
+  EXPIRED
+}
+
+/// The person's permission for one recipient to read part of their record (§2-§3.1).
+model RecordShare {
+  id                  String                 @id @default(cuid())
+  person              Person                 @relation(fields: [personId], references: [id])
+  personId            String
+  kind                RecordShareKind
+  status              RecordShareStatus      @default(PENDING)
+  purpose             SharePurpose
+  categories          ShareCategory[]
+  sensitiveCategories RagSensitiveCategory[] @default([])
+  recordedFrom        DateTime?
+  recordedTo          DateTime?
+  /// The facility records covered: a snapshot of the person's ACTIVE links when the share was made.
+  patientIds          String[]
+  recipientUserId     String?
+  recipientFacilityId String?
+  accessRequestId     String?                @unique
+  expiresAt           DateTime
+  createdByUserId     String
+  createdAt           DateTime               @default(now())
+  activatedAt         DateTime?
+  endedAt             DateTime?
+  endedReason         ShareEndReason?
+  version             Int                    @default(1)
+  session             PatientAccessSession?
+
+  @@index([personId, status])
+  @@index([recipientUserId, status])
+  @@index([recipientFacilityId, status])
+  @@index([status, expiresAt])
+}
+
+/// A doctor's or facility's request for access, decided by the person (§5).
+model AccessRequest {
+  id                  String              @id @default(cuid())
+  person              Person              @relation(fields: [personId], references: [id])
+  personId            String
+  /// The requester's own facility record of this person.
+  patientId           String
+  requesterKind       AccessRequesterKind
+  requesterUserId     String
+  requesterFacilityId String
+  purpose             SharePurpose
+  categories          ShareCategory[]
+  recordedFrom        DateTime?
+  recordedTo          DateTime?
+  reason              String?
+  status              AccessRequestStatus @default(REQUESTED)
+  expiresAt           DateTime
+  decidedAt           DateTime?
+  decidedByUserId     String?
+  createdAt           DateTime            @default(now())
+  version             Int                 @default(1)
+
+  @@index([personId, status])
+  @@index([requesterFacilityId, status])
+  @@index([status, expiresAt])
 }

@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { KeyRound, ShieldCheck, Loader2, Copy, Check, X, Stethoscope } from "lucide-react";
+import { ShareChoices, choiceBody, type ShareChoiceValue } from "@/components/patient-portal/ShareChoices";
+import { SharingCenter } from "@/components/patient-portal/SharingCenter";
 
 interface LiveSession {
   id: string;
@@ -18,6 +20,11 @@ export default function PatientSharePage() {
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [copied, setCopied] = useState(false);
+  // Week 4c: what the code shares (default: the four record categories, nothing sensitive, 24 hours).
+  const [choice, setChoice] = useState<ShareChoiceValue>({ categories: ["PRESCRIPTIONS", "LABS", "IMAGING", "DISCHARGE_SUMMARIES"], sensitiveCategories: [], from: "", to: "" });
+  const [hours, setHours] = useState(24);
+  const [error, setError] = useState<string | null>(null);
+  const [centerKey, setCenterKey] = useState(0);
 
   const refresh = useCallback(
     () =>
@@ -48,12 +55,14 @@ export default function PatientSharePage() {
   async function generate() {
     setWorking(true);
     try {
-      const res = await fetch("/api/patient/access-session", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      setError(null);
+      const res = await fetch("/api/patient/access-session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...choiceBody(choice), validHours: hours }) });
       const data = await res.json();
       if (res.ok) {
         setCode(data.displayCode ?? data.code ?? null);
         await refresh();
-      }
+        setCenterKey((k) => k + 1);
+      } else setError(data.error ?? "The code couldn't be made. Try again.");
     } finally {
       setWorking(false);
     }
@@ -87,9 +96,9 @@ export default function PatientSharePage() {
         <h1 className="text-[20px] font-semibold tracking-tight">Share with a doctor</h1>
       </div>
       <p className="text-[13px] leading-relaxed text-text-secondary">
-        Generate a one-time code and read it out to your doctor. While it&apos;s active they can view your
-        full history. You&apos;ll see when they open your record, and you can end access any time — it also
-        ends automatically when the doctor finishes.
+        Choose what to share, then generate a one-time code and read it out to your doctor. They see only
+        what you chose, for this visit. You&apos;ll see when they open your record, and you can end access any
+        time — it also ends automatically when the visit ends.
       </p>
 
       {loading ? (
@@ -103,9 +112,16 @@ export default function PatientSharePage() {
           <p className="mt-1 text-[12.5px] text-text-secondary">
             Generate a code when you&apos;re with your doctor.
           </p>
+          <div className="mt-4"><ShareChoices value={choice} onChange={setChoice} /></div>
+          <label className="mt-3 flex items-center justify-center gap-2 text-[12.5px]">Valid for
+            <select value={hours} onChange={(e) => setHours(Number(e.target.value))} aria-label="Valid for" className="rounded-md border border-hairline bg-transparent px-2 py-1">
+              {[1, 4, 8, 24].map((h) => <option key={h} value={h}>{h} hour{h > 1 ? "s" : ""}</option>)}
+            </select>
+          </label>
+          {error && <p className="mt-2 text-[12px] text-amber">{error}</p>}
           <button
             onClick={generate}
-            disabled={working}
+            disabled={working || choice.categories.length === 0}
             className="mt-4 inline-flex items-center gap-2 rounded-full bg-accent px-5 py-2.5 text-[13px] font-medium text-on-accent transition hover:bg-accent-strong disabled:opacity-60"
           >
             {working ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
@@ -150,6 +166,7 @@ export default function PatientSharePage() {
           </button>
         </div>
       )}
+      <SharingCenter reloadKey={centerKey} />
     </div>
   );
 }

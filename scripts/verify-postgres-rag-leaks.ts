@@ -20,6 +20,13 @@
  *   6  a sensitive category not opted in      only its scopes)
  *      (HIV)                              12  an unconfirmed extracted fact
  *
+ * 13 (Week 4c, docs/CONSENT_SHARING_DESIGN.md §10) — real visit codes,
+ *    issued with a share and redeemed: a category outside the share (a note,
+ *    never shareable; a live medicine without PRESCRIPTIONS), an entry outside
+ *    the share's own period, uploads without UPLOADS, a sensitive category not
+ *    opted in, a share the patient ended, another doctor holding the code's
+ *    id; each with its positive control (a share that admits it).
+ *
  * Every allowed request also goes through POST /api/ai/ask's service
  * (askAi, the mock model, which echoes its sources): the canary must be in
  * none of the prompt's sources, the answer, the citations, the interaction's
@@ -46,6 +53,9 @@ import { scopeSql } from "../src/lib/rag/search";
 import type { AiMode } from "../src/lib/rag/modes";
 import { randomBytes } from "node:crypto";
 import { askAi } from "../src/lib/rag/ask";
+import { issueAccessCode, redeemAccessCode } from "../src/lib/patient/accessSession";
+import { parseShareChoice } from "../src/lib/sharing/categories";
+import { endOwnShare } from "../src/lib/sharing/shares";
 import { decryptText } from "../src/lib/rag/textCrypto";
 import { getRecordAnswerProvider, setRecordAnswerProviderForTest, type AnswerRequest } from "../src/lib/ai/record";
 
@@ -104,10 +114,10 @@ async function note(p: { encounterId: string | null; patientId: string; facility
   return (await createNote({ encounterId, authorStaffId: author.id, authorRole: "DOCTOR", type: "PROGRESS", content: { subjective: text }, sign: true, byUserId: author.userId })).id;
 }
 
-async function lab(p: { encounterId: string | null; patientId: string; facilityId: string }, testName: string, value: string) {
+async function lab(p: { encounterId: string | null; patientId: string; facilityId: string }, testName: string, value: string, resultedAt = new Date()) {
   const author = await staffOf(p.facilityId, "DOCTOR");
   const order = await prisma.labOrder.create({ data: { encounterId: p.encounterId!, patientId: p.patientId, testName, category: "Serology", orderedByStaffId: author.id } });
-  const r = await prisma.labResult.create({ data: { labOrderId: order.id, value, status: "VERIFIED", resultedAt: new Date() } });
+  const r = await prisma.labResult.create({ data: { labOrderId: order.id, value, status: "VERIFIED", resultedAt } });
   await prisma.$transaction((tx) => emitFacilityEvent(tx, { type: "LabResultReleased", aggregateId: r.id, facilityId: p.facilityId, payload: { resultId: r.id, orderId: order.id, patientId: p.patientId } }));
 }
 
@@ -181,7 +191,8 @@ async function main() {
   await note(W, `Withdrawn patient ${canary("withdrawn")}.`);
   // 4, 6, 7. A patient who shares a visit code; an upload and an HIV result behind the share's limits.
   const S = await person({ encounter: "OPEN" });
-  await note(S, `Shared patient visible${tag}.`);
+  // The control is a lab result: notes aren't a shareable category (Week 4c), and a code's default share is the four record categories.
+  await lab(S, "Haemoglobin", `11.9 visible${tag}`);
   await lab(S, "HIV 1/2 antibody", `Non-reactive ${canary("hiv")}`);
   await uploadPersonDocument(S.userId, { bytes: await fixturePdf(fixtureById("lab-en-cbc")!), contentType: "application/pdf", originalName: "u.pdf", title: `Upload ${canary("shareupload")}`, type: "REPORT" });
   await decidePersonConsent({ userId: S.userId, purpose: "SHARE_UPLOADS_WITH_TREATING", decision: "GRANTED" });
@@ -277,6 +288,44 @@ async function main() {
   await bulkReview(P.userId, { decisions: facts.map((f) => ({ factId: f.id, version: f.version, decision: "CONFIRM" })) });
   await drain();
   report("12 (control: once confirmed, they are)", present(await ask({ kind: "PATIENT", userId: P.userId }, { patientId: P.patientId }, "creatinine"), "1.42"));
+
+  // 13. Week 4c: shares with categories, a period and sensitive opt-ins, through real codes.
+  const C = await person({ encounter: "OPEN" });
+  await decidePersonConsent({ userId: C.userId, purpose: "SHARE_UPLOADS_WITH_TREATING", decision: "GRANTED" });
+  await lab(C, "Haemoglobin", `12.1 ${canary("c4lab")}`);
+  await lab(C, "Serum creatinine", `0.9 ${canary("c4old")}`, new Date("2020-03-03T09:00:00Z"));
+  await lab(C, "HIV 1/2 antibody", `Non-reactive ${canary("c4hiv")}`);
+  await note(C, `Consult note ${canary("c4note")}.`);
+  const cDoc = await staffOf(PUNE, "DOCTOR");
+  await prisma.medicationOrder.create({ data: { encounterId: C.encounterId!, patientId: C.patientId, drugName: `Drug${canary("c4rx")}`, dose: "1 tab", route: "ORAL", frequency: "OD", orderedByStaffId: cDoc.id, status: "ACTIVE" } });
+  await uploadPersonDocument(C.userId, { bytes: await fixturePdf(fixtureById("lab-en-cbc")!), contentType: "application/pdf", originalName: "c.pdf", title: `Upload ${canary("c4up")}`, type: "REPORT" });
+  await drain();
+  const code = async (choice: Parameters<typeof parseShareChoice>[0]) => {
+    const issued = await issueAccessCode(C.patientId, C.userId, "leak gate", { choice: parseShareChoice(choice) });
+    const s = await redeemAccessCode({ code: issued.code, doctorUserId: dP.userId, doctorStaffId: dP.id, doctorName: "Leak doctor", facilityId: PUNE });
+    if (!s) throw new Error("redeem");
+    return s;
+  };
+  const viaCode = (sessionId: string, word: string) => ask(dP.actor, { patientId: C.patientId, shareId: sessionId }, word);
+  const a13 = await code({ categories: ["LABS"] });
+  report("13 A LABS-only code: the lab result is there (control)", present(await viaCode(a13.id, canary("c4lab")), canary("c4lab")));
+  report("13 …a note never comes through a share", await absent(await viaCode(a13.id, canary("c4note")), canary("c4note")));
+  report("13 (control: the treating path, without a share, finds the note)", present(await ask(dP.actor, { patientId: C.patientId }, canary("c4note")), canary("c4note")));
+  report("13 …nor an active medicine without PRESCRIPTIONS (live facts follow the categories)", await absent(await viaCode(a13.id, canary("c4rx")), canary("c4rx")));
+  report("13 …nor the patient's upload without UPLOADS", await absent(await viaCode(a13.id, canary("c4up")), canary("c4up")));
+  report("13 …nor the HIV result without its opt-in", await absent(await viaCode(a13.id, canary("c4hiv")), canary("c4hiv")));
+  report("13 …and with no period, the 2020 result is there (control for the period)", present(await viaCode(a13.id, canary("c4old")), canary("c4old")));
+  const b13 = await code({ categories: ["LABS", "PRESCRIPTIONS", "UPLOADS"], period: { from: "2026-01-01" } });
+  report("13 A share from 2026 on: the 2020 result never comes back", await absent(await viaCode(b13.id, canary("c4old")), canary("c4old")));
+  report("13 …with PRESCRIPTIONS the active medicine does (control)", present(await viaCode(b13.id, canary("c4rx")), canary("c4rx")));
+  report("13 …with UPLOADS the upload does (control)", present(await viaCode(b13.id, canary("c4up")), canary("c4up")));
+  report("13 …and still not the HIV result", await absent(await viaCode(b13.id, canary("c4hiv")), canary("c4hiv")));
+  const c13 = await code({ categories: ["LABS"], sensitiveCategories: ["HIV"] });
+  report("13 With the HIV opt-in, the HIV result is there (control)", present(await viaCode(c13.id, canary("c4hiv")), canary("c4hiv")));
+  report("13 Another doctor holding the code's id: 404", (await ask(dN.actor, { patientId: C.patientId, shareId: c13.id }, canary("c4lab"))).refused === "404 NOT_FOUND");
+  report("13 The first code, superseded when the next was issued: 404", (await viaCode(a13.id, canary("c4lab"))).refused === "404 NOT_FOUND");
+  await endOwnShare(C.userId, c13.shareId!);
+  report("13 Once the patient ends the share: 404, at once", (await viaCode(c13.id, canary("c4lab"))).refused === "404 NOT_FOUND");
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();

@@ -73,6 +73,10 @@ export type AuditEventType =
   | "person.consent.decided"
   | "person.document.uploaded"
   | "person.document.accessed"
+  // Week 4c — consent sharing.
+  | "person.access.requested"
+  | "person.access.requestApproved"
+  | "person.access.revokedAll"
   | "person.account.closed"
   | "person.account.reopened"
   | "person.account.purged"

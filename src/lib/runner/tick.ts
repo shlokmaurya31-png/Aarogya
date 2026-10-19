@@ -8,6 +8,8 @@ import { purgeRetiredEmbeddings, runReembedTick } from "@/lib/rag/reembed";
 import { purgeLapsedAiIndexes } from "@/lib/rag/indexer";
 import { purgeExpiredAiInteractions } from "@/lib/rag/interactions";
 import { sweepConsentLapses } from "@/lib/person/consentLapse";
+import { sweepShareExpiry } from "@/lib/sharing/shares";
+import { sweepAccessRequestExpiry } from "@/lib/sharing/requests";
 import { registerAllConsumers } from "./consumers";
 
 /**
@@ -24,7 +26,9 @@ import { registerAllConsumers } from "./consumers";
  *      retired spaces' embeddings after their grace period (Week 4b);
  *   8. consents decided before an 18th birthday lapse; the AI index of a
  *      lapsed AI consent goes after its 90-day window; retained AI text past
- *      its expiry is cleared and AI metadata past a year deleted (Week 4b).
+ *      its expiry is cleared and AI metadata past a year deleted (Week 4b);
+ *   9. shares past their validity expire, and undecided access requests
+ *      past their 7 days (Week 4c).
  * Safe to run concurrently with itself: every claim is SKIP LOCKED + token
  * guarded and every consumer is idempotent.
  */
@@ -53,6 +57,8 @@ export interface RunTickResult {
   consents: { lapsed: number; aiIndexPurged: number };
   /** Week 4b: retained AI text cleared at expiry; AI interaction metadata deleted after a year. */
   aiInteractions: { textPurged: number; deleted: number };
+  /** Week 4c: shares and access requests that expired. */
+  sharing: { sharesExpired: number; requestsExpired: number };
   durationMs: number;
   /** True when a batch limit was hit, i.e. there may be more work now. */
   moreWork: boolean;
@@ -84,6 +90,9 @@ export async function runTick(opts: RunTickOptions = {}): Promise<RunTickResult>
     ? { lapsed: (await sweepConsentLapses({ now: opts.now })).lapsed, aiIndexPurged: (await purgeLapsedAiIndexes({ now: opts.now })).purged }
     : { lapsed: 0, aiIndexPurged: 0 };
   const aiInteractions = Date.now() - started < budgetMs ? await purgeExpiredAiInteractions({ now: opts.now }) : { textPurged: 0, deleted: 0 };
+  const sharing = Date.now() - started < budgetMs
+    ? { sharesExpired: (await sweepShareExpiry({ now: opts.now })).expired, requestsExpired: (await sweepAccessRequestExpiry({ now: opts.now })).expired }
+    : { sharesExpired: 0, requestsExpired: 0 };
 
   return {
     consumers,
@@ -96,6 +105,7 @@ export async function runTick(opts: RunTickOptions = {}): Promise<RunTickResult>
     embeddings,
     consents,
     aiInteractions,
+    sharing,
     durationMs: Date.now() - started,
     moreWork: events.claimed >= eventBatchSize || workflows.timersFired >= workflowBatchSize || workflows.instancesRun >= workflowBatchSize || mar.missed >= marBatchSize,
   };

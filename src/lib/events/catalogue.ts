@@ -35,6 +35,13 @@ const icuDeviceStatus = z.enum(["PLANNED", "ACTIVE", "REMOVED", "DISCONTINUED"])
 const icuInfusionStatus = z.enum(["RUNNING", "PAUSED", "STOPPED"]);
 const delegationScope = z.enum(["APPOINTMENTS", "RECORDS", "REPORTS", "PRESCRIPTIONS", "MEDICATIONS", "BILLING", "INSURANCE", "CONSENT"]);
 const accessSessionStatus = z.enum(["PENDING", "ACTIVE", "ENDED", "EXPIRED", "CANCELLED"]);
+const shareKind = z.enum(["CODE", "REQUEST"]);
+const shareStatus = z.enum(["PENDING", "ACTIVE", "ENDED", "EXPIRED", "REVOKED"]);
+const shareCategory = z.enum(["PRESCRIPTIONS", "LABS", "IMAGING", "DISCHARGE_SUMMARIES", "UPLOADS"]);
+const sharePurpose = z.enum(["CONSULTATION", "SECOND_OPINION", "FOLLOW_UP", "REFERRAL", "OTHER"]);
+const shareEndReason = z.enum(["VISIT_ENDED", "EXPIRED", "PATIENT_ENDED", "REVOKE_ALL", "PERSON_CLOSED"]);
+const accessRequestStatus = z.enum(["REQUESTED", "APPROVED", "DECLINED", "CANCELLED", "EXPIRED"]);
+const sensitiveCategory = z.enum(["MENTAL_HEALTH", "SEXUAL_HEALTH", "HIV", "SUBSTANCE_USE", "REPRODUCTIVE_HEALTH"]);
 const resuscitationStatus = z.enum(["ACTIVATED", "ACTIVE", "STABILIZED", "HANDED_OVER", "DISPOSITION_PENDING", "CLOSED"]);
 const surgeryStatus = z.enum(["REQUESTED", "REVIEWED", "APPROVED", "SCHEDULED", "IN_PROGRESS", "COMPLETED", "CANCELLED"]);
 const recoveryStatus = z.enum(["PENDING", "IN_RECOVERY", "READY_FOR_TRANSFER", "TRANSFERRED"]);
@@ -1386,6 +1393,39 @@ export const EVENT_CONTRACTS: EventContract[] = [
     type: "PersonConsentDecided", version: 1, aggregateType: "PERSON", scope: "PERSON",
     sensitivity: "SENSITIVE", producer: "person identity (decidePersonConsent: the person's own choice, e.g. sharing uploads with treating hospitals)",
     payload: z.object({ personId: id, consentId: id, purpose: z.enum(["SHARE_UPLOADS_WITH_TREATING"]), decision: z.enum(["GRANTED", "DECLINED"]), previous: z.enum(["NONE", "GRANTED", "DECLINED"]) }).strict(),
+  }),
+  // Week 4c — consent sharing (docs/CONSENT_SHARING_DESIGN.md §9).
+  contract({
+    type: "RecordShareCreated", version: 1, aggregateType: "RECORD_SHARE", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "consent sharing (a code issued with a share; an access request approved)",
+    payload: z.object({
+      shareId: id, personId: id, kind: shareKind, status: shareStatus, purpose: sharePurpose, categories: z.array(shareCategory).min(1),
+      sensitiveCategories: z.array(sensitiveCategory), hasPeriod: z.boolean(), expiresAt: iso,
+    }).strict(),
+  }),
+  contract({
+    type: "RecordShareStatusChanged", version: 1, aggregateType: "RECORD_SHARE", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "consent sharing (redeemed, the visit ended, expired, ended by the person, revoke-all, account closed)",
+    payload: z.object({ shareId: id, personId: id, from: shareStatus, to: shareStatus, endedReason: shareEndReason.optional() }).strict(),
+  }),
+  contract({
+    type: "AccessRequested", version: 1, aggregateType: "ACCESS_REQUEST", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "consent sharing (requestAccess: a doctor or facility asks the person)",
+    payload: z.object({
+      requestId: id, personId: id, requesterKind: z.enum(["DOCTOR", "FACILITY"]), requesterFacilityId: id, purpose: sharePurpose, categories: z.array(shareCategory).min(1),
+    }).strict(),
+  }),
+  contract({
+    type: "AccessRequestStatusChanged", version: 1, aggregateType: "ACCESS_REQUEST", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "consent sharing (approved or declined by the person, cancelled by the requester, expired, revoke-all)",
+    payload: z.object({ requestId: id, personId: id, from: accessRequestStatus, to: accessRequestStatus, shareId: optId }).strict(),
+  }),
+  contract({
+    type: "PersonAccessRevokedAll", version: 1, aggregateType: "PERSON", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "consent sharing (revokeAllAccess: the person's one-tap revoke)",
+    payload: z.object({
+      personId: id, sharesEnded: z.number().int().min(0), requestsDeclined: z.number().int().min(0), consentsRevoked: z.number().int().min(0), uploadsSharingDeclined: z.boolean(),
+    }).strict(),
   }),
   contract({
     // Week 4b: a choice decided before the person turned 18 lapsed to "needs your confirmation" (decision 10).
