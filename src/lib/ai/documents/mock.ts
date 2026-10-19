@@ -66,7 +66,10 @@ export const mockOcr: VisionOcrProvider = {
       mockControl.ocrTransientFailures -= 1;
       throw new DocumentProviderError("PROVIDER_UNAVAILABLE");
     }
-    const marker = page.contentType === "application/pdf" ? await fixtureMarker(page.bytes) : mockControl.imagePages.get(createHash("sha256").update(page.bytes).digest("hex")) ?? null;
+    // A rasterized PDF page is read through the marker on the PDF it was rendered from.
+    const marker = page.contentType === "application/pdf" ? await fixtureMarker(page.bytes)
+      : page.sourcePdf ? await fixtureMarker(page.sourcePdf)
+      : mockControl.imagePages.get(createHash("sha256").update(page.bytes).digest("hex")) ?? null;
     const [id, n] = marker?.split("#") ?? [];
     const f = id ? fixtureById(id) : undefined;
     const lines = f ? ocrLines(f, Number(n)) : [];

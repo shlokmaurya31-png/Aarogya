@@ -9,6 +9,7 @@ import { medicineDictionary } from "@/lib/medicines/reference";
 import { claimStep, createRun, finishStep, moveRun, MAX_STEP_ATTEMPTS, STALE_CLAIM_MS, TERMINAL_RUN } from "./pipelineState";
 import { MAX_PAGES, splitPdf, stripProtected, translateText } from "./steps";
 import { normalizePageImage, type Normalization } from "./normalize";
+import { pdfTextLayer, rasterizePdfPage, TEXT_LAYER_CONFIDENCE, TEXT_LAYER_MODEL, TEXT_LAYER_PROVIDER, type TextLayerVerdict } from "./pdfPages";
 import { detectLanguage, isSupportedLanguage } from "./language";
 import { bandOf, LOW_THRESHOLD } from "./confidence";
 import { identifierSpans, personIdentifiers } from "./identifiers";
@@ -168,12 +169,29 @@ async function releasingOnCrash(processingId: string, step: DocumentStepKind, fn
 
 // ── Step 1: page split ─────────────────────────────────────────────────────
 
-interface PreparedPage { bytes: Buffer; contentType: string; normalization?: Normalization }
+interface PreparedPage {
+  bytes: Buffer; contentType: string; normalization?: Normalization;
+  /** PDF pages: the text-layer verdict, and the normalized raster when the layer isn't usable. */
+  textLayer?: TextLayerVerdict; raster?: { bytes: Buffer; contentType: string };
+}
 
-/** A PDF: one single-page PDF per page (not rasterized; there is no PDF renderer). */
+/**
+ * A PDF: one single-page PDF per page. Each page's embedded text layer is
+ * checked; a page whose layer is empty (a scan) or garbage is rendered with
+ * pdf.js and normalized like a photo, and that image is what OCR reads.
+ */
 async function pdfPages(bytes: Buffer): Promise<PreparedPage[] | DocumentStepError> {
   const pages = await splitPdf(bytes);
-  return typeof pages === "string" ? pages : pages.map((b) => ({ bytes: b, contentType: "application/pdf" }));
+  if (typeof pages === "string") return pages;
+  const out: PreparedPage[] = [];
+  for (const b of pages) {
+    const layer = await pdfTextLayer(b).catch(() => ({ verdict: "EMPTY" as const }));
+    if (layer.verdict === "USABLE") { out.push({ bytes: b, contentType: "application/pdf", textLayer: "USABLE" }); continue; }
+    const r = await rasterizePdfPage(b);
+    if (typeof r === "string") return r;
+    out.push({ bytes: b, contentType: "application/pdf", textLayer: layer.verdict, normalization: r.normalization, raster: { bytes: r.bytes, contentType: r.contentType } });
+  }
+  return out;
 }
 
 /** A photo or scan: one page, normalized (upright, deskewed, resized, compressed); the upload is only read. */
@@ -198,23 +216,36 @@ async function pageSplitStepInner(processingId: string) {
   const pages = type === "application/pdf" ? await pdfPages(original.bytes) : PAGE_TYPES.includes(type) ? await imagePage(original.bytes) : "UNREADABLE";
   if (typeof pages === "string") return stepError(run, "PAGE_SPLIT", pages as DocumentStepError);
   const have = new Set((await prisma.documentPage.findMany({ where: { processingId }, select: { pageNo: true } })).map((p) => p.pageNo));
-  const stored: { pageNo: number; storageRef: string; sha256: string; contentType: string; normalization?: Prisma.InputJsonValue }[] = [];
+  const stored: Prisma.DocumentPageCreateManyInput[] = [];
+  const written: string[] = [];
   for (const [i, page] of pages.entries()) {
     if (have.has(i + 1)) continue;
     const ext = page.contentType === "application/pdf" ? "pdf" : page.contentType.split("/")[1];
     const s = await storage.put({ bucket: "patient-uploads", bytes: page.bytes, contentType: page.contentType, originalName: `page-${i + 1}.${ext}`, scope: run.personId });
-    stored.push({ pageNo: i + 1, storageRef: s.storageRef, sha256: s.sha256, contentType: s.contentType, ...(page.normalization ? { normalization: page.normalization as unknown as Prisma.InputJsonValue } : {}) });
+    written.push(s.storageRef);
+    const raster = page.raster ? await storage.put({ bucket: "patient-uploads", bytes: page.raster.bytes, contentType: page.raster.contentType, originalName: `page-${i + 1}-raster.${page.raster.contentType.split("/")[1]}`, scope: run.personId }) : null;
+    if (raster) written.push(raster.storageRef);
+    stored.push({
+      processingId, personId: run.personId, pageNo: i + 1, storageRef: s.storageRef, sha256: s.sha256, contentType: s.contentType,
+      ...(page.normalization ? { normalization: page.normalization as unknown as Prisma.InputJsonValue } : {}),
+      ...(page.textLayer ? { textLayer: page.textLayer } : {}),
+      ...(raster ? { rasterRef: raster.storageRef, rasterSha256: raster.sha256 } : {}),
+    });
   }
   const done = await ifStillRunning(() => prisma.$transaction(async (tx) => {
     await assertRunning(tx, processingId, "PAGE_SPLIT");
-    await tx.documentPage.createMany({ data: stored.map((p) => ({ ...p, processingId, personId: run.personId })), skipDuplicates: true });
+    await tx.documentPage.createMany({ data: stored, skipDuplicates: true });
     await tx.documentProcessing.update({ where: { id: processingId }, data: { pageCount: pages.length } });
-    await finishStep(tx, processingId, "PAGE_SPLIT", { status: "DONE" }, { provider: type === "application/pdf" ? "pdf-lib" : "sharp" });
+    await finishStep(tx, processingId, "PAGE_SPLIT", { status: "DONE" }, { provider: type !== "application/pdf" ? "sharp" : pages.some((p) => p.raster) ? "pdf-lib+pdf.js" : "pdf-lib" });
     await emitDomainEvent(tx, { type: "DocumentPagesPrepared", aggregateId: processingId, personId: run.personId, payload: { processingId, documentId: run.documentId, personId: run.personId, pageCount: pages.length } });
     return true;
   }));
   // Objects written for a step that was no longer ours are removed (never a dangling row).
-  if (!done) for (const p of stored) if (!(await prisma.documentPage.count({ where: { storageRef: p.storageRef } }))) await storage.delete(p.storageRef).catch(() => undefined);
+  if (!done) {
+    for (const ref of written) {
+      if (!(await prisma.documentPage.count({ where: { OR: [{ storageRef: ref }, { rasterRef: ref }] } }))) await storage.delete(ref).catch(() => undefined);
+    }
+  }
 }
 
 // ── Step 2: OCR and language ───────────────────────────────────────────────
@@ -230,24 +261,32 @@ async function ocrStepInner(processingId: string) {
   const { names: dictionary } = await medicineDictionary();
   const pages = await prisma.documentPage.findMany({ where: { processingId }, orderBy: { pageNo: "asc" } });
   const done = new Set((await prisma.extractedText.findMany({ where: { processingId }, select: { pageNo: true } })).map((t) => t.pageNo));
-  let model = "";
   for (const page of pages) {
     if (done.has(page.pageNo)) continue;
     const { bytes } = await storage.get(page.storageRef);
     let r: OcrResult;
-    try {
-      r = await ocr.ocrPage({ bytes, contentType: page.contentType }, {}, permit);
-      if (r.confidence < LOW_THRESHOLD || r.handwritten) {
-        // Low confidence or handwriting: one retry with the retry model; the better result is kept.
-        const second = await ocr.ocrPage({ bytes, contentType: page.contentType }, { retry: true }, permit).catch(() => null);
-        if (second && second.confidence > r.confidence) r = second;
+    let source: string = ocr.id;
+    if (page.textLayer === "USABLE") {
+      // The PDF's own text: no provider sees the page.
+      const { lines } = await pdfTextLayer(bytes);
+      r = { text: lines.map((l) => l.text).join("\n"), layout: lines, language: "und", script: "und", handwritten: false, confidence: TEXT_LAYER_CONFIDENCE, model: TEXT_LAYER_MODEL };
+      source = TEXT_LAYER_PROVIDER;
+    } else {
+      // A rasterized PDF page is read as its image; photos as their normalized page.
+      const input = page.rasterRef ? { bytes: (await storage.get(page.rasterRef)).bytes, contentType: "image/jpeg", sourcePdf: bytes } : { bytes, contentType: page.contentType };
+      try {
+        r = await ocr.ocrPage(input, {}, permit);
+        if (r.confidence < LOW_THRESHOLD || r.handwritten) {
+          // Low confidence or handwriting: one retry with the retry model; the better result is kept.
+          const second = await ocr.ocrPage(input, { retry: true }, permit).catch(() => null);
+          if (second && second.confidence > r.confidence) r = second;
+        }
+      } catch (err) {
+        const code = providerCode(err);
+        if (!code) throw err;
+        return stepError(run, "OCR", code);
       }
-    } catch (err) {
-      const code = providerCode(err);
-      if (!code) throw err;
-      return stepError(run, "OCR", code);
     }
-    model = r.model;
     const detected = detectLanguage(r.layout.map((l) => stripProtected(l.text, dictionary)));
     const layout: Line[] = r.layout.map((l, i) => ({ ...l, language: detected.lines[i] ?? undefined }));
     const ok = await ifStillRunning(() => prisma.$transaction(async (tx) => {
@@ -255,7 +294,7 @@ async function ocrStepInner(processingId: string) {
       await tx.extractedText.create({
         data: {
           processingId, personId: run.personId, pageNo: page.pageNo, text: r.text, layout: layout as unknown as Prisma.InputJsonValue,
-          language: detected.language, script: detected.script, handwritten: r.handwritten, confidence: r.confidence, provider: ocr.id, model: r.model,
+          language: detected.language, script: detected.script, handwritten: r.handwritten, confidence: r.confidence, provider: source, model: r.model,
         },
       });
       return true;
@@ -264,8 +303,10 @@ async function ocrStepInner(processingId: string) {
   }
   await ifStillRunning(() => prisma.$transaction(async (tx) => {
     await assertRunning(tx, processingId, "OCR");
-    const texts = await tx.extractedText.findMany({ where: { processingId }, select: { language: true, handwritten: true, confidence: true, model: true } });
-    await finishStep(tx, processingId, "OCR", { status: "DONE" }, { provider: ocr.id, model: model || texts[0]?.model });
+    const texts = await tx.extractedText.findMany({ where: { processingId }, orderBy: { pageNo: "asc" }, select: { language: true, handwritten: true, confidence: true, model: true, provider: true } });
+    // The step names the OCR provider if any page went to it, else the text layer.
+    const ocrd = texts.find((t) => t.provider !== TEXT_LAYER_PROVIDER);
+    await finishStep(tx, processingId, "OCR", { status: "DONE" }, { provider: ocrd ? ocr.id : TEXT_LAYER_PROVIDER, model: (ocrd ?? texts[0])?.model });
     await emitDomainEvent(tx, {
       type: "DocumentTextExtracted", aggregateId: processingId, personId: run.personId,
       payload: {

@@ -1,5 +1,5 @@
 import type { ExtractedFactType } from "@prisma/client";
-import { PDFDocument, PDFName, PDFString, StandardFonts } from "pdf-lib";
+import { grayscale, PDFDocument, PDFName, PDFString, StandardFonts } from "pdf-lib";
 import { LABELS, LANGUAGE_SCRIPT, type LabelKey, type SupportedLanguage } from "../vocab";
 import type { DocumentType } from "./types";
 import type { DocumentFixture, ExpectedFact, FixtureLine } from "./types";
@@ -142,7 +142,15 @@ export const FIXTURE_PAGE_KEY = "AarogyaFixture";
  * Deterministic bytes (fixed dates). Rendering every script with handwriting
  * fonts and noise is the manual real-provider run's job (scripts/eval-documents.ts).
  */
-export async function fixturePdf(f: DocumentFixture): Promise<Buffer> {
+/**
+ * The fixture as a PDF carrying the CI mock's page marker. By default it is
+ * scan-like: grey bars where the lines are and no text layer, so the
+ * pipeline rasterizes it and sends the image to OCR (the mock reads the
+ * marker). `textLayer: true` writes the Latin lines as real PDF text (a
+ * "digital" report, read without OCR); `garbageTextLayer: true` writes a
+ * layer of replacement and private-use characters (broken font encoding).
+ */
+export async function fixturePdf(f: DocumentFixture, opts: { textLayer?: boolean; garbageTextLayer?: boolean } = {}): Promise<Buffer> {
   const doc = await PDFDocument.create();
   doc.setTitle(`Synthetic ${f.category} ${f.id}`);
   doc.setSubject("aarogya-synthetic-fixture");
@@ -150,14 +158,19 @@ export async function fixturePdf(f: DocumentFixture): Promise<Buffer> {
   doc.setCreator("aarogya fixtures");
   doc.setCreationDate(new Date("2026-01-01T00:00:00Z"));
   doc.setModificationDate(new Date("2026-01-01T00:00:00Z"));
-  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const font = opts.textLayer || opts.garbageTextLayer ? await doc.embedFont(StandardFonts.Helvetica) : null;
   f.pages.forEach((p, i) => {
     const page = doc.addPage([595, 842]);
     page.node.set(PDFName.of(FIXTURE_PAGE_KEY), PDFString.of(`${f.id}#${i + 1}`));
     let y = 800;
-    for (const l of p.lines) {
-      const drawable = /^[\x20-\x7E]*$/.test(l.text) ? l.text : "[non-Latin line]";
-      page.drawText(drawable, { x: 40, y, size: 11, font });
+    for (const [n, l] of p.lines.entries()) {
+      if (opts.textLayer && font) {
+        page.drawText(/^[\x20-\x7E\u00A0-\u00FF]*$/.test(l.text) ? l.text : "[non-Latin line]", { x: 40, y, size: 11, font });
+      } else {
+        page.drawRectangle({ x: 40, y, width: Math.min(500, 6 * l.text.length), height: 8, color: grayscale(0.25) });
+        // What a mis-decoded font encoding extracts as (mojibake); Helvetica can't encode U+FFFD or private-use characters.
+        if (opts.garbageTextLayer && font) page.drawText(`Ã©Ã¨â€™Ã¢ Ã¯Â»Ã© â€œÃ¼${n}`, { x: 40, y: y - 10, size: 4, font });
+      }
       y -= 18;
     }
   });

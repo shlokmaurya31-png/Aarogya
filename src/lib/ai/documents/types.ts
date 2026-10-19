@@ -30,7 +30,8 @@ export interface ProcessingPermit { readonly personId: string; readonly purpose:
 
 export interface VisionOcrProvider {
   readonly id: "claude" | "mock";
-  ocrPage(page: { bytes: Buffer; contentType: string }, hints: { languages?: string[]; retry?: boolean }, permit: ProcessingPermit): Promise<OcrResult>;
+  /** `sourcePdf`: for a rasterized PDF page, the single-page PDF it was rendered from (the image is what is read). */
+  ocrPage(page: { bytes: Buffer; contentType: string; sourcePdf?: Buffer }, hints: { languages?: string[]; retry?: boolean }, permit: ProcessingPermit): Promise<OcrResult>;
 }
 export interface TranslationProvider {
   readonly id: "claude" | "mock";

@@ -10797,6 +10797,12 @@ model DocumentProcessingStep {
 }
 
 /// A page of the original, as its own single-page file (the original is never changed).
+enum PdfTextLayer {
+  USABLE
+  EMPTY
+  GARBAGE
+}
+
 model DocumentPage {
   id            String             @id @default(cuid())
   processing    DocumentProcessing @relation(fields: [processingId], references: [id], onDelete: Cascade)
@@ -10806,8 +10812,13 @@ model DocumentPage {
   storageRef    String
   sha256        String
   contentType   String
-  /// What was done to an image page before OCR (src/lib/documents/normalize.ts); null for PDF pages.
+  /// What was done to an image page before OCR (src/lib/documents/normalize.ts); for a PDF page, to its raster (null when its text layer was used).
   normalization Json?
+  /// A PDF page's embedded text layer (src/lib/documents/pdfPages.ts); null for image pages and pages split before the check.
+  textLayer     PdfTextLayer?
+  /// The rendered, normalized image of a PDF page whose text layer was empty or garbage — what OCR is sent.
+  rasterRef     String?
+  rasterSha256  String?
 
   @@unique([processingId, pageNo])
   @@index([personId])

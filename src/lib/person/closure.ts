@@ -105,6 +105,8 @@ export async function purgeClosedPersons(opts: { now?: Date; batchSize?: number 
       continue;
     }
     const docs = await prisma.personDocument.findMany({ where: { personId }, select: { id: true, storageRef: true } });
+    // The pipeline's derived objects (page copies, normalized images, PDF rasters) go with them.
+    const pageObjects = (await prisma.documentPage.findMany({ where: { personId }, select: { storageRef: true, rasterRef: true } })).flatMap((p) => (p.rasterRef ? [p.storageRef, p.rasterRef] : [p.storageRef]));
     const legacy = await prisma.clinicalDocument.findMany({ where: { personId }, select: { id: true, storageRef: true } });
     const keepLegacy: string[] = [];
     for (const d of legacy) if (await uploadReferenced(d.id)) keepLegacy.push(d.id);
@@ -144,6 +146,7 @@ export async function purgeClosedPersons(opts: { now?: Date; batchSize?: number 
     });
     // Bytes go after the rows are gone (a failure leaves an orphan object, never a dangling row).
     for (const d of [...docs, ...deleteLegacy]) if (d.storageRef) await storage.delete(d.storageRef).catch(() => undefined);
+    for (const ref of pageObjects) await storage.delete(ref).catch(() => undefined);
     await recordAuditEvent("person.account.purged", null, { personId, documentsDeleted: docs.length + deleteLegacy.length, documentsKept: keepLegacy.length });
     out.purged += 1;
     out.documentsDeleted += docs.length + deleteLegacy.length;
