@@ -18,8 +18,9 @@ type Tx = Prisma.TransactionClient;
  *   LAB_RESULT          same analyte (normalized name) within ±1 day of the
  *                       verified result, with a different value or unit
  *   ALLERGY             the facility marked the same substance ENTERED_IN_ERROR
- *                       or INACTIVE (the schema has no verified "no known
- *                       allergies" record, so that rule has nothing to read yet)
+ *                       or INACTIVE; or the facility's record status is "no
+ *                       known allergies", recorded after the document date (or
+ *                       the entry is undated)
  *   MEDICATION_HISTORY  the same drug in a verified active order overlapping the
  *                       entry's date (or now, when it has none), with a
  *                       different dose or frequency
@@ -40,7 +41,7 @@ const sameNumberOrText = (a: unknown, b: unknown) => {
   return Number.isFinite(x) && Number.isFinite(y) ? x === y : norm(a) === norm(b);
 };
 
-interface Found { verifiedSourceType: "LabResult" | "Allergy" | "MedicationOrder" | "Diagnosis"; verifiedSourceId: string; patientId: string; facilityId: string }
+interface Found { verifiedSourceType: "LabResult" | "Allergy" | "AllergyStatusEntry" | "MedicationOrder" | "Diagnosis"; verifiedSourceId: string; patientId: string; facilityId: string }
 
 async function linkedPatients(tx: Tx, personId: string) {
   return tx.personPatientLink.findMany({ where: { personId, status: "ACTIVE" }, select: { patientId: true, facilityId: true } });
@@ -69,6 +70,11 @@ async function detect(tx: Tx, rec: PatientProvidedRecord): Promise<Found[]> {
   if (rec.kind === "ALLERGY") {
     const rows = await tx.allergy.findMany({ where: { patientId: { in: patientIds }, source: "CLINICIAN", status: { in: ["ENTERED_IN_ERROR", "INACTIVE"] } }, select: { id: true, substance: true, patientId: true } });
     for (const a of rows) if (norm(a.substance) === norm(v.substance)) push("Allergy", a.id, a.patientId);
+    // A verified "no known allergies" (the record's current status) recorded after the document.
+    for (const patientId of patientIds) {
+      const latest = await tx.allergyStatusEntry.findFirst({ where: { patientId }, orderBy: { sequence: "desc" }, select: { id: true, status: true, recordedAt: true } });
+      if (latest?.status === "NO_KNOWN_ALLERGIES" && (!rec.effectiveDate || latest.recordedAt > rec.effectiveDate)) push("AllergyStatusEntry", latest.id, patientId);
+    }
   }
   if (rec.kind === "MEDICATION_HISTORY") {
     const at = rec.effectiveDate ?? new Date();
@@ -133,6 +139,10 @@ async function verifiedSummary(type: string, id: string): Promise<Record<string,
   if (type === "Allergy") {
     const a = await prisma.allergy.findUnique({ where: { id }, select: { substance: true, status: true, recordedAt: true } });
     return a && { substance: a.substance, status: a.status, date: a.recordedAt };
+  }
+  if (type === "AllergyStatusEntry") {
+    const e = await prisma.allergyStatusEntry.findUnique({ where: { id }, select: { status: true, recordedAt: true } });
+    return e && { allergyStatus: e.status, date: e.recordedAt };
   }
   if (type === "MedicationOrder") {
     const o = await prisma.medicationOrder.findUnique({ where: { id }, select: { drugName: true, dose: true, frequency: true, route: true, status: true, orderedAt: true } });

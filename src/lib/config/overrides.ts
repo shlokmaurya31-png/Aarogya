@@ -2,7 +2,7 @@ import { Prisma, $Enums } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { BadRequestError, ConflictError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
-import { type ActorMemberships } from "@/lib/auth/tenantContext";
+import { canAccessFacility, type ActorMemberships } from "@/lib/auth/tenantContext";
 import { resolveKeySpec } from "./registry";
 import { resolveScopeRef, assertCanConfigureScope, assertCanReadScope, type ScopeArgs } from "./authz";
 import { invalidateOrg } from "./cache";
@@ -169,9 +169,13 @@ export async function getHistory(m: ActorMemberships, input: ScopeArgs & { key: 
 /** List all overrides currently defined for an organization (for the admin UI), scoped. */
 export async function listOverrides(m: ActorMemberships, organizationId: string, opts?: { status?: string }) {
   await assertCanReadScope(m, { scope: "ORGANIZATION", organizationId });
-  return prisma.configurationOverride.findMany({
+  const rows = await prisma.configurationOverride.findMany({
     where: { organizationId, ...(opts?.status ? { status: parseEnum($Enums.ConfigurationOverrideStatus, opts.status, "status") } : {}) },
     orderBy: [{ key: "asc" }, { scope: "asc" }, { version: "desc" }],
     take: 1000,
   });
+  // Organization-level values are the organization's; a facility's (or its departments') only for
+  // those who can access that facility (found by the tenancy sweep in Week 4b, when the first
+  // facility-level overrides were seeded: a facility admin saw a sister facility's).
+  return rows.filter((r) => !r.facilityId || canAccessFacility(m, r.facilityId, organizationId));
 }

@@ -460,6 +460,17 @@ export const PERMISSIONS = [
   "configuration:publish",
   "configuration:reset",
   "configuration:operate",
+
+  // Week 4b — the AI assistant over the record (docs/RAG_DESIGN.md §1, §4.3).
+  // `ai:record:ask` opens the staff modes (which mode and which patient are
+  // decided again by role, assignment and access path); the review
+  // permissions are held only by the platform reviewer roles: listing
+  // interaction metadata, and decrypting retained text (every read audited).
+  // `ai:embedding:manage` switches the active embedding space (platform).
+  "ai:record:ask",
+  "ai:interaction:review",
+  "ai:interaction:text:read",
+  "ai:embedding:manage",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -517,6 +528,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "diagnosis:manage",
     "problem:manage",
     "allergy:manage",
+    "ai:record:ask",
     "episode:manage",
     "task:manage",
     "task:view",
@@ -606,6 +618,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "medication:administer",
     "bed:manage",
     "allergy:manage",
+    "ai:record:ask",
     "task:manage",
     "task:view",
     "document:manage",
@@ -1172,7 +1185,11 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "configuration:publish",
     "configuration:reset",
     "configuration:operate",
+    "ai:embedding:manage",
   ],
+  // Week 4b — platform reviewers of retained AI text (decision 7): nothing clinical, no facility.
+  CLINICAL_ADVISOR: ["ai:interaction:review", "ai:interaction:text:read"],
+  SAFETY_OFFICER: ["ai:interaction:review", "ai:interaction:text:read"],
 };
 
 export function roleHasPermission(role: Role, permission: Permission): boolean {

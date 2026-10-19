@@ -1,6 +1,7 @@
 /**
- * Week 4a — the pipeline's label vocabulary for the nine supported languages
- * (docs/DOCUMENT_PIPELINE_DESIGN.md §10.1). Used by the evaluation fixtures
+ * Week 4a — the pipeline's label vocabulary for the supported languages
+ * (docs/DOCUMENT_PIPELINE_DESIGN.md §10.1): the app's eleven (Odia and Urdu
+ * added in Week 4b). Used by the evaluation fixtures
  * (to write synthetic reports), the rule-based mock extractor and translator,
  * and language detection. Labels only: clinical values on Indian reports are
  * printed in English, and the fixtures keep them so.
@@ -8,7 +9,7 @@
  * Pending clinical advisor: the wording of these labels (they are not shown to
  * patients; they describe what synthetic reports say).
  */
-export const SUPPORTED_LANGUAGES = ["en", "hi", "mr", "ta", "bn", "gu", "te", "kn", "ml"] as const;
+export const SUPPORTED_LANGUAGES = ["en", "hi", "mr", "ta", "bn", "gu", "te", "kn", "ml", "or", "ur"] as const;
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 
 export const LABEL_KEYS = ["diagnosis", "allergy", "procedure", "date", "labReport", "prescription", "dischargeSummary", "imagingReport", "impression", "patient", "advice", "adviceText"] as const;
@@ -23,6 +24,8 @@ export const LABELS: Record<SupportedLanguage, Record<LabelKey, string>> = {
   gu: { diagnosis: "નિદાન", allergy: "એલર્જી", procedure: "પ્રક્રિયા", date: "તારીખ", labReport: "લેબોરેટરી રિપોર્ટ", prescription: "પ્રિસ્ક્રિપ્શન", dischargeSummary: "ડિસ્ચાર્જ સારાંશ", imagingReport: "રેડિયોલોજી રિપોર્ટ", impression: "તારણ", patient: "દર્દી", advice: "સલાહ", adviceText: "દવાઓ સમયસર લો અને પુષ્કળ પાણી પીઓ." },
   te: { diagnosis: "రోగ నిర్ధారణ", allergy: "అలెర్జీ", procedure: "ప్రక్రియ", date: "తేదీ", labReport: "ల్యాబ్ నివేదిక", prescription: "ప్రిస్క్రిప్షన్", dischargeSummary: "డిశ్చార్జ్ సారాంశం", imagingReport: "రేడియాలజీ నివేదిక", impression: "ముగింపు", patient: "రోగి", advice: "సలహా", adviceText: "మందులు సమయానికి వేసుకోండి, ఎక్కువ నీరు తాగండి." },
   kn: { diagnosis: "ರೋಗನಿರ್ಣಯ", allergy: "ಅಲರ್ಜಿ", procedure: "ಪ್ರಕ್ರಿಯೆ", date: "ದಿನಾಂಕ", labReport: "ಪ್ರಯೋಗಾಲಯ ವರದಿ", prescription: "ಔಷಧ ಚೀಟಿ", dischargeSummary: "ಡಿಸ್ಚಾರ್ಜ್ ಸಾರಾಂಶ", imagingReport: "ರೇಡಿಯಾಲಜಿ ವರದಿ", impression: "ತೀರ್ಮಾನ", patient: "ರೋಗಿ", advice: "ಸಲಹೆ", adviceText: "ಔಷಧಿಗಳನ್ನು ಸಮಯಕ್ಕೆ ಸರಿಯಾಗಿ ತೆಗೆದುಕೊಳ್ಳಿ ಮತ್ತು ಸಾಕಷ್ಟು ನೀರು ಕುಡಿಯಿರಿ." },
+  or: { diagnosis: "ରୋଗ ନିର୍ଣ୍ଣୟ", allergy: "ଆଲର୍ଜି", procedure: "ଚିକିତ୍ସା ପ୍ରକ୍ରିୟା", date: "ତାରିଖ", labReport: "ପରୀକ୍ଷାଗାର ରିପୋର୍ଟ", prescription: "ବ୍ୟବସ୍ଥାପତ୍ର", dischargeSummary: "ଡିସଚାର୍ଜ ସାରାଂଶ", imagingReport: "ରେଡିଓଲୋଜି ରିପୋର୍ଟ", impression: "ସିଦ୍ଧାନ୍ତ", patient: "ରୋଗୀ", advice: "ପରାମର୍ଶ", adviceText: "ଔଷଧ ସମୟରେ ଖାଆନ୍ତୁ ଏବଂ ପ୍ରଚୁର ପାଣି ପିଅନ୍ତୁ।" },
+  ur: { diagnosis: "تشخیص", allergy: "الرجی", procedure: "طریقۂ علاج", date: "تاریخ", labReport: "لیبارٹری رپورٹ", prescription: "نسخہ", dischargeSummary: "ڈسچارج خلاصہ", imagingReport: "ریڈیالوجی رپورٹ", impression: "نتیجہ", patient: "مریض", advice: "مشورہ", adviceText: "دوائیں وقت پر لیں اور خوب پانی پئیں۔" },
   ml: { diagnosis: "രോഗനിർണയം", allergy: "അലർജി", procedure: "നടപടിക്രമം", date: "തീയതി", labReport: "ലാബ് റിപ്പോർട്ട്", prescription: "കുറിപ്പടി", dischargeSummary: "ഡിസ്ചാർജ് സംഗ്രഹം", imagingReport: "റേഡിയോളജി റിപ്പോർട്ട്", impression: "നിഗമനം", patient: "രോഗി", advice: "നിർദ്ദേശം", adviceText: "മരുന്നുകൾ കൃത്യസമയത്ത് കഴിക്കുക, ധാരാളം വെള്ളം കുടിക്കുക." },
 };
 
@@ -32,7 +35,7 @@ export function labelsFor(key: LabelKey): string[] {
 }
 
 /** Unicode script of each language (ISO 15924). Hindi and Marathi share Devanagari. */
-export const LANGUAGE_SCRIPT: Record<SupportedLanguage, string> = { en: "Latn", hi: "Deva", mr: "Deva", ta: "Taml", bn: "Beng", gu: "Gujr", te: "Telu", kn: "Knda", ml: "Mlym" };
+export const LANGUAGE_SCRIPT: Record<SupportedLanguage, string> = { en: "Latn", hi: "Deva", mr: "Deva", ta: "Taml", bn: "Beng", gu: "Gujr", te: "Telu", kn: "Knda", ml: "Mlym", or: "Orya", ur: "Arab" };
 
 /** Words that tell Marathi from Hindi (both Devanagari). */
 export const DEVANAGARI_STOPWORDS: Record<"hi" | "mr", readonly string[]> = {

@@ -62,6 +62,11 @@ enum Role {
   // preserved by the existing same-actor approval guards (a PROCUREMENT_OFFICER
   // still cannot approve their own submission).
   PROCUREMENT_OFFICER
+  // Week 4b — platform-level reviewers of retained AI text (docs/RAG_DESIGN.md
+  // §4.3, decision 7). No facility, no clinical permissions: they read
+  // retained question/answer text for safety review, every read audited.
+  CLINICAL_ADVISOR
+  SAFETY_OFFICER
 }
 
 model User {
@@ -1078,6 +1083,9 @@ model Facility {
   /// Week 4a: REAL unless the seed marks a demo facility SYNTHETIC. Real data
   /// never reaches an AI provider while the real-data switch is off.
   dataClassification DataClassification @default(REAL)
+
+  allergyStatusEntries AllergyStatusEntry[]
+  ragDocuments         RagDocument[]
 
   @@unique([organizationId, slug])
   @@index([organizationId])
@@ -2167,6 +2175,8 @@ model Patient {
   identifiers               PatientIdentifier[]
   emergencyContacts         PatientEmergencyContact[]
   allergies                 Allergy[]
+  allergyStatusEntries      AllergyStatusEntry[]
+  ragDocuments              RagDocument[]
   problems                  Problem[]
   diagnoses                 Diagnosis[]
   episodesOfCare            EpisodeOfCare[]
@@ -2278,6 +2288,44 @@ model Allergy {
   patientProvidedRecordId String?
 
   @@index([patientId])
+}
+
+/// Week 4b (4a follow-up b): the record-level allergy status, as history.
+/// Append-only: the latest row is the status; no row means UNKNOWN (never
+/// assumed). NO_KNOWN_ALLERGIES is a clinician's assertion and is refused
+/// while an allergy is active; adding an allergy makes it HAS_ALLERGIES;
+/// inactivating the last one makes it UNKNOWN again (absence is never inferred).
+model AllergyStatusEntry {
+  id               String                    @id @default(cuid())
+  patient          Patient                   @relation(fields: [patientId], references: [id])
+  patientId        String
+  facility         Facility                  @relation(fields: [facilityId], references: [id])
+  facilityId       String
+  status           AllergyStatusAssertion
+  previousStatus   AllergyStatusAssertion?
+  reason           AllergyStatusChangeReason
+  recordedByUserId String?
+  recordedAt       DateTime                  @default(now())
+  /// 1, 2, 3… per patient, under a lock on the patient row: the history's order.
+  sequence         Int
+
+  @@unique([patientId, sequence])
+  @@index([facilityId])
+}
+
+enum AllergyStatusAssertion {
+  NO_KNOWN_ALLERGIES
+  UNKNOWN
+  HAS_ALLERGIES
+}
+
+enum AllergyStatusChangeReason {
+  /// A clinician recorded the status.
+  RECORDED
+  /// An allergy was recorded.
+  ALLERGY_ADDED
+  /// The last active allergy was inactivated or entered in error.
+  LAST_ALLERGY_INACTIVATED
 }
 
 /**
@@ -10333,6 +10381,7 @@ model Person {
 
   documentProcessings    DocumentProcessing[]
   patientProvidedRecords PatientProvidedRecord[]
+  ragDocuments           RagDocument[]
 
   @@index([mergedIntoPersonId])
 }
@@ -10462,6 +10511,8 @@ enum PersonConsentDecision {
 enum PersonConsentStatus {
   ACTIVE
   SUPERSEDED
+  /// Week 4b: decided before the person turned 18 (by a guardian, in effect); counts as not granted until they choose again.
+  LAPSED
 }
 
 /// A choice the person makes about their own data (Phase 0: "share my uploads
@@ -10481,7 +10532,8 @@ model PersonConsent {
   createdAt       DateTime              @default(now())
 
   /// AI_TEXT_RETENTION only: SAFETY_REVIEW lets safety reviewers read retained text.
-  scopes String[] @default([])
+  scopes   String[]  @default([])
+  lapsedAt DateTime?
 
   @@index([personId, purpose, status])
 }
@@ -10746,14 +10798,16 @@ model DocumentProcessingStep {
 
 /// A page of the original, as its own single-page file (the original is never changed).
 model DocumentPage {
-  id           String             @id @default(cuid())
-  processing   DocumentProcessing @relation(fields: [processingId], references: [id], onDelete: Cascade)
-  processingId String
-  personId     String
-  pageNo       Int
-  storageRef   String
-  sha256       String
-  contentType  String
+  id            String             @id @default(cuid())
+  processing    DocumentProcessing @relation(fields: [processingId], references: [id], onDelete: Cascade)
+  processingId  String
+  personId      String
+  pageNo        Int
+  storageRef    String
+  sha256        String
+  contentType   String
+  /// What was done to an image page before OCR (src/lib/documents/normalize.ts); null for PDF pages.
+  normalization Json?
 
   @@unique([processingId, pageNo])
   @@index([personId])
@@ -10881,4 +10935,311 @@ model PatientAllergyNotice {
   resolvedByStaffId String?
 
   @@index([facilityId, patientId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Week 4b — the AI index over the record and AI interactions
+// (docs/RAG_DESIGN.md §3). The index is derived data: it can always be
+// rebuilt from the record, deleting from it is a hard delete, and it is
+// written only by the rag-indexer (CONSUMER_OUTPUT). Each row is owned either
+// by a facility record (FACILITY_PATIENT: facilityId and patientId) or by a
+// Person (PERSON: personId, no facility); CHECK constraints in the migration.
+// Every filter column is copied onto the chunk and the embedding, so access
+// is decided in SQL on the row being ranked.
+// ─────────────────────────────────────────────────────────────────────────
+
+enum RagOwnerType {
+  FACILITY_PATIENT
+  PERSON
+}
+
+enum RagSourceType {
+  CLINICAL_NOTE
+  LAB_RESULT
+  IMAGING_REPORT
+  PATIENT_DOCUMENT
+  GENERATED_DOCUMENT
+  CLINICAL_DOCUMENT
+  OBSERVATION
+  DIAGNOSIS
+  ALLERGY
+  ALLERGY_STATUS
+  REFERRAL
+  PROBLEM
+  DISCHARGE_SUMMARY
+  PATIENT_PROVIDED_RECORD
+}
+
+enum RagOrigin {
+  VERIFIED
+  PATIENT_PROVIDED
+}
+
+/// Sharing categories (PRODUCT_SPEC feature B, plus the record's own kinds).
+enum RagCategory {
+  PRESCRIPTIONS
+  LABS
+  IMAGING
+  DISCHARGE_SUMMARIES
+  UPLOADS
+  CLINICAL_NOTES
+  DIAGNOSES
+  ALLERGIES
+  VITALS
+  REFERRALS
+}
+
+/// Placeholder list, pending clinical advisor (docs/RAG_DESIGN.md §3.1, §5.3).
+enum RagSensitiveCategory {
+  MENTAL_HEALTH
+  SEXUAL_HEALTH
+  HIV
+  SUBSTANCE_USE
+  REPRODUCTIVE_HEALTH
+}
+
+enum RagAudience {
+  STAFF_ONLY
+  PATIENT_VISIBLE
+}
+
+enum RagDocumentStatus {
+  ACTIVE
+  SUPERSEDED
+  WITHDRAWN
+}
+
+enum RagWithdrawReason {
+  AMENDED
+  SOURCE_DELETED
+  REJECTED_BY_PATIENT
+  CONSENT_WITHDRAWN
+  ERASURE
+  REINDEX
+}
+
+/// One indexed version of one source record.
+model RagDocument {
+  id                 String                @id @default(cuid())
+  ownerType          RagOwnerType
+  organizationId     String?
+  facility           Facility?             @relation(fields: [facilityId], references: [id])
+  facilityId         String?
+  patient            Patient?              @relation(fields: [patientId], references: [id])
+  patientId          String?
+  person             Person?               @relation(fields: [personId], references: [id])
+  /// PERSON documents: the owner. FACILITY_PATIENT documents: the Person of an ACTIVE link (cleared on unlink).
+  personId           String?
+  encounterId        String?
+  sourceType         RagSourceType
+  sourceId           String
+  sourceVersion      Int
+  origin             RagOrigin
+  originalLanguage   String                @default("en")
+  /// sha-256 of the rendered text: the same hash means nothing to do.
+  contentHash        String
+  /// Every category the access path must allow (a patient-provided lab value is UPLOADS and LABS).
+  categories         RagCategory[]
+  sensitiveCategory  RagSensitiveCategory?
+  audience           RagAudience
+  title              String
+  handwritten        Boolean               @default(false)
+  recordedAt         DateTime
+  status             RagDocumentStatus     @default(ACTIVE)
+  indexedFromEventId String?
+  embeddingModel     String
+  embeddingDim       Int
+  withdrawnAt        DateTime?
+  withdrawnReason    RagWithdrawReason?
+  createdAt          DateTime              @default(now())
+  chunks             RagChunk[]
+
+  @@unique([sourceType, sourceId, sourceVersion])
+  @@index([facilityId, patientId, status])
+  @@index([personId, status])
+}
+
+/// The unit retrieval returns. The filter columns are the document's, copied.
+model RagChunk {
+  id                  String                   @id @default(cuid())
+  document            RagDocument              @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  documentId          String
+  chunkNo             Int
+  ownerType           RagOwnerType
+  facilityId          String?
+  patientId           String?
+  personId            String?
+  categories          RagCategory[]
+  sensitiveCategory   RagSensitiveCategory?
+  origin              RagOrigin
+  audience            RagAudience
+  status              RagDocumentStatus        @default(ACTIVE)
+  sourceType          RagSourceType
+  sourceId            String
+  recordedAt          DateTime
+  handwritten         Boolean                  @default(false)
+  /// The context line the chunk is embedded with, e.g. "[Lab result · CBC · 2026-10-14 · verified]".
+  context             String
+  heading             String?
+  /// The chunk in its original language (PHI).
+  text                String
+  translatedText      String?
+  translationLanguage String?
+  tokenCount          Int
+  /// Generated: to_tsvector('simple', …) over the context, heading, text and any translation (GIN-indexed).
+  tsv                 Unsupported("tsvector")? @default(dbgenerated("to_tsvector('simple'::regconfig, ((((((COALESCE(context, ''::text) || ' '::text) || COALESCE(heading, ''::text)) || ' '::text) || text) || ' '::text) || COALESCE(\"translatedText\", ''::text)))"))
+  embeddings          RagEmbedding[]
+
+  @@unique([documentId, chunkNo])
+  @@index([tsv], type: Gin)
+  @@index([facilityId, patientId, status, audience])
+  @@index([personId, status, audience])
+}
+
+/// One vector per chunk per embedding model and version (decision 8): no fixed dimension.
+/// Half precision, kept on the heap row (no TOAST), so the exact scan over one
+/// patient stays inside the latency budget (docs/RAG_DESIGN.md §16.2).
+model RagEmbedding {
+  id                String                 @id @default(cuid())
+  chunk             RagChunk               @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+  chunkId           String
+  embeddingModel    String
+  embeddingVersion  Int
+  dims              Int
+  /// An untyped pgvector halfvec (half precision, any dimension), stored inline;
+  /// CHECK vector_dims(embedding) = dims. Distances are computed exactly over it.
+  embedding         Unsupported("halfvec")
+  ownerType         RagOwnerType
+  facilityId        String?
+  patientId         String?
+  personId          String?
+  status            RagDocumentStatus      @default(ACTIVE)
+  /// The rest of the chunk's filter columns, copied from it by a trigger on insert (never
+  /// written by the app, so they can't disagree): the vector search filters on this row alone.
+  categories        RagCategory[]
+  sensitiveCategory RagSensitiveCategory?
+  audience          RagAudience
+  origin            RagOrigin
+  recordedAt        DateTime
+  sourceId          String
+  createdAt         DateTime               @default(now())
+
+  @@unique([chunkId, embeddingModel, embeddingVersion])
+  @@index([patientId, embeddingModel, embeddingVersion])
+  @@index([personId, embeddingModel, embeddingVersion])
+}
+
+enum RagEmbeddingSpaceStatus {
+  BUILDING
+  ACTIVE
+  RETIRED
+}
+
+/// An embedding model and version the index is (being) built in. Exactly one is ACTIVE (partial unique index).
+model RagEmbeddingSpace {
+  id                String                  @id @default(cuid())
+  embeddingModel    String
+  embeddingVersion  Int
+  provider          String
+  dims              Int
+  status            RagEmbeddingSpaceStatus @default(BUILDING)
+  createdAt         DateTime                @default(now())
+  activatedAt       DateTime?
+  activatedByUserId String?
+  retiredAt         DateTime?
+
+  @@unique([embeddingModel, embeddingVersion])
+}
+
+enum AiInteractionOutcome {
+  ANSWERED
+  NO_RECORD
+  REFUSED_SAFETY
+  CITATION_INVALID
+  RATE_LIMITED
+  ERROR
+}
+
+/// Why retained text was kept, and so who may ever read it (§4.3).
+enum AiTextScope {
+  /// Staff text, for safety review: decryptable by the reviewer roles.
+  STAFF_SAFETY
+  /// Patient text kept under their opt-in, without safety review: never decryptable by reviewers.
+  PATIENT_OPT_IN
+  /// Patient text kept under an opt-in that includes safety review.
+  PATIENT_OPT_IN_SAFETY_REVIEW
+}
+
+/// One AI request, for audit, safety review and evaluation (§3.3). BOOKKEEPING under the emit rule.
+model AiInteraction {
+  id                 String               @id @default(cuid())
+  organizationId     String?
+  facilityId         String?
+  userId             String
+  role               String
+  patientId          String?
+  personId           String?
+  proxyGrantId       String?
+  shareId            String?
+  consentId          String?
+  mode               String
+  language           String
+  model              String
+  embeddingModel     String
+  embeddingVersion   Int
+  outcome            AiInteractionOutcome
+  retrievedChunkIds  String[]
+  citedChunkIds      String[]
+  topScore           Float?
+  threshold          Float?
+  inputTokens        Int                  @default(0)
+  outputTokens       Int                  @default(0)
+  latencyMs          Int
+  /// AES-256-GCM, application-level; kept only under §4.3.
+  questionCiphertext String?
+  answerCiphertext   String?
+  keyVersion         Int?
+  textScope          AiTextScope?
+  textExpiresAt      DateTime?
+  /// Metadata (ids, scores, outcome, counts) is kept for a year.
+  metadataExpiresAt  DateTime
+  createdAt          DateTime             @default(now())
+
+  @@index([facilityId, createdAt])
+  @@index([userId, createdAt])
+  @@index([personId])
+  @@index([patientId])
+  @@index([textExpiresAt])
+}
+
+enum AiTextReadReason {
+  SAFETY_INCIDENT
+  QUALITY_REVIEW
+  PATIENT_COMPLAINT
+  EVALUATION_SAMPLE
+  LEGAL_REQUEST
+}
+
+/// Every reviewer read of retained AI text: who, which interaction, why (§4.3). Feeds the monthly review report.
+model AiTextReadLog {
+  id            String           @id @default(cuid())
+  interactionId String
+  readerUserId  String
+  readerRole    String
+  reasonCode    AiTextReadReason
+  ticketRef     String
+  readAt        DateTime         @default(now())
+
+  @@index([readAt])
+  @@index([interactionId])
+}
+
+/// Week 4b — the backfill's resumable cursor, per facility and source type (docs/RAG_DESIGN.md §5.7).
+model RagBackfillCursor {
+  facilityId   String
+  sourceType   RagSourceType
+  lastSourceId String
+  updatedAt    DateTime      @updatedAt
+
+  @@id([facilityId, sourceType])
 }

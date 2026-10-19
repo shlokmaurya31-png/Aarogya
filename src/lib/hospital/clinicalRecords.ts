@@ -1,4 +1,4 @@
-import { $Enums, type Prisma, type DiagnosisStatus, type AllergyStatus } from "@prisma/client";
+import { $Enums, type Prisma, type DiagnosisStatus, type AllergyStatus, type AllergyStatusAssertion, type AllergyStatusChangeReason } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { parseEnum, parseOptionalEnum } from "@/lib/enumValue";
@@ -12,7 +12,8 @@ type Tx = Prisma.TransactionClient;
  * Point-of-care clinical records that were written by their routes (batch 7,
  * item 1): vitals and intake/output (ObservationRecorded v2, kinds VITALS,
  * INTAKE, OUTPUT), diagnoses (DiagnosisRecorded) and allergies
- * (AllergyListUpdated). Each write emits in its own transaction; payloads carry
+ * (AllergyListUpdated) and the record's allergy status (AllergyStatusRecorded).
+ * Each write emits in its own transaction; payloads carry
  * IDs and closed codes only, never a value, a diagnosis text or code, a
  * substance, a reaction or a note.
  */
@@ -139,6 +140,7 @@ export async function recordAllergy(input: { patientId: string; facilityId: stri
     const patient = await patientIn(tx, input.patientId, input.facilityId);
     const allergy = await tx.allergy.create({ data: { patientId: patient.id, substance: input.substance, reaction: input.reaction, status: "ACTIVE", severity, criticality, verification } });
     await emitAllergy(tx, allergy, "ADDED", input.facilityId, input.byUserId);
+    await appendAllergyStatus(tx, patient.id, input.facilityId, "HAS_ALLERGIES", "ALLERGY_ADDED", input.byUserId);
     return allergy;
   });
 }
@@ -159,6 +161,89 @@ export async function updateAllergy(input: { allergyId: string; facilityId: stri
     if (r.count !== 1) throw new BadRequestError("The allergy changed concurrently. Refresh and try again.");
     const updated = await tx.allergy.findUniqueOrThrow({ where: { id: a.id } });
     await emitAllergy(tx, updated, updated.status === "ACTIVE" ? "UPDATED" : "INACTIVATED", input.facilityId, input.byUserId);
+    // The last active allergy gone: the status goes back to UNKNOWN, never to "no known allergies".
+    if (updated.status !== "ACTIVE" && (await tx.allergy.count({ where: { patientId: a.patientId, status: "ACTIVE" } })) === 0) {
+      const recorded = await latestAllergyStatusEntry(tx, a.patientId);
+      if (recorded?.status === "HAS_ALLERGIES") await appendAllergyStatus(tx, a.patientId, input.facilityId, "UNKNOWN", "LAST_ALLERGY_INACTIVATED", input.byUserId);
+    }
     return updated;
   });
+}
+
+// ── Allergy status (Week 4b, 4a follow-up b) ─────────────────────────────────
+
+export const ALLERGY_STATUS_VALUES = ["NO_KNOWN_ALLERGIES", "UNKNOWN", "HAS_ALLERGIES"] as const;
+
+export interface CurrentAllergyStatus {
+  status: AllergyStatusAssertion;
+  /** The history entry it comes from; null when nothing was recorded (then derived). */
+  entryId: string | null;
+  recordedAt: Date | null;
+  recordedByUserId: string | null;
+  /** True when no entry exists: HAS_ALLERGIES if an allergy is active, else UNKNOWN (absence is never assumed). */
+  derived: boolean;
+}
+
+function latestAllergyStatusEntry(db: Tx | typeof prisma, patientId: string) {
+  return db.allergyStatusEntry.findFirst({ where: { patientId }, orderBy: { sequence: "desc" } });
+}
+
+/** The record's allergy status: the latest entry, or derived from the active allergies when none. */
+export async function currentAllergyStatus(patientId: string, db: Tx | typeof prisma = prisma): Promise<CurrentAllergyStatus> {
+  const latest = await latestAllergyStatusEntry(db, patientId);
+  if (latest) return { status: latest.status, entryId: latest.id, recordedAt: latest.recordedAt, recordedByUserId: latest.recordedByUserId, derived: false };
+  const active = await db.allergy.count({ where: { patientId, status: "ACTIVE" } });
+  return { status: active ? "HAS_ALLERGIES" : "UNKNOWN", entryId: null, recordedAt: null, recordedByUserId: null, derived: true };
+}
+
+/**
+ * Appends a status entry (and its event) unless the recorded status already is
+ * `status`. Serialized per patient by a lock on the patient row, so the
+ * sequence (the history's order) never collides.
+ */
+async function appendAllergyStatus(tx: Tx, patientId: string, facilityId: string, status: AllergyStatusAssertion, reason: AllergyStatusChangeReason, byUserId: string) {
+  await tx.$queryRaw`SELECT 1 FROM "Patient" WHERE "id" = ${patientId} FOR UPDATE`;
+  const latest = await latestAllergyStatusEntry(tx, patientId);
+  if (latest?.status === status) return null;
+  const entry = await tx.allergyStatusEntry.create({
+    data: { patientId, facilityId, status, previousStatus: latest?.status ?? null, reason, recordedByUserId: byUserId, recordedAt: new Date(), sequence: (latest?.sequence ?? 0) + 1 },
+  });
+  await emitFacilityEvent(tx, {
+    type: "AllergyStatusRecorded", aggregateId: patientId, facilityId, actorUserId: byUserId,
+    payload: { entryId: entry.id, patientId, status, previousStatus: entry.previousStatus, reason },
+  });
+  return entry;
+}
+
+/**
+ * A clinician records the allergy status. NO_KNOWN_ALLERGIES and UNKNOWN only
+ * while no allergy is active (inactivate or mark them entered in error first;
+ * a shared patient-reported allergy counts); HAS_ALLERGIES only when one is
+ * (it is also set by recording an allergy). Recording the current status
+ * again changes nothing and emits nothing.
+ */
+export async function recordAllergyStatus(input: { patientId: string; facilityId: string; status: string; byUserId: string }) {
+  const status = parseEnum($Enums.AllergyStatusAssertion, input.status, "status");
+  return prisma.$transaction(async (tx) => {
+    const patient = await patientIn(tx, input.patientId, input.facilityId);
+    await tx.$queryRaw`SELECT 1 FROM "Patient" WHERE "id" = ${patient.id} FOR UPDATE`;
+    const active = await tx.allergy.count({ where: { patientId: patient.id, status: "ACTIVE" } });
+    if (status !== "HAS_ALLERGIES" && active > 0) {
+      throw new BadRequestError(`The record has ${active} active ${active === 1 ? "allergy" : "allergies"}; inactivate or mark ${active === 1 ? "it" : "them"} entered in error before recording ${status === "NO_KNOWN_ALLERGIES" ? "no known allergies" : "the status as unknown"}.`);
+    }
+    if (status === "HAS_ALLERGIES" && active === 0) throw new BadRequestError("Record the allergy itself; the status follows.");
+    const entry = await appendAllergyStatus(tx, patient.id, input.facilityId, status, "RECORDED", input.byUserId);
+    return { changed: !!entry, status: await currentAllergyStatus(patient.id, tx) };
+  });
+}
+
+/** The status history, newest first (facility-checked). */
+export async function allergyStatusHistory(patientId: string, facilityId: string) {
+  const patient = await prisma.patient.findUnique({ where: { id: patientId }, select: { facilityId: true } });
+  if (!patient || patient.facilityId !== facilityId) throw new NotFoundError("Patient not found.");
+  const [current, history] = await Promise.all([
+    currentAllergyStatus(patientId),
+    prisma.allergyStatusEntry.findMany({ where: { patientId }, orderBy: { sequence: "desc" }, select: { id: true, status: true, previousStatus: true, reason: true, recordedAt: true, recordedByUserId: true } }),
+  ]);
+  return { current, history };
 }

@@ -30,7 +30,12 @@
     "storage:check": "tsx scripts/storage.ts check",
     "verification:migrate": "tsx scripts/migrate-verification-uploads.ts",
     "worker": "tsx scripts/worker.ts",
-    "eval:documents": "tsx scripts/eval-documents.ts"
+    "eval:documents": "tsx scripts/eval-documents.ts",
+    "eval:documents:real": "tsx scripts/eval-documents-real.ts",
+    "rag:reembed": "tsx scripts/rag-reembed.ts",
+    "rag:backfill": "tsx scripts/rag-backfill.ts",
+    "eval:rag": "tsx scripts/eval-rag.ts",
+    "eval:rag:real": "tsx scripts/eval-rag.ts --provider real"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -56,6 +61,7 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "recharts": "^3.9.2",
+    "sharp": "^0.34.5",
     "tailwind-merge": "^3.6.0",
     "zod": "^4.5.4",
     "zustand": "^5.0.14"
@@ -63,12 +69,14 @@
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",
     "@tailwindcss/postcss": "^4",
+    "@types/fontkit": "^2.0.9",
     "@types/node": "^20",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
+    "fontkit": "^2.0.4",
     "jsqr": "^1.4.0",
     "tailwindcss": "^4",
     "tsx": "^4.23.13",

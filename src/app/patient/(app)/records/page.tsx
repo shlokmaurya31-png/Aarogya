@@ -1,6 +1,7 @@
 "use client";
 
 import { Card, SectionTitle, Empty, Unavailable, usePatientData, formatDate, formatDateTime } from "@/components/patient-portal/ui";
+import { PatientAi } from "@/components/ai/PatientAi";
 
 interface RecordsData {
   visits: { date: string; department: string | null; statusLabel: string; reason: string | null }[];
@@ -17,6 +18,7 @@ export default function RecordsPage() {
   return (
     <div className="space-y-5">
       <h1 className="text-[18px] font-semibold">Your health record</h1>
+      <PatientAi modes={["HEALTH_TIMELINE", "PREVISIT_QUESTIONS"]} />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Card>

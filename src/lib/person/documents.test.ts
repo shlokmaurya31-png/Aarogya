@@ -7,8 +7,9 @@ describe("the upload move knows every column that can point at a ClinicalDocumen
     const withDocumentId = Prisma.dmmf.datamodel.models
       .filter((m) => m.fields.some((f) => f.name === "documentId" && f.kind === "scalar"))
       .map((m) => m.name)
-      // These documentId columns point at a PersonDocument, never a ClinicalDocument.
-      .filter((m) => !["DocumentProcessing", "PatientProvidedRecord"].includes(m))
+      // These documentId columns point at a PersonDocument, never a ClinicalDocument;
+      // RagChunk's points at its RagDocument (the AI index's own row).
+      .filter((m) => !["DocumentProcessing", "PatientProvidedRecord", "RagChunk"].includes(m))
       .sort();
     expect(withDocumentId).toEqual([...CLINICAL_DOCUMENT_REFERENCES].sort());
   });

@@ -43,3 +43,16 @@ export const FACILITY_MODELS_WITH_PERSON = [
   // Week 4a: a conflict between a person's record and a facility's verified one.
   "RecordConflict",
 ] as const;
+
+/**
+ * Week 4b — models owned either by a facility record or by a Person, row by
+ * row (ownerType, with CHECK constraints): the AI index and AI interactions.
+ * A FACILITY_PATIENT row is the facility's; a PERSON row belongs to no tenant
+ * and is read only through the access resolver, like the person-scoped models.
+ */
+export const MIXED_OWNER_MODELS = [
+  "RagDocument",
+  "RagChunk",
+  "RagEmbedding",
+  "AiInteraction",
+] as const;

@@ -8,10 +8,10 @@
  * DOCUMENT_AI_PROVIDER=claude and ANTHROPIC_API_KEY, sends only the synthetic
  * fixtures (no person, no database), and is recorded in the PR by hand.
  *
- * Limitation (real run): the fixture PDFs draw Latin-script lines only, with
- * no handwriting fonts or noise, so a real run scores English pages
- * meaningfully and the other scripts not at all until a renderer is added
- * (docs/PRE_LAUNCH_CHECKLIST.md). Exit code 1 when a target is missed.
+ * The real run sends the rendered pages (every script, handwriting fonts and
+ * noise; src/lib/documents/fixtures/render.ts). `npm run eval:documents:real`
+ * is the full manual run: it reads the key from .env.local, checks the
+ * account first and writes .eval-report/. Exit code 1 when a target is missed.
  */
 import { writeFileSync } from "node:fs";
 import { documentProviderKind, getDocumentProviders } from "../src/lib/ai/documents";
@@ -29,7 +29,7 @@ async function main() {
   }
   const providers = real ? getDocumentProviders() : getDocumentProviders({});
   // A permit for synthetic fixtures only: no Person, no database row is read or written.
-  const report = await runEvaluation(providers, issuePermit("evaluation:synthetic-fixtures"), evaluationDictionary());
+  const report = await runEvaluation(providers, issuePermit("evaluation:synthetic-fixtures"), evaluationDictionary(), undefined, real ? "rendered-image" : "marker-pdf");
   const md = reportMarkdown(report, real ? "claude" : "mock");
   if (out) writeFileSync(out, md + "\n");
   console.log(md);

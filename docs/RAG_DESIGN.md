@@ -1,6 +1,6 @@
 # Retrieval-augmented answers over the patient record: design (Week 4b)
 
-- **Status:** Design, revision 3, for review. No code yet.
+- **Status:** Revision 3, **built in Week 4b** (2026-10-18; §16 records what the code does where it differs). Real data stays off.
 - **Revision 3 (2026-10-17):**
   - person-owned sources (`docs/PERSON_IDENTITY_DESIGN.md`, Phase 0);
   - product decisions 2–11 applied (§13.2): the reviewer roles, deferred India-hosted embeddings with a re-embed job instead of a fixed vector column, same-organization consent through the existing consent model, guardian consents lapsing at 18, items pending the clinical advisor.
@@ -38,6 +38,7 @@
 13. Product decisions
 14. Decisions taken for you
 15. Open questions
+16. As built (Week 4b)
 
 ---
 
@@ -635,3 +636,100 @@ None open. Answered 2026-10-17:
 - the lapse window is 90 days;
 - reviewers read staff text, and patient text only with an explicit safety-review opt-in (§4.3);
 - the latency budget is p95 < 150 ms at 20,000 chunks, enforced by a gate (§12).
+
+## 16. As built (Week 4b, 2026-10-18)
+
+What the code does where it differs from, or adds to, the sections above. Each item takes the more conservative option.
+
+### 16.1 Step 2: model configuration and the answer boundary
+
+- **The answer boundary is its own provider family** (`src/lib/ai/record`: `RecordAnswerProvider.answerFromRecord`), next to the document providers, rather than a fifth method on the Scholar/assistant `AIProvider`. Same reasons as the pipeline's: its own permit (`AiPermit`, issued only by the real-data gate), its own provider switch, and no way for a Scholar code path to reach patient data.
+- **Claude only with both a key and `RECORD_AI_PROVIDER=claude`**; otherwise the deterministic mock. **The mock refuses a permit for real data**, so a real patient's record is only ever answered by the configured model, and a provider failure is a 503 (`RecordAiUnavailableError`), never the mock.
+- **Model ids per mode** (`ai.model.<mode>`) are read like the pipeline's (`AI_MODEL_<KEY>`, Claude ids only), not through the config registry, whose scopes are organization, facility and department; a model is a platform choice.
+- **The mock is extractive:** every factual sentence is a source line copied verbatim and cited; patient-facing answers open with a fixed line from a phrasebook in the eleven app languages (`src/lib/rag/phrases.ts`, no numbers, pending clinical advisor).
+- **Config keys:** `ai.enabled` (off by default), `ai.threshold.<mode>` (thousandths of the best rerank score; patient-mode defaults above every staff default), `ai.staff_text_retention_days` (90, at most 90), `ai.daily_request_budget`, `ai.lapsed_consent_index_days` (90).
+
+### 16.2 Step 3: models, migration and the latency gate
+
+- **Vectors are half precision (`halfvec`), stored on the heap row.** Still untyped (any dimension, a CHECK on `vector_dims`), still compared by exact cosine distance with no approximate index; only the stored precision is 16-bit. Found by the latency gate: a 1024-dimension `vector` is 4 KB, so Postgres moved it to TOAST and the scan spent ~185 ms re-reading it; inline full-precision vectors filled a page each (195 MB for 25,000 rows, ~85 ms). Half precision inline is 65 MB and ~23 ms. The migration sets `STORAGE MAIN` and `toast_tuple_target = 8160`, so vectors of up to ~4,000 dimensions stay inline.
+- **The candidate query is planned for its own parameters every time** (`SET LOCAL plan_cache_mode = force_custom_plan`, in its own transaction). After five runs of the same prepared statement Postgres switched to a generic plan about 100× slower (10 ms → 1.1 s). Also found by the latency gate.
+- **The vector search filters on the embedding row alone.** `RagEmbedding` carries every filter column of its chunk (categories, sensitive category, audience, origin, `recordedAt`, `sourceId`, besides the owner and status the design copied), **filled by a trigger from the chunk on insert** — never by the app, so the copy can't disagree — and kept in step when a chunk's Person changes. Found on CI: joining each candidate embedding to its chunk cost ~20,000 index lookups per query, and the whole retrieval missed the budget on the slower runner (p95 156.9 ms).
+- **Gate result:** 20,000 chunks for one patient (5,000 for another beside them): candidate search (exact cosine top 40 and keyword top 40, every access filter first) at **p95 51.5 ms** locally (88.9 ms before the change above), the whole retrieval **p95 59.5 ms**, against the 150 ms budget; not one candidate of the other patient.
+- **A document has `categories` (an array), not one `category`:** a patient-provided lab value is both `UPLOADS` and `LABS` (§5.3), and a chunk is a candidate only if every one of its categories is allowed (`categories <@ allowed`).
+- **Added:** `ALLERGY_STATUS` as a source type (the record-level allergy status, 4a follow-up b); `title`, `handwritten` and the chunk's `context` line, `recordedAt`, `sourceType`/`sourceId` on chunks (for labels, recency and citations without a join); `RagEmbeddingSpace` (the embedding models and versions, exactly one ACTIVE by a partial unique index, the offline mock to start), which is where `ai.embedding.active` lives (§5.8) — a platform setting, so not in the organization/facility config registry; `AiTextReadLog` (every reviewer read: who, which interaction, a closed reason, a ticket).
+- **Mixed owners:** `RagDocument`, `RagChunk`, `RagEmbedding` and `AiInteraction` are owned row by row by a facility record or by a Person (`MIXED_OWNER_MODELS`); a Person merge re-points them; the tenancy sweep treats their PERSON rows like the person-scoped models.
+- **Reviewer roles:** `CLINICAL_ADVISOR` and `SAFETY_OFFICER` (platform-level) hold only `ai:interaction:review` and `ai:interaction:text:read`; `ai:record:ask` (the staff modes) is for doctors and nurses; `ai:embedding:manage` for the platform admin.
+- **Retained text is at most 90 days by a CHECK**, and complete or absent (ciphertext, key version, scope and expiry together).
+
+### 16.3 Step 4: embeddings and the re-embed job
+
+- **The provider is the embedding space's** (`RagEmbeddingSpace.provider`), never a request's: `mock` (feature hashing, the model name carries the dimension: `mock-hash-1024`), `voyage` (`voyage-multilingual-2`, 1024, with `rerank-2`; needs `VOYAGE_API_KEY`), `india-hosted` (the slot exists; it refuses, deferred).
+- **Every embedding or rerank call needs an AI permit** from `aiAssistancePermit` (`src/lib/ai/realData.ts`): an explicit `AI_ASSISTANCE` decline refuses even synthetic data; synthetic data needs nothing more; real data needs the switch on and the Person's grant (a facility record's Person is its ACTIVE link's; a record with no Person can't consent and is refused).
+- **Voyage refuses a permit for real data** outright, until the cross-border check for that processor is done and the guard is changed on purpose.
+- **The mock reranker's score is BM25 squashed to 0..1** (`1 − e^(−bm25/2)`), so the per-mode thresholds read the same scale as Voyage's relevance scores; they are calibrated on the evaluation (§10).
+- **The re-embed** (`npm run rag:reembed`, and one batch per building space each runner tick) refuses a provider that can't embed now before writing anything; the switch (`activateEmbeddingSpace`) needs 100% coverage, re-checked inside its transaction, retires the old space in the same transaction, and emits `RagEmbeddingSpaceChanged` (platform, new) and an audit event. A retired space's embeddings are deleted after a 7-day grace period by the runner.
+- **An owner the AI may not use is removed from the index, not skipped** (`removeOwnerIndex`, a hard delete): found by the gate in a full run, where a REAL Person's rows (a fixture) were skipped on every batch and blocked coverage for good. The index never holds data the gate refuses.
+
+### 16.4 Step 5: renderers, categories, sensitivity and chunking
+
+- **Renderers are pure** (`src/lib/rag/render.ts`): the indexer loads a source through the service layer and hands a plain object over; golden tests per source type.
+- **Audience:** clinicians' notes are `STAFF_ONLY` (patient-facing modes never read them); a clinical document follows its own access policy; released results, diagnoses, problems, allergies, the allergy status, vitals, referrals, discharge summaries and the patient's own entries are `PATIENT_VISIBLE`.
+- **Categories:** generated and clinical documents by their type (prescription, discharge, lab, imaging, referral, else clinical notes); a patient-provided entry is `UPLOADS` plus its fact's own category; added `DIAGNOSES`, `ALLERGIES`, `VITALS` and `REFERRALS` for the record's structured kinds.
+- **Sensitive categories (placeholder, pending clinical advisor):** by ICD-10 range (F10–F19 substance use, other F mental health, B20–B24 and Z21 HIV, A50–A64 sexual health, O and Z30–Z39 reproductive) and by words in diagnoses, test names, note types and text; it errs towards marking.
+- **Chunking:** tokens are estimated (a quarter of the characters, at least one per word); a sentence longer than the 512 maximum stays whole as its own chunk (the design says never split a sentence); one document per lab result row (each row is one analyte here) and one per encounter-day of vitals.
+
+### 16.5 Step 6: the rag-indexer and backfill
+
+- **Version per source:** a source changed in place (a diagnosis resolved, an allergy inactivated, a referral moving on) has no version number of its own, so the indexer gives its document the next version whenever the rendered content's hash changes; an amendment that is a new row (a note, a lab or imaging result) names its predecessor and supersedes it. The allergy status uses its history's sequence.
+- **Vitals** are one document per encounter-day (`<encounterId>:<yyyy-mm-dd>`), re-rendered as readings arrive; other observation kinds (ICU, ED reassessment, intake/output) are not indexed yet.
+- **Never indexed:** a patient-provided allergy bridged to a facility record (the Person's own entry already is), a patient's own pre-Phase-0 upload on a facility record, ID proofs, restricted documents, drafts.
+- **`DocumentTranslated` adds nothing:** translations exist only for a document's OCR text, which is never indexed (only confirmed facts are). Patient-facing answers in other languages are written by the model from the original values (§9.4).
+- **Removals:** AI consent declined removes the Person's own documents and their linked records' (and later events are skipped); granted again, or an account reopened, re-indexes through the indexer's own function; an account closed or purged removes the Person's own documents; **a family member's access revoked purges the retained text of that member's AI questions** (metadata stays) — the index itself is per patient, so nothing else changes and access is checked live.
+- **Consents lapse at 18** (`PersonConsent.status = LAPSED`, `PersonConsentLapsed`, new): the runner lapses every choice decided before the 18th birthday; a lapsed AI consent refuses the AI like a decline (even on synthetic data) and its index is removed after 90 days unless the person chooses again. A re-embed in the window removes a lapsed owner's index too (rebuilt on confirmation): a provider switch isn't held up for 90 days.
+- **The backfill** walks each source type by id with a cursor per (facility, type) in `RagBackfillCursor`; Person-owned sources are re-indexed per Person (consent re-grant, reopening).
+- Gate: `verify-postgres-rag-indexer` (33 checks); the core journey checks the journey's result, confirmed entries and discharge summary are indexed.
+
+### 16.6 Step 7: retrieval and the leak gate
+
+- **The access paths** (`src/lib/rag/access.ts`), all from server-side values:
+  - **TREATING:** a doctor at the patient's facility with an **active care relationship** (the resolver's OPD/IPD windows) — stricter than "registered there" (§7.1), the same rule person-level data already uses. Every category, sensitive included (the chart permission decides, §7.1.5). The Person's uploads and confirmed facts only with their opt-in (`personAccess`).
+  - **NURSE_ASSIGNED:** a nurse with an open `NursingAssignment` for the patient (start in the past, end empty or ahead); chart Q&A and the handoff only.
+  - **SHARE:** the code share that exists today, `PatientAccessSession` (ACTIVE, redeemed by this doctor, not expired). It has no category or date-range choice yet (4c), so it never includes `UPLOADS` and never a sensitive category; the date-range limit of §10.3 is tested on the timeline's period until 4c's share model carries one.
+  - **ORG_CONSENT:** a doctor at another facility of the same organization, with an `InteropConsent` to that organization (GRANTED/ACTIVE, not revoked or expired); its scopes map to categories; never sensitive.
+  - **OWN:** the patient's OWNER login: every ACTIVE link's record (`PATIENT_VISIBLE` entries) and their own uploads and facts.
+  - **Proxies are refused** (404): the `USE_AI` permission arrives with households (5b).
+  - Staff use needs `ai.enabled` at the caller's facility; the seed turns it on at the two SYNTHETIC demo facilities only.
+- **Ranking** as §7.2: fusion `1/(60+rank)`; rerank (the space's reranker) of the top 30; "latest/last/current" adds up to 0.15 for the newest; a patient-provided chunk gives 0.02 to a verified one; ties by recency. The brief, the handoff and the timeline also get the latest vitals day and the allergy, allergy-status, problem and diagnosis entries in scope; the timeline is ordered oldest first.
+- **"No record found":** for a question, when the best rerank score is under the mode's threshold **and** no keyword match covered every content word of the question; for the other modes, when nothing at all is in scope. A patient mode's threshold is raised to the highest staff threshold if configured lower.
+- **Live facts** (§7.4) are read only from the records the path allows, and only for categories it allows (`PRESCRIPTIONS`, `ALLERGIES`); a medicine whose name maps to a sensitive category is left out where sensitive categories aren't opted in; a nurse also gets doses due or missed within 12 hours either side; patient-provided bridged allergies only where the opt-in applies.
+- **Gate:** `verify-postgres-rag-leaks`, 28 checks, zero leaks, with a positive control per canary. The latency gate now also times the whole retrieval for a question (p95 59.5 ms locally after §16.2's change).
+- **Bug fixed (pre-existing, found by the tenancy sweep):** `GET /api/hospital/enterprise/configuration` listed every override of the organization, so a facility admin saw a sister facility's facility-level values. No facility-level override existed until this step seeded `ai.enabled`; facility and department rows are now returned only to actors who can access that facility.
+
+### 16.7 Step 8: `POST /api/ai/ask`
+
+- **Order:** rate limits → access (403/404) → the patient safety rules (urgent symptom: the emergency line only; diagnosis or treatment question: "please ask your care team"), before anything is retrieved → retrieval ("no record" without asking the model) → the provider, with the record's identifiers masked (`[redacted]`: names, UHIDs, phones, contacts, ABHA- and mobile-shaped numbers) → validation → labels → the interaction log.
+- **Validation:** a FACT must cite only retrieved sources, and every number in it must occur in the original text or context line of a source it cites (normalized: thousands separators and leading zeros); a GUIDANCE line cites nothing and states no number (112 excepted). Staff: the answer stops at the first failing sentence (`CITATION_INVALID`; the lines before it were streamed). Patients: withheld whole.
+- **Labels per line:** `verified` / `patient-provided` from the cited sources, `handwritten` where a cited source is, `not yet confirmed by you` for the patient's own upload explained before review (read from its OCR text directly, never the index), and `translated` whenever the answer is in a language other than the sources' (English) or uses a translation.
+- **Streaming:** `meta` is sent first (the interaction id is minted before the answer); errors before the stream opens are plain status codes, after it a closing `done` with `outcome: ERROR`.
+- **Rate limits** count the interaction log (so they hold across instances); the two-concurrent cap is per process. A refused request is logged as `RATE_LIMITED` (metadata only).
+- **Text:** encrypted with `AI_TEXT_KEY_<version>` (`AI_TEXT_KEY_VERSION`); **with no key configured, nothing is kept** (metadata only). Patient text is kept for 90 days under the opt-in. Reviewer routes: `GET /api/ai/interactions` (metadata), `GET /api/ai/interactions/report?month=YYYY-MM`, `POST /api/ai/interactions/:id/text` (`reasonCode`, `ticketRef`).
+- **Bug fixed:** the mock reranker scored a question's function words ("the", "is"), so "What is the blood group?" matched "see the allergy list" above the threshold; query stopwords are dropped before BM25.
+- **Gates:** `verify-postgres-ai-ask` (39 checks, service and HTTP); the leak gate now runs every allowed case through the whole request too (the prompt's sources, the answer, the citations, the interaction's chunks and stored answer).
+
+### 16.8 Step 9: the evaluation
+
+- **The set** (`eval/rag/questions.json`, "pending clinical advisor sign-off"): 4 visit briefs (one through a visit code, which must leave out the patient's uploads), 8 chart Q&A (latest vs earlier, the amended value, a verified-vs-patient-provided disagreement), 4 nurse (missed and due doses, the allergy, the latest abnormal vital), 5 explain-my-report (two in Hindi and Marathi, one uploaded report, one diagnosis ask that must be refused), 3 timeline/pre-visit, 6 not in the record (three in patient modes). The synthetic patient is built through the services and the indexer (`scripts/lib/ragEvalFixture.ts`).
+- **Scoring** as §10.2 (`src/lib/rag/evalScore.ts`); the gate `verify-postgres-rag-eval` (CI, mocks) requires ≥ 90% correct with valid citations **and** the expected source retrieved for ≥ 90%. `npm run eval:rag` runs the same on the local verify database; `npm run eval:rag:real` is the manual real run (Claude answers; Voyage if its key is set).
+- **Mock result: 30/30** correct with valid citations, 30/30 expected source retrieved. With the extractive mock this checks retrieval, access, validation and labels, not answer quality.
+- **Found and fixed on the way (first run 26/30):** imaging modality codes weren't expanded ("XRAY" never matched "X-ray"; §5.3 says codes are expanded); the keyword side had no stemming ("allergic" missed "Allergy": a small English suffix stripper now makes stemmed words prefix matches); live facts didn't count towards "no record" (a question about allergies answered by the live allergy list was refused); the brief and the handoff didn't carry recent results (the newest result per test is now always in them); the mock reranker didn't weigh how much of the question a passage covers.
+- **Thresholds calibrated** on this set with the offline reranker: staff modes 0.50, patient modes 0.55 (every correctly answered question scored ≥ 0.617; the one false match 0.424). They must be recalibrated on the real reranker's scale (Voyage) before real data; the real run reports the values in force.
+- **Real run (2026-10-18): ready, not run** — the Anthropic key in `.env.local` is refused for insufficient credit, and there is no Voyage key.
+
+### 16.9 Step 10: the screens
+
+- **One panel, three places** (`src/components/ai/RecordAi.tsx`): the AI-generated label, each line with its citation numbers and labels, the cited entries with links into the record (staff), outcomes in plain words; staff answers stream line by line, patient answers arrive whole.
+  - **Hospital OS AI Cockpit:** for doctors and nurses, "Ask about a patient's record", choosing among their current patients (active encounters).
+  - **The chart** (`/hospital-os/doctor/patients/:id`): the modes the role may use; the doctor's next appointment with the patient is the visit brief's reason (`GET /api/ai/me`).
+  - **The patient portal:** "Explain" on every released report and upload (`/patient/reports`), the health timeline and questions for the next visit (`/patient/records`), in the patient's language (eleven to choose from).
+- **Proxy switcher:** not built — proxies are refused until households (5b) add `USE_AI`.
+- **Tests:** the stream parser (unit), every mode over HTTP and through the service (`verify-postgres-ai-ask`), and the core journey now asks the AI about its patient (answered, the critical troponin cited as verified, logged, no event, nothing written). The screens were checked by the type checker, lint and the production build, not by a browser run.

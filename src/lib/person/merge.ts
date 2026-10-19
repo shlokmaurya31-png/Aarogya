@@ -201,6 +201,7 @@ async function mergePersonsTx(tx: Tx, req: { id: string; personId: string; sourc
     documents: await ids(tx.personDocument.findMany({ where: { personId: from }, select: { id: true } })),
     patientProvidedRecords: await ids(tx.patientProvidedRecord.findMany({ where: { personId: from }, select: { id: true } })),
     extractedFacts: await ids(tx.extractedFact.findMany({ where: { personId: from }, select: { id: true } })),
+    aiInteractions: await ids(tx.aiInteraction.findMany({ where: { personId: from }, select: { id: true } })),
     consents: [] as { id: string; action: "REPOINTED" | "SUPERSEDED" }[],
     endedAccounts: await ids(tx.personAccount.findMany({ where: { personId: from, endedAt: null }, select: { id: true } })),
   };
@@ -220,6 +221,12 @@ async function mergePersonsTx(tx: Tx, req: { id: string; personId: string; sourc
   await tx.extractedFact.updateMany({ where: { personId: from }, data: { personId: to } });
   await tx.patientProvidedRecord.updateMany({ where: { personId: from }, data: { personId: to } });
   await tx.recordConflict.updateMany({ where: { personId: from }, data: { personId: to } });
+  // Week 4b: the AI index is derived (rebuilt rather than restored on an undo); it moves with
+  // its Person, so the merged record is answered from in one piece. Interactions are history.
+  await tx.ragDocument.updateMany({ where: { personId: from }, data: { personId: to } });
+  await tx.ragChunk.updateMany({ where: { personId: from }, data: { personId: to } });
+  await tx.ragEmbedding.updateMany({ where: { personId: from }, data: { personId: to } });
+  await tx.aiInteraction.updateMany({ where: { personId: from }, data: { personId: to } });
   // Choices: the same choice carries; two different choices both lapse, so the
   // person is asked again (never silently pick one).
   const now = new Date();

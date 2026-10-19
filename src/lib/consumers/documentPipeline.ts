@@ -77,18 +77,21 @@ export const docWithdrawal: DomainEventConsumer = {
  * Conflicts with verified records (§8): a new patient-provided entry is
  * checked against the linked facility records; a verified record of a linked
  * patient (released result, recorded diagnosis, allergy change, verified
- * order) re-checks that person's entries of the same kind.
+ * order, a "no known allergies" status) re-checks that person's entries of
+ * the same kind.
  */
 export const docConflicts: DomainEventConsumer = {
   name: "doc-conflicts",
-  handles: ["PatientProvidedRecordAdded", "LabResultReleased", "DiagnosisRecorded", "AllergyListUpdated", "MedicationVerified"],
+  handles: ["PatientProvidedRecordAdded", "LabResultReleased", "DiagnosisRecorded", "AllergyListUpdated", "AllergyStatusRecorded", "MedicationVerified"],
   async handle(event) {
-    const p = event.payload as { recordId?: string; patientId?: string; source?: string };
+    const p = event.payload as { recordId?: string; patientId?: string; source?: string; status?: string };
     if (event.eventType === "PatientProvidedRecordAdded") return void (await checkRecordConflicts(String(p.recordId)));
     // A bridged patient-provided allergy is not a verified record.
     if (event.eventType === "AllergyListUpdated" && p.source === "PATIENT_PROVIDED") return;
+    // Only a "no known allergies" status can disagree with an uploaded allergy.
+    if (event.eventType === "AllergyStatusRecorded" && p.status !== "NO_KNOWN_ALLERGIES") return;
     if (!p.patientId) return;
-    const kind = ({ LabResultReleased: "LAB_RESULT", DiagnosisRecorded: "DIAGNOSIS", AllergyListUpdated: "ALLERGY", MedicationVerified: "MEDICATION_HISTORY" } as const)[event.eventType as "LabResultReleased"];
+    const kind = ({ LabResultReleased: "LAB_RESULT", DiagnosisRecorded: "DIAGNOSIS", AllergyListUpdated: "ALLERGY", AllergyStatusRecorded: "ALLERGY", MedicationVerified: "MEDICATION_HISTORY" } as const)[event.eventType as "LabResultReleased"];
     await recheckForPatient(p.patientId, kind);
   },
 };

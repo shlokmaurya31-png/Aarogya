@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { PERSON_SCOPED_MODELS, FACILITY_MODELS_WITH_PERSON } from "./tenancy";
+import { PERSON_SCOPED_MODELS, FACILITY_MODELS_WITH_PERSON, MIXED_OWNER_MODELS } from "./tenancy";
 
 /**
  * A Person merge must move everything the merged-away Person owns. When a new
@@ -19,7 +19,7 @@ const NOT_REPOINTED: Record<string, string> = {
 
 describe("a Person merge re-points every model that carries a personId", () => {
   const src = readFileSync(path.join(__dirname, "merge.ts"), "utf8");
-  for (const model of [...PERSON_SCOPED_MODELS, ...FACILITY_MODELS_WITH_PERSON]) {
+  for (const model of [...PERSON_SCOPED_MODELS, ...FACILITY_MODELS_WITH_PERSON, ...MIXED_OWNER_MODELS]) {
     if (NOT_REPOINTED[model]) continue;
     it(model, () => {
       const delegate = model[0].toLowerCase() + model.slice(1);

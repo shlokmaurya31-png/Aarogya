@@ -64,10 +64,13 @@ const subscriptionStatus = z.enum(["TRIAL", "ACTIVE", "PAST_DUE", "GRACE", "SUSP
 const personLinkMethod = z.enum(PERSON_LINK_METHODS);
 // Week 4a — the document pipeline's closed codes.
 const documentLanguage = z.enum(["en", "hi", "mr", "ta", "bn", "gu", "te", "kn", "ml", "mixed", "und"]);
+// Week 4b: Odia and Urdu join the pipeline (the app's eleven languages).
+const documentLanguageV2 = z.enum(["en", "hi", "mr", "ta", "bn", "gu", "te", "kn", "ml", "or", "ur", "mixed", "und"]);
 const confidenceBand = z.enum(["HIGH", "MEDIUM", "LOW"]);
 const documentStep = z.enum(["PAGE_SPLIT", "OCR", "TRANSLATE", "EXTRACT", "MERGE"]);
 const extractedFactType = z.enum(["DOCUMENT_META", "DIAGNOSIS", "MEDICATION", "LAB_VALUE", "PROCEDURE", "ALLERGY"]);
 const patientProvidedKind = z.enum(["DIAGNOSIS", "MEDICATION_HISTORY", "LAB_RESULT", "PROCEDURE", "ALLERGY"]);
+const allergyStatusAssertion = z.enum(["NO_KNOWN_ALLERGIES", "UNKNOWN", "HAS_ALLERGIES"]);
 const documentStepError = z.enum(["PROVIDER_UNAVAILABLE", "RATE_LIMITED", "UNREADABLE", "UNSUPPORTED_LANGUAGE", "EXACT_COPY_VIOLATION", "TOO_LARGE", "INTERNAL"]);
 
 function contract<P extends z.ZodTypeAny>(c: EventContract<P>): EventContract<P> {
@@ -627,6 +630,25 @@ export const EVENT_CONTRACTS: EventContract[] = [
       verification: z.enum(["UNCONFIRMED", "CONFIRMED"]),
       criticality: z.enum(["LOW", "HIGH", "UNABLE_TO_ASSESS"]).optional(),
       source: z.enum(["CLINICIAN", "PATIENT_PROVIDED"]),
+    }).strict(),
+  }),
+  contract({
+    // Week 4b (4a follow-up b): the record-level allergy status changed. Aggregate: the patient's status.
+    type: "AllergyStatusRecorded", version: 1, aggregateType: "ALLERGY_STATUS", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "allergies (recordAllergyStatus: RECORDED; recordAllergy: ALLERGY_ADDED; updateAllergy: LAST_ALLERGY_INACTIVATED)",
+    payload: z.object({
+      entryId: id, patientId: id,
+      status: allergyStatusAssertion, previousStatus: allergyStatusAssertion.nullable(),
+      reason: z.enum(["RECORDED", "ALLERGY_ADDED", "LAST_ALLERGY_INACTIVATED"]),
+    }).strict(),
+  }),
+  contract({
+    // Week 4b: an embedding space of the AI index was created (BUILDING), switched to (ACTIVE) or retired (docs/RAG_DESIGN.md §5.8).
+    type: "RagEmbeddingSpaceChanged", version: 1, aggregateType: "RAG_EMBEDDING_SPACE", scope: "PLATFORM",
+    sensitivity: "LOW", producer: "AI index (startReembed: BUILDING; activateEmbeddingSpace: ACTIVE, and RETIRED for the space it replaces)",
+    payload: z.object({
+      spaceId: id, embeddingModel: z.string().min(1).max(100), embeddingVersion: z.number().int().min(1), provider: z.enum(["mock", "voyage", "india-hosted"]),
+      dims: z.number().int().min(1).max(16000), status: z.enum(["BUILDING", "ACTIVE", "RETIRED"]), previous: z.enum(["BUILDING", "ACTIVE", "RETIRED"]).nullable(),
     }).strict(),
   }),
   contract({
@@ -1366,6 +1388,14 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({ personId: id, consentId: id, purpose: z.enum(["SHARE_UPLOADS_WITH_TREATING"]), decision: z.enum(["GRANTED", "DECLINED"]), previous: z.enum(["NONE", "GRANTED", "DECLINED"]) }).strict(),
   }),
   contract({
+    // Week 4b: a choice decided before the person turned 18 lapsed to "needs your confirmation" (decision 10).
+    type: "PersonConsentLapsed", version: 1, aggregateType: "PERSON", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "person identity (sweepConsentLapses: the runner, on the 18th birthday)",
+    payload: z.object({
+      personId: id, consentId: id, purpose: z.enum(["SHARE_UPLOADS_WITH_TREATING", "DOCUMENT_PROCESSING", "AI_ASSISTANCE", "AI_TEXT_RETENTION"]), reason: z.enum(["TURNED_18"]),
+    }).strict(),
+  }),
+  contract({
     // v2 (Week 4a): the purposes of the real-data switch, and scopes.
     type: "PersonConsentDecided", version: 2, aggregateType: "PERSON", scope: "PERSON",
     sensitivity: "SENSITIVE", producer: "person identity (decidePersonConsent: sharing uploads, document processing, AI assistance, AI text retention)",
@@ -1395,6 +1425,24 @@ export const EVENT_CONTRACTS: EventContract[] = [
     sensitivity: "INTERNAL", producer: "document pipeline (doc-translate: protected values masked; a translation failing the exact-copy check is never shown)",
     payload: z.object({
       processingId: id, documentId: id, personId: id, targetLanguage: documentLanguage,
+      translatedPages: z.number().int().min(0), exactCopyFailures: z.number().int().min(0), skipped: z.boolean(),
+    }).strict(),
+  }),
+  contract({
+    // v2 (Week 4b): Odia and Urdu.
+    type: "DocumentTextExtracted", version: 2, aggregateType: "DOCUMENT_PROCESSING", scope: "PERSON",
+    sensitivity: "INTERNAL", producer: "document pipeline (doc-ocr: text and language per page)",
+    payload: z.object({
+      processingId: id, documentId: id, personId: id, pageCount: z.number().int().min(1),
+      languages: z.array(documentLanguageV2), handwritten: z.boolean(), confidenceBand,
+    }).strict(),
+  }),
+  contract({
+    // v2 (Week 4b): Odia and Urdu.
+    type: "DocumentTranslated", version: 2, aggregateType: "DOCUMENT_PROCESSING", scope: "PERSON",
+    sensitivity: "INTERNAL", producer: "document pipeline (doc-translate: protected values masked; a translation failing the exact-copy check is never shown)",
+    payload: z.object({
+      processingId: id, documentId: id, personId: id, targetLanguage: documentLanguageV2,
       translatedPages: z.number().int().min(0), exactCopyFailures: z.number().int().min(0), skipped: z.boolean(),
     }).strict(),
   }),
@@ -1439,6 +1487,15 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({
       conflictId: id, personId: id, patientId: id, kind: patientProvidedKind, patientProvidedRecordId: id,
       verifiedSourceType: z.enum(["LabResult", "Allergy", "MedicationOrder", "Diagnosis"]), verifiedSourceId: id,
+    }).strict(),
+  }),
+  contract({
+    // v2 (Week 4b): a verified "no known allergies" status can be the other side (AllergyStatusEntry).
+    type: "RecordConflictDetected", version: 2, aggregateType: "RECORD_CONFLICT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "document pipeline (doc-conflicts: a patient-provided entry disagrees with this facility's verified record; nothing is overwritten)",
+    payload: z.object({
+      conflictId: id, personId: id, patientId: id, kind: patientProvidedKind, patientProvidedRecordId: id,
+      verifiedSourceType: z.enum(["LabResult", "Allergy", "AllergyStatusEntry", "MedicationOrder", "Diagnosis"]), verifiedSourceId: id,
     }).strict(),
   }),
   contract({

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { PDFDocument, PDFName, PDFString } from "pdf-lib";
 import { FIXTURES, FIXTURE_PAGE_KEY, fixtureById, ocrLines } from "@/lib/documents/fixtures";
 import { UNITS } from "@/lib/documents/protect";
@@ -11,9 +12,11 @@ import { DocumentProviderError, type CandidateFact, type FactExtractor, type Lin
  * (docs/DOCUMENT_PIPELINE_DESIGN.md §6). Used whenever no Claude provider is
  * configured, and always in CI.
  *
- *   OCR          reads the fixture marker on a synthetic PDF page and returns
- *                that fixture page's lines (with its handwritten misreads);
- *                anything else is UNREADABLE.
+ *   OCR          reads the fixture marker on a synthetic PDF page, or looks an
+ *                image page up by its sha256 (images registered with
+ *                `mockControl.imagePages`), and returns that fixture page's
+ *                lines (with its handwritten misreads); anything else is
+ *                UNREADABLE.
  *   translation  a phrase glossary per language pair built from the label
  *                vocabulary; placeholders pass through untouched.
  *   extraction   rules over the page's lines (labels, lab-value and
@@ -31,7 +34,10 @@ export const mockControl = {
   ocrCalls: 0,
   /** Corrupt translations: drop, alter or duplicate a placeholder. `times` limits it (Infinity: always). */
   translationCorruption: { mode: "none" as "none" | "drop" | "alter" | "duplicate", times: 0 },
+  /** Image pages the OCR mock can read: sha256 of the page bytes → "fixtureId#pageNo". */
+  imagePages: new Map<string, string>(),
   reset() {
+    this.imagePages.clear();
     this.ocrTransientFailures = 0;
     this.ocrCalls = 0;
     this.translationCorruption = { mode: "none", times: 0 };
@@ -60,7 +66,7 @@ export const mockOcr: VisionOcrProvider = {
       mockControl.ocrTransientFailures -= 1;
       throw new DocumentProviderError("PROVIDER_UNAVAILABLE");
     }
-    const marker = page.contentType === "application/pdf" ? await fixtureMarker(page.bytes) : null;
+    const marker = page.contentType === "application/pdf" ? await fixtureMarker(page.bytes) : mockControl.imagePages.get(createHash("sha256").update(page.bytes).digest("hex")) ?? null;
     const [id, n] = marker?.split("#") ?? [];
     const f = id ? fixtureById(id) : undefined;
     const lines = f ? ocrLines(f, Number(n)) : [];
