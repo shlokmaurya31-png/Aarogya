@@ -6,7 +6,7 @@ import {
   LogOut, Home, CalendarDays, FileText, Pill, Receipt,
   ShieldCheck, Users, User as UserIcon, ClipboardList, ListChecks, KeyRound,
 } from "lucide-react";
-import { Sparkles } from "lucide-react";
+import { Sparkles, FolderUp } from "lucide-react";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { ThemeToggle } from "@/components/navigation/ThemeToggle";
 import { AiAssistantProvider, AiCommandBar } from "@/components/ai/PortalAssistant";
@@ -23,6 +23,7 @@ const NAV = [
   { href: "/patient/share", label: "Share access", icon: KeyRound },
   { href: "/patient/records", label: "Records", icon: ClipboardList },
   { href: "/patient/reports", label: "Reports", icon: FileText },
+  { href: "/patient/documents", label: "My documents", icon: FolderUp },
   { href: "/patient/medications", label: "Medicines", icon: Pill },
   { href: "/patient/billing", label: "Bills", icon: Receipt },
   { href: "/patient/insurance", label: "Insurance", icon: ShieldCheck },

@@ -162,16 +162,23 @@ export async function staffDocumentVisibility(facilityId: string, patientIds: st
 }
 
 /** Who is reading a patient's documents: staff of a facility, or the patient side (own scope already resolved). */
-export type DocumentViewer = { kind: "STAFF"; facilityId: string } | { kind: "PATIENT" };
+/**
+ * STAFF: the resolver's rules. PATIENT: the patient's own login (their
+ * person's uploads and entries). PROXY: a family delegate's view of the
+ * record — the facility record only, none of the person's own uploads or
+ * patient-provided entries until households (5b) define proxy permissions.
+ */
+export type DocumentViewer = { kind: "STAFF"; facilityId: string } | { kind: "PATIENT" } | { kind: "PROXY" };
 
 /** The document where-fragment for a viewer: the staff filter, or nothing extra for the patient side. */
 export async function documentVisibilityFor(viewer: DocumentViewer, patientIds: string[]): Promise<Prisma.ClinicalDocumentWhereInput> {
   return viewer.kind === "STAFF" ? staffDocumentVisibility(viewer.facilityId, patientIds) : {};
 }
 
-/** The person documents a viewer sees for these records (staff: the resolver; patient side: the linked person's own). */
+/** The person documents a viewer sees for these records (staff: the resolver; patient side: the linked person's own; a proxy: none). */
 export async function personDocumentsFor(viewer: DocumentViewer, patientIds: string[]) {
   const { staffPersonDocuments, linkedPersonDocuments } = await import("./documents");
+  if (viewer.kind === "PROXY") return [];
   return viewer.kind === "STAFF" ? staffPersonDocuments(viewer.facilityId, patientIds) : linkedPersonDocuments(patientIds);
 }
 

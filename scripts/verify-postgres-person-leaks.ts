@@ -40,6 +40,7 @@ import { facilityConflicts, listOwnConflicts } from "../src/lib/documents/confli
 import { registerPatientAccount, connectFacilityRecord } from "../src/lib/patient/selfRegistration";
 import { uploadPatientDocument } from "../src/lib/patient/experience/documents";
 import { listReports } from "../src/lib/patient/experience/reports";
+import { buildRecords } from "../src/lib/patient/experience/records";
 import { buildPatientTimeline } from "../src/lib/patient/timeline";
 import { buildPatientSummary } from "../src/lib/patient/summary";
 import { clinicianAssistantContext } from "../src/lib/ai/assistantContext";
@@ -112,7 +113,7 @@ async function main() {
   const aSees = async () => {
     const own = await personOverview(a.userId);
     const scopeA: PatientAccessScope = { patientId: a.patientId, patientIds: [a.patientId], facilityId: PUNE, isSelf: true, allowedClasses: new Set(ALL) };
-    return JSON.stringify({ own, reports: await listReports(scopeA), access: await personAccess({ kind: "OWNER", userId: a.userId }, personB, "UPLOADS"), provided: await listOwnRecords(a.userId), conflicts: await listOwnConflicts(a.userId) }).includes(CANARY)
+    return JSON.stringify({ own, reports: await listReports(scopeA), records: await buildRecords(scopeA), access: await personAccess({ kind: "OWNER", userId: a.userId }, personB, "UPLOADS"), provided: await listOwnRecords(a.userId), conflicts: await listOwnConflicts(a.userId) }).includes(CANARY)
       || (await personAccess({ kind: "OWNER", userId: a.userId }, personB, "PROFILE")) !== null;
   };
   const staffProfile = async (facilityId: string) => (await personAccess({ kind: "STAFF", userId: "staff", facilityId }, personB, "PROFILE")) !== null;
@@ -120,6 +121,11 @@ async function main() {
   // Positive controls: B sees their own canaries.
   const bOwn = JSON.stringify({ o: await personOverview(b.userId), r: await listReports(scopeB), p: await listOwnRecords(b.userId) });
   report("Control: B sees their own upload", bOwn.includes(CANARY));
+  // Week 4c: the record timeline carries B's own uploads and confirmed entries on B's own view, never on a delegate's (5b).
+  const timelineB = JSON.stringify((await buildRecords(scopeB)).timeline);
+  report("Control: B's own record timeline shows their upload and their confirmed entry", timelineB.includes(`Report ${CANARY}`) && timelineB.includes(`Canary ${CANARY}`));
+  const delegateView: PatientAccessScope = { ...scopeB, isSelf: false, delegationId: `leak-delegation-${run}` };
+  report("…a family delegate's view of B's record timeline shows neither", !JSON.stringify(await buildRecords(delegateView)).includes(CANARY));
 
   report("B hasn't chosen: Pune staff see nothing of the upload", !(await sees(PUNE, pb)));
   report("…and A sees nothing of B's", !(await aSees()));

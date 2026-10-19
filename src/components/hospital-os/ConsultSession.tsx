@@ -9,6 +9,7 @@ import {
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { ageLabel } from "@/lib/patient/age";
+import { ChartAi } from "@/components/ai/ChartAi";
 
 // Mirror of the server windows (src/lib/patient/accessSession.ts).
 const WARN_THRESHOLD_MS = 1000 * 60 * 3;
@@ -213,6 +214,9 @@ export function ConsultSession({ sessionId }: { sessionId: string }) {
           </button>
         </div>
       </div>
+
+      {/* The AI over what this code shares (visit brief, chart Q&A); the server checks the share on every request. */}
+      {data.session.status === "ACTIVE" && <ChartAi patientId={p.id} shareId={data.session.id} title="Visit brief from the shared record (cited, advisory)" />}
 
       <div className="grid gap-4 md:grid-cols-2">
         {/* Allergies — safety first */}

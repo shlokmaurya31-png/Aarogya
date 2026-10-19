@@ -593,3 +593,19 @@ What the code does where it differs from, or adds to, the sections above. Each i
 
   The image-normalization gate's PDF check now expects a raster.
 - **Bug fixed:** the account purge deleted each upload's bytes but not the pipeline's derived objects in storage (single-page PDFs and normalized page images), which then stayed behind. These are now deleted after the rows, including the rasters. Gate: `verify-postgres-scanned-pdf`.
+
+### 15.5 Week 4c: the documents page and browser smoke tests (2026-10-19)
+
+- **"My documents" in the patient portal** (`/patient/documents`). Until now, upload, processing and review existed as APIs only. The page lets the person:
+  - add a report (the existing upload route);
+  - watch its run;
+  - review what was found. Confirm-all appears only for high-confidence printed lines whose exact-copy check passed; other lines are confirmed or rejected one by one, and the server enforces both rules.
+
+  Confirmed entries already appear on the record timeline (`buildPatientTimeline`, "Lab result from the patient's document: …"). Explain-my-report for an upload stays on the Reports page.
+- **The doctor's visit-code consult** (`/consult/[sessionId]`) shows the AI panel (visit brief, chart Q&A) over what the code shares. The server already supported this path (`shareId`, RAG §16), but no page offered it.
+- **`npm run e2e:smoke`** (`scripts/e2e-smoke.ts`, Playwright 1.62 with Chromium; CI job "Browser smoke"):
+  - **Patient:** sign in → upload a scan-like sample report → it is rasterized, read and extracted on the mock providers by the real worker → review and confirm → the timeline shows the entry → explain my report, with the AI label, cited lines and sources.
+  - **Doctor:** sign in → open the consult a redeemed visit code opened (with an appointment today) → visit brief → a cited line about the shared result, labelled "verified", and the sources list.
+  - **Where it runs:** on a local database only, with the same refusals as verify:all (`scripts/lib/verifyTarget.ts`). It is never reset: migrations are applied, the seed runs only if missing, and fixtures are synthetic and tagged per run.
+  - **Isolation:** no provider key reaches the app or the worker.
+- **Bug fixed (privacy, from 4a):** a family delegate's view of the record (`/api/patient/records`, with a RECORDS grant) included the person's own uploads and patient-provided entries on its timeline. The reports list already kept them to the person's own login ("delegates see them from households, 5b"). The timeline now takes a `PROXY` viewer for a delegate's view, which carries none of the person's own uploads or entries until households define proxy permissions. Gate: `verify-postgres-person-leaks` (a delegate-view check, with B's own view as the positive control).
