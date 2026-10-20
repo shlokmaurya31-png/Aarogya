@@ -24,6 +24,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-core-journey.ts
  */
+import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 import { registerPatient } from "../src/lib/patient/registration";
 import { registerEdArrival } from "../src/lib/hospital/emergency";

@@ -8,6 +8,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-billing-concurrency.ts
  */
+import "./lib/gateBootstrap";
 import { PrismaClient } from "@prisma/client";
 import { createOrderEnvelope } from "../src/lib/hospital/orderEnvelope";
 import { createChargeIfNotExists } from "../src/lib/hospital/billing/chargeCapture";

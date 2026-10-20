@@ -13,6 +13,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-order-status.ts
  */
+import "./lib/gateBootstrap";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { $Enums, type Prisma } from "@prisma/client";

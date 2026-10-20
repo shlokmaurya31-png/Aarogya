@@ -12,6 +12,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-rag-latency.ts
  */
+import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 import { registerPatientAccount } from "../src/lib/patient/selfRegistration";
 import { Prisma } from "@prisma/client";

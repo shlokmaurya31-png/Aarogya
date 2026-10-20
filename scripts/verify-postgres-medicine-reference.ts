@@ -9,6 +9,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-medicine-reference.ts
  */
+import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 import { importInnVersion, medicineDictionary, latestInnNames } from "../src/lib/medicines/reference";
 import { INN_STARTER, INN_STARTER_VERSION } from "../src/lib/medicines/innStarter";

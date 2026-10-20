@@ -20,6 +20,7 @@
  * Usage:
  *   DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-interoperability.ts
  */
+import "./lib/gateBootstrap";
 import { PrismaClient } from "@prisma/client";
 import {
   linkExternalIdentifier, unlinkExternalIdentifier, verifyExternalIdentifier, listExternalIdentifiers,

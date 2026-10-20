@@ -20,6 +20,7 @@
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-task-merge.ts
  * (needs CREATEDB; it creates and drops its own scratch database.)
  */
+import "./lib/gateBootstrap";
 import { execFileSync } from "node:child_process";
 import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, copyFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";

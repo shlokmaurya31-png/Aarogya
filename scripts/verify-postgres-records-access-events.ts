@@ -26,6 +26,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-records-access-events.ts
  */
+import "./lib/gateBootstrap";
 import { PDFDocument } from "pdf-lib";
 import { prisma } from "../src/lib/db";
 import { uploadPatientDocument } from "../src/lib/patient/experience/documents";

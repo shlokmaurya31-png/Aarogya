@@ -16,6 +16,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-location-history.ts
  */
+import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 import { admitPatient, transferPatient, TRANSFER_WITH_LOCATIONS } from "../src/lib/hospital/admission";
 import {

@@ -10,6 +10,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-rag-eval.ts
  */
+import "./lib/gateBootstrap";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { prisma } from "../src/lib/db";

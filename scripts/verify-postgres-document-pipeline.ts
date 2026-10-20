@@ -45,6 +45,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-document-pipeline.ts
  */
+import "./lib/gateBootstrap";
 import { PDFDocument } from "pdf-lib";
 import { prisma } from "../src/lib/db";
 import { registerPatientAccount } from "../src/lib/patient/selfRegistration";

@@ -12,6 +12,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-nursing-concurrency.ts
  */
+import "./lib/gateBootstrap";
 import { PrismaClient } from "@prisma/client";
 import { completeTask, TaskConcurrencyError } from "../src/lib/hospital/task";
 import { createAssessment, completeAssessment, signAssessment, amendAssessment, AssessmentConcurrencyError } from "../src/lib/hospital/nursingAssessment";

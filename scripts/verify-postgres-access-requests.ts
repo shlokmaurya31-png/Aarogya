@@ -15,6 +15,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-access-requests.ts
  */
+import "./lib/gateBootstrap";
 import { randomBytes } from "node:crypto";
 import { prisma } from "../src/lib/db";
 import { registerAllConsumers } from "../src/lib/runner/consumers";

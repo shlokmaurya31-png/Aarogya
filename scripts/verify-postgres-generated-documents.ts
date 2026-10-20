@@ -14,6 +14,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-generated-documents.ts
  */
+import "./lib/gateBootstrap";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "../src/lib/db";

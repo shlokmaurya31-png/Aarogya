@@ -16,6 +16,7 @@
  * Usage:
  *   DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-abdm-integration.ts
  */
+import "./lib/gateBootstrap";
 import { PrismaClient } from "@prisma/client";
 import { getAbdmConfig, ABDM_ENV_VARS } from "../src/lib/hospital/interoperability/abdm/config";
 import { receiveCallback } from "../src/lib/hospital/interoperability/abdm/callbacks";

@@ -10,6 +10,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-pharmacy.ts
  */
+import "./lib/gateBootstrap";
 import { PrismaClient } from "@prisma/client";
 import { createAdjustment } from "../src/lib/hospital/inventory/adjustment";
 import {

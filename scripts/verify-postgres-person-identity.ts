@@ -45,6 +45,7 @@
 process.env.SMS_PROVIDER = "outbox";
 process.env.EMAIL_PROVIDER = "outbox";
 
+import "./lib/gateBootstrap";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { SMS_OUTBOX_FILE } from "../src/lib/messaging/sms";

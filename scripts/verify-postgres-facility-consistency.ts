@@ -11,6 +11,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-facility-consistency.ts
  */
+import "./lib/gateBootstrap";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../src/lib/db";
 import { PERSON_SCOPED_MODELS } from "../src/lib/person/tenancy";

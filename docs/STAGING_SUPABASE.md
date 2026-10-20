@@ -17,7 +17,9 @@ never print a password or a full URL.
 > `VERIFY_DATABASE_URL` (locally `aarogya_verify`), never `DATABASE_URL`.
 > `scripts/verify-all.ts` refuses any `*.supabase.co` / `*.supabase.com` host,
 > even with `ALLOW_REMOTE_VERIFY=1`, and a verify database named like the dev
-> database. Do not work around it.
+> database. Every gate also refuses to start unless both `DATABASE_URL` and
+> `DIRECT_URL` name `aarogya_verify` on localhost (`scripts/lib/gateGuard.ts`,
+> loaded first by every `scripts/verify-*.ts`). Do not work around it.
 
 > [!WARNING]
 > **Never enable `vector`, or any other extension `schema.prisma` declares,

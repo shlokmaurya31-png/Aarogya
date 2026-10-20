@@ -10,6 +10,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-emergency-department.ts
  */
+import "./lib/gateBootstrap";
 import { PrismaClient } from "@prisma/client";
 import {
   registerEdArrival, assignEdLocation, releaseEdLocation, activateResuscitation, updateResuscitation,

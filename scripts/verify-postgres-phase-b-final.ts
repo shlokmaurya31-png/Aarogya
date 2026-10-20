@@ -26,6 +26,7 @@
  * Usage:
  *   DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-phase-b-final.ts
  */
+import "./lib/gateBootstrap";
 import { PrismaClient } from "@prisma/client";
 import {
   createQualityIncident, transitionIncident, reopenIncident, createRca, updateRca, reviewRca,

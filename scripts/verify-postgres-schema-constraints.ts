@@ -13,6 +13,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-schema-constraints.ts
  */
+import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 
 let pass = 0;

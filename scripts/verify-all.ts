@@ -19,8 +19,10 @@
  *   --timeout <s>  per-script timeout in seconds (default 300)
  *
  * Safety: resetting wipes the verify database, so this refuses to run unless
- * VERIFY_DATABASE_URL points at localhost / 127.0.0.1 / ::1, or
- * ALLOW_REMOTE_VERIFY=1. Supabase (staging) hosts are refused even then. It
+ * VERIFY_DATABASE_URL names the database aarogya_verify on localhost /
+ * 127.0.0.1 / ::1 (the gate guard, scripts/lib/gateGuard.ts, which every gate
+ * also applies on start; ALLOW_REMOTE_VERIFY no longer opens it). Supabase
+ * (staging) hosts are refused always. It
  * also refuses when the verify database has the same name as the dev
  * database (DATABASE_URL / DIRECT_URL), so it can never reset the dev data.
  *
@@ -29,6 +31,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { assertGateDatabase } from "./lib/gateGuard";
 import { resolveVerifyTarget } from "./lib/verifyTarget";
 
 const ROOT = path.resolve(__dirname, "..");
@@ -351,6 +354,9 @@ async function main() {
   // the verify database. Next.js and Prisma never override a variable that
   // is already set, so .env cannot point them back at the dev database.
   childEnv = { ...process.env, DATABASE_URL: target.url, DIRECT_URL: target.url };
+  // The hard guard (scripts/lib/gateGuard.ts): the reset and every gate run
+  // only against aarogya_verify on localhost. Each gate re-checks on start.
+  assertGateDatabase(childEnv);
   if (!existsSync(TSX) || !existsSync(PRISMA)) throw new Error("tsx/prisma not found in node_modules; run npm ci first.");
 
   const names = discover(opts);

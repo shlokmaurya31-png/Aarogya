@@ -34,6 +34,7 @@ process.env.EMAIL_PROVIDER = "outbox";
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-person-leaks.ts
  */
+import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 import { listOwnRecords, staffPatientProvidedRecords } from "../src/lib/documents/merge";
 import { facilityConflicts, listOwnConflicts } from "../src/lib/documents/conflicts";

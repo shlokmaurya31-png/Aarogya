@@ -16,6 +16,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-image-normalization.ts
  */
+import "./lib/gateBootstrap";
 import { createHash } from "node:crypto";
 import sharp from "sharp";
 import { prisma } from "../src/lib/db";

@@ -6,6 +6,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-procurement-concurrency.ts
  */
+import "./lib/gateBootstrap";
 import { PrismaClient } from "@prisma/client";
 import { createRequisitionDraft, addRequisitionLine, submitRequisition, approveRequisition, RequisitionConcurrencyError, SameActorApprovalError as ReqSameActorError } from "../src/lib/hospital/procurement/requisitions";
 import { createPurchaseOrderDraft, addPurchaseOrderLine, submitForApproval, approvePurchaseOrder, PurchaseOrderConcurrencyError } from "../src/lib/hospital/procurement/purchaseOrders";

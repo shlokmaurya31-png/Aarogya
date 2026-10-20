@@ -11,6 +11,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-d8-configuration.ts
  */
+import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 import { emitDomainEvent } from "../src/lib/events/emit";
 import "../src/lib/workflows/register";

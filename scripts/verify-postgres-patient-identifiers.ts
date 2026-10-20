@@ -15,6 +15,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-patient-identifiers.ts
  */
+import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 import {
   addPatientIdentifier, listPatientIdentifiers, patientIdsByExternalIdentifier, externalSystemFor,

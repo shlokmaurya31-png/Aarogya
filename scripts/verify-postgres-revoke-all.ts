@@ -16,6 +16,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-revoke-all.ts
  */
+import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 import { registerAllConsumers } from "../src/lib/runner/consumers";
 import { issueAccessCode, redeemAccessCode } from "../src/lib/patient/accessSession";

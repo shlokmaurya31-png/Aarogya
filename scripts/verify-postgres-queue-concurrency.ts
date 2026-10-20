@@ -7,6 +7,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-queue-concurrency.ts
  */
+import "./lib/gateBootstrap";
 import { PrismaClient } from "@prisma/client";
 import { callNext } from "../src/lib/hospital/queue";
 import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";

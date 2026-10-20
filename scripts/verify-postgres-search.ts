@@ -12,6 +12,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-search.ts
  */
+import "./lib/gateBootstrap";
 import { PrismaClient } from "@prisma/client";
 import { patientSearchWhere } from "../src/lib/hospital/patientSearch";
 import { listItems } from "../src/lib/hospital/inventory/items";

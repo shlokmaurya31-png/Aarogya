@@ -10,6 +10,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-scheduling.ts
  */
+import "./lib/gateBootstrap";
 import { PrismaClient } from "@prisma/client";
 import { createOrderEnvelope } from "../src/lib/hospital/orderEnvelope";
 import { scheduleStudy, ScheduleConflictError } from "../src/lib/hospital/imagingStudyLifecycle";

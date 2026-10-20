@@ -11,6 +11,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-appointment-concurrency.ts
  */
+import "./lib/gateBootstrap";
 import { PrismaClient } from "@prisma/client";
 import { bookAppointment, SlotConflictError } from "../src/lib/hospital/appointment";
 import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";

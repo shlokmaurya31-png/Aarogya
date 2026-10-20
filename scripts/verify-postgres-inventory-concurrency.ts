@@ -8,6 +8,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-inventory-concurrency.ts
  */
+import "./lib/gateBootstrap";
 import { seedFixtureStock } from "./lib/stockFixture";
 import { PrismaClient } from "@prisma/client";
 import { issueStock } from "../src/lib/hospital/inventory/issue";

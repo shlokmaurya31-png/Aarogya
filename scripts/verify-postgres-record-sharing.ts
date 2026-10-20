@@ -17,6 +17,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-record-sharing.ts
  */
+import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 import { registerAllConsumers } from "../src/lib/runner/consumers";
 import { issueAccessCode, redeemAccessCode, endAccessSession, endOwnAccessSession, extendAccessSession } from "../src/lib/patient/accessSession";

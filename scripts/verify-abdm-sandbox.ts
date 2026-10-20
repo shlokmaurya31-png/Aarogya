@@ -22,6 +22,7 @@
  *     npx tsx scripts/verify-abdm-sandbox.ts
  * ════════════════════════════════════════════════════════════════════════════
  */
+import "./lib/gateBootstrap";
 import { getAbdmConfig, checkEnvironmentSafety, describeAbdmConfig, ABDM_ENV_VARS } from "../src/lib/hospital/interoperability/abdm/config";
 import { checkAbdmHealth } from "../src/lib/hospital/interoperability/abdm/health";
 import { getAbdmSession, clearSessionCache, describeCachedSession } from "../src/lib/hospital/interoperability/abdm/session";

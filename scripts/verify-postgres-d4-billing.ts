@@ -18,6 +18,7 @@ process.env.RAZORPAY_KEY_ID ||= "rzp_test_gate";
 process.env.RAZORPAY_KEY_SECRET ||= "test_secret_gate";
 process.env.RAZORPAY_WEBHOOK_SECRET ||= "whsec_gate";
 
+import "./lib/gateBootstrap";
 import { createHmac } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../src/lib/db";

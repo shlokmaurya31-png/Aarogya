@@ -6,6 +6,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-ot-concurrency.ts
  */
+import "./lib/gateBootstrap";
 import { PrismaClient } from "@prisma/client";
 import { runTick } from "../src/lib/runner/tick";
 import { createOperatingTheatre, createProcedure, requestSurgery, transitionSurgery, scheduleSurgery, startProcedure, completeProcedure, recordItemUsage, SurgeryScheduleConflictError, SurgeryTransitionError } from "../src/lib/hospital/surgery";

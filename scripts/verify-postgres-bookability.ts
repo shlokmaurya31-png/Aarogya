@@ -19,6 +19,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-bookability.ts
  */
+import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 import { bookAppointment } from "../src/lib/hospital/appointment";
 import { getAvailableSlots } from "../src/lib/hospital/doctorSchedule";

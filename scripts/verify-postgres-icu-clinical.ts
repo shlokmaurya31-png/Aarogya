@@ -7,6 +7,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-icu-clinical.ts
  */
+import "./lib/gateBootstrap";
 import { PrismaClient } from "@prisma/client";
 import { createIcuUnit, admitToIcu, recordObservation, recordInfusion, updateInfusionStatus, recordDevice, buildIcuRounding, buildIcuTimeline } from "../src/lib/hospital/icu";
 import { transferPatient } from "../src/lib/hospital/admission";

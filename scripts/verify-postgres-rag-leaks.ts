@@ -34,6 +34,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-rag-leaks.ts
  */
+import "./lib/gateBootstrap";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../src/lib/db";
 import { registerPatientAccount } from "../src/lib/patient/selfRegistration";

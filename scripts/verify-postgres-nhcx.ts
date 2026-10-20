@@ -25,6 +25,7 @@
  * Usage:
  *   DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-nhcx.ts
  */
+import "./lib/gateBootstrap";
 import { PrismaClient, Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { buildClaimPackage } from "../src/lib/hospital/nhcx/claimPackage";

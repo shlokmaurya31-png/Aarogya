@@ -43,6 +43,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-tenancy-sweep.ts [--no-build]
  */
+import "./lib/gateBootstrap";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { ItemCategory, Prisma, Role, UnitOfMeasure } from "@prisma/client";

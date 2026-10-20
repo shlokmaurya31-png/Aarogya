@@ -16,6 +16,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-scanned-pdf.ts
  */
+import "./lib/gateBootstrap";
 import { createHash } from "node:crypto";
 import sharp from "sharp";
 import { PDFDocument } from "pdf-lib";

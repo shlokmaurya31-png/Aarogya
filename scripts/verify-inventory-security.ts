@@ -11,6 +11,7 @@
  *
  * Usage: npx tsx scripts/verify-inventory-security.ts
  */
+import "./lib/gateBootstrap";
 import { seedFixtureStock } from "./lib/stockFixture";
 import { PrismaClient } from "@prisma/client";
 import { issueStock } from "../src/lib/hospital/inventory/issue";
