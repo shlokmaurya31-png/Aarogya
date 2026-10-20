@@ -18,6 +18,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-rag-models.ts
  */
+import "./lib/gateBootstrap";
 import { Prisma, Role } from "@prisma/client";
 import { prisma } from "../src/lib/db";
 import { roleHasPermission } from "../src/lib/auth/permissions";

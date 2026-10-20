@@ -39,8 +39,9 @@ export async function buildRecords(scope: PatientAccessScope): Promise<RecordsDT
       orderBy: { recordedAt: "desc" },
       take: 100,
     }),
-    // Timeline builder is already merge-aware; scope it to the primary id.
-    buildPatientTimeline(scope.patientId, { kind: "PATIENT" }),
+    // Timeline builder is already merge-aware; scope it to the primary id. A
+    // delegate's view carries none of the person's own uploads or entries (5b).
+    buildPatientTimeline(scope.patientId, scope.isSelf && !scope.delegationId ? { kind: "PATIENT" } : { kind: "PROXY" }),
   ]);
 
   return {

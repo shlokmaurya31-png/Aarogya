@@ -19,6 +19,7 @@
  * Usage:
  *   DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-trust-layer.ts
  */
+import "./lib/gateBootstrap";
 import { PrismaClient } from "@prisma/client";
 import { authorizeAccess, resolveRelationship } from "../src/lib/auth/authorize/engine";
 import {

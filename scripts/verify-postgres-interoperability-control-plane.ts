@@ -25,6 +25,7 @@
  * Usage:
  *   DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-interoperability-control-plane.ts
  */
+import "./lib/gateBootstrap";
 import { PrismaClient } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import {

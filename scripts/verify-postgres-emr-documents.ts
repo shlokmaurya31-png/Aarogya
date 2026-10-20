@@ -8,6 +8,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-emr-documents.ts
  */
+import "./lib/gateBootstrap";
 import { PrismaClient } from "@prisma/client";
 import { buildPatientTimeline } from "../src/lib/patient/timeline";
 import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";

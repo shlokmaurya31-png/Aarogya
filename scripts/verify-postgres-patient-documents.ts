@@ -15,6 +15,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-patient-documents.ts
  */
+import "./lib/gateBootstrap";
 import { createHash } from "node:crypto";
 import { PDFDocument } from "pdf-lib";
 import { prisma } from "../src/lib/db";

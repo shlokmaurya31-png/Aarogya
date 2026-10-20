@@ -11,6 +11,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-bed-concurrency.ts
  */
+import "./lib/gateBootstrap";
 import { PrismaClient } from "@prisma/client";
 import { admitPatient, transferPatient, BedNotAvailableError } from "../src/lib/hospital/admission";
 import { allocateBed, AdmissionRequestNotPendingError } from "../src/lib/hospital/admissionRequest";

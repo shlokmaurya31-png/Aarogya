@@ -26,6 +26,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-supply-events.ts
  */
+import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 import { createItem } from "../src/lib/hospital/inventory/items";
 import { createStockLocation } from "../src/lib/hospital/inventory/locations";

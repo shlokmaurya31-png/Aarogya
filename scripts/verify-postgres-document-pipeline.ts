@@ -45,6 +45,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-document-pipeline.ts
  */
+import "./lib/gateBootstrap";
 import { PDFDocument } from "pdf-lib";
 import { prisma } from "../src/lib/db";
 import { registerPatientAccount } from "../src/lib/patient/selfRegistration";
@@ -116,7 +117,8 @@ function recording(inner: DocumentProviders, opts: { crashOnPage?: string } = {}
   let crashed = false;
   const p: DocumentProviders = {
     ocr: { id: "mock", async ocrPage(page, hints, permit) {
-      const marker = (await PDFDocument.load(page.bytes)).getPage(0).node.toString().match(/AarogyaFixture \(([^)]+)\)/)?.[1] ?? "?";
+      // Fixture PDF pages are rasterized before OCR; the marker is on the PDF the image was rendered from.
+      const marker = (await PDFDocument.load(page.sourcePdf ?? page.bytes)).getPage(0).node.toString().match(/AarogyaFixture \(([^)]+)\)/)?.[1] ?? "?";
       if (opts.crashOnPage === marker && !crashed) { crashed = true; throw new Error("worker killed"); }
       // Keyed by person: leftover runs of an earlier gate run (reused database) may be resumed by the sweep too.
       sent.ocrPages.push(`${permit.personId}:${marker}`);

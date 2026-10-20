@@ -20,6 +20,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-runner.ts
  */
+import "./lib/gateBootstrap";
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 import { prisma } from "../src/lib/db";

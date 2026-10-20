@@ -24,6 +24,7 @@
  */
 process.env.SMS_PROVIDER = "outbox";
 
+import "./lib/gateBootstrap";
 import { readFile, rm } from "node:fs/promises";
 import { prisma } from "../src/lib/db";
 import { BadRequestError, NotFoundError } from "../src/lib/auth/rbac";

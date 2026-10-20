@@ -10,6 +10,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-d6-events.ts
  */
+import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 import { emitDomainEvent } from "../src/lib/events/emit";
 import { dispatchPendingDomainEvents } from "../src/lib/events/dispatcher";

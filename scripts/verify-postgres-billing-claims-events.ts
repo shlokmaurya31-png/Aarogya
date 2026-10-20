@@ -27,6 +27,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-billing-claims-events.ts
  */
+import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 import { registerPatient } from "../src/lib/patient/registration";
 import { openEncounter } from "../src/lib/hospital/encounter";

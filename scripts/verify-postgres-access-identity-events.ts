@@ -17,6 +17,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-access-identity-events.ts
  */
+import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 import { registerPatient } from "../src/lib/patient/registration";
 import { activateBreakGlass, completeBreakGlass, revokeBreakGlass, expireLapsedBreakGlass } from "../src/lib/auth/authorize/breakGlass";

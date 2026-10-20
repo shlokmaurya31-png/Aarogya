@@ -1,4 +1,4 @@
-import { $Enums } from "@prisma/client";
+import { $Enums, type PersonConsentDecision, type PersonConsentPurpose, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { BadRequestError, ConflictError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
@@ -23,23 +23,32 @@ export async function decidePersonConsent(input: { userId: string; purpose: stri
   if (scopes.some((x) => !allowedScopes.includes(x))) throw new BadRequestError(`Scopes for ${purpose}: ${allowedScopes.join(", ") || "none"}.`);
   if (decision === "DECLINED" && scopes.length) throw new BadRequestError("A declined choice has no scopes.");
   const personId = await requireOwnedPerson(input.userId);
-  const result = await prisma.$transaction(async (tx) => {
-    const current = await tx.personConsent.findFirst({ where: { personId, purpose, status: "ACTIVE" } });
-    if (current?.decision === decision && [...current.scopes].sort().join() === scopes.join()) return { consent: current, changed: false };
-    if (current) {
-      const r = await tx.personConsent.updateMany({ where: { id: current.id, status: "ACTIVE" }, data: { status: "SUPERSEDED", supersededAt: new Date() } });
-      if (r.count !== 1) throw new ConflictError("This choice changed concurrently. Refresh and try again.");
-    }
-    const consent = await tx.personConsent.create({ data: { personId, purpose, decision, scopes, decidedByUserId: input.userId } });
-    await tx.personAccessLogEntry.create({ data: { personId, kind: "CONSENT_DECIDED", actorUserId: input.userId, detail: { consentId: consent.id, purpose, decision } } });
-    await emitDomainEvent(tx, {
-      type: "PersonConsentDecided", aggregateId: personId, personId, actorUserId: input.userId,
-      payload: { personId, consentId: consent.id, purpose, decision, previous: current?.decision ?? "NONE", scopes },
-    });
-    return { consent, changed: true };
-  });
+  const result = await prisma.$transaction((tx) => recordPersonConsentTx(tx, { personId, userId: input.userId, purpose, decision, scopes }));
   if (result.changed) await recordAuditEvent("person.consent.decided", input.userId, { personId, purpose, decision });
   return { purpose, decision: result.consent.decision, scopes: result.consent.scopes, decidedAt: result.consent.decidedAt.toISOString() };
+}
+
+/**
+ * A person's choice, inside the caller's transaction: the current one is
+ * superseded, the new one recorded and logged, and PersonConsentDecided
+ * emitted. No change if the same choice is already in force. Week 4c:
+ * shared with revoke-all, which declines "share uploads" in its own transaction.
+ */
+export async function recordPersonConsentTx(tx: Prisma.TransactionClient, input: { personId: string; userId: string; purpose: PersonConsentPurpose; decision: PersonConsentDecision; scopes: string[] }) {
+  const { personId, purpose, decision, scopes } = input;
+  const current = await tx.personConsent.findFirst({ where: { personId, purpose, status: "ACTIVE" } });
+  if (current?.decision === decision && [...current.scopes].sort().join() === scopes.join()) return { consent: current, changed: false };
+  if (current) {
+    const r = await tx.personConsent.updateMany({ where: { id: current.id, status: "ACTIVE" }, data: { status: "SUPERSEDED", supersededAt: new Date() } });
+    if (r.count !== 1) throw new ConflictError("This choice changed concurrently. Refresh and try again.");
+  }
+  const consent = await tx.personConsent.create({ data: { personId, purpose, decision, scopes, decidedByUserId: input.userId } });
+  await tx.personAccessLogEntry.create({ data: { personId, kind: "CONSENT_DECIDED", actorUserId: input.userId, detail: { consentId: consent.id, purpose, decision } } });
+  await emitDomainEvent(tx, {
+    type: "PersonConsentDecided", aggregateId: personId, personId, actorUserId: input.userId,
+    payload: { personId, consentId: consent.id, purpose, decision, previous: current?.decision ?? "NONE", scopes: scopes as "SAFETY_REVIEW"[] },
+  });
+  return { consent, changed: true };
 }
 
 export function assertDecision(value: unknown): "GRANTED" | "DECLINED" {

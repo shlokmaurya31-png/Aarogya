@@ -10,10 +10,13 @@
  *   - OCR is sent the normalized page, never the original;
  *   - redelivery creates no second page;
  *   - a decompression bomb fails the run (TOO_LARGE) with the original kept;
- *   - PDF pages are still single-page copies, with no normalization record.
+ *   - a scanned PDF page keeps its single-page copy and gains a normalized
+ *     raster alongside, which is what OCR reads (Week 4c; the scanned-pdf
+ *     gate covers text layers and mixed PDFs).
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-image-normalization.ts
  */
+import "./lib/gateBootstrap";
 import { createHash } from "node:crypto";
 import sharp from "sharp";
 import { prisma } from "../src/lib/db";
@@ -130,12 +133,20 @@ async function main() {
   report("A 100-megapixel image fails page split with TOO_LARGE", r3?.status === "FAILED" && r3.steps.find((s) => s.step === "PAGE_SPLIT")?.lastErrorCode === "TOO_LARGE" && (failed?.payload as { errorCode?: string })?.errorCode === "TOO_LARGE");
   report("…no page stored, the original kept as uploaded", r3?.pages.length === 0 && (await prisma.personDocument.findUniqueOrThrow({ where: { id: d3.id } })).status === "CURRENT" && sha((await storage.get(d3.storageRef)).bytes) === sha(bomb));
 
-  // 4. PDFs are still split page by page, not rasterized.
+  // 4. A scanned PDF page: split page by page, then rasterized and normalized for OCR.
   const pdf = await fixturePdf(fixtureById("lab-en-cbc")!);
   const d4 = await uploadPersonDocument(p1.userId, { bytes: pdf, contentType: "application/pdf", originalName: "r.pdf", title: "PDF", type: "REPORT" });
   await drain();
   const r4 = await runOf(d4.id);
-  report("A PDF page is a single-page PDF with no normalization record", r4?.pages.length === 1 && r4.pages[0].contentType === "application/pdf" && r4.pages[0].normalization === null && r4.steps.find((s) => s.step === "PAGE_SPLIT")?.provider === "pdf-lib");
+  const p4 = r4?.pages[0];
+  const n4 = p4?.normalization as unknown as Normalization | null;
+  const raster4 = p4?.rasterRef ? (await storage.get(p4.rasterRef)).bytes : Buffer.alloc(0);
+  report("A scanned PDF page is a single-page PDF with a normalized JPEG raster alongside",
+    r4?.pages.length === 1 && p4?.contentType === "application/pdf" && p4.textLayer === "EMPTY" && !!p4.rasterRef && p4.rasterRef !== p4.storageRef
+      && sha(raster4) === p4.rasterSha256 && (await sharp(raster4).metadata()).format === "jpeg" && !!n4 && n4.output.height > n4.output.width
+      && r4?.steps.find((s) => s.step === "PAGE_SPLIT")?.provider === "pdf-lib+pdf.js",
+    JSON.stringify({ textLayer: p4?.textLayer, raster: !!p4?.rasterRef, out: n4?.output }));
+  report("…OCR was sent the raster", seen.some((s) => s.contentType === "image/jpeg" && s.sha === p4?.rasterSha256));
 
   setDocumentProvidersForTest(null);
   mockControl.reset();

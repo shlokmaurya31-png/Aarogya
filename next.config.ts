@@ -16,6 +16,10 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // The document pipeline renders PDF pages with pdf.js on @napi-rs/canvas (a
+  // native addon); both load from node_modules at runtime, not bundled.
+  // (sharp is already on Next's built-in list.)
+  serverExternalPackages: ["@napi-rs/canvas", "pdfjs-dist"],
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

@@ -13,6 +13,7 @@
  *
  * Usage: npx tsx scripts/verify-inventory-e2e.ts
  */
+import "./lib/gateBootstrap";
 import { PrismaClient } from "@prisma/client";
 import { createMedicationOrder, verifyMedicationOrder, dispenseMedication, UnmappedDrugItemError } from "../src/lib/hospital/medicationLifecycle";
 import { reconcileBalances } from "../src/lib/hospital/inventory/stockBalance";

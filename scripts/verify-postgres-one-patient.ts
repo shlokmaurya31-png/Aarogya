@@ -19,6 +19,7 @@
  * the gate can read the code the server sent.
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-one-patient.ts [--no-build]
  */
+import "./lib/gateBootstrap";
 import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { PDFDocument } from "pdf-lib";

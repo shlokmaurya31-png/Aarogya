@@ -13,6 +13,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-problem-list.ts
  */
+import "./lib/gateBootstrap";
 import type { DiagnosisStatus } from "@prisma/client";
 import { prisma } from "../src/lib/db";
 import { NotFoundError } from "../src/lib/auth/rbac";

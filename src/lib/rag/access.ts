@@ -8,6 +8,11 @@ import { aiAssistancePermit, type AiDataOwner, type AiRefusal } from "@/lib/ai/r
 import type { AiPermit } from "@/lib/ai/record/types";
 import { MODES, type AiAudience, type AiMode } from "./modes";
 import { ALL_CATEGORIES, ALL_SENSITIVE, type RetrievalScope, type ScopeSegment } from "./scope";
+import { resolveShare } from "@/lib/sharing/resolve";
+import { ragCategoriesFor } from "@/lib/sharing/categories";
+
+const latest = (a?: Date, b?: Date) => (a && b ? (a > b ? a : b) : a ?? b);
+const earliest = (a?: Date, b?: Date) => (a && b ? (a < b ? a : b) : a ?? b);
 
 /**
  * Week 4b — who may ask what about whom (docs/RAG_DESIGN.md §1, §7.1). The AI
@@ -22,10 +27,12 @@ import { ALL_CATEGORIES, ALL_SENSITIVE, type RetrievalScope, type ScopeSegment }
  *                 NursingAssignment), and only chart Q&A and the handoff; the
  *                 Person's uploads and confirmed facts only with their
  *                 "share my uploads" choice (personAccess)
- *   SHARE         a doctor holding the patient's visit code (an ACTIVE
- *                 PatientAccessSession redeemed by them, not expired): that
- *                 record, never uploads (the code carries no category choice
- *                 yet; 4c) and never a sensitive category
+ *   SHARE         a share (Week 4c, src/lib/sharing/resolve.ts): a visit code
+ *                 this doctor redeemed (its consult open) or a request the
+ *                 person approved for them or their facility: only the share's
+ *                 categories (and allergies), its period, its sensitive
+ *                 opt-ins; uploads only with UPLOADS. A code from before 4c
+ *                 reads under the legacy code scope
  *   ORG_CONSENT   a doctor at another facility of the same organization, with
  *                 the patient's consent to that organization (InteropConsent,
  *                 recipient ORGANIZATION): its scopes only, never sensitive
@@ -55,7 +62,9 @@ export interface AiAccess {
   shareId?: string;
   consentId?: string;
   /** Live facts (§7.4): read from these records, if the scope allows their categories. */
-  live: { patientIds: string[]; facilityIds: string[]; medications: boolean; allergies: boolean; patientProvidedAllergies: boolean; nurseView: boolean };
+  live: { patientIds: string[]; facilityIds: string[]; medications: boolean; allergies: boolean; patientProvidedAllergies: boolean; nurseView: boolean; period?: { from?: Date; to?: Date } };
+  /** Week 4c: the share's person (for the access log) and how the caller got in. */
+  share?: { personId: string | null; via: "SHARE_CODE" | "ACCESS_REQUEST"; categories: string[] };
   permit: AiPermit;
   real: boolean;
 }
@@ -135,18 +144,26 @@ export async function resolveAiAccess(actor: AiActor, req: AccessRequest): Promi
   const recordGate = () => gate({ facilityId: patient.facilityId, patientId: patient.id });
   const base = { mode: req.mode, audience: spec.audience, subject, callerFacilityId: actor.facilityId, callerOrganizationId: caller.organizationId };
 
-  // A visit code shared with this doctor.
+  // A share: a visit code this doctor redeemed, or a request the person approved (Week 4c,
+  // docs/CONSENT_SHARING_DESIGN.md §8). Only its categories (and allergies), its period,
+  // its sensitive opt-ins, and the person's uploads only with UPLOADS.
   if (req.shareId) {
     if (actor.role !== "DOCTOR") throw new AiAccessError(403, "MODE_NOT_ALLOWED");
-    const s = await prisma.patientAccessSession.findUnique({ where: { id: req.shareId } });
-    const now = new Date();
-    if (!s || s.patientId !== patient.id || s.doctorUserId !== actor.userId || s.status !== "ACTIVE" || !s.activeExpiresAt || s.activeExpiresAt <= now) throw new AiAccessError(404, "NOT_FOUND");
+    const share = await resolveShare({ userId: actor.userId, facilityId: actor.facilityId, role: actor.role }, req.shareId);
+    if (!share || !share.patientIds.includes(patient.id)) throw new AiAccessError(404, "NOT_FOUND");
     const g = await recordGate();
-    const categories = ALL_CATEGORIES.filter((c) => c !== "UPLOADS");
+    const from = latest(share.recordedFrom ?? undefined, req.period?.from);
+    const to = earliest(share.recordedTo ?? undefined, req.period?.to);
+    const sharePeriod = { recordedFrom: from, recordedTo: to };
+    const categories = ragCategoriesFor(share.categories);
+    const segments: ScopeSegment[] = [{ path: "SHARE", facility: { patientIds: share.patientIds, facilityIds: share.facilityIds }, categories: categories.filter((c) => c !== "UPLOADS"), sensitive: share.sensitive, audiences: ["STAFF_ONLY", "PATIENT_VISIBLE"], origins: ["VERIFIED"], ...sharePeriod }];
+    if (share.categories.includes("UPLOADS") && share.personId) {
+      segments.push({ path: "SHARE_UPLOADS", personId: share.personId, categories, sensitive: share.sensitive, audiences: ["PATIENT_VISIBLE"], origins: ["PATIENT_PROVIDED"], ...sharePeriod });
+    }
     return {
-      ...base, path: "SHARE", shareId: s.id,
-      scope: { segments: [{ path: "SHARE", facility: { patientIds, facilityIds: [patient.facilityId] }, categories, sensitive: NON_SENSITIVE, audiences: ["STAFF_ONLY", "PATIENT_VISIBLE"], origins: ["VERIFIED"], ...period }] },
-      live: { patientIds, facilityIds: [patient.facilityId], medications: true, allergies: true, patientProvidedAllergies: false, nurseView: false },
+      ...base, path: "SHARE", shareId: share.shareId ?? share.ref, scope: { segments },
+      live: { patientIds: share.patientIds, facilityIds: share.facilityIds, medications: share.categories.includes("PRESCRIPTIONS"), allergies: true, patientProvidedAllergies: share.categories.includes("UPLOADS"), nurseView: false, period: { from, to } },
+      share: { personId: share.personId ?? subject.personId, via: share.via, categories: share.categories },
       permit: g.permit, real: g.real,
     };
   }

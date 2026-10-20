@@ -6,6 +6,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-d10-command-center.ts
  */
+import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 import { getCommandCenterOverview, getCommandCenterSection, getDrillDown } from "../src/lib/hospital-os/command-center";
 import { setOverride, publishOverride } from "../src/lib/config";

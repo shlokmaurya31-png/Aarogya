@@ -123,6 +123,10 @@ export const AGGREGATE_TYPES = [
   "ALLERGY_STATUS",
   // Week 4b — an embedding space of the AI index (platform).
   "RAG_EMBEDDING_SPACE",
+  // Week 4c — consent sharing (person-owned).
+  "RECORD_SHARE",
+  "ACCESS_REQUEST",
+  "PERSON_NOTIFICATION",
 ] as const;
 export type AggregateType = (typeof AGGREGATE_TYPES)[number];
 

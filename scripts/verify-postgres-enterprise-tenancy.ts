@@ -25,6 +25,7 @@
  *   DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-enterprise-tenancy.ts
  * Also runnable against the dev SQLite database for the security assertions.
  */
+import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 import {
   loadActorMemberships,

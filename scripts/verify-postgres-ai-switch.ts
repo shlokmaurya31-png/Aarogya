@@ -14,6 +14,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-ai-switch.ts
  */
+import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 import { registerPatientAccount } from "../src/lib/patient/selfRegistration";
 import { mayProcessPersonData } from "../src/lib/ai/realData";

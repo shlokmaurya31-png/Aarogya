@@ -11,6 +11,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-walk-ins.ts
  */
+import "./lib/gateBootstrap";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { prisma } from "../src/lib/db";

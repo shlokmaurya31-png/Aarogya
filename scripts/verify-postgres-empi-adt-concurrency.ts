@@ -9,6 +9,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-empi-adt-concurrency.ts
  */
+import "./lib/gateBootstrap";
 import { PrismaClient } from "@prisma/client";
 import { createPatientWithUhid } from "../src/lib/hospital/uhid";
 import { mergePatients, unmergePatients, AlreadyMergedError, CrossFacilityMergeError } from "../src/lib/patient/merge";

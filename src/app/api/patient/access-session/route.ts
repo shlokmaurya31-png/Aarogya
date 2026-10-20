@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
-import { withApiErrors } from "@/lib/auth/rbac";
+import { withApiErrors, BadRequestError } from "@/lib/auth/rbac";
+import { DEFAULT_SHARE_CATEGORIES, parseShareChoice } from "@/lib/sharing/categories";
 import { requirePatientSelf } from "@/lib/auth/patientRbac";
 import { prisma } from "@/lib/db";
 import { issueAccessCode, prettyCode, enforceActiveExpiry } from "@/lib/patient/accessSession";
@@ -22,6 +23,7 @@ export async function GET() {
         id: session.id,
         status: session.status,
         purpose: session.purpose,
+        shareId: session.shareId,
         expiresAt: session.expiresAt,
         redeemedAt: session.redeemedAt,
         doctorName: session.doctorName,
@@ -30,14 +32,22 @@ export async function GET() {
   });
 }
 
-/** POST — issue a fresh code for the patient to hand to a doctor. */
+/**
+ * POST — issue a fresh code for the patient to hand to a doctor. Week 4c: body
+ * { categories?, sensitiveCategories?, period?: { from?, to? }, purpose?, validHours? } —
+ * what the code shares (default since the 4c fix: every non-sensitive category,
+ * uploads included, except clinical notes; nothing sensitive; 24 hours).
+ */
 export async function POST(req: NextRequest) {
   return withApiErrors(async () => {
     const { session: authSession, patient } = await requirePatientSelf();
     const body = await req.json().catch(() => ({}));
-    const purpose = typeof body?.purpose === "string" ? body.purpose : undefined;
+    const note = typeof body?.note === "string" ? body.note : undefined;
+    const choice = parseShareChoice(body, { categories: DEFAULT_SHARE_CATEGORIES });
+    const validHours = body?.validHours === undefined ? undefined : Number(body.validHours);
+    if (validHours !== undefined && (!Number.isInteger(validHours) || validHours < 1 || validHours > 24)) throw new BadRequestError("validHours must be 1–24.");
 
-    const { session, code } = await issueAccessCode(patient.id, authSession.userId, purpose);
+    const { session, code } = await issueAccessCode(patient.id, authSession.userId, note, { choice, validHours });
 
     return {
       session: { id: session.id, status: session.status, expiresAt: session.expiresAt },

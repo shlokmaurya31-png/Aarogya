@@ -43,6 +43,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-tenancy-sweep.ts [--no-build]
  */
+import "./lib/gateBootstrap";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { ItemCategory, Prisma, Role, UnitOfMeasure } from "@prisma/client";
@@ -362,6 +363,11 @@ const SEGMENT_MODELS: Record<string, string> = {
   "patient-link-requests/[id]": "PatientLinkRequest",
   "person-links/[id]": "PersonPatientLink",
   "person-documents/[id]": "PersonDocument",
+  // Week 4c: person-scoped; staff reach them only as requester or recipient.
+  "access-requests/[id]": "AccessRequest",
+  "shares/[id]": "RecordShare",
+  // 4c fix: a shared upload's signed URL, only through the share.
+  "shares/[id]/documents/[documentId]": "PersonDocument",
 };
 
 type SegmentTarget = { kind: "record"; model: string } | { kind: "static"; values: string[] } | { kind: "unmapped" };

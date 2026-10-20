@@ -9272,6 +9272,10 @@ model PatientAccessSession {
   endedAt         DateTime?
   endedBy         String? // "DOCTOR" | "PATIENT" | "SYSTEM"
 
+  /// Week 4c: the share this code carries (categories, period, sensitive opt-ins); null for codes issued before 4c.
+  shareId String?      @unique
+  share   RecordShare? @relation(fields: [shareId], references: [id])
+
   version   Int      @default(1)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -10334,6 +10338,12 @@ enum PersonAccessLogKind {
   LINK_SUPERSEDED
   ACCOUNT_CLOSED
   ACCOUNT_REOPENED
+  /// Week 4c: consent sharing.
+  SHARE_CREATED
+  SHARE_ENDED
+  ACCESS_REQUESTED
+  ACCESS_REQUEST_DECIDED
+  ACCESS_REVOKED_ALL
 }
 
 model Person {
@@ -10367,6 +10377,11 @@ model Person {
   mergeRecordsAsSource  PersonMergeRecord[]  @relation("PersonMergeRecordSource")
 
   personDocuments PersonDocument[]
+  /// Week 4c: shares the person gave and access requests about them (docs/CONSENT_SHARING_DESIGN.md).
+  recordShares    RecordShare[]
+  accessRequests  AccessRequest[]
+  /// 4c answers: what the person is told about access to their record.
+  notifications   PersonNotification[]
 
   /// Account closure: CLOSED at closedAt; patient-provided data is deleted at
   /// purgeAfter (30 days later) unless reopened first; purgedAt once done.
@@ -10797,6 +10812,12 @@ model DocumentProcessingStep {
 }
 
 /// A page of the original, as its own single-page file (the original is never changed).
+enum PdfTextLayer {
+  USABLE
+  EMPTY
+  GARBAGE
+}
+
 model DocumentPage {
   id            String             @id @default(cuid())
   processing    DocumentProcessing @relation(fields: [processingId], references: [id], onDelete: Cascade)
@@ -10806,8 +10827,13 @@ model DocumentPage {
   storageRef    String
   sha256        String
   contentType   String
-  /// What was done to an image page before OCR (src/lib/documents/normalize.ts); null for PDF pages.
+  /// What was done to an image page before OCR (src/lib/documents/normalize.ts); for a PDF page, to its raster (null when its text layer was used).
   normalization Json?
+  /// A PDF page's embedded text layer (src/lib/documents/pdfPages.ts); null for image pages and pages split before the check.
+  textLayer     PdfTextLayer?
+  /// The rendered, normalized image of a PDF page whose text layer was empty or garbage — what OCR is sent.
+  rasterRef     String?
+  rasterSha256  String?
 
   @@unique([processingId, pageNo])
   @@index([personId])
@@ -11242,4 +11268,161 @@ model RagBackfillCursor {
   updatedAt    DateTime      @updatedAt
 
   @@id([facilityId, sourceType])
+}
+
+// ── Week 4c: consent sharing (docs/CONSENT_SHARING_DESIGN.md) ───────────────
+
+enum RecordShareKind {
+  CODE
+  REQUEST
+}
+
+enum RecordShareStatus {
+  PENDING
+  ACTIVE
+  ENDED
+  EXPIRED
+  REVOKED
+}
+
+enum ShareCategory {
+  PRESCRIPTIONS
+  LABS
+  IMAGING
+  DISCHARGE_SUMMARIES
+  UPLOADS
+  /// 4c fix: diagnoses and the problem list (and, with UPLOADS, confirmed patient-provided conditions).
+  CONDITIONS
+  VITALS
+  /// Off by default: only when the patient ticks it.
+  CLINICAL_NOTES
+}
+
+enum SharePurpose {
+  CONSULTATION
+  SECOND_OPINION
+  FOLLOW_UP
+  REFERRAL
+  OTHER
+}
+
+enum ShareEndReason {
+  VISIT_ENDED
+  EXPIRED
+  PATIENT_ENDED
+  REVOKE_ALL
+  PERSON_CLOSED
+}
+
+enum AccessRequesterKind {
+  DOCTOR
+  FACILITY
+}
+
+enum AccessRequestStatus {
+  REQUESTED
+  APPROVED
+  DECLINED
+  CANCELLED
+  EXPIRED
+}
+
+/// The person's permission for one recipient to read part of their record (§2-§3.1).
+model RecordShare {
+  id                  String                 @id @default(cuid())
+  person              Person                 @relation(fields: [personId], references: [id])
+  personId            String
+  kind                RecordShareKind
+  status              RecordShareStatus      @default(PENDING)
+  purpose             SharePurpose
+  categories          ShareCategory[]
+  sensitiveCategories RagSensitiveCategory[] @default([])
+  recordedFrom        DateTime?
+  recordedTo          DateTime?
+  /// The facility records covered: a snapshot of the person's ACTIVE links when the share was made.
+  patientIds          String[]
+  recipientUserId     String?
+  recipientFacilityId String?
+  accessRequestId     String?                @unique
+  expiresAt           DateTime
+  createdByUserId     String
+  createdAt           DateTime               @default(now())
+  activatedAt         DateTime?
+  endedAt             DateTime?
+  endedReason         ShareEndReason?
+  version             Int                    @default(1)
+  session             PatientAccessSession?
+
+  @@index([personId, status])
+  @@index([recipientUserId, status])
+  @@index([recipientFacilityId, status])
+  @@index([status, expiresAt])
+}
+
+/// A doctor's or facility's request for access, decided by the person (§5).
+model AccessRequest {
+  id                  String              @id @default(cuid())
+  person              Person              @relation(fields: [personId], references: [id])
+  personId            String
+  /// The requester's own facility record of this person.
+  patientId           String
+  requesterKind       AccessRequesterKind
+  requesterUserId     String
+  requesterFacilityId String
+  purpose             SharePurpose
+  categories          ShareCategory[]
+  recordedFrom        DateTime?
+  recordedTo          DateTime?
+  reason              String?
+  status              AccessRequestStatus @default(REQUESTED)
+  expiresAt           DateTime
+  decidedAt           DateTime?
+  decidedByUserId     String?
+  createdAt           DateTime            @default(now())
+  version             Int                 @default(1)
+
+  @@index([personId, status])
+  @@index([requesterFacilityId, status])
+  @@index([status, expiresAt])
+}
+
+/// 4c answers (docs/CONSENT_SHARING_DESIGN.md §15): what the person is told
+/// about access to their record, through the notification pipeline: a daily
+/// summary of who opened it, an immediate notice of break-glass, and a waiting
+/// access request. Person-scoped; no clinical content, only counts and kinds.
+model PersonNotification {
+  id        String                   @id @default(cuid())
+  person    Person                   @relation(fields: [personId], references: [id])
+  personId  String
+  kind      PersonNotificationKind
+  /// One notification per fact: "ACCESS_SUMMARY:<personId>:<yyyy-mm-dd>", "BREAK_GLASS:<id>", "ACCESS_REQUESTED:<id>".
+  dedupeKey String                   @unique
+  /// The language the text is written in: the person's preferred language, or English where no translation exists yet.
+  language  String
+  title     String
+  body      String
+  /// Counts only (never names or clinical detail).
+  detail    Json?
+  status    PersonNotificationStatus @default(PENDING)
+  /// EMAIL | SMS once sent.
+  channel   String?
+  createdAt DateTime                 @default(now())
+  sentAt    DateTime?
+  version   Int                      @default(1)
+
+  @@index([personId, createdAt])
+  @@index([status])
+}
+
+enum PersonNotificationKind {
+  ACCESS_SUMMARY
+  BREAK_GLASS_ACCESS
+  ACCESS_REQUESTED
+}
+
+enum PersonNotificationStatus {
+  PENDING
+  SENT
+  NO_CHANNEL
+  FAILED
 }

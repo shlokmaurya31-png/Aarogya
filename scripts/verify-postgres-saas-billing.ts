@@ -21,6 +21,7 @@
  * Usage (authoritative gate; run against a freshly migrated + seeded DB):
  *   DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-saas-billing.ts
  */
+import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 import { ensureCommercialBootstrap } from "../src/lib/commercial/bootstrap";
 import { ensureBillingBootstrap } from "../src/lib/billing/bootstrap";

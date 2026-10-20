@@ -1,5 +1,6 @@
 import type { ExtractedFact, PatientProvidedRecord, Prisma, Severity } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import type { DocumentViewer } from "@/lib/person/access";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { NotFoundError } from "@/lib/auth/rbac";
 import { emitDomainEvent } from "@/lib/events/emit";
@@ -227,9 +228,10 @@ export async function rebridgePerson(personId: string, change: { patientId?: str
 /**
  * The entries a viewer sees for these facility records: staff under the
  * opt-in and care relationship (above); the patient side, the linked
- * person's own (as for their uploads).
+ * person's own (as for their uploads); a proxy, none (5b).
  */
-export async function patientProvidedRecordsFor(viewer: { kind: "STAFF"; facilityId: string } | { kind: "PATIENT" }, patientIds: string[]) {
+export async function patientProvidedRecordsFor(viewer: DocumentViewer, patientIds: string[]) {
+  if (viewer.kind === "PROXY") return [];
   if (viewer.kind === "STAFF") return staffPatientProvidedRecords(viewer.facilityId, patientIds);
   const links = await prisma.personPatientLink.findMany({ where: { patientId: { in: patientIds }, status: "ACTIVE" }, select: { personId: true } });
   if (!links.length) return [];

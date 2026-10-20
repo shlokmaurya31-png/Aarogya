@@ -15,6 +15,7 @@
  * Uses whatever storage target the environment configures (local disk by
  * default). Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-verification-uploads.ts
  */
+import "./lib/gateBootstrap";
 import { createHash } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";

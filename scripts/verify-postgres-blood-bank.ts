@@ -8,6 +8,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-blood-bank.ts
  */
+import "./lib/gateBootstrap";
 import { PrismaClient } from "@prisma/client";
 import {
   createBloodProduct, registerBloodUnit, releaseUnit, quarantineUnit, wasteUnit, recallUnit,

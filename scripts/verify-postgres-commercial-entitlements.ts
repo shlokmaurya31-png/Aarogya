@@ -19,6 +19,7 @@
  * Usage (authoritative gate; run against a freshly migrated + seeded DB):
  *   DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-commercial-entitlements.ts
  */
+import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 import { ensureCommercialBootstrap } from "../src/lib/commercial/bootstrap";
 import { loadActorMemberships, type ActorMemberships } from "../src/lib/auth/tenantContext";

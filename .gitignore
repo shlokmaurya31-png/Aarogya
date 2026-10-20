@@ -63,3 +63,6 @@ next-env.d.ts
 # verify:all reports
 /.verify-report/
 /.eval-report/
+/.e2e/
+/test-results/
+/playwright-report/

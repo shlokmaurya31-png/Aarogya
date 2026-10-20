@@ -9,6 +9,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-diagnostics.ts
  */
+import "./lib/gateBootstrap";
 import { PrismaClient, type Prisma } from "@prisma/client";
 import { accessionSpecimen, collectSpecimen, rejectSpecimen } from "../src/lib/hospital/specimenLifecycle";
 import { enterResult, verifyResult, amendResult, acknowledgeResult } from "../src/lib/hospital/labResultLifecycle";

@@ -9,6 +9,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-d5-commercial.ts
  */
+import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 import { ensureCommercialBootstrap } from "../src/lib/commercial/bootstrap";
 import { ensureBillingBootstrap } from "../src/lib/billing/bootstrap";

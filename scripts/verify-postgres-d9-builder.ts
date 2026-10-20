@@ -11,6 +11,7 @@
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-d9-builder.ts
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 import { emitDomainEvent } from "../src/lib/events/emit";
 import type { DomainEventEnvelope } from "../src/lib/events/types";

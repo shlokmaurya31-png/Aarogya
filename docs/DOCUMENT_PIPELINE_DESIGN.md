@@ -552,7 +552,7 @@ What the code does where it differs from, or adds to, the sections above. Each i
 ### 15.3 Week 4b follow-ups (2026-10-18)
 
 - **Image pages are normalized before OCR** (`src/lib/documents/normalize.ts`, with `sharp`): the EXIF orientation is applied and then all metadata dropped (no camera, time or GPS tags reach storage or a provider); a tilt of up to ±10° is measured from the text lines' projection profile and undone, only when the measurement is clear; the long edge comes down to 2,400 px (never enlarged); the page is stored as JPEG (mozjpeg, quality 82). The upload itself is never touched; the normalized page is stored alongside it (`DocumentPage`, with a `normalization` record of what was done). A decompression bomb (over 80 megapixels) fails the run as `TOO_LARGE`; bytes that don't decode are `UNREADABLE`. Gate: `verify-postgres-image-normalization`.
-- **Not done (where not feasible):** PDF pages are still not rasterized (no PDF renderer is carried), and a page turned 90° or 180° with no EXIF tag is left to the OCR model, which reads rotated pages.
+- **Not done (where not feasible):** PDF pages are still not rasterized (no PDF renderer is carried; done in Week 4c, §15.4), and a page turned 90° or 180° with no EXIF tag is left to the OCR model, which reads rotated pages.
 - **A record-level allergy status** (`AllergyStatusEntry`: `NO_KNOWN_ALLERGIES`, `UNKNOWN` or `HAS_ALLERGIES`, append-only history ordered by a per-patient sequence, event `AllergyStatusRecorded`):
   - no entry reads as `UNKNOWN` (or `HAS_ALLERGIES` while an allergy is active); "no known allergies" is never inferred, and no row was backfilled;
   - a clinician records `NO_KNOWN_ALLERGIES` or `UNKNOWN` only while no allergy is active (a shared patient-reported one counts); recording an allergy makes the status `HAS_ALLERGIES`; inactivating the last one makes it `UNKNOWN`, never "no known allergies";
@@ -565,3 +565,47 @@ What the code does where it differs from, or adds to, the sections above. Each i
 - **Deskew uses a local threshold** (ink must be darker than its own neighbourhood), found while testing on the rendered photos: a global threshold counted the dark background around a photographed page and the shadow as ink. On the 50 noisy renders the correction is within 0.15° of the applied tilt.
 - **`npm run eval:documents:real`** (manual, never in CI): the 50 samples, rendered and normalized, through the Claude providers; synthetic fixtures only (no Person, no database), refused while `AI_REAL_DATA_ENABLED=true`; the key read from the environment or `.env.local`, never printed; one content-free preflight request first, so a refused account sends nothing else; results (scores, models, tokens, latency) to `.eval-report/`. The scorer keeps exact fields byte-for-byte strict, compares the other fields for meaning (dates as dates, numbers as numbers), and falls back to the closest source line when a real model spans a line differently.
 - **Bug fixed:** the Claude adapter read every HTTP 400 on an OCR call as `UNREADABLE`, a permanent failure. A billing refusal ("credit balance is too low") is a 400, so an account out of credit would have failed every upload for good ("We couldn't read this document"). It is now `PROVIDER_UNAVAILABLE` (retried); other 400s are unchanged. Found by the first real run, which the provider refused for that reason.
+
+### 15.4 Week 4c: scanned and mixed PDFs (2026-10-19)
+
+- **Each PDF page's own text layer is read first** (`src/lib/documents/pdfPages.ts`, pdf.js `pdfjs-dist` 5.6.205, Apache-2.0; pinned (6.x needs Node 22.13+; CI and the runtime are Node 20)). Items are grouped into lines by baseline, ordered top to bottom and left to right, and given normalized boxes; abutting runs are joined without a space. The micro sign, which pdf.js returns as Greek mu, is put back where it prefixes a unit (µL, µg), so values copy exactly.
+- **The verdict on a page's layer:**
+  - `USABLE`: the layer is the page's text. It's stored as `ExtractedText` with provider `pdf-text-layer`, confidence 0.99, not handwritten. No provider sees the page.
+  - `EMPTY`: fewer than 20 letters or digits (a scan, perhaps with a stray page number).
+  - `GARBAGE`: more than 3% replacement, private-use or control characters; three or more mojibake sequences; or under 85% letters, digits, spaces and ordinary punctuation (a broken font encoding).
+  - An `EMPTY` or `GARBAGE` page is rasterized and OCR'd. A layer that fails to parse is treated as `EMPTY`.
+- **Rasterizing:**
+  - **Rendering:** the page is rendered with pdf.js on `@napi-rs/canvas`. That's a prebuilt native addon, so no system binaries are needed, locally or in CI. mupdf was not used because of its AGPL licence.
+  - **Normalization:** the long edge is about 2,400 px and the background white. The image is then normalized exactly as a photo is (§15.3).
+  - **Storage:** the raster is stored alongside the page's single-page PDF (`DocumentPage.rasterRef`, `rasterSha256`, the `normalization` record), with the verdict in `DocumentPage.textLayer`.
+  - **What OCR receives:** the raster, as `image/jpeg`. It also gets `sourcePdf`, the single-page PDF the image was rendered from. The Claude adapter reads only the image; the CI mock reads its fixture marker from `sourcePdf`.
+  - **Labels:** page split records `pdf-lib+pdf.js` when any page was rasterized. The OCR step names the OCR provider if any page went to it, else `pdf-text-layer`.
+- **What doesn't change:** the upload and its single-page PDFs are never modified. The patient's page view still shows the single-page PDF as the original.
+- **Migration `20261023100000_pdf_text_layer`, additive:** three nullable columns and an enum. Pages split earlier keep `NULL` and are OCR'd as before; nothing is guessed for them.
+- **The fixture PDFs are now scan-like:** grey bars where the lines are and no text layer. As a result, CI exercises the rasterize-and-OCR path on every fixture upload. `fixturePdf(f, { textLayer: true })` builds a digital page; `{ garbageTextLayer: true }` builds a mis-encoded one.
+- **Gate `verify-postgres-scanned-pdf`:**
+  - a scanned-only PDF and a mixed PDF (page 1 digital, page 2 scanned; only page 2 goes to OCR, and facts come from both, exactly);
+  - a digital-only PDF, which makes no OCR call;
+  - a garbage text layer;
+  - an unopenable PDF;
+  - redelivery;
+  - the purge removing page objects and rasters.
+
+  The image-normalization gate's PDF check now expects a raster.
+- **Bug fixed:** the account purge deleted each upload's bytes but not the pipeline's derived objects in storage (single-page PDFs and normalized page images), which then stayed behind. These are now deleted after the rows, including the rasters. Gate: `verify-postgres-scanned-pdf`.
+
+### 15.5 Week 4c: the documents page and browser smoke tests (2026-10-19)
+
+- **"My documents" in the patient portal** (`/patient/documents`). Until now, upload, processing and review existed as APIs only. The page lets the person:
+  - add a report (the existing upload route);
+  - watch its run;
+  - review what was found. Confirm-all appears only for high-confidence printed lines whose exact-copy check passed; other lines are confirmed or rejected one by one, and the server enforces both rules.
+
+  Confirmed entries already appear on the record timeline (`buildPatientTimeline`, "Lab result from the patient's document: …"). Explain-my-report for an upload stays on the Reports page.
+- **The doctor's visit-code consult** (`/consult/[sessionId]`) shows the AI panel (visit brief, chart Q&A) over what the code shares. The server already supported this path (`shareId`, RAG §16), but no page offered it.
+- **`npm run e2e:smoke`** (`scripts/e2e-smoke.ts`, Playwright 1.62 with Chromium; CI job "Browser smoke"):
+  - **Patient:** sign in → upload a scan-like sample report → it is rasterized, read and extracted on the mock providers by the real worker → review and confirm → the timeline shows the entry → explain my report, with the AI label, cited lines and sources.
+  - **Doctor:** sign in → open the consult a redeemed visit code opened (with an appointment today) → visit brief → a cited line about the shared result, labelled "verified", and the sources list.
+  - **Where it runs:** on a local database only, with the same refusals as verify:all (`scripts/lib/verifyTarget.ts`). It is never reset: migrations are applied, the seed runs only if missing, and fixtures are synthetic and tagged per run.
+  - **Isolation:** no provider key reaches the app or the worker.
+- **Bug fixed (privacy, from 4a):** a family delegate's view of the record (`/api/patient/records`, with a RECORDS grant) included the person's own uploads and patient-provided entries on its timeline. The reports list already kept them to the person's own login ("delegates see them from households, 5b"). The timeline now takes a `PROXY` viewer for a delegate's view, which carries none of the person's own uploads or entries until households define proxy permissions. Gate: `verify-postgres-person-leaks` (a delegate-view check, with B's own view as the positive control).

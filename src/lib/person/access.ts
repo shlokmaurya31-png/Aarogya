@@ -17,6 +17,11 @@ import { resolvePatientIdsForRead } from "@/lib/patient/merge";
  *           relationship with the person's linked record there. Uploads made
  *           before Phase 0 stay visible to the facility they were uploaded to
  *           until the person makes that choice (the approved reversal).
+ *   SHARE   (Week 4c fix) a doctor holding a live share the person gave
+ *           (a redeemed visit code or an approved request) that includes
+ *           UPLOADS: their uploads, filtered by the share (period, sensitive
+ *           opt-ins) by the caller (src/lib/sharing/history.ts). The share is
+ *           resolved here, on every call (src/lib/sharing/resolve.ts).
  *
  * Nothing here takes a personId from a request as authority: callers pass the
  * id they are asking about and get a grant or nothing.
@@ -24,13 +29,16 @@ import { resolvePatientIdsForRead } from "@/lib/patient/merge";
 
 export type PersonActor =
   | { kind: "OWNER"; userId: string }
-  | { kind: "STAFF"; userId: string; facilityId: string };
+  | { kind: "STAFF"; userId: string; facilityId: string }
+  | { kind: "SHARE"; userId: string; facilityId: string; role: string; shareRef: string };
 
 export type PersonPurpose = "PROFILE" | "UPLOADS";
 
 export interface PersonGrant {
   personId: string;
-  via: "OWNER" | "CARE_RELATIONSHIP";
+  via: "OWNER" | "CARE_RELATIONSHIP" | "SHARE";
+  /** The resolved share, for a SHARE grant: the caller applies its filters. */
+  share?: import("@/lib/sharing/resolve").ShareScope;
 }
 
 export const SHARE_UPLOADS = "SHARE_UPLOADS_WITH_TREATING" as const;
@@ -106,6 +114,11 @@ export async function personAccess(actor: PersonActor, personId: string, purpose
   }
   // Staff never read the person's own profile, contacts, links or log.
   if (purpose !== "UPLOADS") return null;
+  if (actor.kind === "SHARE") {
+    const { resolveShare } = await import("@/lib/sharing/resolve");
+    const share = await resolveShare({ userId: actor.userId, facilityId: actor.facilityId, role: actor.role }, actor.shareRef);
+    return share && share.personId === personId && share.categories.includes("UPLOADS") ? { personId, via: "SHARE", share } : null;
+  }
   if ((await personDecision(personId, SHARE_UPLOADS)) !== "GRANTED") return null;
   const links = await prisma.personPatientLink.findMany({ where: { personId, facilityId: actor.facilityId, status: "ACTIVE" }, select: { patientId: true } });
   for (const l of links) {
@@ -162,16 +175,23 @@ export async function staffDocumentVisibility(facilityId: string, patientIds: st
 }
 
 /** Who is reading a patient's documents: staff of a facility, or the patient side (own scope already resolved). */
-export type DocumentViewer = { kind: "STAFF"; facilityId: string } | { kind: "PATIENT" };
+/**
+ * STAFF: the resolver's rules. PATIENT: the patient's own login (their
+ * person's uploads and entries). PROXY: a family delegate's view of the
+ * record — the facility record only, none of the person's own uploads or
+ * patient-provided entries until households (5b) define proxy permissions.
+ */
+export type DocumentViewer = { kind: "STAFF"; facilityId: string } | { kind: "PATIENT" } | { kind: "PROXY" };
 
 /** The document where-fragment for a viewer: the staff filter, or nothing extra for the patient side. */
 export async function documentVisibilityFor(viewer: DocumentViewer, patientIds: string[]): Promise<Prisma.ClinicalDocumentWhereInput> {
   return viewer.kind === "STAFF" ? staffDocumentVisibility(viewer.facilityId, patientIds) : {};
 }
 
-/** The person documents a viewer sees for these records (staff: the resolver; patient side: the linked person's own). */
+/** The person documents a viewer sees for these records (staff: the resolver; patient side: the linked person's own; a proxy: none). */
 export async function personDocumentsFor(viewer: DocumentViewer, patientIds: string[]) {
   const { staffPersonDocuments, linkedPersonDocuments } = await import("./documents");
+  if (viewer.kind === "PROXY") return [];
   return viewer.kind === "STAFF" ? staffPersonDocuments(viewer.facilityId, patientIds) : linkedPersonDocuments(patientIds);
 }
 

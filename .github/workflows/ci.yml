@@ -5,6 +5,8 @@ name: CI
 #   Test & Build      migrate a fresh Postgres, unit tests, production build
 #   Integrity gates   npm run verify:all: every scripts/verify-postgres-*.ts
 #                     against a reset + migrated + seeded Postgres
+#   Browser smoke     npm run e2e:smoke: Playwright (Chromium) through the
+#                     patient's upload journey and the doctor's visit brief
 #   Migration drift   prisma/migrations must reproduce schema.prisma exactly
 #   Lint              ESLint, zero warnings allowed
 #
@@ -132,6 +134,64 @@ jobs:
             .verify-report/gates/
           include-hidden-files: true
           if-no-files-found: warn
+
+  browser-smoke:
+    name: Browser smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: aarogya
+          POSTGRES_PASSWORD: aarogya
+          POSTGRES_DB: aarogya
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya"
+      DIRECT_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya"
+      E2E_DATABASE_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya_e2e"
+      AUTH_SECRET: "ci-dummy-secret-not-used-for-anything-real-000000"
+      CLINICAL_DATA_MODE: synthetic
+      AI_PROVIDER: mock
+      ABDM_ENVIRONMENT: DISABLED
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Create the smoke database
+        run: PGPASSWORD=aarogya psql -h localhost -U aarogya -d aarogya -c "CREATE DATABASE aarogya_e2e"
+
+      # Migrates and seeds aarogya_e2e, builds a synthetic fixture, builds and
+      # starts the app and the worker on the mock providers, runs e2e/*.spec.ts.
+      - name: e2e:smoke
+        run: npm run e2e:smoke
+
+      - name: Upload smoke report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-smoke
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
 
   migration-drift:
     name: Migration drift

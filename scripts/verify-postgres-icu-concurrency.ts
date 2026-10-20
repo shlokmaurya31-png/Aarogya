@@ -8,6 +8,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-icu-concurrency.ts
  */
+import "./lib/gateBootstrap";
 import { PrismaClient } from "@prisma/client";
 import { createIcuUnit, admitToIcu, recordDevice, updateDeviceStatus, IcuBedCapabilityError } from "../src/lib/hospital/icu";
 import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";

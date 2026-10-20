@@ -16,6 +16,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-document-eval.ts
  */
+import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 import { registerPatientAccount } from "../src/lib/patient/selfRegistration";
 import { uploadPersonDocument } from "../src/lib/person/documents";

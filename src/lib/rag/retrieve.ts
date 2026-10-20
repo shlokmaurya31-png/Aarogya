@@ -119,8 +119,11 @@ async function liveFacts(access: AiAccess): Promise<LiveFact[]> {
       where: { patientId: { in: patientIds }, encounter: { facilityId: { in: facilityIds } }, status: { in: ["ORDERED", "PHARMACY_REVIEW", "VERIFIED", "DISPENSED", "ACTIVE"] } },
       orderBy: { orderedAt: "desc" }, take: 30, select: { id: true, drugName: true, genericName: true, dose: true, route: true, frequency: true, orderedAt: true, status: true },
     });
+    const { from, to } = access.live.period ?? {};
     for (const o of orders) {
       if (!ok(`${o.drugName} ${o.genericName ?? ""}`)) continue;
+      // Week 4c: a share's period limits the live medicines too.
+      if ((from && o.orderedAt < from) || (to && o.orderedAt > to)) continue;
       out.push({ chunkId: `live:med:${o.id}`, context: `[Active medicine · ${o.drugName} · ${isoDay(o.orderedAt)} · verified]`, text: `Active medicine: ${o.drugName} ${o.dose} ${o.route.toLowerCase()} ${o.frequency} (ordered ${isoDay(o.orderedAt)}, ${o.status.toLowerCase().replace(/_/g, " ")}).`, origin: "VERIFIED", sourceType: "MEDICATION_ORDER", sourceId: o.id, recordedAt: o.orderedAt });
     }
     if (access.live.nurseView) {
@@ -141,6 +144,8 @@ async function liveFacts(access: AiAccess): Promise<LiveFact[]> {
       orderBy: { recordedAt: "desc" }, take: 20,
     });
     for (const a of rows) {
+      // Week 4c: a sensitive allergy follows the scope's opt-ins like everything else.
+      if (!ok(`${a.substance} ${a.reaction ?? ""}`)) continue;
       const reported = a.source === "PATIENT_PROVIDED";
       out.push({ chunkId: `live:allergy:${a.id}`, context: `[Allergy · ${a.substance} · ${isoDay(a.recordedAt)} · ${reported ? "patient-provided" : "verified"}]`, text: `${reported ? "Patient-reported allergy" : "Allergy"}: ${a.substance}${a.reaction ? `, reaction ${a.reaction}` : ""}${a.severity ? `, ${a.severity.toLowerCase()}` : ", severity not recorded"} (${a.verification.toLowerCase()}).`, origin: reported ? "PATIENT_PROVIDED" : "VERIFIED", sourceType: "ALLERGY", sourceId: a.id, recordedAt: a.recordedAt });
     }

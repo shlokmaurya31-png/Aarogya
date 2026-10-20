@@ -16,6 +16,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-services-out-of-routes.ts
  */
+import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 import { BadRequestError, NotFoundError } from "../src/lib/auth/rbac";
 import { registerPatient } from "../src/lib/patient/registration";

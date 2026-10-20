@@ -19,8 +19,10 @@
  *   --timeout <s>  per-script timeout in seconds (default 300)
  *
  * Safety: resetting wipes the verify database, so this refuses to run unless
- * VERIFY_DATABASE_URL points at localhost / 127.0.0.1 / ::1, or
- * ALLOW_REMOTE_VERIFY=1. Supabase (staging) hosts are refused even then. It
+ * VERIFY_DATABASE_URL names the database aarogya_verify on localhost /
+ * 127.0.0.1 / ::1 (the gate guard, scripts/lib/gateGuard.ts, which every gate
+ * also applies on start; ALLOW_REMOTE_VERIFY no longer opens it). Supabase
+ * (staging) hosts are refused always. It
  * also refuses when the verify database has the same name as the dev
  * database (DATABASE_URL / DIRECT_URL), so it can never reset the dev data.
  *
@@ -29,6 +31,8 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { assertGateDatabase } from "./lib/gateGuard";
+import { resolveVerifyTarget } from "./lib/verifyTarget";
 
 const ROOT = path.resolve(__dirname, "..");
 const SCRIPTS_DIR = path.join(ROOT, "scripts");
@@ -127,6 +131,12 @@ const ORDER = [
   "verify-postgres-quality-ops-events",
   "verify-postgres-access-identity-events",
   "verify-postgres-route-services",
+  // Week 4c: consent sharing (before the core journey and the whole-database checks below).
+  "verify-postgres-record-sharing",
+  "verify-postgres-access-requests",
+  "verify-postgres-sensitive-categories",
+  "verify-postgres-revoke-all",
+  "verify-postgres-person-notifications",
   // §7: the core-journey replay test, extended at each spine step.
   "verify-postgres-core-journey",
   // Batch 4: bounded retries; runs after the tenancy sweep (checks its fixtures)
@@ -178,59 +188,6 @@ function parseArgs(argv: string[]): Options {
   }
   if (!Number.isFinite(opts.timeoutMs) || opts.timeoutMs <= 0) throw new Error("--timeout must be a positive number of seconds");
   return opts;
-}
-
-function hostOf(name: string, url: string | undefined): string {
-  if (!url) throw new Error(`${name} is not set (see .env.example).`);
-  try {
-    return new URL(url).hostname;
-  } catch {
-    throw new Error(`${name} is not a valid URL.`);
-  }
-}
-
-const DEFAULT_VERIFY_URL = "postgresql://aarogya:aarogya@localhost:5432/aarogya_verify";
-const LOCAL_HOSTS = ["localhost", "127.0.0.1", "::1", "[::1]"];
-
-function dbName(url: URL): string {
-  return decodeURIComponent(url.pathname.replace(/^\//, ""));
-}
-
-/**
- * The database verify:all resets and every child process uses. Refuses
- * Supabase always, any non-local host unless ALLOW_REMOTE_VERIFY=1, and a
- * verify database named like the dev database (DATABASE_URL / DIRECT_URL).
- */
-function resolveVerifyTarget(): { url: string; host: string; name: string } {
-  const raw = process.env.VERIFY_DATABASE_URL || DEFAULT_VERIFY_URL;
-  const host = hostOf("VERIFY_DATABASE_URL", raw);
-  const verify = new URL(raw);
-  // Staging (Supabase) is never a valid target, whatever the override says.
-  if (/(^|\.)supabase\.(co|com)$/i.test(host)) {
-    throw new Error(`Refusing to run: "${host}" is the Supabase staging database. verify:all must never run against staging (docs/STAGING_SUPABASE.md).`);
-  }
-  if (!LOCAL_HOSTS.includes(host) && process.env.ALLOW_REMOTE_VERIFY !== "1") {
-    throw new Error(
-      `Refusing to run: "${host}" is not localhost. verify:all wipes the database. ` +
-        "Set ALLOW_REMOTE_VERIFY=1 only if that database is disposable."
-    );
-  }
-  const name = dbName(verify);
-  if (!name) throw new Error("Refusing to run: VERIFY_DATABASE_URL names no database.");
-  // The dev database is never the verify database, even on another host
-  // (the names are what a mistyped override most often gets wrong).
-  for (const devVar of ["DATABASE_URL", "DIRECT_URL"]) {
-    const dev = process.env[devVar];
-    if (!dev) continue;
-    hostOf(devVar, dev);
-    if (dbName(new URL(dev)) === name) {
-      throw new Error(
-        `Refusing to run: the verify database "${name}" has the same name as the dev database in ${devVar}. ` +
-          "verify:all resets its database; point VERIFY_DATABASE_URL at a separate one (default aarogya_verify)."
-      );
-    }
-  }
-  return { url: raw, host, name };
 }
 
 function discover(opts: Options): string[] {
@@ -403,6 +360,9 @@ async function main() {
   // the verify database. Next.js and Prisma never override a variable that
   // is already set, so .env cannot point them back at the dev database.
   childEnv = { ...process.env, DATABASE_URL: target.url, DIRECT_URL: target.url };
+  // The hard guard (scripts/lib/gateGuard.ts): the reset and every gate run
+  // only against aarogya_verify on localhost. Each gate re-checks on start.
+  assertGateDatabase(childEnv);
   if (!existsSync(TSX) || !existsSync(PRISMA)) throw new Error("tsx/prisma not found in node_modules; run npm ci first.");
 
   const names = discover(opts);
