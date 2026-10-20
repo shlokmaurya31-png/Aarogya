@@ -16,6 +16,9 @@ CREATE TYPE "ConsultMode" AS ENUM ('IN_PERSON', 'VIDEO');
 -- CreateEnum
 CREATE TYPE "DoctorVerificationCaseStatus" AS ENUM ('OPEN', 'APPROVED', 'REJECTED', 'INFO_REQUESTED');
 
+-- CreateEnum
+CREATE TYPE "SymptomMapReviewStatus" AS ENUM ('PENDING_CLINICAL_ADVISOR', 'APPROVED');
+
 -- AlterEnum
 ALTER TYPE "RecordShareKind" ADD VALUE 'BOOKING';
 
@@ -130,7 +133,7 @@ CREATE TABLE "SymptomSpecialtyMap" (
     "specialty" TEXT NOT NULL,
     "weight" INTEGER NOT NULL DEFAULT 1,
     "version" INTEGER NOT NULL,
-    "reviewStatus" TEXT NOT NULL DEFAULT 'PENDING_CLINICAL_ADVISOR',
+    "reviewStatus" "SymptomMapReviewStatus" NOT NULL DEFAULT 'PENDING_CLINICAL_ADVISOR',
     "approvedBy" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 

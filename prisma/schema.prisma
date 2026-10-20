@@ -11603,20 +11603,24 @@ enum DoctorVerificationCaseStatus {
 
 /// Symptom → specialty, curated and versioned. Every row is "pending clinical advisor" until signed off.
 model SymptomSpecialtyMap {
-  id           String   @id @default(cuid())
+  id           String                 @id @default(cuid())
   symptomCode  String
   /// English label; translated labels live in the app's strings.
   label        String
   specialty    String
-  weight       Int      @default(1)
+  weight       Int                    @default(1)
   version      Int
-  /// PENDING_CLINICAL_ADVISOR | APPROVED
-  reviewStatus String   @default("PENDING_CLINICAL_ADVISOR")
+  reviewStatus SymptomMapReviewStatus @default(PENDING_CLINICAL_ADVISOR)
   approvedBy   String?
-  createdAt    DateTime @default(now())
+  createdAt    DateTime               @default(now())
 
   @@unique([version, symptomCode, specialty])
   @@index([symptomCode])
+}
+
+enum SymptomMapReviewStatus {
+  PENDING_CLINICAL_ADVISOR
+  APPROVED
 }
 
 /// A projection: the next bookable slot per location (refreshed by directory-slots; never decides a booking).
