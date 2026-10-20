@@ -7,7 +7,10 @@
  *     indexed for the AI;
  *   - a visit code the patient issued and the doctor redeemed (an ACTIVE
  *     share), which the doctor's smoke opens;
- *   - a scan-like sample report PDF for the patient's smoke to upload.
+ *   - a scan-like sample report PDF for the patient's smoke to upload;
+ *   - Week 5a: a verified, listed general physician in the directory (a
+ *     hospital location at Pune with sessions all day, so a slot is always
+ *     inside the booking share's window), with a login.
  * Import only after DATABASE_URL points at the smoke database.
  */
 import { randomBytes } from "node:crypto";
@@ -23,6 +26,10 @@ import { recordAllergy } from "../../src/lib/hospital/clinicalRecords";
 import { issueAccessCode, redeemAccessCode } from "../../src/lib/patient/accessSession";
 import { fixtureById, fixturePdf } from "../../src/lib/documents/fixtures";
 import { ensurePrimaryMembership } from "../../prisma/seedData/staffMembership";
+import { registerDoctor, updateOwnProfile } from "../../src/lib/doctors/profile";
+import { decideVerification, submitVerification } from "../../src/lib/doctors/verification";
+import { addHospitalLocation, claimStaffProfile, decideStaffLink } from "../../src/lib/doctors/locations";
+import { refreshNextSlot } from "../../src/lib/doctors/slots";
 
 export const PUNE = "fac-amc-pune";
 
@@ -31,6 +38,7 @@ export interface E2eFixture {
   password: string;
   patient: { email: string; patientId: string; name: string };
   doctor: { email: string; name: string };
+  networkDoctor: { email: string; name: string };
   shareId: string;
   samplePdf: string;
   sampleTitle: string;
@@ -82,11 +90,32 @@ export async function buildE2eFixture(outDir: string): Promise<E2eFixture> {
   if (!redeemed) throw new Error("fixture share: the code was not redeemed");
   await drain();
 
+  // Week 5a: a directory doctor, through the real services (register, verify, list, link, locate).
+  const netName = `Dr. Network ${tag}`;
+  const netUser = await prisma.user.create({ data: { email: `e2e-network-${tag}@verify.aarogya`, passwordHash: hash, role: "DOCTOR", displayName: netName } });
+  const netStaff = await prisma.hospitalStaffProfile.create({ data: { userId: netUser.id, departmentId: dept.id, displayRole: "General physician" } });
+  await ensurePrimaryMembership(prisma, netUser.id, PUNE, { isAdmin: false });
+  const verifierUser = await prisma.user.create({ data: { email: `e2e-verifier-${tag}@verify.aarogya`, passwordHash: hash, role: "AAROGYA_ADMIN", displayName: "Smoke verifier" } });
+  const adminUser = await prisma.user.create({ data: { email: `e2e-admin-${tag}@verify.aarogya`, passwordHash: hash, role: "HOSPITAL_ADMIN", displayName: "Smoke admin" } });
+  await prisma.hospitalStaffProfile.create({ data: { userId: adminUser.id, departmentId: dept.id, displayRole: "Admin" } });
+  await ensurePrimaryMembership(prisma, adminUser.id, PUNE, { isAdmin: true });
+  const doc = await registerDoctor(netUser.id, { registrationNumber: `E2E${tag}`.toUpperCase(), stateCouncil: "MMC", registrationYear: 2008, specialties: ["GENERAL_MEDICINE"], languages: ["en", "hi"] });
+  const vcase = await submitVerification(netUser.id, [{ bytes: Buffer.from("%PDF-1.4\n%%EOF\n"), contentType: "application/pdf", originalName: "registration.pdf" }]);
+  await decideVerification(verifierUser.id, vcase.caseId, { decision: "APPROVE" });
+  await updateOwnProfile(netUser.id, { listed: true });
+  const link = await claimStaffProfile(netUser.id, PUNE);
+  await decideStaffLink({ userId: adminUser.id, facilityId: PUNE }, link.id, true);
+  const loc = await addHospitalLocation(netUser.id, { facilityId: PUNE, modes: ["IN_PERSON", "VIDEO"], lat: 18.5204, lng: 73.8567, pincode: "411001" });
+  for (let dow = 0; dow < 7; dow++) await prisma.doctorScheduleBlock.create({ data: { staffId: netStaff.id, facilityId: PUNE, dayOfWeek: dow, startMinute: 0, endMinute: 1440, slotDurationMinutes: 15 } });
+  await refreshNextSlot(loc.id);
+  void doc;
+  await drain();
+
   mkdirSync(outDir, { recursive: true });
   const samplePdf = path.join(outDir, "sample-report.pdf");
   writeFileSync(samplePdf, await fixturePdf(fixtureById("lab-en-cbc")!));
   const fixture: E2eFixture = {
-    tag, password, patient: { email, patientId, name }, doctor: { email: doctorUser.email, name: doctorName },
+    tag, password, patient: { email, patientId, name }, doctor: { email: doctorUser.email, name: doctorName }, networkDoctor: { email: netUser.email, name: netName },
     shareId: redeemed.id, samplePdf, sampleTitle: `Blood count ${tag}`,
   };
   writeFileSync(path.join(outDir, "fixture.json"), JSON.stringify(fixture, null, 2));

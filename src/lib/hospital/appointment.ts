@@ -2,7 +2,7 @@ import { prisma, CONTENDED_TX } from "@/lib/db";
 import type { AppointmentType, AccessSource, RequestPriority, Prisma } from "@prisma/client";
 import { emitDomainEvent } from "@/lib/events/emit";
 import { facilityOrganizationId } from "@/lib/events/tenant";
-import { assertBookable } from "./bookability";
+import { assertBookable, DoctorNotBookableError } from "./bookability";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 export class SlotConflictError extends Error {
@@ -68,7 +68,7 @@ export function appointmentsOverlap(aStart: Date, aEnd: Date, bStart: Date, bEnd
  * Contenders queue on that lock, so the transaction gets CONTENDED_TX budgets:
  * a loser must wait its turn and get SlotConflictError, never time out.
  */
-export async function bookAppointment(input: {
+export interface BookAppointmentInput {
   facilityId: string;
   departmentId?: string;
   doctorStaffId: string;
@@ -82,8 +82,21 @@ export async function bookAppointment(input: {
   reason?: string;
   createdByStaffId: string;
   byUserId: string;
-}) {
-  return prisma.$transaction(async (tx) => {
+  /** Week 5a: the clinic session must be at this facility (a doctor practising at several places). */
+  requireFacilityId?: string;
+}
+
+export async function bookAppointment(input: BookAppointmentInput) {
+  return prisma.$transaction((tx) => bookAppointmentTx(tx, input), CONTENDED_TX);
+}
+
+/**
+ * The booking's transaction body (Week 5a: a directory booking commits its
+ * DirectoryBooking and share in the same transaction). The caller's
+ * transaction must use CONTENDED_TX budgets: contenders queue on the lock.
+ */
+export async function bookAppointmentTx(tx: Prisma.TransactionClient, input: BookAppointmentInput) {
+  {
     // Serializes concurrent bookAppointment calls for this doctor so the
     // overlap count below and the eventual create are effectively one
     // atomic step — closes the phantom-read race for any
@@ -94,6 +107,7 @@ export async function bookAppointment(input: {
     // D7: inside a clinic session, not on leave/absent, not off shift — the
     // same rule the slot listing uses. Checked under the doctor's lock.
     const block = await assertBookable(tx, input.doctorStaffId, input.scheduledStart, input.scheduledEnd);
+    if (input.requireFacilityId && block.facilityId !== input.requireFacilityId) throw new DoctorNotBookableError("NO_SESSION");
     const maxConcurrent = block.maxConcurrentAppointments;
 
     // Real half-open-interval overlap: [scheduledStart, scheduledEnd) vs
@@ -138,7 +152,7 @@ export async function bookAppointment(input: {
       payload: { appointmentId: appointment.id, patientId: input.patientId, doctorStaffId: input.doctorStaffId, scheduledStart: input.scheduledStart.toISOString() },
     });
     return appointment;
-  }, CONTENDED_TX);
+  }
 }
 
 export class AppointmentNotConfirmableError extends Error {

@@ -67,6 +67,9 @@ import { DEFAULT_SHARE_CATEGORIES, parseShareChoice } from "../src/lib/sharing/c
 import { viewSharedRecord } from "../src/lib/sharing/view";
 import { indexSource } from "../src/lib/rag/indexer";
 import { registerPatientAccount } from "../src/lib/patient/selfRegistration";
+import { searchDirectory, locationSlots } from "../src/lib/doctors/directory";
+import { bookThroughDirectory, cancelOwnDirectoryBooking } from "../src/lib/doctors/booking";
+import { facilityAdmin, networkDoctor, verifier } from "./lib/doctorFixture";
 import { revokeAllAccess } from "../src/lib/sharing/revokeAll";
 import { decidePersonConsent } from "../src/lib/person/consent";
 import { personDocumentDownload, staffPersonDocuments, uploadPersonDocument, withdrawPersonDocument } from "../src/lib/person/documents";
@@ -374,6 +377,8 @@ async function main() {
     orderBy: { seq: "asc" },
   });
   const ids = [...all, ...side].map((e) => e.eventId);
+  // Week 5a: the journey's directory booking (below) joins the journey's events.
+  const directoryEventIds: string[] = [];
   const notProcessed = await prisma.domainEventDelivery.count({ where: { eventId: { in: ids }, status: { not: "PROCESSED" } } });
   const dead = await prisma.domainEventOutbox.count({ where: { eventId: { in: ids }, status: "DEAD_LETTER" } });
   report("Every delivery PROCESSED; zero dead letters", notProcessed === 0 && dead === 0, `${notProcessed} unprocessed, ${dead} dead`);
@@ -421,10 +426,6 @@ async function main() {
   report("9/9b: the seeded catalogue's specific tariffs priced PTCA, the stent and the PRBC unit (no generic, nothing needing a price)",
     codes === [`BLOOD:PRBC:PRICED`, `ITEM:${implantSku("DES", a.facilityId)}:PRICED`, "PROCEDURE:PTCA:PRICED"].sort().join(), codes);
 
-  // Every consumer took part in the journey.
-  const consumersSeen = new Set((await prisma.domainEventDelivery.findMany({ where: { eventId: { in: ids }, status: "PROCESSED" }, select: { consumerName: true }, distinct: ["consumerName"] })).map((d) => d.consumerName));
-  const missing = EXPECTED_CONSUMERS.filter((c) => !consumersSeen.has(c));
-  report(`Every registered consumer (${EXPECTED_CONSUMERS.length}) processed journey events`, missing.length === 0, missing.join(",") || [...consumersSeen].sort().join(","));
   // Week 4b: the rag-indexer kept the AI index in step with the journey (replay included: one document each).
   const ragResult = await prisma.ragDocument.count({ where: { sourceType: "LAB_RESULT", sourceId: a.resultId, status: "ACTIVE" } });
   const ragProvided = await prisma.ragDocument.count({ where: { personId: a.journeyPersonId, ownerType: "PERSON", sourceType: "PATIENT_PROVIDED_RECORD", status: "ACTIVE" } });
@@ -498,7 +499,37 @@ async function main() {
       !!opened.url && new Date(opened.expiresAt).getTime() - Date.now() <= 300_000
         && (await prisma.personAccessLogEntry.count({ where: { personId: kPerson, actorUserId: visiting.userId, AND: [{ detail: { path: ["surface"], equals: "DOCUMENT_DOWNLOAD" } }, { detail: { path: ["documentId"], equals: mri.id } }] } })) === 1);
     await drain();
+
+    // Week 5a: the knee patient searches the directory by symptom, books a verified orthopaedist at the
+    // other facility with a LABS + CONDITIONS share, the doctor's visit brief cites only what was shared,
+    // then the patient cancels and the share ends.
+    const v = await verifier();
+    const admin = await facilityAdmin(otherFacility);
+    const netOrtho = await networkDoctor(otherFacility, v, admin, { name: `Dr Journey Ortho ${kRun}`, specialties: ["ORTHOPAEDICS"] });
+    await drain();
+    const found = await searchDirectory({ symptom: "KNEE_PAIN" });
+    report("5a: searching by knee pain finds the verified orthopaedist", found.results.some((r) => r.doctorId === netOrtho.doctorId));
+    const next = (await prisma.doctorNextSlot.findUniqueOrThrow({ where: { practiceLocationId: netOrtho.locationId! } })).nextSlotAt!;
+    const slot = (await locationSlots(netOrtho.locationId!, next))[0];
+    const booked = await bookThroughDirectory(k.userId, { locationId: netOrtho.locationId, start: slot.start, reason: "Right knee pain", share: { categories: ["CONDITIONS"] } });
+    await prisma.recordShare.update({ where: { id: booked.shareId! }, data: { validFrom: new Date(Date.now() - 60_000) } });
+    const bookedAppt = await prisma.appointment.findUniqueOrThrow({ where: { id: booked.appointmentId } });
+    const orthoBrief = await askAi({ kind: "STAFF", userId: netOrtho.userId, role: "DOCTOR", facilityId: otherFacility }, { mode: "VISIT_BRIEF", patientId: bookedAppt.patientId, shareId: booked.shareId! });
+    report("5a: booked with a CONDITIONS share: the visit brief cites the knee diagnosis, and nothing outside conditions and allergies (no upload)",
+      orthoBrief.outcome === "ANSWERED" && orthoBrief.citations.some((c) => c.sourceType === "DIAGNOSIS" && c.sourceId === kneeDx.id) && orthoBrief.citations.every((c) => ["DIAGNOSIS", "PROBLEM", "ALLERGY", "ALLERGY_STATUS"].includes(c.sourceType)),
+      orthoBrief.citations.map((c) => c.sourceType).join(","));
+    await cancelOwnDirectoryBooking(k.userId, booked.bookingId);
+    await drain();
+    const after5a = await askAi({ kind: "STAFF", userId: netOrtho.userId, role: "DOCTOR", facilityId: otherFacility }, { mode: "VISIT_BRIEF", patientId: bookedAppt.patientId, shareId: booked.shareId! }).then(() => "answered", (e) => (e instanceof AskError ? String(e.status) : "error"));
+    directoryEventIds.push(...(await prisma.domainEventOutbox.findMany({ where: { OR: [{ aggregateId: { in: [booked.appointmentId, booked.bookingId, booked.shareId!] } }, { aggregateId: netOrtho.locationId! }] }, select: { eventId: true } })).map((e) => e.eventId));
+    report("5a: the patient cancels: the share ends (APPOINTMENT_CANCELLED) and the brief is refused (404)",
+      (await prisma.recordShare.findUniqueOrThrow({ where: { id: booked.shareId! } })).endedReason === "APPOINTMENT_CANCELLED" && after5a === "404", after5a);
   }
+
+  // Every consumer took part in the journey (the directory booking included).
+  const consumersSeen = new Set((await prisma.domainEventDelivery.findMany({ where: { eventId: { in: [...ids, ...directoryEventIds] }, status: "PROCESSED" }, select: { consumerName: true }, distinct: ["consumerName"] })).map((d) => d.consumerName));
+  const missing = EXPECTED_CONSUMERS.filter((c) => !consumersSeen.has(c));
+  report(`Every registered consumer (${EXPECTED_CONSUMERS.length}) processed journey events`, missing.length === 0, missing.join(",") || [...consumersSeen].sort().join(","));
 
   // 8c reorder, 9c waste, 15 identity (events not correlated by the encounter).
   const reorder = side.filter((e) => e.eventType === "StockBelowReorder");

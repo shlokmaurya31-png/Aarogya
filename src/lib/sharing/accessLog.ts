@@ -6,7 +6,7 @@ import { prisma } from "@/lib/db";
  * from which facility, through which way in, on which surface, which
  * categories. Part of the read (bookkeeping), not a state change.
  */
-export type AccessVia = "SHARE_CODE" | "ACCESS_REQUEST" | "TREATING" | "ORG_CONSENT" | "BREAK_GLASS";
+export type AccessVia = "SHARE_CODE" | "ACCESS_REQUEST" | "BOOKING" | "TREATING" | "ORG_CONSENT" | "BREAK_GLASS";
 export type AccessSurface = "CONSULT_VIEW" | "SHARED_RECORD_VIEW" | "AI_ASK" | "DOCUMENT_DOWNLOAD";
 
 export async function logRecordAccess(input: {
@@ -33,7 +33,7 @@ const KIND_LABEL: Record<string, string> = {
   CONSENT_DECIDED: "You changed a choice", LINKED: "A hospital record was linked", UNLINKED: "A hospital record was unlinked",
 };
 const VIA_LABEL: Record<string, string> = {
-  SHARE_CODE: "your visit code", ACCESS_REQUEST: "a request you approved", TREATING: "the treating hospital", ORG_CONSENT: "your consent to the organization", BREAK_GLASS: "emergency access",
+  SHARE_CODE: "your visit code", ACCESS_REQUEST: "a request you approved", BOOKING: "the record you shared with a booking", TREATING: "the treating hospital", ORG_CONSENT: "your consent to the organization", BREAK_GLASS: "emergency access",
 };
 
 /** The person's own access log (§7.1): newest first, paged by a createdAt cursor; names resolved, ids kept out of the text. */

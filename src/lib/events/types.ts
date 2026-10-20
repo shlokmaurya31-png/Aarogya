@@ -127,6 +127,12 @@ export const AGGREGATE_TYPES = [
   "RECORD_SHARE",
   "ACCESS_REQUEST",
   "PERSON_NOTIFICATION",
+  // Week 5a — the doctor network (platform-scoped; a booking is the person's).
+  "DOCTOR",
+  "DOCTOR_VERIFICATION_CASE",
+  "DOCTOR_STAFF_LINK",
+  "PRACTICE_LOCATION",
+  "DIRECTORY_BOOKING",
 ] as const;
 export type AggregateType = (typeof AGGREGATE_TYPES)[number];
 

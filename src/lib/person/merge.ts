@@ -231,6 +231,8 @@ async function mergePersonsTx(tx: Tx, req: { id: string; personId: string; sourc
   await tx.recordShare.updateMany({ where: { personId: from }, data: { personId: to } });
   await tx.accessRequest.updateMany({ where: { personId: from }, data: { personId: to } });
   await tx.personNotification.updateMany({ where: { personId: from }, data: { personId: to } });
+  // Week 5a: directory bookings (the appointments are the facilities' and stay where they are).
+  await tx.directoryBooking.updateMany({ where: { personId: from }, data: { personId: to } });
   // Choices: the same choice carries; two different choices both lapse, so the
   // person is asked again (never silently pick one).
   const now = new Date();

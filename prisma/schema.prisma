@@ -11275,6 +11275,8 @@ model RagBackfillCursor {
 enum RecordShareKind {
   CODE
   REQUEST
+  /// Week 5a: attached to a directory booking, for its doctor, from a day before the slot to a day after.
+  BOOKING
 }
 
 enum RecordShareStatus {
@@ -11312,6 +11314,8 @@ enum ShareEndReason {
   PATIENT_ENDED
   REVOKE_ALL
   PERSON_CLOSED
+  /// Week 5a: the booking it was attached to was cancelled.
+  APPOINTMENT_CANCELLED
 }
 
 enum AccessRequesterKind {
@@ -11344,6 +11348,8 @@ model RecordShare {
   recipientUserId     String?
   recipientFacilityId String?
   accessRequestId     String?                @unique
+  /// Week 5a: a BOOKING share reads only from here (a day before the slot); null = from creation.
+  validFrom           DateTime?
   expiresAt           DateTime
   createdByUserId     String
   createdAt           DateTime               @default(now())
@@ -11425,4 +11431,214 @@ enum PersonNotificationStatus {
   SENT
   NO_CHANNEL
   FAILED
+}
+
+// ── Week 5a — the doctor network (docs/DOCTOR_NETWORK_DESIGN.md) ─────────────
+// Platform-scoped: no facility tenant, no Person. Reads go through
+// src/lib/doctors (the directory returns public fields of verified, listed
+// doctors only). A doctor's professional identity is never joined to a
+// Person (decision 2): a doctor who is also a patient has a separate login.
+
+/// A doctor's professional identity, owned by their DOCTOR login.
+model DoctorProfile {
+  id                 String                   @id @default(cuid())
+  userId             String                   @unique
+  displayName        String
+  registrationNumber String
+  stateCouncil       String /// a code from STATE_COUNCILS (src/lib/doctors/vocab.ts)
+  /// The year of first registration, confirmed at verification: shown as "registered since".
+  registrationYear   Int?
+  verificationStatus DoctorVerificationStatus @default(UNVERIFIED)
+  verifiedAt         DateTime?
+  /// DOCUMENT_CHECK now; HPR later.
+  verificationMethod String?
+  hprId              String?                  @unique
+  /// App language codes the doctor consults in.
+  languages          String[]
+  /// The doctor's own choice to appear in search; only counts once VERIFIED.
+  listed             Boolean                  @default(false)
+  version            Int                      @default(1)
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
+
+  qualifications DoctorQualification[]
+  specialties    DoctorSpecialty[]
+  staffLinks     DoctorStaffLink[]
+  locations      PracticeLocation[]
+  cases          DoctorVerificationCase[]
+
+  @@unique([stateCouncil, registrationNumber])
+  @@index([verificationStatus, listed])
+}
+
+enum DoctorVerificationStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  SUSPENDED
+  REJECTED
+}
+
+model DoctorQualification {
+  id          String        @id @default(cuid())
+  doctor      DoctorProfile @relation(fields: [doctorId], references: [id])
+  doctorId    String
+  /// A code from DEGREES (src/lib/doctors/vocab.ts).
+  degree      String
+  institution String
+  year        Int?
+  createdAt   DateTime      @default(now())
+
+  @@index([doctorId])
+}
+
+model DoctorSpecialty {
+  doctor    DoctorProfile @relation(fields: [doctorId], references: [id])
+  doctorId  String
+  /// A code from SPECIALTIES (src/lib/doctors/vocab.ts): the fixed list.
+  specialty String
+  primary   Boolean       @default(false)
+
+  @@id([doctorId, specialty])
+  @@index([specialty])
+}
+
+/// A doctor's link to a facility staff profile: the doctor claims it, the facility's admin approves.
+model DoctorStaffLink {
+  id              String                @id @default(cuid())
+  doctor          DoctorProfile         @relation(fields: [doctorId], references: [id])
+  doctorId        String
+  /// One staff profile, one doctor.
+  staffId         String                @unique
+  facilityId      String
+  status          DoctorStaffLinkStatus @default(PENDING)
+  decidedByUserId String?
+  createdAt       DateTime              @default(now())
+  decidedAt       DateTime?
+  endedAt         DateTime?
+  version         Int                   @default(1)
+
+  @@index([doctorId, status])
+  @@index([facilityId, status])
+}
+
+enum DoctorStaffLinkStatus {
+  PENDING
+  ACTIVE
+  REJECTED
+  ENDED
+}
+
+/// Where a doctor can be booked: a hospital (an ACTIVE staff link) or the doctor's own clinic.
+model PracticeLocation {
+  id          String               @id @default(cuid())
+  doctor      DoctorProfile        @relation(fields: [doctorId], references: [id])
+  doctorId    String
+  kind        PracticeLocationKind
+  facilityId  String
+  /// The staff profile bookings land on.
+  staffId     String
+  /// CLINIC only: the doctor's own fee. A HOSPITAL location always uses the hospital's tariff (CONSULT_OPD).
+  feeMinor    Int?
+  modes       ConsultMode[]
+  /// The facility's public address point, never the doctor's home.
+  addressLine String?
+  pincode     String?
+  lat         Float?
+  lng         Float?
+  active      Boolean              @default(true)
+  version     Int                  @default(1)
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  nextSlot DoctorNextSlot?
+
+  @@unique([doctorId, facilityId])
+  @@index([facilityId])
+  @@index([active])
+}
+
+enum PracticeLocationKind {
+  HOSPITAL
+  CLINIC
+}
+
+/// No HOME_VISIT at launch (5a decision). VIDEO is designed, its provider not chosen; no recording by default.
+enum ConsultMode {
+  IN_PERSON
+  VIDEO
+}
+
+/// The manual check against the medical register (platform team; 48-hour target).
+model DoctorVerificationCase {
+  id                        String                       @id @default(cuid())
+  doctor                    DoctorProfile                @relation(fields: [doctorId], references: [id])
+  doctorId                  String
+  status                    DoctorVerificationCaseStatus @default(OPEN)
+  /// Storage refs (doctor-verification bucket): the registration certificate and degree.
+  documentRefs              String[]
+  /// The 48-hour review target.
+  dueAt                     DateTime
+  reviewerUserId            String?
+  decidedAt                 DateTime?
+  /// A code from VERIFICATION_REASONS (src/lib/doctors/vocab.ts).
+  reasonCode                String?
+  /// What the reviewer confirmed against the register (e.g. the registration year).
+  confirmedRegistrationYear Int?
+  /// Documents are deleted 90 days after the decision; the decision stays.
+  documentsPurgedAt         DateTime?
+  createdAt                 DateTime                     @default(now())
+  version                   Int                          @default(1)
+
+  @@index([status, dueAt])
+  @@index([doctorId])
+}
+
+enum DoctorVerificationCaseStatus {
+  OPEN
+  APPROVED
+  REJECTED
+  INFO_REQUESTED
+}
+
+/// Symptom → specialty, curated and versioned. Every row is "pending clinical advisor" until signed off.
+model SymptomSpecialtyMap {
+  id           String   @id @default(cuid())
+  symptomCode  String
+  /// English label; translated labels live in the app's strings.
+  label        String
+  specialty    String
+  weight       Int      @default(1)
+  version      Int
+  /// PENDING_CLINICAL_ADVISOR | APPROVED
+  reviewStatus String   @default("PENDING_CLINICAL_ADVISOR")
+  approvedBy   String?
+  createdAt    DateTime @default(now())
+
+  @@unique([version, symptomCode, specialty])
+  @@index([symptomCode])
+}
+
+/// A projection: the next bookable slot per location (refreshed by directory-slots; never decides a booking).
+model DoctorNextSlot {
+  practiceLocation   PracticeLocation @relation(fields: [practiceLocationId], references: [id])
+  practiceLocationId String           @id
+  nextSlotAt         DateTime?
+  refreshedAt        DateTime         @default(now())
+}
+
+/// A booking made through the directory (person-scoped): who booked what where, how, and the share it carries.
+model DirectoryBooking {
+  id                 String      @id @default(cuid())
+  appointmentId      String      @unique
+  personId           String
+  practiceLocationId String
+  doctorId           String
+  mode               ConsultMode
+  shareId            String?     @unique
+  createdByUserId    String
+  createdAt          DateTime    @default(now())
+
+  @@index([personId])
+  @@index([doctorId])
 }

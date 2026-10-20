@@ -471,6 +471,12 @@ export const PERMISSIONS = [
   "ai:interaction:review",
   "ai:interaction:text:read",
   "ai:embedding:manage",
+  // Week 5a — the doctor network: the platform team verifies doctors against
+  // the medical register (and suspends them). Platform admin only; never a
+  // facility admin.
+  "doctor:verify",
+  // …and a doctor manages their own directory profile, verification case and locations.
+  "doctor:profile:manage",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -492,6 +498,8 @@ export const OPERATIONAL_ONLY_ACTIONS = [
 const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
   PATIENT: ["patient:self:read", "patient:self:manage"],
   DOCTOR: [
+    // Week 5a — their own directory profile, verification and practice locations.
+    "doctor:profile:manage",
     // Phase C1 — a treating clinician sees interoperability state for their
     // patients and can initiate a referral/second-opinion transfer, but cannot
     // create registry mappings, grant consent on the patient's behalf, or
@@ -1186,6 +1194,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "configuration:reset",
     "configuration:operate",
     "ai:embedding:manage",
+    "doctor:verify",
   ],
   // Week 4b — platform reviewers of retained AI text (decision 7): nothing clinical, no facility.
   CLINICAL_ADVISOR: ["ai:interaction:review", "ai:interaction:text:read"],

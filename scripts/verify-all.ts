@@ -137,6 +137,11 @@ const ORDER = [
   "verify-postgres-sensitive-categories",
   "verify-postgres-revoke-all",
   "verify-postgres-person-notifications",
+  // Week 5a: the doctor network.
+  "verify-postgres-doctor-verification",
+  "verify-postgres-doctor-directory",
+  "verify-postgres-directory-booking",
+  "verify-postgres-doctor-leaks",
   // §7: the core-journey replay test, extended at each spine step.
   "verify-postgres-core-journey",
   // Batch 4: bounded retries; runs after the tenancy sweep (checks its fixtures)

@@ -10,6 +10,7 @@ import { MODES, type AiAudience, type AiMode } from "./modes";
 import { ALL_CATEGORIES, ALL_SENSITIVE, type RetrievalScope, type ScopeSegment } from "./scope";
 import { resolveShare } from "@/lib/sharing/resolve";
 import { ragCategoriesFor } from "@/lib/sharing/categories";
+import { staffIsSubject } from "@/lib/doctors/self";
 
 const latest = (a?: Date, b?: Date) => (a && b ? (a > b ? a : b) : a ?? b);
 const earliest = (a?: Date, b?: Date) => (a && b ? (a < b ? a : b) : a ?? b);
@@ -64,7 +65,7 @@ export interface AiAccess {
   /** Live facts (§7.4): read from these records, if the scope allows their categories. */
   live: { patientIds: string[]; facilityIds: string[]; medications: boolean; allergies: boolean; patientProvidedAllergies: boolean; nurseView: boolean; period?: { from?: Date; to?: Date } };
   /** Week 4c: the share's person (for the access log) and how the caller got in. */
-  share?: { personId: string | null; via: "SHARE_CODE" | "ACCESS_REQUEST"; categories: string[] };
+  share?: { personId: string | null; via: "SHARE_CODE" | "ACCESS_REQUEST" | "BOOKING"; categories: string[] };
   permit: AiPermit;
   real: boolean;
 }
@@ -137,6 +138,8 @@ export async function resolveAiAccess(actor: AiActor, req: AccessRequest): Promi
   // Staff.
   const modes = STAFF_MODES[actor.role] ?? [];
   if (!modes.includes(req.mode)) throw new AiAccessError(403, "MODE_NOT_ALLOWED");
+  // Week 5a: a doctor never reads their own record through doctor tools (the same human, src/lib/doctors/self.ts).
+  if (await staffIsSubject(actor.userId, subject.personId)) throw new AiAccessError(404, "NOT_FOUND");
   const caller = await prisma.facility.findUnique({ where: { id: actor.facilityId }, select: { organizationId: true } });
   if (!caller) throw new AiAccessError(403, "NO_FACILITY");
   if (!(await aiEnabled(caller.organizationId, actor.facilityId))) throw new AiAccessError(403, "AI_NOT_ENABLED");

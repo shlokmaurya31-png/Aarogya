@@ -358,6 +358,7 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/hospital/workforce/service.ts#createStaffingRequirement": { category: "REFERENCE_DATA", reason: "catalogue / master data; no runtime reaction depends on it" },
   "src/lib/hospital/workforce/service.ts#setAvailability": { category: "OPERATIONAL_DETAIL", reason: "staff availability (StaffAbsence); bookability reads it directly" },
   "src/lib/patient/experience/family.ts#inviteDelegate": { category: "PROCESS_STEP", reason: "an invitation grants nothing; access starts on acceptance (FamilyAccessGranted)", boundary: ["FamilyAccessGranted"] },
+  "src/lib/doctors/slots.ts#refreshNextSlot": { category: "BOOKKEEPING", reason: "Week 5a: the directory's next-slot projection (DoctorNextSlot), derived from appointments and schedules; it never decides a booking" },
   "src/lib/scoring/achievements.ts#grantEarnedAchievements": { category: "BOOKKEEPING", reason: "Scholar scoring projection" },
   "src/lib/scoring/competencies.ts#updateCompetencies": { category: "BOOKKEEPING", reason: "Scholar scoring projection" },
   "src/lib/verification/migrateLegacy.ts#migrateLegacyVerificationUploads": { category: "BOOKKEEPING", reason: "idempotent bootstrap / one-off migration" },

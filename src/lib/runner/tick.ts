@@ -11,6 +11,8 @@ import { sweepConsentLapses } from "@/lib/person/consentLapse";
 import { sweepShareExpiry } from "@/lib/sharing/shares";
 import { sweepAccessRequestExpiry } from "@/lib/sharing/requests";
 import { sweepAccessSummaries } from "@/lib/person/notifications";
+import { sweepNextSlots } from "@/lib/doctors/slots";
+import { purgeVerificationDocuments } from "@/lib/doctors/verification";
 import { registerAllConsumers } from "./consumers";
 
 /**
@@ -60,6 +62,8 @@ export interface RunTickResult {
   aiInteractions: { textPurged: number; deleted: number };
   /** Week 4c: shares and access requests that expired. */
   sharing: { sharesExpired: number; requestsExpired: number; accessSummaries: number };
+  /** Week 5a: next-slot projections refreshed; verification documents deleted 90 days after the decision. */
+  doctors: { slotsRefreshed: number; documentsPurged: number };
   durationMs: number;
   /** True when a batch limit was hit, i.e. there may be more work now. */
   moreWork: boolean;
@@ -99,6 +103,9 @@ export async function runTick(opts: RunTickOptions = {}): Promise<RunTickResult>
       accessSummaries: (await sweepAccessSummaries({ now: opts.now })).queued,
     }
     : { sharesExpired: 0, requestsExpired: 0, accessSummaries: 0 };
+  const doctors = Date.now() - started < budgetMs
+    ? { slotsRefreshed: (await sweepNextSlots({ now: opts.now })).refreshed, documentsPurged: (await purgeVerificationDocuments({ now: opts.now })).purged }
+    : { slotsRefreshed: 0, documentsPurged: 0 };
 
   return {
     consumers,
@@ -112,6 +119,7 @@ export async function runTick(opts: RunTickOptions = {}): Promise<RunTickResult>
     consents,
     aiInteractions,
     sharing,
+    doctors,
     durationMs: Date.now() - started,
     moreWork: events.claimed >= eventBatchSize || workflows.timersFired >= workflowBatchSize || workflows.instancesRun >= workflowBatchSize || mar.missed >= marBatchSize,
   };
