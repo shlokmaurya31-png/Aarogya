@@ -233,6 +233,19 @@ async function mergePersonsTx(tx: Tx, req: { id: string; personId: string; sourc
   await tx.personNotification.updateMany({ where: { personId: from }, data: { personId: to } });
   // Week 5a: directory bookings (the appointments are the facilities' and stay where they are).
   await tx.directoryBooking.updateMany({ where: { personId: from }, data: { personId: to } });
+  // Week 5b: households. A membership the surviving person already has in that household stays; the
+  // merged-away one is removed. Grants and claims follow the person (as member or as proxy); a grant
+  // that would now be a person's to themselves is revoked.
+  for (const m of await tx.householdMember.findMany({ where: { personId: from } })) {
+    const dup = await tx.householdMember.findUnique({ where: { householdId_personId: { householdId: m.householdId, personId: to } } });
+    if (dup) await tx.householdMember.update({ where: { id: m.id }, data: { status: "REMOVED", leftAt: new Date(), version: { increment: 1 } } });
+    else await tx.householdMember.update({ where: { id: m.id }, data: { personId: to } });
+  }
+  await tx.proxyGrant.updateMany({ where: { proxyPersonId: from, memberPersonId: to }, data: { status: "REVOKED", revokedAt: new Date() } });
+  await tx.proxyGrant.updateMany({ where: { memberPersonId: from, proxyPersonId: to }, data: { status: "REVOKED", revokedAt: new Date() } });
+  await tx.proxyGrant.updateMany({ where: { memberPersonId: from }, data: { memberPersonId: to } });
+  await tx.proxyGrant.updateMany({ where: { proxyPersonId: from }, data: { proxyPersonId: to } });
+  await tx.memberClaim.updateMany({ where: { personId: from }, data: { personId: to } });
   // Choices: the same choice carries; two different choices both lapse, so the
   // person is asked again (never silently pick one).
   const now = new Date();

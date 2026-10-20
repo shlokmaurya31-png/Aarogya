@@ -6,7 +6,7 @@ import { emitDomainEvent } from "@/lib/events/emit";
 import type { DomainEventConsumer } from "@/lib/events/consumers";
 import { bookAppointmentTx, cancelAppointment } from "@/lib/hospital/appointment";
 import { requireOwnedPerson } from "@/lib/person/access";
-import { connectFacilityRecord } from "@/lib/patient/selfRegistration";
+import { connectFacilityRecordFor } from "@/lib/patient/selfRegistration";
 import { DEFAULT_SHARE_CATEGORIES, parseShareChoice } from "@/lib/sharing/categories";
 import { activeLinkedPatients, createShareTx, endShareTx } from "@/lib/sharing/shares";
 import { locationSlots } from "./directory";
@@ -31,8 +31,16 @@ import { isSameHuman } from "./self";
 export const SHARE_WINDOW_MS = 24 * 3_600_000;
 
 export async function bookThroughDirectory(userId: string, body: Record<string, unknown> | null) {
+  return bookForPerson(userId, await requireOwnedPerson(userId), body);
+}
+
+/**
+ * Week 5b: the booking for a Person, by the person's own login (above) or by a
+ * proxy whose BOOK grant (and SHARE, for a share) the caller has checked
+ * (src/lib/household/proxy.ts). The proxy is recorded as the actor.
+ */
+export async function bookForPerson(userId: string, personId: string, body: Record<string, unknown> | null) {
   const b = body ?? {};
-  const personId = await requireOwnedPerson(userId);
   const loc = await prisma.practiceLocation.findUnique({ where: { id: String(b.locationId ?? "") }, include: { doctor: true } });
   if (!loc || !loc.active || loc.doctor.verificationStatus !== "VERIFIED" || !loc.doctor.listed) throw new NotFoundError();
   const mode = (b.mode ?? "IN_PERSON") as ConsultMode;
@@ -50,7 +58,7 @@ export async function bookThroughDirectory(userId: string, body: Record<string, 
   let link = await prisma.personPatientLink.findFirst({ where: { personId, facilityId: loc.facilityId, status: "ACTIVE" }, select: { patientId: true } });
   if (!link) {
     const person = await prisma.person.findUniqueOrThrow({ where: { id: personId }, select: { displayName: true, sex: true, dateOfBirth: true } });
-    const connected = await connectFacilityRecord(userId, { facilityId: loc.facilityId, fullName: person.displayName, sex: person.sex ?? "U", dob: person.dateOfBirth ?? undefined });
+    const connected = await connectFacilityRecordFor(personId, userId, { facilityId: loc.facilityId, fullName: person.displayName, sex: person.sex ?? "U", dob: person.dateOfBirth ?? undefined });
     if (connected.status !== "LINKED_NEW") throw new ConflictError("You may already have a record at this hospital. Verify it from your profile first, then book.");
     link = { patientId: connected.patientId };
   }

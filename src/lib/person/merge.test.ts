@@ -15,6 +15,7 @@ const NOT_REPOINTED: Record<string, string> = {
   PersonMergeRequest: "the request that caused the merge",
   PersonMergeRecord: "the merge's own record",
   DomainEventOutbox: "events are history; they keep the Person they were about",
+  HouseholdMember: "re-pointed one by one (a membership the surviving Person already has in that household is removed instead): see mergePersonsTx",
 };
 
 describe("a Person merge re-points every model that carries a personId", () => {

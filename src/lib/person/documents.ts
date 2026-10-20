@@ -29,7 +29,15 @@ export const PERSON_DOCUMENT_TYPES = ["REPORT", "REFERRAL_LETTER", "ID_PROOF", "
 const SIGNED_URL_SECONDS = 300;
 
 export async function uploadPersonDocument(userId: string, input: { bytes: Buffer; contentType: string; originalName: string; title: string; type: string }) {
-  const personId = await requireOwnedPerson(userId);
+  return uploadPersonDocumentFor(await requireOwnedPerson(userId), userId, input);
+}
+
+/**
+ * Week 5b: the upload itself, for a Person, by a user who may upload there:
+ * the person's own login (above), or a proxy whose UPLOAD grant the caller
+ * has already checked (src/lib/household/proxy.ts). The uploader is recorded.
+ */
+export async function uploadPersonDocumentFor(personId: string, userId: string, input: { bytes: Buffer; contentType: string; originalName: string; title: string; type: string }) {
   if (!(PERSON_DOCUMENT_TYPES as readonly string[]).includes(input.type)) throw new BadRequestError(`type must be one of ${PERSON_DOCUMENT_TYPES.join(", ")}.`);
   const title = input.title.trim().slice(0, 200);
   if (!title) throw new BadRequestError("A title is required.");

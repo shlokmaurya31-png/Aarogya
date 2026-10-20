@@ -17,6 +17,11 @@ import { resolvePatientIdsForRead } from "@/lib/patient/merge";
  *           relationship with the person's linked record there. Uploads made
  *           before Phase 0 stay visible to the facility they were uploaded to
  *           until the person makes that choice (the approved reversal).
+ *   PROXY   (Week 5b) a household proxy: the actor's own Person holds an
+ *           ACTIVE ProxyGrant from this person with the permission asked
+ *           for (src/lib/household/grants.ts proxyGrantFor). The grant's
+ *           categories and sensitive opt-ins come back for the caller to apply.
+ *           Household membership alone gives nothing.
  *   SHARE   (Week 4c fix) a doctor holding a live share the person gave
  *           (a redeemed visit code or an approved request) that includes
  *           UPLOADS: their uploads, filtered by the share (period, sensitive
@@ -30,15 +35,18 @@ import { resolvePatientIdsForRead } from "@/lib/patient/merge";
 export type PersonActor =
   | { kind: "OWNER"; userId: string }
   | { kind: "STAFF"; userId: string; facilityId: string }
-  | { kind: "SHARE"; userId: string; facilityId: string; role: string; shareRef: string };
+  | { kind: "SHARE"; userId: string; facilityId: string; role: string; shareRef: string }
+  | { kind: "PROXY"; userId: string; permission: import("@prisma/client").ProxyPermission };
 
 export type PersonPurpose = "PROFILE" | "UPLOADS";
 
 export interface PersonGrant {
   personId: string;
-  via: "OWNER" | "CARE_RELATIONSHIP" | "SHARE";
+  via: "OWNER" | "CARE_RELATIONSHIP" | "SHARE" | "PROXY";
   /** The resolved share, for a SHARE grant: the caller applies its filters. */
   share?: import("@/lib/sharing/resolve").ShareScope;
+  /** The proxy's grant, for a PROXY grant: the caller applies its categories. */
+  proxy?: import("@/lib/household/grants").ProxyAccess;
 }
 
 export const SHARE_UPLOADS = "SHARE_UPLOADS_WITH_TREATING" as const;
@@ -111,6 +119,11 @@ export async function personAccess(actor: PersonActor, personId: string, purpose
   if (!person || person.status !== "ACTIVE") return null;
   if (actor.kind === "OWNER") {
     return (await ownedPersonId(actor.userId)) === personId ? { personId, via: "OWNER" } : null;
+  }
+  if (actor.kind === "PROXY") {
+    const { proxyGrantFor } = await import("@/lib/household/grants");
+    const proxy = await proxyGrantFor(actor.userId, personId, actor.permission);
+    return proxy ? { personId, via: "PROXY", proxy } : null;
   }
   // Staff never read the person's own profile, contacts, links or log.
   if (purpose !== "UPLOADS") return null;

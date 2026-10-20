@@ -11781,7 +11781,7 @@ model DependentConsent {
   secondStaffUserId String?
   facilityId        String?
   /// LEGAL_DOCUMENT: the reviewed document (a person upload) and the reviewing staff.
-  documentId        String?
+  legalDocumentId   String?
   reviewedByUserId  String?
   documentKind      String?
   decidedAt         DateTime?

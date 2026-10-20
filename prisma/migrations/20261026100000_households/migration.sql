@@ -120,7 +120,7 @@ CREATE TABLE "DependentConsent" (
     "firstStaffUserId" TEXT,
     "secondStaffUserId" TEXT,
     "facilityId" TEXT,
-    "documentId" TEXT,
+    "legalDocumentId" TEXT,
     "reviewedByUserId" TEXT,
     "documentKind" TEXT,
     "decidedAt" TIMESTAMP(3),

@@ -39,7 +39,7 @@ export interface AskRequest {
 }
 
 export type Outcome = "ANSWERED" | "NO_RECORD" | "REFUSED_SAFETY" | "CITATION_INVALID" | "RATE_LIMITED" | "ERROR";
-export type Label = "verified" | "patient-provided" | "translated" | "handwritten" | "not yet confirmed by you";
+export type Label = "verified" | "patient-provided" | "confirmed by proxy" | "translated" | "handwritten" | "not yet confirmed by you";
 
 export interface Citation {
   n: number; chunkId: string; sourceType: string; sourceId: string; origin: "VERIFIED" | "PATIENT_PROVIDED"; translated: boolean; handwritten: boolean;
@@ -124,6 +124,7 @@ function labelsFor(cited: Source[], answerLanguage: string): Label[] {
   for (const c of cited) {
     labels.add(c.origin === "VERIFIED" ? "verified" : "patient-provided");
     if (c.handwritten) labels.add("handwritten");
+    if (c.origin !== "VERIFIED" && c.context.includes("confirmed by proxy")) labels.add("confirmed by proxy");
     if (c.unconfirmed) labels.add("not yet confirmed by you");
   }
   // Sources are English (values as printed); an answer in another language is a translation of them.

@@ -17,6 +17,8 @@ import { requireOwnedPerson } from "./access";
  *                       BreakGlassStatusChanged).
  *   ACCESS_REQUESTED    at once, when a doctor or hospital asks (the
  *                       person-notifier, on AccessRequested).
+ *   COMING_OF_AGE       (Week 5b) to a household's managers, 30 days before a
+ *                       child they manage turns 18 (src/lib/household/comingOfAge.ts).
  *
  * Writing one is a state change: PersonNotificationQueued in the same
  * transaction. The person-notifier delivers it (the account's email, else a
@@ -41,6 +43,10 @@ const TEXTS: Record<string, Texts> = {
       title: "A request to see your health record",
       body: "A doctor or hospital has asked to see part of your health record. Open Aarogya to approve or decline it. Nothing is shared until you approve.",
     }),
+    COMING_OF_AGE: (d) => ({
+      title: "A child in your family turns 18 soon",
+      body: `A profile you manage becomes its owner's own in ${d.days} day${d.days === 1 ? "" : "s"}. From then on you see it only if they choose. Open Aarogya to hand it over.`,
+    }),
   },
   hi: {
     ACCESS_SUMMARY: (d) => ({
@@ -54,6 +60,10 @@ const TEXTS: Record<string, Texts> = {
     ACCESS_REQUESTED: () => ({
       title: "आपका स्वास्थ्य रिकॉर्ड देखने का अनुरोध",
       body: "किसी डॉक्टर या अस्पताल ने आपके स्वास्थ्य रिकॉर्ड का कुछ हिस्सा देखने का अनुरोध किया है। स्वीकार या अस्वीकार करने के लिए Aarogya खोलें। आपकी स्वीकृति के बिना कुछ भी साझा नहीं होता।",
+    }),
+    COMING_OF_AGE: (d) => ({
+      title: "आपके परिवार में कोई जल्द 18 का होगा",
+      body: `आपके द्वारा प्रबंधित एक प्रोफ़ाइल ${d.days} दिन में उसके मालिक की अपनी हो जाएगी। उसके बाद आप उसे तभी देखेंगे जब वे चुनें। सौंपने के लिए Aarogya खोलें।`,
     }),
   },
 };
