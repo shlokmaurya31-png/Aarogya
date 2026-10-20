@@ -45,7 +45,7 @@ function AddChild({ householdId, onDone }: { householdId: string; onDone: () => 
     if (r.ok) onDone(); else setMsg(r.error);
   }
   return (
-    <div className="space-y-2 rounded-xl border border-hairline p-3" aria-label="Add a child">
+    <div role="region" className="space-y-2 rounded-xl border border-hairline p-3" aria-label="Add a child">
       {!consentId ? (
         <>
           <input aria-label="Child's name" placeholder="Child's name" value={f.displayName} onChange={(e) => setF({ ...f, displayName: e.target.value })} className="w-full rounded-md border border-hairline bg-transparent px-2 py-1.5 text-[13px]" />
@@ -111,7 +111,7 @@ function MemberPanel({ profile }: { profile: Profile }) {
     if (r.ok) setCode(r.data.code); else setMsg(r.error);
   }
   return (
-    <div className="space-y-4" aria-label={`Acting for ${profile.name}`}>
+    <div role="region" className="space-y-4" aria-label={`Acting for ${profile.name}`}>
       <p className="rounded-xl border border-accent/30 bg-accent/[0.06] px-3 py-2 text-[12.5px]">Acting for <span className="font-semibold">{profile.name}</span>. You may: {profile.permissions.join(", ").toLowerCase()}. Everything you do here is in their access log.</p>
       {can("VIEW") && (view?.record ? <SharedRecordSections data={view.record} /> : <Empty>{view ? `No hospital records yet${view.uploads.length ? `; documents: ${view.uploads.map((u) => u.title).join(", ")}` : ""}.` : "Loading…"}</Empty>)}
       {can("UPLOAD") && (

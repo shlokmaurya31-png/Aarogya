@@ -70,11 +70,15 @@ import { registerPatientAccount } from "../src/lib/patient/selfRegistration";
 import { searchDirectory, locationSlots } from "../src/lib/doctors/directory";
 import { bookThroughDirectory, cancelOwnDirectoryBooking } from "../src/lib/doctors/booking";
 import { facilityAdmin, networkDoctor, verifier } from "./lib/doctorFixture";
+import { child as householdChild, manager as householdManager } from "./lib/householdFixture";
+import { bookForMember, uploadForMember, viewMember } from "../src/lib/household/proxy";
+import { sweepComingOfAge } from "../src/lib/household/comingOfAge";
+import { comingOfAge } from "../src/lib/household/vocab";
 import { revokeAllAccess } from "../src/lib/sharing/revokeAll";
 import { decidePersonConsent } from "../src/lib/person/consent";
 import { personDocumentDownload, staffPersonDocuments, uploadPersonDocument, withdrawPersonDocument } from "../src/lib/person/documents";
 import { fixtureById, fixturePdf } from "../src/lib/documents/fixtures";
-import { bulkReview, listOwnFacts } from "../src/lib/documents/review";
+import { bulkReview, listFactsFor, listOwnFacts } from "../src/lib/documents/review";
 import { buildPatientTimeline } from "../src/lib/patient/timeline";
 
 let pass = 0;
@@ -524,6 +528,32 @@ async function main() {
     directoryEventIds.push(...(await prisma.domainEventOutbox.findMany({ where: { OR: [{ aggregateId: { in: [booked.appointmentId, booked.bookingId, booked.shareId!] } }, { aggregateId: netOrtho.locationId! }] }, select: { eventId: true } })).map((e) => e.eventId));
     report("5a: the patient cancels: the share ends (APPOINTMENT_CANCELLED) and the brief is refused (404)",
       (await prisma.recordShare.findUniqueOrThrow({ where: { id: booked.shareId! } })).endedReason === "APPOINTMENT_CANCELLED" && after5a === "404", after5a);
+
+    // Week 5b: a parent adds a child → uploads a report for them → the child's record shows it as
+    // patient-provided, confirmed by proxy → the parent books for the child → the child turns 18 →
+    // the parent's access lapses.
+    process.env.SMS_PROVIDER = "outbox";
+    const parent = await householdManager();
+    const kid = await householdChild(parent, 17, `Journey child ${kRun}`);
+    const kidDoc = await uploadForMember(parent.userId, kid.childPersonId, { bytes: await fixturePdf(fixtureById("lab-en-cbc")!), contentType: "application/pdf", originalName: "kid-cbc.pdf", title: `Child blood count ${kRun}`, type: "REPORT" });
+    await drain();
+    const kidFacts = await listFactsFor(parent.userId, kid.childPersonId, {});
+    await bulkReview(parent.userId, { decisions: kidFacts.filter((f) => f.bulkConfirmable).map((f) => ({ factId: f.id, version: f.version, decision: "CONFIRM" })), memberPersonId: kid.childPersonId });
+    await drain();
+    const kidEntries = await prisma.patientProvidedRecord.findMany({ where: { personId: kid.childPersonId, documentId: kidDoc.id, status: "ACTIVE" } });
+    report("5b: a parent adds a child and uploads a report for them: the confirmed values are the child's, patient-provided, confirmed by proxy",
+      kidEntries.length > 0 && kidEntries.every((e) => e.source === "PATIENT_PROVIDED" && e.confirmedByProxy), String(kidEntries.length));
+    const kidSlot = (await locationSlots(netOrtho.locationId!, next))[1];
+    const kidBooking = await bookForMember(parent.userId, kid.childPersonId, { locationId: netOrtho.locationId, start: kidSlot.start, reason: "Knee pain after football" });
+    const kidAppt = await prisma.appointment.findUniqueOrThrow({ where: { id: kidBooking.appointmentId } });
+    const kidLink = await prisma.personPatientLink.findFirst({ where: { personId: kid.childPersonId, patientId: kidAppt.patientId, status: "ACTIVE" } });
+    report("5b: the parent books for the child: on the child's own record (created from the child's Person), logged for the child",
+      !!kidLink && (await prisma.personAccessLogEntry.count({ where: { personId: kid.childPersonId, kind: "PROXY_ACTION", actorUserId: parent.userId, detail: { path: ["action"], equals: "BOOK" } } })) === 1);
+    const kidDob = (await prisma.person.findUniqueOrThrow({ where: { id: kid.childPersonId } })).dateOfBirth!;
+    await sweepComingOfAge({ now: new Date(comingOfAge(kidDob, "DAY").getTime() + 60_000) });
+    const kidAfter = await viewMember(parent.userId, kid.childPersonId).then(() => "seen", (e) => e?.constructor?.name ?? "error");
+    report("5b: the child turns 18: the guardian grant lapses and the parent sees nothing (404)",
+      (await prisma.proxyGrant.findUniqueOrThrow({ where: { id: kid.grantId } })).lapsedReason === "CAME_OF_AGE" && kidAfter === "NotFoundError", kidAfter);
   }
 
   // Every consumer took part in the journey (the directory booking included).

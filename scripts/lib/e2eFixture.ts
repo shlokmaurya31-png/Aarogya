@@ -8,6 +8,7 @@
  *   - a visit code the patient issued and the doctor redeemed (an ACTIVE
  *     share), which the doctor's smoke opens;
  *   - a scan-like sample report PDF for the patient's smoke to upload;
+ *   - Week 5b: the patient's own verified phone (a household's parental consent);
  *   - Week 5a: a verified, listed general physician in the directory (a
  *     hospital location at Pune with sessions all day, so a slot is always
  *     inside the booking share's window), with a login.
@@ -36,7 +37,7 @@ export const PUNE = "fac-amc-pune";
 export interface E2eFixture {
   tag: string;
   password: string;
-  patient: { email: string; patientId: string; name: string };
+  patient: { email: string; patientId: string; name: string; verifiedPhone: string };
   doctor: { email: string; name: string };
   networkDoctor: { email: string; name: string };
   shareId: string;
@@ -74,6 +75,9 @@ export async function buildE2eFixture(outDir: string): Promise<E2eFixture> {
   const personId = (await prisma.personAccount.findUniqueOrThrow({ where: { userId: a.userId } })).personId;
   await prisma.person.update({ where: { id: personId }, data: { dataClassification: "SYNTHETIC", preferredLanguage: "en" } });
   const patientId = (await prisma.personPatientLink.findFirstOrThrow({ where: { personId, status: "ACTIVE" } })).patientId;
+  // Week 5b: a verified phone of the person's own (where a household's parental-consent code goes).
+  const verifiedPhone = `+91${phone}`;
+  await prisma.personContact.create({ data: { personId, kind: "PHONE", value: verifiedPhone, verifiedAt: new Date() } });
 
   // A small verified record, indexed for the AI.
   const enc = await prisma.encounter.create({ data: { patientId, facilityId: PUNE, type: "OPD", status: "IN_CONSULTATION", chiefComplaint: "Tiredness for two weeks" } });
@@ -115,7 +119,7 @@ export async function buildE2eFixture(outDir: string): Promise<E2eFixture> {
   const samplePdf = path.join(outDir, "sample-report.pdf");
   writeFileSync(samplePdf, await fixturePdf(fixtureById("lab-en-cbc")!));
   const fixture: E2eFixture = {
-    tag, password, patient: { email, patientId, name }, doctor: { email: doctorUser.email, name: doctorName }, networkDoctor: { email: netUser.email, name: netName },
+    tag, password, patient: { email, patientId, name, verifiedPhone }, doctor: { email: doctorUser.email, name: doctorName }, networkDoctor: { email: netUser.email, name: netName },
     shareId: redeemed.id, samplePdf, sampleTitle: `Blood count ${tag}`,
   };
   writeFileSync(path.join(outDir, "fixture.json"), JSON.stringify(fixture, null, 2));

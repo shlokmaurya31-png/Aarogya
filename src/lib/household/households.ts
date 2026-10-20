@@ -113,7 +113,9 @@ export async function confirmAddMinor(userId: string, consentId: string, code: u
     await assertRoom(tx, c.householdId);
     const r = await tx.parentalConsent.updateMany({ where: { id: c.id, confirmedAt: null }, data: { confirmedAt: new Date() } });
     if (r.count !== 1) throw new ConflictError("Already confirmed.");
-    const child = await tx.person.create({ data: { displayName: c.minorDisplayName, dateOfBirth: c.minorDateOfBirth, dobPrecision: "DAY", sex: c.minorSex ?? undefined, managedByHousehold: true } });
+    // A managed profile has its creator's data classification (a synthetic demo or gate family stays synthetic).
+    const { dataClassification } = await tx.person.findUniqueOrThrow({ where: { id: personId }, select: { dataClassification: true } });
+    const child = await tx.person.create({ data: { displayName: c.minorDisplayName, dateOfBirth: c.minorDateOfBirth, dobPrecision: "DAY", sex: c.minorSex ?? undefined, managedByHousehold: true, dataClassification } });
     await tx.parentalConsent.update({ where: { id: c.id }, data: { minorPersonId: child.id } });
     await emitDomainEvent(tx, { type: "PersonCreated", aggregateId: child.id, personId: child.id, actorUserId: userId, payload: { personId: child.id, source: "HOUSEHOLD" } });
     await tx.personAccessLogEntry.create({ data: { personId: child.id, kind: "PERSON_CREATED", actorUserId: userId, detail: { source: "HOUSEHOLD", parentalConsentId: c.id } } });
@@ -156,7 +158,8 @@ export async function addDependentAdult(userId: string, householdId: string, bod
   }
   const out = await prisma.$transaction(async (tx) => {
     await assertRoom(tx, householdId);
-    const adult = await tx.person.create({ data: { displayName, dateOfBirth: dob ?? undefined, managedByHousehold: true, ...(contact ? { contacts: { create: { kind: contact.kind, value: contact.value } } } : {}) } });
+    const { dataClassification } = await tx.person.findUniqueOrThrow({ where: { id: personId }, select: { dataClassification: true } });
+    const adult = await tx.person.create({ data: { displayName, dateOfBirth: dob ?? undefined, managedByHousehold: true, dataClassification, ...(contact ? { contacts: { create: { kind: contact.kind, value: contact.value } } } : {}) } });
     await emitDomainEvent(tx, { type: "PersonCreated", aggregateId: adult.id, personId: adult.id, actorUserId: userId, payload: { personId: adult.id, source: "HOUSEHOLD" } });
     await tx.personAccessLogEntry.create({ data: { personId: adult.id, kind: "PERSON_CREATED", actorUserId: userId, detail: { source: "HOUSEHOLD" } } });
     const m = await tx.householdMember.create({ data: { householdId, personId: adult.id, memberType: "DEPENDENT_ADULT", role: "MEMBER", status: "PENDING_CONSENT", relationship } });
