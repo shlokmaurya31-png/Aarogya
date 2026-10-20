@@ -8,7 +8,7 @@ import {
   ClipboardCheck, FlaskConical, ScanLine, Receipt, DoorOpen,
   UserPlus, Siren, ArrowRightLeft, Pill, Microscope,
   ShieldCheck, BarChart3, Settings2, Boxes, Truck, HeartPulse, Scissors, Droplet, Wrench, Network, ShieldAlert, Plug,
-  Menu, X, Sparkles} from "lucide-react";
+  Menu, X, Sparkles, CalendarCheck} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/navigation/ThemeToggle";
 import { StatusPill } from "@/components/ui/StatusPill";
@@ -121,6 +121,7 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
   ],
   DOCTOR: [
     { href: "/hospital-os/doctor", label: "My Patients", icon: Stethoscope },
+    { href: "/hospital-os/doctor/bookings", label: "Directory bookings", icon: CalendarCheck },
     { href: "/hospital-os/ed", label: "ED Board", icon: Siren },
     { href: "/hospital-os", label: "Command Center", icon: LayoutGrid },
     { href: "/hospital-os/beds", label: "Beds", icon: BedDouble },

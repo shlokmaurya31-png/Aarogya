@@ -6,7 +6,7 @@ import {
   LogOut, Home, CalendarDays, FileText, Pill, Receipt,
   ShieldCheck, Users, User as UserIcon, ClipboardList, ListChecks, KeyRound,
 } from "lucide-react";
-import { Sparkles, FolderUp } from "lucide-react";
+import { Sparkles, FolderUp, Stethoscope } from "lucide-react";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { ThemeToggle } from "@/components/navigation/ThemeToggle";
 import { AiAssistantProvider, AiCommandBar } from "@/components/ai/PortalAssistant";
@@ -19,6 +19,7 @@ import { AiAssistantProvider, AiCommandBar } from "@/components/ai/PortalAssista
 const NAV = [
   { href: "/patient", label: "Home", icon: Home },
   { href: "/patient/appointments", label: "Appointments", icon: CalendarDays },
+  { href: "/patient/doctors", label: "Find a doctor", icon: Stethoscope },
   { href: "/patient/queue", label: "Queue", icon: ListChecks },
   { href: "/patient/share", label: "Share access", icon: KeyRound },
   { href: "/patient/records", label: "Records", icon: ClipboardList },
