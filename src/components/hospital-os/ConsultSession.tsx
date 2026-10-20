@@ -187,7 +187,7 @@ export function ConsultSession({ sessionId }: { sessionId: string }) {
       {/* The AI over what this code shares (visit brief, chart Q&A); the server checks the share on every request. */}
       {data.session.status === "ACTIVE" && <ChartAi patientId={p.id} shareId={data.session.id} title="Visit brief from the shared record (cited, advisory)" />}
 
-      <SharedRecordSections data={data} />
+      <SharedRecordSections data={data} shareRef={sessionId} />
     </div>
   );
 }

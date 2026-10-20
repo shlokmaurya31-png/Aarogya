@@ -230,6 +230,7 @@ async function mergePersonsTx(tx: Tx, req: { id: string; personId: string; sourc
   // Week 4c: the merged-away person's shares and the requests about them carry over unchanged.
   await tx.recordShare.updateMany({ where: { personId: from }, data: { personId: to } });
   await tx.accessRequest.updateMany({ where: { personId: from }, data: { personId: to } });
+  await tx.personNotification.updateMany({ where: { personId: from }, data: { personId: to } });
   // Choices: the same choice carries; two different choices both lapse, so the
   // person is asked again (never silently pick one).
   const now = new Date();

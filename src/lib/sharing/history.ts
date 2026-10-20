@@ -10,6 +10,8 @@ import type { ShareScope } from "./resolve";
  * only the shared categories, entries recorded inside the period, and no
  * sensitive item unless its category was opted in. A section that isn't
  * shared is absent (undefined), and a withheld item leaves no placeholder.
+ * The same filters decide which uploads a share's doctor may open
+ * (sharedDocumentVisible, used by the signed-URL download).
  * Allergies are always shown (the safety minimum), sensitive ones still
  * filtered, and not limited by the period (they are current state).
  */
@@ -24,6 +26,16 @@ function flatten(v: unknown): string[] {
 export function sensitiveAllowed(allowed: readonly RagSensitiveCategory[], input: { code?: string | null; texts: string[] }): boolean {
   const cat = sensitiveCategoryOf(input);
   return !cat || allowed.includes(cat);
+}
+
+/**
+ * May a share's doctor see (and open) this upload? Only with UPLOADS, the
+ * share's own person, a current document that isn't an ID proof, uploaded
+ * inside the period, and not sensitive unless opted in.
+ */
+export function sharedDocumentVisible(scope: ShareScope, doc: { personId: string; status: string; type: string; title: string; uploadedAt: Date }): boolean {
+  return scope.categories.includes("UPLOADS") && !!scope.personId && doc.personId === scope.personId && doc.status === "CURRENT" && doc.type !== "ID_PROOF"
+    && inPeriod(doc.uploadedAt, scope.recordedFrom, scope.recordedTo) && sensitiveAllowed(scope.sensitive, { texts: texts(doc.title) });
 }
 
 export async function shareHistory(scope: ShareScope) {
@@ -70,13 +82,37 @@ export async function shareHistory(scope: ShareScope) {
       .map((d) => ({ id: d.id, dischargedAt: d.dischargedAt!.toISOString(), dischargeType: d.dischargeType, summary: d.dischargeSummary }))
     : undefined;
 
+  // 4c fix (§15): diagnoses and the problem list, vitals and signed clinical notes, each only with its category.
+  const conditions = has("CONDITIONS")
+    ? {
+      diagnoses: (await prisma.diagnosis.findMany({ where: { patientId: { in: ids }, status: { not: "ENTERED_IN_ERROR" } }, orderBy: { createdAt: "desc" }, take: 100 }))
+        .filter((d) => when(d.createdAt) && ok(texts(d.diagnosis, d.codeDisplay), d.code))
+        .map((d) => ({ id: d.id, diagnosis: d.diagnosis, code: d.code, type: d.type, status: d.status, recordedAt: d.createdAt.toISOString() })),
+      problems: (await prisma.problem.findMany({ where: { patientId: { in: ids }, OR: [{ verificationStatus: null }, { verificationStatus: { notIn: ["ENTERED_IN_ERROR", "REFUTED"] } }] }, orderBy: { createdAt: "desc" }, take: 100 }))
+        .filter((p) => when(p.createdAt) && ok(texts(p.diagnosis, p.codeDisplay), p.code))
+        .map((p) => ({ id: p.id, diagnosis: p.diagnosis, code: p.code, status: p.status, severity: p.severity, recordedAt: p.createdAt.toISOString() })),
+    }
+    : undefined;
+
+  const vitals = has("VITALS")
+    ? (await prisma.vital.findMany({ where: { encounter: { patientId: { in: ids } } }, orderBy: { recordedAt: "desc" }, take: 50 }))
+      .filter((v) => when(v.recordedAt))
+      .map((v) => ({ id: v.id, hr: v.hr, sbp: v.sbp, dbp: v.dbp, rr: v.rr, spo2: v.spo2, tempC: v.tempC, recordedAt: v.recordedAt.toISOString() }))
+    : undefined;
+
+  const clinicalNotes = has("CLINICAL_NOTES")
+    ? (await prisma.clinicalNote.findMany({ where: { encounter: { patientId: { in: ids } }, status: { in: ["SIGNED", "AMENDED"] } }, orderBy: { createdAt: "desc" }, take: 30 }))
+      .filter((n) => when(n.signedAt ?? n.createdAt) && ok(flatten(n.content)))
+      .map((n) => ({ id: n.id, type: n.type, content: n.content, signedAt: (n.signedAt ?? n.createdAt).toISOString() }))
+    : undefined;
+
   // The person's own uploads and confirmed entries: only with UPLOADS, and each entry only with its own category too.
   let uploads: { documents: { id: string; title: string; type: string; uploadedAt: string }[]; entries: { id: string; kind: string; text: string; date: string }[] } | undefined;
   if (has("UPLOADS") && scope.personId) {
     const docs = await prisma.personDocument.findMany({ where: { personId: scope.personId, status: "CURRENT", type: { not: "ID_PROOF" } }, orderBy: { uploadedAt: "desc" }, take: 50 });
     const entries = await prisma.patientProvidedRecord.findMany({ where: { personId: scope.personId, status: "ACTIVE" }, orderBy: [{ effectiveDate: "desc" }, { createdAt: "desc" }], take: 100 });
     uploads = {
-      documents: docs.filter((d) => when(d.uploadedAt) && ok(texts(d.title))).map((d) => ({ id: d.id, title: d.title, type: d.type, uploadedAt: d.uploadedAt.toISOString() })),
+      documents: docs.filter((d) => sharedDocumentVisible(scope, d)).map((d) => ({ id: d.id, title: d.title, type: d.type, uploadedAt: d.uploadedAt.toISOString() })),
       entries: entries
         .filter((e) => {
           const need = PROVIDED_KIND_CATEGORY[e.kind];
@@ -93,7 +129,7 @@ export async function shareHistory(scope: ShareScope) {
       period: { from: scope.recordedFrom?.toISOString() ?? null, to: scope.recordedTo?.toISOString() ?? null },
       expiresAt: scope.expiresAt?.toISOString() ?? null, via: scope.via,
     },
-    allergies, medicationOrders, labResults, imagingReports, dischargeSummaries, uploads,
+    allergies, medicationOrders, labResults, imagingReports, dischargeSummaries, conditions, vitals, clinicalNotes, uploads,
   };
 }
 export type ShareHistory = NonNullable<Awaited<ReturnType<typeof shareHistory>>>;

@@ -10,6 +10,7 @@ import { purgeExpiredAiInteractions } from "@/lib/rag/interactions";
 import { sweepConsentLapses } from "@/lib/person/consentLapse";
 import { sweepShareExpiry } from "@/lib/sharing/shares";
 import { sweepAccessRequestExpiry } from "@/lib/sharing/requests";
+import { sweepAccessSummaries } from "@/lib/person/notifications";
 import { registerAllConsumers } from "./consumers";
 
 /**
@@ -58,7 +59,7 @@ export interface RunTickResult {
   /** Week 4b: retained AI text cleared at expiry; AI interaction metadata deleted after a year. */
   aiInteractions: { textPurged: number; deleted: number };
   /** Week 4c: shares and access requests that expired. */
-  sharing: { sharesExpired: number; requestsExpired: number };
+  sharing: { sharesExpired: number; requestsExpired: number; accessSummaries: number };
   durationMs: number;
   /** True when a batch limit was hit, i.e. there may be more work now. */
   moreWork: boolean;
@@ -91,8 +92,13 @@ export async function runTick(opts: RunTickOptions = {}): Promise<RunTickResult>
     : { lapsed: 0, aiIndexPurged: 0 };
   const aiInteractions = Date.now() - started < budgetMs ? await purgeExpiredAiInteractions({ now: opts.now }) : { textPurged: 0, deleted: 0 };
   const sharing = Date.now() - started < budgetMs
-    ? { sharesExpired: (await sweepShareExpiry({ now: opts.now })).expired, requestsExpired: (await sweepAccessRequestExpiry({ now: opts.now })).expired }
-    : { sharesExpired: 0, requestsExpired: 0 };
+    ? {
+      sharesExpired: (await sweepShareExpiry({ now: opts.now })).expired,
+      requestsExpired: (await sweepAccessRequestExpiry({ now: opts.now })).expired,
+      // 4c answers: yesterday's (India day) access summary to each person whose record was opened.
+      accessSummaries: (await sweepAccessSummaries({ now: opts.now })).queued,
+    }
+    : { sharesExpired: 0, requestsExpired: 0, accessSummaries: 0 };
 
   return {
     consumers,

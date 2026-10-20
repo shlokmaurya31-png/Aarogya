@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { KeyRound, ShieldCheck, Loader2, Copy, Check, X, Stethoscope } from "lucide-react";
-import { ShareChoices, choiceBody, type ShareChoiceValue } from "@/components/patient-portal/ShareChoices";
+import { DEFAULT_SHARE_CHOICE, ShareChoices, choiceBody, type ShareChoiceValue } from "@/components/patient-portal/ShareChoices";
 import { SharingCenter } from "@/components/patient-portal/SharingCenter";
 
 interface LiveSession {
@@ -20,8 +20,8 @@ export default function PatientSharePage() {
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [copied, setCopied] = useState(false);
-  // Week 4c: what the code shares (default: the four record categories, nothing sensitive, 24 hours).
-  const [choice, setChoice] = useState<ShareChoiceValue>({ categories: ["PRESCRIPTIONS", "LABS", "IMAGING", "DISCHARGE_SUMMARIES"], sensitiveCategories: [], from: "", to: "" });
+  // Week 4c fix: what the code shares, pre-selected (every non-sensitive category, uploads included, not clinical notes; nothing sensitive; 24 hours).
+  const [choice, setChoice] = useState<ShareChoiceValue>({ categories: DEFAULT_SHARE_CHOICE, sensitiveCategories: [], from: "", to: "" });
   const [hours, setHours] = useState(24);
   const [error, setError] = useState<string | null>(null);
   const [centerKey, setCenterKey] = useState(0);

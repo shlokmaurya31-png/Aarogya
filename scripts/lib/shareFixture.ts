@@ -101,3 +101,33 @@ export async function provided(personId: string, kind: PatientProvidedKind, valu
 export const eventsOf = (aggregateId: string, type: string) => prisma.domainEventOutbox.findMany({ where: { aggregateId, eventType: type }, orderBy: { createdAt: "asc" } });
 export const refused = <T>(p: Promise<T>) => p.then(() => false, () => true);
 export const notFound = <T>(p: Promise<T>) => p.then(() => false, (e) => e?.constructor?.name === "NotFoundError");
+
+// 4c fix: the new categories' entries (CONDITIONS, VITALS, CLINICAL_NOTES) and a real-looking upload.
+async function authorAt(patientId: string) {
+  const p = await prisma.patient.findUniqueOrThrow({ where: { id: patientId }, select: { facilityId: true } });
+  return prisma.hospitalStaffProfile.findFirstOrThrow({ where: { department: { facilityId: p.facilityId } }, select: { id: true } });
+}
+
+export async function diagnosis(patientId: string, encounterId: string, text: string, opts: { code?: string; at?: Date } = {}) {
+  const author = await authorAt(patientId);
+  return (await prisma.diagnosis.create({ data: { patientId, encounterId, diagnosis: text, type: "FINAL", code: opts.code, codeSystem: opts.code ? "ICD-10" : undefined, diagnosedByStaffId: author.id, ...(opts.at ? { createdAt: opts.at } : {}) } })).id;
+}
+
+export async function problem(patientId: string, text: string, opts: { code?: string; at?: Date } = {}) {
+  return (await prisma.problem.create({ data: { patientId, diagnosis: text, status: "ACTIVE", code: opts.code, codeSystem: opts.code ? "ICD-10" : undefined, ...(opts.at ? { createdAt: opts.at } : {}) } })).id;
+}
+
+export async function vital(encounterId: string, values: { hr?: number; sbp?: number; dbp?: number }, recordedAt = new Date()) {
+  return (await prisma.vital.create({ data: { encounterId, recordedByStaffId: "gate", ...values, recordedAt } })).id;
+}
+
+export async function note(patientId: string, encounterId: string, text: string) {
+  const author = await authorAt(patientId);
+  return (await prisma.clinicalNote.create({ data: { encounterId, authorStaffId: author.id, type: "SOAP", content: { assessment: text }, status: "SIGNED", signedAt: new Date() } })).id;
+}
+
+/** A person's upload with a well-formed storage ref (the signed URL is a token over it; no bytes are needed). */
+export async function upload(personId: string, title: string, opts: { type?: string; uploadedAt?: Date } = {}) {
+  seq += 1;
+  return (await prisma.personDocument.create({ data: { personId, type: opts.type ?? "REPORT", title, storageRef: `patient-uploads/${personId}/${seq.toString(16).padStart(16, "0")}-gate.pdf`, sha256: "1".repeat(64), contentType: "application/pdf", uploadedByUserId: "gate", ...(opts.uploadedAt ? { uploadedAt: opts.uploadedAt } : {}) } })).id;
+}

@@ -26,6 +26,11 @@
  *    the share's own period, uploads without UPLOADS, a sensitive category not
  *    opted in, a share the patient ended, another doctor holding the code's
  *    id; each with its positive control (a share that admits it).
+ * 14 (4c fix, §15) — the new categories and the default share: a condition
+ *    without CONDITIONS, vitals without VITALS, a note without CLINICAL_NOTES
+ *    (the default leaves notes out), a patient-provided condition without
+ *    UPLOADS or without CONDITIONS, a sensitive diagnosis in the default share;
+ *    each with its control (the default share, or the category ticked).
  *
  * Every allowed request also goes through POST /api/ai/ask's service
  * (askAi, the mock model, which echoes its sources): the canary must be in
@@ -55,7 +60,8 @@ import type { AiMode } from "../src/lib/rag/modes";
 import { randomBytes } from "node:crypto";
 import { askAi } from "../src/lib/rag/ask";
 import { issueAccessCode, redeemAccessCode } from "../src/lib/patient/accessSession";
-import { parseShareChoice } from "../src/lib/sharing/categories";
+import { DEFAULT_SHARE_CATEGORIES, parseShareChoice } from "../src/lib/sharing/categories";
+import { reindexPerson } from "../src/lib/rag/indexer";
 import { endOwnShare } from "../src/lib/sharing/shares";
 import { decryptText } from "../src/lib/rag/textCrypto";
 import { getRecordAnswerProvider, setRecordAnswerProviderForTest, type AnswerRequest } from "../src/lib/ai/record";
@@ -310,7 +316,7 @@ async function main() {
   const viaCode = (sessionId: string, word: string) => ask(dP.actor, { patientId: C.patientId, shareId: sessionId }, word);
   const a13 = await code({ categories: ["LABS"] });
   report("13 A LABS-only code: the lab result is there (control)", present(await viaCode(a13.id, canary("c4lab")), canary("c4lab")));
-  report("13 …a note never comes through a share", await absent(await viaCode(a13.id, canary("c4note")), canary("c4note")));
+  report("13 …a note doesn't come through a share without CLINICAL_NOTES", await absent(await viaCode(a13.id, canary("c4note")), canary("c4note")));
   report("13 (control: the treating path, without a share, finds the note)", present(await ask(dP.actor, { patientId: C.patientId }, canary("c4note")), canary("c4note")));
   report("13 …nor an active medicine without PRESCRIPTIONS (live facts follow the categories)", await absent(await viaCode(a13.id, canary("c4rx")), canary("c4rx")));
   report("13 …nor the patient's upload without UPLOADS", await absent(await viaCode(a13.id, canary("c4up")), canary("c4up")));
@@ -327,6 +333,46 @@ async function main() {
   report("13 The first code, superseded when the next was issued: 404", (await viaCode(a13.id, canary("c4lab"))).refused === "404 NOT_FOUND");
   await endOwnShare(C.userId, c13.shareId!);
   report("13 Once the patient ends the share: 404, at once", (await viaCode(c13.id, canary("c4lab"))).refused === "404 NOT_FOUND");
+
+  // 14. The 4c fix: CONDITIONS, VITALS, CLINICAL_NOTES and the default share.
+  const D = await person({ encounter: "OPEN" });
+  const dAuthor = await staffOf(PUNE, "DOCTOR");
+  await prisma.diagnosis.create({ data: { patientId: D.patientId, encounterId: D.encounterId!, diagnosis: `Gonarthrosis ${canary("c5dx")}`, type: "FINAL", diagnosedByStaffId: dAuthor.id } });
+  await prisma.problem.create({ data: { patientId: D.patientId, diagnosis: `Hypertension ${canary("c5pl")}`, status: "ACTIVE" } });
+  await prisma.diagnosis.create({ data: { patientId: D.patientId, encounterId: D.encounterId!, diagnosis: `Bipolar affective disorder ${canary("c5sdx")}`, code: "F31.9", codeSystem: "ICD-10", type: "FINAL", diagnosedByStaffId: dAuthor.id } });
+  await prisma.vital.create({ data: { encounterId: D.encounterId!, recordedByStaffId: dAuthor.id, sbp: 211, dbp: 133 } });
+  await note(D, `Knee review ${canary("c5note")}.`);
+  await prisma.$transaction(async (tx) => {
+    const doc = await tx.personDocument.create({ data: { personId: D.personId, type: "REPORT", title: "D old report", storageRef: `patient-uploads/${D.personId}/00000000000000d1-d.pdf`, sha256: "2".repeat(64), contentType: "application/pdf", uploadedByUserId: D.userId } });
+    await tx.patientProvidedRecord.create({ data: { personId: D.personId, kind: "DIAGNOSIS", value: { text: `Meniscus tear ${canary("c5ppd")}` }, factId: `leak-fact-${tag}`, documentId: doc.id, pageNo: 1, effectiveDate: new Date() } });
+  });
+  await uploadPersonDocument(D.userId, { bytes: await fixturePdf(fixtureById("lab-en-cbc")!), contentType: "application/pdf", originalName: "d.pdf", title: `MRI knee ${canary("c5up")}`, type: "REPORT" });
+  await drain();
+  await reindexPerson(D.personId);
+  const VITALS = "211/133";
+  const codeD = async (choice: Parameters<typeof parseShareChoice>[0], defaults = false) => {
+    const issued = await issueAccessCode(D.patientId, D.userId, "leak gate", { choice: parseShareChoice(choice, defaults ? { categories: DEFAULT_SHARE_CATEGORIES } : {}) });
+    const s = await redeemAccessCode({ code: issued.code, doctorUserId: dP.userId, doctorStaffId: dP.id, doctorName: "Leak doctor", facilityId: PUNE });
+    if (!s) throw new Error("redeem");
+    return s;
+  };
+  const viaD = (sessionId: string, word: string) => ask(dP.actor, { patientId: D.patientId, shareId: sessionId }, word);
+  const d14 = await codeD({}, true);
+  report("14 The default share: the diagnosis and the problem list are there (control for CONDITIONS)", present(await viaD(d14.id, canary("c5dx")), canary("c5dx")) && present(await viaD(d14.id, canary("c5pl")), canary("c5pl")));
+  report("14 …the vitals (control for VITALS)", present(await viaD(d14.id, VITALS), VITALS));
+  report("14 …the upload and the confirmed patient-provided condition (control for UPLOADS + CONDITIONS)", present(await viaD(d14.id, canary("c5up")), canary("c5up")) && present(await viaD(d14.id, canary("c5ppd")), canary("c5ppd")));
+  report("14 …but no clinical note (the default leaves notes out)", await absent(await viaD(d14.id, canary("c5note")), canary("c5note")));
+  report("14 …and no sensitive (psychiatric) diagnosis without its opt-in", await absent(await viaD(d14.id, canary("c5sdx")), canary("c5sdx")));
+  const e14 = await codeD({ categories: ["LABS"] });
+  report("14 Without CONDITIONS: no diagnosis, no problem", await absent(await viaD(e14.id, canary("c5dx")), canary("c5dx")) && await absent(await viaD(e14.id, canary("c5pl")), canary("c5pl")));
+  report("14 Without VITALS: no vitals", await absent(await viaD(e14.id, VITALS), VITALS));
+  const f14 = await codeD({ categories: ["CONDITIONS"] });
+  report("14 CONDITIONS without UPLOADS: the diagnosis yes, the patient-provided condition no", present(await viaD(f14.id, canary("c5dx")), canary("c5dx")) && await absent(await viaD(f14.id, canary("c5ppd")), canary("c5ppd")));
+  const g14 = await codeD({ categories: ["UPLOADS", "LABS"] });
+  report("14 UPLOADS without CONDITIONS: the upload yes, the patient-provided condition no", present(await viaD(g14.id, canary("c5up")), canary("c5up")) && await absent(await viaD(g14.id, canary("c5ppd")), canary("c5ppd")));
+  const h14 = await codeD({ categories: ["CLINICAL_NOTES", "CONDITIONS"], sensitiveCategories: ["MENTAL_HEALTH"] });
+  report("14 CLINICAL_NOTES ticked: the note is there (control)", present(await viaD(h14.id, canary("c5note")), canary("c5note")));
+  report("14 The MENTAL_HEALTH opt-in: the psychiatric diagnosis is there (control)", present(await viaD(h14.id, canary("c5sdx")), canary("c5sdx")));
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();

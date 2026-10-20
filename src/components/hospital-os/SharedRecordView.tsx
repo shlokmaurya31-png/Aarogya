@@ -27,7 +27,7 @@ export function SharedRecordView({ shareId }: { shareId: string }) {
         <p className="text-[14px] font-semibold">{data.patient.fullName} · <span className="font-normal text-text-secondary">{data.patient.uhid}</span> · <span className="font-normal text-text-secondary">shared with you by the patient</span></p>
       </div>
       <ChartAi patientId={data.patient.id} shareId={shareId} title="Visit brief from the shared record (cited, advisory)" />
-      <SharedRecordSections data={data} />
+      <SharedRecordSections data={data} shareRef={shareId} />
     </div>
   );
 }

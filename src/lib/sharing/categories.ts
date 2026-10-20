@@ -4,24 +4,40 @@ import { ALL_SENSITIVE } from "@/lib/rag/scope";
 
 /**
  * Week 4c — what a share covers (docs/CONSENT_SHARING_DESIGN.md §2): one
- * table every read path uses. The five categories of the spec; allergies ride
- * with every share (the safety minimum, §12 decision 4); notes, diagnoses,
- * vitals and referrals are never shared through a share (decision 5).
+ * table every read path uses. Allergies ride with every share (the safety
+ * minimum, §12 decision 4); referrals are never shared through a share.
+ *
+ * 4c fix (§15): CONDITIONS (diagnoses and the problem list), VITALS and
+ * CLINICAL_NOTES join the five. A new share defaults to every non-sensitive
+ * category, uploads included, except CLINICAL_NOTES, which the patient must
+ * tick; sensitive categories stay off unless opted in, per share.
  */
-export const SHARE_CATEGORIES: readonly ShareCategory[] = ["PRESCRIPTIONS", "LABS", "IMAGING", "DISCHARGE_SUMMARIES", "UPLOADS"];
-/** A code share's default: the four record categories, no uploads (what the code showed before 4c, §12 decision 2). */
-export const DEFAULT_CODE_CATEGORIES: readonly ShareCategory[] = ["PRESCRIPTIONS", "LABS", "IMAGING", "DISCHARGE_SUMMARIES"];
+export const SHARE_CATEGORIES: readonly ShareCategory[] = ["PRESCRIPTIONS", "LABS", "IMAGING", "DISCHARGE_SUMMARIES", "UPLOADS", "CONDITIONS", "VITALS", "CLINICAL_NOTES"];
+/** A new share's default (a code, and what a request form starts with): every non-sensitive category but clinical notes, uploads included (§15). */
+export const DEFAULT_SHARE_CATEGORIES: readonly ShareCategory[] = ["PRESCRIPTIONS", "LABS", "IMAGING", "DISCHARGE_SUMMARIES", "UPLOADS", "CONDITIONS", "VITALS"];
+/** What a code issued before 4c reads (it has no share): the four record categories, no uploads (§4.3). Never widened. */
+export const LEGACY_CODE_CATEGORIES: readonly ShareCategory[] = ["PRESCRIPTIONS", "LABS", "IMAGING", "DISCHARGE_SUMMARIES"];
 export const SHARE_PURPOSES: readonly SharePurpose[] = ["CONSULTATION", "SECOND_OPINION", "FOLLOW_UP", "REFERRAL", "OTHER"];
 export const SENSITIVE_CATEGORIES: readonly RagSensitiveCategory[] = ALL_SENSITIVE;
 
+/** Share category → retrieval category (the names differ only for CONDITIONS). */
+const RAG_CATEGORY: Record<ShareCategory, RagCategory> = {
+  PRESCRIPTIONS: "PRESCRIPTIONS", LABS: "LABS", IMAGING: "IMAGING", DISCHARGE_SUMMARIES: "DISCHARGE_SUMMARIES", UPLOADS: "UPLOADS",
+  CONDITIONS: "DIAGNOSES", VITALS: "VITALS", CLINICAL_NOTES: "CLINICAL_NOTES",
+};
+
 /** Retrieval categories a share admits: its own and ALLERGIES. UPLOADS stays: a person chunk needs it as well as its own category. */
 export function ragCategoriesFor(categories: readonly ShareCategory[]): RagCategory[] {
-  return [...new Set<RagCategory>([...categories, "ALLERGIES"])];
+  return [...new Set<RagCategory>([...categories.map((c) => RAG_CATEGORY[c]), "ALLERGIES"])];
 }
 
-/** Patient-provided entry kinds → the share category they also need (besides UPLOADS). Allergies need only UPLOADS. */
+/**
+ * Patient-provided entry kinds → the share category they also need (besides
+ * UPLOADS), as in retrieval (src/lib/rag/render.ts PP_CATEGORY). Allergies
+ * need only UPLOADS; a procedure is a clinical-notes item there.
+ */
 export const PROVIDED_KIND_CATEGORY: Record<string, ShareCategory | "ALWAYS" | null> = {
-  LAB_RESULT: "LABS", MEDICATION_HISTORY: "PRESCRIPTIONS", ALLERGY: "ALWAYS", DIAGNOSIS: null, PROCEDURE: null,
+  LAB_RESULT: "LABS", MEDICATION_HISTORY: "PRESCRIPTIONS", ALLERGY: "ALWAYS", DIAGNOSIS: "CONDITIONS", PROCEDURE: "CLINICAL_NOTES",
 };
 
 export interface ShareChoice {

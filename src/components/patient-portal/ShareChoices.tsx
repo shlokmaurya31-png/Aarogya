@@ -2,14 +2,19 @@
 
 /**
  * Week 4c — what a share covers, as the patient chooses it
- * (docs/CONSENT_SHARING_DESIGN.md §2, §6): the five categories, the sensitive
- * categories (unticked, each explained), an optional period. Used to issue a
- * code and to approve a request (where only the requested categories can be ticked).
+ * (docs/CONSENT_SHARING_DESIGN.md §2, §6, §15): the categories, shown
+ * pre-selected (every non-sensitive one but clinical notes) so the patient sees
+ * the whole list and can untick anything; the sensitive categories (unticked,
+ * each explained); an optional period. Used to issue a code and to approve a
+ * request (where only the requested categories can be ticked).
  */
 export const CATEGORY_LABEL: Record<string, string> = {
   PRESCRIPTIONS: "Prescriptions and medicines", LABS: "Lab results", IMAGING: "Scans and X-rays",
-  DISCHARGE_SUMMARIES: "Discharge summaries", UPLOADS: "Documents you uploaded",
+  DISCHARGE_SUMMARIES: "Discharge summaries", CONDITIONS: "Conditions and diagnoses", VITALS: "Vitals (blood pressure, pulse, temperature)",
+  UPLOADS: "Documents you uploaded", CLINICAL_NOTES: "Doctors' clinical notes",
 };
+/** The pre-selected list (src/lib/sharing/categories.ts DEFAULT_SHARE_CATEGORIES). Clinical notes only if ticked. */
+export const DEFAULT_SHARE_CHOICE = ["PRESCRIPTIONS", "LABS", "IMAGING", "DISCHARGE_SUMMARIES", "CONDITIONS", "VITALS", "UPLOADS"];
 export const SENSITIVE_LABEL: Record<string, [string, string]> = {
   MENTAL_HEALTH: ["Mental health", "counselling, psychiatric care"],
   SEXUAL_HEALTH: ["Sexual health", "tests and treatment for sexually transmitted infections"],
@@ -35,7 +40,7 @@ export function ShareChoices({ value, onChange, allowed }: { value: ShareChoiceV
             </label>
           ))}
         </div>
-        <p className="mt-1 text-[11.5px] text-text-tertiary">Allergies are always included, so a doctor never prescribes something you react to.</p>
+        <p className="mt-1 text-[11.5px] text-text-tertiary">Untick anything you don&apos;t want to share. Clinical notes are left out unless you tick them. Allergies are always included, so a doctor never prescribes something you react to.</p>
       </fieldset>
       <details className="rounded-lg border border-hairline px-3 py-2">
         <summary className="cursor-pointer text-[12.5px] font-medium">Sensitive records ({value.sensitiveCategories.length ? `${value.sensitiveCategories.length} included` : "hidden"})</summary>

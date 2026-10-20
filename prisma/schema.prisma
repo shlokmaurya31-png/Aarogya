@@ -10380,6 +10380,8 @@ model Person {
   /// Week 4c: shares the person gave and access requests about them (docs/CONSENT_SHARING_DESIGN.md).
   recordShares    RecordShare[]
   accessRequests  AccessRequest[]
+  /// 4c answers: what the person is told about access to their record.
+  notifications   PersonNotification[]
 
   /// Account closure: CLOSED at closedAt; patient-provided data is deleted at
   /// purgeAfter (30 days later) unless reopened first; purgedAt once done.
@@ -11289,6 +11291,11 @@ enum ShareCategory {
   IMAGING
   DISCHARGE_SUMMARIES
   UPLOADS
+  /// 4c fix: diagnoses and the problem list (and, with UPLOADS, confirmed patient-provided conditions).
+  CONDITIONS
+  VITALS
+  /// Off by default: only when the patient ticks it.
+  CLINICAL_NOTES
 }
 
 enum SharePurpose {
@@ -11377,4 +11384,45 @@ model AccessRequest {
   @@index([personId, status])
   @@index([requesterFacilityId, status])
   @@index([status, expiresAt])
+}
+
+/// 4c answers (docs/CONSENT_SHARING_DESIGN.md §15): what the person is told
+/// about access to their record, through the notification pipeline: a daily
+/// summary of who opened it, an immediate notice of break-glass, and a waiting
+/// access request. Person-scoped; no clinical content, only counts and kinds.
+model PersonNotification {
+  id        String                   @id @default(cuid())
+  person    Person                   @relation(fields: [personId], references: [id])
+  personId  String
+  kind      PersonNotificationKind
+  /// One notification per fact: "ACCESS_SUMMARY:<personId>:<yyyy-mm-dd>", "BREAK_GLASS:<id>", "ACCESS_REQUESTED:<id>".
+  dedupeKey String                   @unique
+  /// The language the text is written in: the person's preferred language, or English where no translation exists yet.
+  language  String
+  title     String
+  body      String
+  /// Counts only (never names or clinical detail).
+  detail    Json?
+  status    PersonNotificationStatus @default(PENDING)
+  /// EMAIL | SMS once sent.
+  channel   String?
+  createdAt DateTime                 @default(now())
+  sentAt    DateTime?
+  version   Int                      @default(1)
+
+  @@index([personId, createdAt])
+  @@index([status])
+}
+
+enum PersonNotificationKind {
+  ACCESS_SUMMARY
+  BREAK_GLASS_ACCESS
+  ACCESS_REQUESTED
+}
+
+enum PersonNotificationStatus {
+  PENDING
+  SENT
+  NO_CHANNEL
+  FAILED
 }

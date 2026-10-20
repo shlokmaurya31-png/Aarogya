@@ -131,6 +131,12 @@ const ORDER = [
   "verify-postgres-quality-ops-events",
   "verify-postgres-access-identity-events",
   "verify-postgres-route-services",
+  // Week 4c: consent sharing (before the core journey and the whole-database checks below).
+  "verify-postgres-record-sharing",
+  "verify-postgres-access-requests",
+  "verify-postgres-sensitive-categories",
+  "verify-postgres-revoke-all",
+  "verify-postgres-person-notifications",
   // §7: the core-journey replay test, extended at each spine step.
   "verify-postgres-core-journey",
   // Batch 4: bounded retries; runs after the tenancy sweep (checks its fixtures)

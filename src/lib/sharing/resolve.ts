@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { careRelationship } from "@/lib/person/access";
 import { resolvePatientIdsForRead } from "@/lib/patient/merge";
 import { enforceActiveExpiry } from "@/lib/patient/accessSession";
-import { DEFAULT_CODE_CATEGORIES } from "./categories";
+import { LEGACY_CODE_CATEGORIES } from "./categories";
 import type { AccessVia } from "./accessLog";
 
 /**
@@ -14,10 +14,11 @@ import type { AccessVia } from "./accessLog";
  *   - a code: the session is ACTIVE (its consult window open), redeemed by
  *     this doctor, and its share ACTIVE and unexpired;
  *   - a request: the share is ACTIVE and unexpired, and the caller is its
- *     recipient doctor (at the facility it was approved for), or, for a
- *     facility recipient, a doctor there with an active care relationship;
+ *     recipient doctor (the one who asked) at the facility it was approved
+ *     for; for a facility request, also only while that facility has an
+ *     active care relationship with the person (4c answer, §15);
  *   - the person's account is ACTIVE.
- * A code issued before 4c has no share: it reads under the default code
+ * A code issued before 4c has no share: it reads under the legacy code
  * scope (the four record categories, no uploads, nothing sensitive; §4.3).
  */
 export interface ShareScope {
@@ -58,7 +59,7 @@ export async function resolveShare(actor: ShareActor, ref: string): Promise<Shar
     const live = await enforceActiveExpiry(session);
     if (live.status !== "ACTIVE") return null;
     if (!live.shareId) {
-      return { ref, shareId: null, sessionId: live.id, via: "SHARE_CODE", legacy: true, personId: null, subjectPatientId: live.patientId, ...(await expand([live.patientId])), categories: [...DEFAULT_CODE_CATEGORIES], sensitive: [], recordedFrom: null, recordedTo: null, expiresAt: live.activeExpiresAt };
+      return { ref, shareId: null, sessionId: live.id, via: "SHARE_CODE", legacy: true, personId: null, subjectPatientId: live.patientId, ...(await expand([live.patientId])), categories: [...LEGACY_CODE_CATEGORIES], sensitive: [], recordedFrom: null, recordedTo: null, expiresAt: live.activeExpiresAt };
     }
     const share = await prisma.recordShare.findUnique({ where: { id: live.shareId } });
     if (!share || share.status !== "ACTIVE" || share.expiresAt <= now || share.recipientUserId !== actor.userId || !(await personActive(share.personId))) return null;
@@ -67,12 +68,12 @@ export async function resolveShare(actor: ShareActor, ref: string): Promise<Shar
   const share = await prisma.recordShare.findUnique({ where: { id: ref } });
   if (!share || share.kind !== "REQUEST" || share.status !== "ACTIVE" || share.expiresAt <= now || !share.accessRequestId) return null;
   if (actor.role !== "DOCTOR" || share.recipientFacilityId !== actor.facilityId) return null;
-  const request = await prisma.accessRequest.findUnique({ where: { id: share.accessRequestId }, select: { patientId: true } });
+  const request = await prisma.accessRequest.findUnique({ where: { id: share.accessRequestId }, select: { patientId: true, requesterKind: true } });
   if (!request) return null;
-  if (share.recipientUserId) {
-    if (share.recipientUserId !== actor.userId) return null;
-  } else {
-    // A facility recipient: any doctor there, while the facility treats the person.
+  // Only the doctor who asked; a share with no named doctor reads for no one.
+  if (!share.recipientUserId || share.recipientUserId !== actor.userId) return null;
+  if (request.requesterKind === "FACILITY") {
+    // A facility request: also only while the facility treats the person.
     const here = (await prisma.patient.findMany({ where: { id: { in: share.patientIds }, facilityId: actor.facilityId }, select: { id: true } })).map((p) => p.id);
     let treating = false;
     for (const p of here) if ((await careRelationship(actor.facilityId, p)).active) { treating = true; break; }

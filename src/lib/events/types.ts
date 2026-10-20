@@ -126,6 +126,7 @@ export const AGGREGATE_TYPES = [
   // Week 4c — consent sharing (person-owned).
   "RECORD_SHARE",
   "ACCESS_REQUEST",
+  "PERSON_NOTIFICATION",
 ] as const;
 export type AggregateType = (typeof AGGREGATE_TYPES)[number];
 

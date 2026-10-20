@@ -63,10 +63,13 @@ import { createCharge } from "../src/lib/hospital/billing/chargeCapture";
 import { linkAccountForGate } from "./lib/personFixture";
 import { askAi, AskError } from "../src/lib/rag/ask";
 import { issueAccessCode, redeemAccessCode } from "../src/lib/patient/accessSession";
-import { parseShareChoice } from "../src/lib/sharing/categories";
+import { DEFAULT_SHARE_CATEGORIES, parseShareChoice } from "../src/lib/sharing/categories";
+import { viewSharedRecord } from "../src/lib/sharing/view";
+import { indexSource } from "../src/lib/rag/indexer";
+import { registerPatientAccount } from "../src/lib/patient/selfRegistration";
 import { revokeAllAccess } from "../src/lib/sharing/revokeAll";
 import { decidePersonConsent } from "../src/lib/person/consent";
-import { staffPersonDocuments, withdrawPersonDocument } from "../src/lib/person/documents";
+import { personDocumentDownload, staffPersonDocuments, uploadPersonDocument, withdrawPersonDocument } from "../src/lib/person/documents";
 import { fixtureById, fixturePdf } from "../src/lib/documents/fixtures";
 import { bulkReview, listOwnFacts } from "../src/lib/documents/review";
 import { buildPatientTimeline } from "../src/lib/patient/timeline";
@@ -456,6 +459,45 @@ async function main() {
     await revokeAllAccess(owner, "REVOKE");
     const after = await askAi(visitingActor, { mode: "VISIT_BRIEF", patientId: a.patientId, shareId: visit!.id }).then(() => "answered", (e) => (e instanceof AskError ? String(e.status) : "error"));
     report("Week 4c: …after revoke-all, the share reads nothing (404)", after === "404", after);
+  }
+
+  // 4c fix (§15), the knee: a patient with a past knee diagnosis (verified, at the hospital) uploads an
+  // MRI report and shares by code with the default choice (every non-sensitive category, uploads
+  // included). A visiting doctor's visit brief cites both; the doctor opens the MRI through a signed URL.
+  {
+    const kRun = Date.now().toString(36);
+    const k = await registerPatientAccount({ facilityId: a.facilityId, fullName: `Knee patient ${kRun}`, email: `cj-knee-${kRun}@verify.aarogya`, passwordHash: "x", sex: "M", dob: new Date("1970-07-07") });
+    if (k.status !== "LINKED_NEW") throw new Error(`knee fixture: ${k.status}`);
+    const kPerson = (await prisma.personAccount.findUniqueOrThrow({ where: { userId: k.userId } })).personId;
+    await prisma.person.update({ where: { id: kPerson }, data: { dataClassification: "SYNTHETIC", preferredLanguage: "en" } });
+    const kPatient = (await prisma.personPatientLink.findFirstOrThrow({ where: { personId: kPerson, status: "ACTIVE" } })).patientId;
+    const ortho = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { department: { facilityId: a.facilityId }, user: { role: "DOCTOR" } }, select: { id: true } });
+    const pastVisit = await prisma.encounter.create({ data: { patientId: kPatient, facilityId: a.facilityId, type: "OPD", status: "CLOSED", chiefComplaint: "Right knee pain", registeredAt: new Date("2025-03-10T09:00:00Z"), closedAt: new Date("2025-03-10T10:00:00Z") } });
+    const kneeDx = await prisma.diagnosis.create({ data: { patientId: kPatient, encounterId: pastVisit.id, diagnosis: "Osteoarthritis of right knee", code: "M17.11", codeSystem: "ICD-10", type: "FINAL", diagnosedByStaffId: ortho.id, createdAt: new Date("2025-03-10T09:40:00Z") } });
+    await indexSource({ sourceType: "DIAGNOSIS", sourceId: kneeDx.id });
+    const mri = await uploadPersonDocument(k.userId, { bytes: await fixturePdf(fixtureById("lab-en-cbc")!), contentType: "application/pdf", originalName: "mri-knee.pdf", title: "MRI right knee report", type: "REPORT" });
+    await drain();
+    const issued = await issueAccessCode(kPatient, k.userId, "knee visit", { choice: parseShareChoice({}, { categories: DEFAULT_SHARE_CATEGORIES }) });
+    const kShare = await prisma.recordShare.findUniqueOrThrow({ where: { id: issued.session.shareId! } });
+    const visiting = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { department: { facilityId: otherFacility }, user: { role: "DOCTOR" } }, select: { id: true, userId: true } });
+    const visit = await redeemAccessCode({ code: issued.code, doctorUserId: visiting.userId, doctorStaffId: visiting.id, doctorName: "Visiting doctor", facilityId: otherFacility });
+    const visitingActor = { kind: "STAFF" as const, userId: visiting.userId, role: "DOCTOR" as const, facilityId: otherFacility };
+    report("4c fix (knee): the default share includes uploads and conditions, not clinical notes or anything sensitive",
+      kShare.categories.includes("UPLOADS") && kShare.categories.includes("CONDITIONS") && !kShare.categories.includes("CLINICAL_NOTES") && kShare.sensitiveCategories.length === 0);
+    const brief = await askAi(visitingActor, { mode: "VISIT_BRIEF", patientId: kPatient, shareId: visit!.id });
+    const cites = (type: string, id: string) => brief.citations.some((c) => c.sourceType === type && c.sourceId === id);
+    report("4c fix (knee): the visiting doctor's visit brief cites the past knee diagnosis (verified) and the uploaded MRI report (patient-provided)",
+      brief.outcome === "ANSWERED" && cites("DIAGNOSIS", kneeDx.id) && cites("PATIENT_DOCUMENT", mri.id)
+        && brief.sentences.some((x) => /knee/i.test(x.text) && x.labels.includes("verified")) && brief.sentences.some((x) => /MRI right knee/.test(x.text) && x.labels.includes("patient-provided")),
+      brief.citations.map((c) => c.sourceType).join(","));
+    const consult = (await viewSharedRecord({ userId: visiting.userId, facilityId: otherFacility, role: "DOCTOR" }, visit!.id, "CONSULT_VIEW")).history;
+    report("4c fix (knee): the consult view shows the knee diagnosis under conditions and the MRI under uploads",
+      !!consult.conditions?.diagnoses.some((d) => d.id === kneeDx.id) && !!consult.uploads?.documents.some((d) => d.id === mri.id));
+    const opened = await personDocumentDownload({ kind: "SHARE", userId: visiting.userId, facilityId: otherFacility, role: "DOCTOR", shareRef: visit!.id }, mri.id);
+    report("4c fix (knee): the doctor opens the MRI through a 5-minute signed URL, logged for the patient",
+      !!opened.url && new Date(opened.expiresAt).getTime() - Date.now() <= 300_000
+        && (await prisma.personAccessLogEntry.count({ where: { personId: kPerson, actorUserId: visiting.userId, AND: [{ detail: { path: ["surface"], equals: "DOCUMENT_DOWNLOAD" } }, { detail: { path: ["documentId"], equals: mri.id } }] } })) === 1);
+    await drain();
   }
 
   // 8c reorder, 9c waste, 15 identity (events not correlated by the encounter).

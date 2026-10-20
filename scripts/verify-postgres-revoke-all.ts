@@ -12,7 +12,10 @@
  *     share, the AI);
  *   - not touched: the treating hospital's own access, the consent staff
  *     recorded offline, and the processing consent (AI assistance);
- *   - it needs the explicit confirmation, and only the person can do it.
+ *   - it needs the explicit confirmation, and only the person can do it;
+ *   - 4c answer (§15): the paper consent is listed, before the tap and in the
+ *     result, with the facility and how to withdraw it; the patient-granted
+ *     one is not listed (it is revoked).
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-revoke-all.ts
  */
@@ -23,7 +26,7 @@ import { issueAccessCode, redeemAccessCode } from "../src/lib/patient/accessSess
 import { parseShareChoice } from "../src/lib/sharing/categories";
 import { viewSharedRecord } from "../src/lib/sharing/view";
 import { decideRequest, requestAccess } from "../src/lib/sharing/requests";
-import { revokeAllAccess } from "../src/lib/sharing/revokeAll";
+import { revokeAllAccess, revokeAllPreview } from "../src/lib/sharing/revokeAll";
 import { decidePersonConsent } from "../src/lib/person/consent";
 import { resolveAiAccess } from "../src/lib/rag/access";
 import { NOIDA, PUNE, drain, eventsOf, lab, notFound, refused, reporter, sharer, staff, tag } from "./lib/shareFixture";
@@ -57,7 +60,12 @@ async function main() {
   report("Revoke-all needs the explicit confirmation", await refused(revokeAllAccess(P.userId, "yes")));
   report("Only the person's own login reaches their shares (another person's revoke-all leaves them alone)", (await revokeAllAccess(other.userId, "REVOKE")).sharesEnded === 0
     && (await prisma.recordShare.findUniqueOrThrow({ where: { id: approved.shareId! } })).status === "ACTIVE");
+  const preview = await revokeAllPreview(P.userId);
+  const puneName = (await prisma.facility.findUniqueOrThrow({ where: { id: PUNE }, select: { name: true } })).name;
+  report("Before the tap: the preview lists the paper consent with its facility and how to withdraw it, and not the one the patient gave",
+    preview.paperConsents.length === 1 && preview.paperConsents[0].id === paper.id && preview.paperConsents[0].facilityName === puneName && /withdraw/i.test(preview.paperConsents[0].howToWithdraw) && preview.consentsYouGave === 1);
   const res = await revokeAllAccess(P.userId, "REVOKE");
+  report("After the tap: the result lists the paper consent it left, with the instructions", res.paperConsents.length === 1 && res.paperConsents[0].id === paper.id && res.paperConsents[0].howToWithdraw.includes(puneName));
   report("The counts: three shares, one request, one consent, the uploads choice", res.sharesEnded === 3 && res.requestsDeclined === 1 && res.consentsRevoked === 1 && res.uploadsSharingDeclined, JSON.stringify(res));
   const shares = await prisma.recordShare.findMany({ where: { personId: P.personId } });
   report("Every share is REVOKED (REVOKE_ALL), each with its event", shares.length === 3 && shares.every((s) => s.status === "REVOKED" && s.endedReason === "REVOKE_ALL")

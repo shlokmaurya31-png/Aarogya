@@ -3,15 +3,16 @@ import { prisma } from "@/lib/db";
 import { BadRequestError, ConflictError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { emitDomainEvent } from "@/lib/events/emit";
-import { sendEmail } from "@/lib/email/send";
 import { requireOwnedPerson } from "@/lib/person/access";
 import { parseShareChoice, SENSITIVE_CATEGORIES, type ShareChoice } from "./categories";
 import { activeLinkedPatients, createShareTx } from "./shares";
 
 /**
- * Week 4c — access requests (docs/CONSENT_SHARING_DESIGN.md §5). A doctor (as
- * themselves) or a facility admin (as the facility) at a facility holding an
- * ACTIVE link to the person asks; the person approves (as asked or narrower,
+ * Week 4c — access requests (docs/CONSENT_SHARING_DESIGN.md §5). A doctor at a
+ * facility holding an ACTIVE link to the person asks, as themselves or for the
+ * facility (4c answer, §15: a facility request is readable only by the doctor
+ * who asked, and only while the facility treats the person; an admin, who
+ * can't read, can't ask); the person approves (as asked or narrower,
  * adding sensitive categories only by their own choice) or declines. One open
  * request per requester and person; undecided requests expire in 7 days.
  * Every transition emits its event in its transaction and is logged for the person.
@@ -32,8 +33,8 @@ async function statusTx(tx: Prisma.TransactionClient, r: AccessRequest, to: Acce
 export async function requestAccess(actor: RequestActor, body: Record<string, unknown> | null) {
   const b = body ?? {};
   const kind = b.requesterKind === "FACILITY" ? "FACILITY" : "DOCTOR";
-  if (kind === "DOCTOR" && actor.role !== "DOCTOR") throw new BadRequestError("Only a doctor can ask as themselves.");
-  if (kind === "FACILITY" && actor.role !== "HOSPITAL_ADMIN") throw new BadRequestError("Only a facility admin can ask for the facility.");
+  // A request is read only by the doctor who made it (a facility request too), so only a doctor can ask.
+  if (actor.role !== "DOCTOR") throw new BadRequestError("Only a doctor can ask: a request is read only by the doctor who asked.");
   if (Array.isArray(b.sensitiveCategories) && b.sensitiveCategories.length) throw new BadRequestError("A request can't ask for sensitive categories; only the patient can add them.");
   const choice = parseShareChoice({ ...b, sensitiveCategories: [] });
   if (kind === "FACILITY" && choice.purpose === "OTHER") throw new BadRequestError("A facility must give a specific purpose.");
@@ -66,9 +67,7 @@ export async function requestAccess(actor: RequestActor, body: Record<string, un
     return r;
   });
   await recordAuditEvent("person.access.requested", actor.userId, { requestId: created.id }, { facilityId: actor.facilityId, patientId: patient.id });
-  // Tell the person a request is waiting; who and what they see in the app (nothing clinical in the message).
-  const owner = await prisma.personAccount.findFirst({ where: { personId: link.personId, role: "OWNER", endedAt: null }, select: { user: { select: { email: true } } } });
-  if (owner?.user.email) await sendEmail({ to: owner.user.email, subject: "A request to see your health record", text: "A doctor or hospital has asked to see part of your health record. Open Aarogya to approve or decline it. Nothing is shared until you approve." }).catch(() => undefined);
+  // The person is told through the notification pipeline (person-notifier, on AccessRequested), in their language.
   return { id: created.id, status: created.status, expiresAt: created.expiresAt.toISOString() };
 }
 
@@ -148,7 +147,8 @@ export async function decideRequest(userId: string, requestId: string, body: Rec
   const shareId = await prisma.$transaction(async (tx) => {
     const share = await createShareTx(tx, {
       personId, kind: "REQUEST", status: "ACTIVE", choice, patientIds: await activeLinkedPatients(personId, tx), expiresAt: new Date(Date.now() + days * 86_400_000),
-      createdByUserId: userId, recipientUserId: r.requesterKind === "DOCTOR" ? r.requesterUserId : null, recipientFacilityId: r.requesterFacilityId, accessRequestId: r.id,
+      // Always the doctor who asked (a facility request too, §15), at their facility.
+      createdByUserId: userId, recipientUserId: r.requesterUserId, recipientFacilityId: r.requesterFacilityId, accessRequestId: r.id,
     });
     if (!(await statusTx(tx, r, "APPROVED", userId, share.id))) throw new ConflictError("This request is no longer waiting for you.");
     return share.id;

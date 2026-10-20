@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 import type { PatientAccessSession, PatientAccessSessionStatus, Prisma } from "@prisma/client";
-import { DEFAULT_CODE_CATEGORIES, type ShareChoice } from "@/lib/sharing/categories";
+import { DEFAULT_SHARE_CATEGORIES, type ShareChoice } from "@/lib/sharing/categories";
 import { activateShareTx, activeLinkedPatients, createShareTx, endShareTx } from "@/lib/sharing/shares";
 
 /**
@@ -89,7 +89,7 @@ export function prettyCode(code: string): string {
 export async function issueAccessCode(patientId: string, createdByUserId: string, purpose?: string, share?: { choice?: ShareChoice; validHours?: number }) {
   const now = new Date();
   const validHours = Math.min(24, Math.max(1, Math.round(share?.validHours ?? SHARE_VALID_HOURS_DEFAULT)));
-  const choice: ShareChoice = share?.choice ?? { categories: [...DEFAULT_CODE_CATEGORIES], sensitiveCategories: [], purpose: "CONSULTATION" };
+  const choice: ShareChoice = share?.choice ?? { categories: [...DEFAULT_SHARE_CATEGORIES], sensitiveCategories: [], purpose: "CONSULTATION" };
   // Week 4c: every new code carries a share of the person's record. A record with no linked Person (an account the identity migration hasn't moved) keeps the pre-4c code.
   const link = await prisma.personPatientLink.findFirst({ where: { patientId, status: "ACTIVE" }, select: { personId: true } });
 

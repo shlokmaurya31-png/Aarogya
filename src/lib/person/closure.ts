@@ -144,6 +144,7 @@ export async function purgeClosedPersons(opts: { now?: Date; batchSize?: number 
       // Week 4c: the person's shares and the requests about them.
       await tx.accessRequest.deleteMany({ where: { personId } });
       await tx.recordShare.deleteMany({ where: { personId } });
+      await tx.personNotification.deleteMany({ where: { personId } });
       await tx.personAccessLogEntry.deleteMany({ where: { personId } });
       await tx.personAccount.updateMany({ where: { personId, endedAt: null }, data: { endedAt: now } });
       await tx.person.update({ where: { id: personId }, data: { purgedAt: now, displayName: "Closed account", dateOfBirth: null, dobPrecision: null, sex: null, version: { increment: 1 } } });

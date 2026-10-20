@@ -32,7 +32,7 @@ const earliest = (a?: Date, b?: Date) => (a && b ? (a < b ? a : b) : a ?? b);
  *                 person approved for them or their facility: only the share's
  *                 categories (and allergies), its period, its sensitive
  *                 opt-ins; uploads only with UPLOADS. A code from before 4c
- *                 reads under the default code scope
+ *                 reads under the legacy code scope
  *   ORG_CONSENT   a doctor at another facility of the same organization, with
  *                 the patient's consent to that organization (InteropConsent,
  *                 recipient ORGANIZATION): its scopes only, never sensitive

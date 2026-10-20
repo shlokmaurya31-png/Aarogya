@@ -1,7 +1,8 @@
 /**
  * Week 4c — access requests (docs/CONSENT_SHARING_DESIGN.md §5, §8, §10):
- *   - only a doctor (as themselves) or a facility admin (as the facility) at
- *     a facility holding an ACTIVE link to the person can ask; anyone else,
+ *   - only a doctor (as themselves, or for the facility) at a facility
+ *     holding an ACTIVE link to the person can ask; anyone else (an admin, a
+ *     nurse),
  *     or about anyone else, gets a 404; a request can't ask for sensitive
  *     categories; one open request per requester and person;
  *   - the person sees who asks and what for; approving narrower creates the
@@ -9,8 +10,8 @@
  *     period is refused); declining, cancelling and expiry each end it;
  *   - through an approved request, the Noida doctor reads the person's Pune
  *     record (the share's categories only), in the view and the AI; another
- *     Noida doctor doesn't; a facility recipient reads only while it treats
- *     the person;
+ *     Noida doctor doesn't; a facility request (4c answer, §15) is read only
+ *     by the doctor who asked, and only while the facility treats the person;
  *   - every transition emits its event and is in the person's access log.
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-access-requests.ts
@@ -46,7 +47,7 @@ async function main() {
   report("A Noida doctor can't ask about a patient Noida doesn't hold (404)", await notFound(ask(noidaDoc.actor, { patientId: stranger.pune, categories: ["LABS"] })));
   report("A Pune doctor can't ask through Noida's record (404)", await notFound(ask(puneDoc.actor, { patientId: P.noida!, categories: ["LABS"] })));
   report("A nurse can't ask", await refused(ask(noidaNurse.actor, { patientId: P.noida!, categories: ["LABS"] })));
-  report("A doctor can't ask as the facility", await refused(ask(noidaDoc.actor, { patientId: P.noida!, requesterKind: "FACILITY", categories: ["LABS"], purpose: "REFERRAL" })));
+  report("A facility admin can't ask (it couldn't read: a request is read only by the doctor who asked)", await refused(ask(noidaAdmin.actor, { patientId: P.noida!, requesterKind: "FACILITY", categories: ["LABS"], purpose: "REFERRAL" })));
   report("A request can't ask for a sensitive category", await refused(ask(noidaDoc.actor, { patientId: P.noida!, categories: ["LABS"], sensitiveCategories: ["HIV"] })));
   report("A request needs at least one category", await refused(ask(noidaDoc.actor, { patientId: P.noida!, categories: [] })));
   const r1 = await ask(noidaDoc.actor, { patientId: P.noida!, categories: ["LABS", "PRESCRIPTIONS"], purpose: "SECOND_OPINION", reason: "Second opinion on anaemia", period: { from: "2026-01-01" } });
@@ -98,16 +99,18 @@ async function main() {
   const swept = await sweepAccessRequestExpiry();
   report("The sweep expires it (EXPIRED), with its event", swept.expired >= 1 && (await prisma.accessRequest.findUniqueOrThrow({ where: { id: r4.id } })).status === "EXPIRED" && (await eventsOf(r4.id, "AccessRequestStatusChanged")).length === 1);
 
-  // 5. A facility recipient.
-  const r5 = await ask(noidaAdmin.actor, { patientId: P.noida!, requesterKind: "FACILITY", categories: ["LABS"], purpose: "REFERRAL" });
+  // 5. A facility request (4c answer, §15): read only by the doctor who asked, while the facility treats the person.
+  report("A facility request can't have purpose OTHER", await refused(ask(noidaDoc2.actor, { patientId: P.noida!, requesterKind: "FACILITY", categories: ["LABS"], purpose: "OTHER" })));
+  const r5 = await ask(noidaDoc2.actor, { patientId: P.noida!, requesterKind: "FACILITY", categories: ["LABS"], purpose: "REFERRAL" });
   const d5 = await decideRequest(P.userId, r5.id, { decision: "APPROVE" });
   const s5 = await prisma.recordShare.findUniqueOrThrow({ where: { id: d5.shareId! } });
-  report("A facility request's share names the facility, not a doctor", s5.recipientUserId === null && s5.recipientFacilityId === NOIDA);
-  report("A Noida doctor reads through it while Noida treats the person", JSON.stringify((await viewSharedRecord(noidaDoc2.actor, s5.id, "SHARED_RECORD_VIEW")).history.labResults).includes(`punelab${tag}`));
-  report("The admin who asked (not a doctor) reads nothing (404)", await notFound(viewSharedRecord(noidaAdmin.actor, s5.id, "SHARED_RECORD_VIEW")));
+  report("A facility request's share names the doctor who asked, at the facility", s5.recipientUserId === noidaDoc2.userId && s5.recipientFacilityId === NOIDA);
+  report("The doctor who asked reads through it while Noida treats the person", JSON.stringify((await viewSharedRecord(noidaDoc2.actor, s5.id, "SHARED_RECORD_VIEW")).history.labResults).includes(`punelab${tag}`));
+  report("Another Noida doctor reads nothing through it (404), though Noida treats the person", await notFound(viewSharedRecord(noidaDoc.actor, s5.id, "SHARED_RECORD_VIEW")));
+  report("A Noida admin reads nothing through it (404)", await notFound(viewSharedRecord(noidaAdmin.actor, s5.id, "SHARED_RECORD_VIEW")));
   await prisma.encounter.update({ where: { id: P.noidaEnc! }, data: { status: "CLOSED", closedAt: new Date(Date.now() - 400 * 86_400_000), registeredAt: new Date(Date.now() - 401 * 86_400_000) } });
-  report("Once Noida no longer treats the person, its doctors read nothing through it (404)", await notFound(viewSharedRecord(noidaDoc2.actor, s5.id, "SHARED_RECORD_VIEW")));
-  report("A facility can't ask with purpose OTHER", await refused(ask(noidaAdmin.actor, { patientId: P.noida!, requesterKind: "FACILITY", categories: ["LABS"], purpose: "OTHER" })));
+  report("Once Noida no longer treats the person, the doctor who asked reads nothing through it (404)", await notFound(viewSharedRecord(noidaDoc2.actor, s5.id, "SHARED_RECORD_VIEW")));
+  report("…while the doctor's own (DOCTOR) request still reads: it never needed a care relationship", JSON.stringify((await viewSharedRecord(noidaDoc.actor, share.id, "SHARED_RECORD_VIEW")).history.labResults).includes(`punelab${tag}`));
 
   await done();
 }

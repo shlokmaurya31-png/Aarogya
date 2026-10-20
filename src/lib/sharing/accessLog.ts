@@ -11,10 +11,12 @@ export type AccessSurface = "CONSULT_VIEW" | "SHARED_RECORD_VIEW" | "AI_ASK" | "
 
 export async function logRecordAccess(input: {
   personId: string; actorUserId: string; facilityId: string | null; via: AccessVia; surface: AccessSurface; shareId?: string | null; categories?: string[];
+  /** The upload opened (DOCUMENT_DOWNLOAD). */
+  documentId?: string;
   /** Log at most once per share and surface (the consult view's refreshes). */
   oncePerShare?: boolean;
 }, tx: Prisma.TransactionClient = prisma): Promise<void> {
-  const detail = { via: input.via, surface: input.surface, ...(input.shareId ? { shareId: input.shareId } : {}), ...(input.categories ? { categories: input.categories } : {}) };
+  const detail = { via: input.via, surface: input.surface, ...(input.shareId ? { shareId: input.shareId } : {}), ...(input.categories ? { categories: input.categories } : {}), ...(input.documentId ? { documentId: input.documentId } : {}) };
   if (input.oncePerShare && input.shareId) {
     const seen = await tx.personAccessLogEntry.findFirst({
       where: { personId: input.personId, kind: "RECORD_ACCESSED", actorUserId: input.actorUserId, AND: [{ detail: { path: ["shareId"], equals: input.shareId } }, { detail: { path: ["surface"], equals: input.surface } }] },

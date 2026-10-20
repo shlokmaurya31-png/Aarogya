@@ -32,6 +32,7 @@ export const PERSON_SCOPED_MODELS = [
   // Week 4c — consent sharing.
   "RecordShare",
   "AccessRequest",
+  "PersonNotification",
 ] as const;
 
 /** Facility-owned models that reference a Person. */

@@ -11,7 +11,7 @@ import { Inbox } from "lucide-react";
  * request opens the shared record. The server decides who may ask.
  */
 interface Req { id: string; status: string; categories: string[]; createdAt: string; share: { id: string; status: string; expiresAt: string } | null }
-const LABEL: Record<string, string> = { PRESCRIPTIONS: "Prescriptions", LABS: "Labs", IMAGING: "Imaging", DISCHARGE_SUMMARIES: "Discharge summaries", UPLOADS: "Patient uploads" };
+const LABEL: Record<string, string> = { PRESCRIPTIONS: "Prescriptions", LABS: "Labs", IMAGING: "Imaging", DISCHARGE_SUMMARIES: "Discharge summaries", UPLOADS: "Patient uploads", CONDITIONS: "Conditions", VITALS: "Vitals", CLINICAL_NOTES: "Clinical notes" };
 const STATUS: Record<string, string> = { REQUESTED: "Waiting for the patient", APPROVED: "Approved", DECLINED: "Declined", CANCELLED: "Withdrawn", EXPIRED: "Expired" };
 
 export function RecordRequests({ patientId }: { patientId: string }) {

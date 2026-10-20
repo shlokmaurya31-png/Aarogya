@@ -5,6 +5,8 @@ import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { getStorageAdapter } from "@/lib/storage";
 import { emitDomainEvent } from "@/lib/events/emit";
 import { resolvePatientIdsForRead } from "@/lib/patient/merge";
+import { logRecordAccess } from "@/lib/sharing/accessLog";
+import { sharedDocumentVisible } from "@/lib/sharing/history";
 import { personAccess, personDecision, requireOwnedPerson, SHARE_UPLOADS } from "./access";
 
 /**
@@ -17,8 +19,10 @@ import { personAccess, personDecision, requireOwnedPerson, SHARE_UPLOADS } from 
  *     - if they haven't chosen yet, only uploads made before Phase 0 to that
  *       facility's record (legacyFacilityId/legacyPatientId);
  *     - if they declined, none.
- * Bytes are read only through a short-lived signed URL after that decision;
- * a staff read is audited and written to the person's access log.
+ *   a doctor holding a share with UPLOADS (Week 4c fix): the uploads the share
+ *     shows (its period and sensitive opt-ins), while the share is live.
+ * Bytes are read only through a short-lived (5-minute) signed URL after that
+ * decision; a staff read is audited and written to the person's access log.
  */
 
 export const PERSON_DOCUMENT_TYPES = ["REPORT", "REFERRAL_LETTER", "ID_PROOF", "OTHER"] as const;
@@ -84,7 +88,11 @@ export async function linkedPersonDocuments(patientIds: string[]): Promise<Perso
   return prisma.personDocument.findMany({ where: { personId: { in: persons }, status: "CURRENT" }, orderBy: [{ uploadedAt: "desc" }, { id: "desc" }] });
 }
 
-export type DocumentActor = { kind: "OWNER"; userId: string } | { kind: "STAFF"; userId: string; facilityId: string; patientId: string };
+export type DocumentActor =
+  | { kind: "OWNER"; userId: string }
+  | { kind: "STAFF"; userId: string; facilityId: string; patientId: string }
+  /** Week 4c fix: a doctor holding a share with UPLOADS (a code session id or an approved request's share id). */
+  | { kind: "SHARE"; userId: string; facilityId: string; role: string; shareRef: string };
 
 /** A signed URL for one document, after the access decision. 404 when the actor may not read it. */
 export async function personDocumentDownload(actor: DocumentActor, documentId: string) {
@@ -92,6 +100,13 @@ export async function personDocumentDownload(actor: DocumentActor, documentId: s
   if (!doc || doc.status !== "CURRENT") throw new NotFoundError();
   if (actor.kind === "OWNER") {
     if ((await requireOwnedPerson(actor.userId)) !== doc.personId) throw new NotFoundError();
+  } else if (actor.kind === "SHARE") {
+    // The access check first (the resolver, then the share's own filters); only then a 5-minute URL.
+    const grant = await personAccess(actor, doc.personId, "UPLOADS");
+    if (!grant?.share || !sharedDocumentVisible(grant.share, doc)) throw new NotFoundError();
+    await logRecordAccess({ personId: doc.personId, actorUserId: actor.userId, facilityId: actor.facilityId, via: grant.share.via, surface: "DOCUMENT_DOWNLOAD", shareId: grant.share.shareId ?? grant.share.ref, categories: ["UPLOADS"], documentId: doc.id });
+    // The record shared may be another facility's: it goes in the detail, not the facility-scoped patient column.
+    await recordAuditEvent("person.document.accessedViaShare", actor.userId, { documentId: doc.id, personId: doc.personId, shareId: grant.share.shareId ?? grant.share.ref, via: grant.share.via, subjectPatientId: grant.share.subjectPatientId }, { facilityId: actor.facilityId });
   } else {
     const patient = await prisma.patient.findUnique({ where: { id: actor.patientId }, select: { facilityId: true } });
     if (!patient || patient.facilityId !== actor.facilityId) throw new NotFoundError();

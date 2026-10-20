@@ -37,7 +37,8 @@ const delegationScope = z.enum(["APPOINTMENTS", "RECORDS", "REPORTS", "PRESCRIPT
 const accessSessionStatus = z.enum(["PENDING", "ACTIVE", "ENDED", "EXPIRED", "CANCELLED"]);
 const shareKind = z.enum(["CODE", "REQUEST"]);
 const shareStatus = z.enum(["PENDING", "ACTIVE", "ENDED", "EXPIRED", "REVOKED"]);
-const shareCategory = z.enum(["PRESCRIPTIONS", "LABS", "IMAGING", "DISCHARGE_SUMMARIES", "UPLOADS"]);
+// Widened in v1 before the 4c events ever shipped to main (PR #7 unmerged): no consumer has seen v1.
+const shareCategory = z.enum(["PRESCRIPTIONS", "LABS", "IMAGING", "DISCHARGE_SUMMARIES", "UPLOADS", "CONDITIONS", "VITALS", "CLINICAL_NOTES"]);
 const sharePurpose = z.enum(["CONSULTATION", "SECOND_OPINION", "FOLLOW_UP", "REFERRAL", "OTHER"]);
 const shareEndReason = z.enum(["VISIT_ENDED", "EXPIRED", "PATIENT_ENDED", "REVOKE_ALL", "PERSON_CLOSED"]);
 const accessRequestStatus = z.enum(["REQUESTED", "APPROVED", "DECLINED", "CANCELLED", "EXPIRED"]);
@@ -1419,6 +1420,19 @@ export const EVENT_CONTRACTS: EventContract[] = [
     type: "AccessRequestStatusChanged", version: 1, aggregateType: "ACCESS_REQUEST", scope: "PERSON",
     sensitivity: "SENSITIVE", producer: "consent sharing (approved or declined by the person, cancelled by the requester, expired, revoke-all)",
     payload: z.object({ requestId: id, personId: id, from: accessRequestStatus, to: accessRequestStatus, shareId: optId }).strict(),
+  }),
+  contract({
+    // 4c answers: a notice to the person about access to their record (daily summary, break-glass, a waiting request).
+    type: "PersonNotificationQueued", version: 1, aggregateType: "PERSON_NOTIFICATION", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "person notifications (the daily access-summary sweep; the person-notifier on BreakGlassStatusChanged and AccessRequested)",
+    payload: z.object({ notificationId: id, personId: id, kind: z.enum(["ACCESS_SUMMARY", "BREAK_GLASS_ACCESS", "ACCESS_REQUESTED"]) }).strict(),
+  }),
+  contract({
+    type: "PersonNotificationStatusChanged", version: 1, aggregateType: "PERSON_NOTIFICATION", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "person notifications (the person-notifier delivered it, found no channel, or failed)",
+    payload: z.object({
+      notificationId: id, personId: id, from: z.enum(["PENDING"]), to: z.enum(["SENT", "NO_CHANNEL", "FAILED"]), channel: z.enum(["EMAIL", "SMS"]).optional(),
+    }).strict(),
   }),
   contract({
     type: "PersonAccessRevokedAll", version: 1, aggregateType: "PERSON", scope: "PERSON",
