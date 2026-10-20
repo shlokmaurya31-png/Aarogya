@@ -1,6 +1,6 @@
 # Consent sharing: design (Week 4c)
 
-- **Status:** Revision 1, 2026-10-19. Built in Week 4c on branch `foundation/w4c-sharing`; §13 records where the code departs from this text.
+- **Status:** Revision 2, 2026-10-20. Built in Week 4c on branch `foundation/w4c-sharing`; §13 records where the code departs from this text, and §15 the fixes and answers applied before merge (they supersede the text above where they differ).
 - **Spec:** `docs/PRODUCT_SPEC.md` feature B (consent sharing).
 - **Builds on:**
   - **Person identity** (`docs/PERSON_IDENTITY_DESIGN.md`):
@@ -32,6 +32,7 @@
 12. Decisions taken for you
 13. As built
 14. Open questions
+15. Fixes and answers before merge (2026-10-20)
 
 ## 1. Goals and non-goals
 
@@ -380,8 +381,11 @@ Each step lands with its gate.
 
 ## 14. Open questions
 
+Questions 2–6 are answered in §15.3.
+
 1. **Clinical advisor:**
    - Allergies as the safety minimum of every share (decision 4).
+   - The default category list (§15.1), and CLINICAL_NOTES off by default.
    - Whether diagnoses or the problem list should become a sixth category (decision 5).
    - The sensitive classifier's reach (`sensitiveCategoryOf` is a term list; real data needs a reviewed classifier).
 2. **Code validity:** 24 hours is the spec. Is that right for a code that then lives only as long as one visit, or should the unredeemed window stay short (30 minutes today)?
@@ -389,3 +393,44 @@ Each step lands with its gate.
 4. **ABDM:** when the consent manager is integrated, does a share become an ABDM artefact, or does it stay local with a separate ABDM flow?
 5. **Revoke all and organization consents** that staff recorded offline (`grantedBy = STAFF_RECORDED`): revoke them too, or leave them as the hospital's record of a paper consent?
 6. **Notifications:** should the person be told each time someone opens their record (a push per access), or is the log enough?
+
+## 15. Fixes and answers before merge (2026-10-20)
+
+Applied on `foundation/w4c-sharing` before PR #7 merged. Where this section and §1–§14 differ, this section holds.
+
+### 15.1 Categories and the default share
+
+- **Three more categories:** `CONDITIONS` (diagnoses and the problem list; with UPLOADS, also the person's confirmed patient-provided conditions), `VITALS`, and `CLINICAL_NOTES` (signed notes). Migration `20261024100000_share_categories_conditions_vitals_notes` adds the enum values; nothing is backfilled, and existing shares keep the categories they were given.
+- **The default share** (a code issued with no choice, and what the share screen pre-selects) is every non-sensitive category, **uploads included**: PRESCRIPTIONS, LABS, IMAGING, DISCHARGE_SUMMARIES, CONDITIONS, VITALS, UPLOADS. CLINICAL_NOTES is off by default and only the patient's tick adds it. Sensitive categories stay off unless the patient opts in on that share. Allergies are always included. This replaces decision 2 and decision 5 (§12).
+- **The screen** shows the whole list pre-ticked so the patient sees what goes, and can untick anything (at least one category stays).
+- **Retrieval mapping:** CONDITIONS → `DIAGNOSES`; VITALS → `VITALS`; CLINICAL_NOTES → `CLINICAL_NOTES`. A patient-provided entry still needs UPLOADS **and** its own category (a confirmed condition: UPLOADS + CONDITIONS; a procedure: UPLOADS + CLINICAL_NOTES), as retrieval already required.
+- **Codes issued before 4c** keep the narrow legacy scope (the four record categories, no uploads); the new default never widens them.
+- **Events:** the `shareCategory` set in `RecordShareCreated` and `AccessRequested` v1 is widened in place: those contracts have never shipped to main, so no consumer has seen v1.
+
+### 15.2 Opening shared uploads
+
+A doctor holding a live share that includes UPLOADS can open the patient's uploaded files: `GET /api/hospital/shares/[id]/documents/[documentId]/download` (`id` = the code's session id or the approved request's share id).
+
+- The person access resolver gains a `SHARE` way in (`personAccess`, `src/lib/person/access.ts`): it resolves the share on every call (live, this doctor's, with UPLOADS, this person).
+- The document must be one the share shows (`sharedDocumentVisible`, `src/lib/sharing/history.ts`): current, not an ID proof, uploaded inside the share's period, and not sensitive unless opted in.
+- Only then a **5-minute signed URL** is minted. The opening is written to the person's access log (`DOCUMENT_DOWNLOAD`, the way in, the share, the document) and audited (`person.document.accessedViaShare`). Anything else is a 404, with no log entry or audit row. This closes §13 departure 1.
+
+### 15.3 Answers to the open questions (§14)
+
+| # | Question | Answer, as built |
+|---|---|---|
+| 3 | Facility-recipient requests | **Readable only by the doctor who asked.** Only a doctor can ask (as themselves, or for their facility); the share names that doctor. A facility request also reads only while the facility has an active care relationship with the person. A facility admin can't ask (it couldn't read). A share with no named doctor reads for no one. |
+| 6 | Notifications | **A daily summary** of who opened the record (the India day just ended: how many opens, by how many people), and **an immediate notice for break-glass**, both through the notification pipeline: `PersonNotification` (person-scoped), `PersonNotificationQueued` and `PersonNotificationStatusChanged`, the `person-notifier` consumer, and the runner's summary sweep. The request notice moved into the same pipeline (closes §13 departure 2). Delivery: the account's email, else a verified phone by SMS, else `NO_CHANNEL`. No names, facilities or clinical detail in the text; the app shows who. In the person's language (English and Hindi today; the others fall back to English, a pre-launch item). |
+| 5 | Revoke-all and paper consents | **Left alone, but listed.** Consents a hospital recorded from a paper form (`grantedBy` not PATIENT) aren't revoked; the screen lists them before the tap (`GET /api/patient/person/revoke-all`) and in the result, each with the facility and how to withdraw it (at that hospital, in writing). |
+| 2 | Code validity | **Unchanged:** the unredeemed code lives 30 minutes; the share is valid 1–24 hours (default 24) and ends with the visit. |
+| 4 | ABDM | **Documented as a pre-launch item** (docs/PRE_LAUNCH_CHECKLIST.md item 20): the mapping of a share to an ABDM consent artefact (§12 decision 3) is reviewed and decided before the consent manager is integrated. No ABDM call is made. |
+| 1 | Clinical advisor | Still open: allergies as the safety minimum, the sensitive classifier, and now the default category list. |
+
+### 15.4 Gates
+
+- `verify-postgres-record-sharing`: 27 → 51 checks (the default share, the three categories, a sensitive condition, notes only when ticked, opening uploads and every refusal).
+- `verify-postgres-rag-leaks`: section 14, 11 checks (each new limit with its control).
+- `verify-postgres-core-journey`: the knee example (an uploaded MRI report and a past knee diagnosis in the visit brief through a default share; the MRI opened by signed URL).
+- `verify-postgres-access-requests`: facility requests read only by the doctor who asked.
+- `verify-postgres-revoke-all`: paper consents listed before and after.
+- `verify-postgres-person-notifications` (new, 18): the request notice, break-glass at once, the daily summary, language, channels, idempotency.
