@@ -22,6 +22,8 @@ export async function activeLinkedPatients(personId: string, tx: Prisma.Transact
 export async function createShareTx(tx: Prisma.TransactionClient, input: {
   personId: string; kind: RecordShareKind; status: "PENDING" | "ACTIVE"; choice: ShareChoice; patientIds: string[]; expiresAt: Date; createdByUserId: string;
   recipientUserId?: string | null; recipientFacilityId?: string | null; accessRequestId?: string;
+  /** Week 5a: a BOOKING share reads only from here. */
+  validFrom?: Date;
 }): Promise<RecordShare> {
   const c = input.choice;
   const share = await tx.recordShare.create({
@@ -29,7 +31,7 @@ export async function createShareTx(tx: Prisma.TransactionClient, input: {
       personId: input.personId, kind: input.kind, status: input.status, purpose: c.purpose, categories: c.categories, sensitiveCategories: c.sensitiveCategories,
       recordedFrom: c.recordedFrom, recordedTo: c.recordedTo, patientIds: input.patientIds, expiresAt: input.expiresAt, createdByUserId: input.createdByUserId,
       recipientUserId: input.recipientUserId ?? null, recipientFacilityId: input.recipientFacilityId ?? null, accessRequestId: input.accessRequestId,
-      activatedAt: input.status === "ACTIVE" ? new Date() : null,
+      activatedAt: input.status === "ACTIVE" ? new Date() : null, validFrom: input.validFrom ?? null,
     },
   });
   await tx.personAccessLogEntry.create({ data: { personId: input.personId, kind: "SHARE_CREATED", actorUserId: input.createdByUserId, accessingFacilityId: input.recipientFacilityId ?? null, detail: { shareId: share.id, kind: share.kind, categories: share.categories, sensitive: share.sensitiveCategories.length } } });
@@ -38,6 +40,7 @@ export async function createShareTx(tx: Prisma.TransactionClient, input: {
     payload: {
       shareId: share.id, personId: input.personId, kind: share.kind, status: share.status, purpose: share.purpose, categories: share.categories,
       sensitiveCategories: share.sensitiveCategories, hasPeriod: Boolean(share.recordedFrom || share.recordedTo), expiresAt: share.expiresAt.toISOString(),
+      ...(share.validFrom ? { validFrom: share.validFrom.toISOString() } : {}),
     },
   });
   return share;

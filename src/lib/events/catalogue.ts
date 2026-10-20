@@ -36,11 +36,16 @@ const icuInfusionStatus = z.enum(["RUNNING", "PAUSED", "STOPPED"]);
 const delegationScope = z.enum(["APPOINTMENTS", "RECORDS", "REPORTS", "PRESCRIPTIONS", "MEDICATIONS", "BILLING", "INSURANCE", "CONSENT"]);
 const accessSessionStatus = z.enum(["PENDING", "ACTIVE", "ENDED", "EXPIRED", "CANCELLED"]);
 const shareKind = z.enum(["CODE", "REQUEST"]);
+// Week 5a (v2 of the share events): the BOOKING kind and its end reason.
+const shareKindV2 = z.enum(["CODE", "REQUEST", "BOOKING"]);
 const shareStatus = z.enum(["PENDING", "ACTIVE", "ENDED", "EXPIRED", "REVOKED"]);
 // Widened in v1 before the 4c events ever shipped to main (PR #7 unmerged): no consumer has seen v1.
 const shareCategory = z.enum(["PRESCRIPTIONS", "LABS", "IMAGING", "DISCHARGE_SUMMARIES", "UPLOADS", "CONDITIONS", "VITALS", "CLINICAL_NOTES"]);
 const sharePurpose = z.enum(["CONSULTATION", "SECOND_OPINION", "FOLLOW_UP", "REFERRAL", "OTHER"]);
 const shareEndReason = z.enum(["VISIT_ENDED", "EXPIRED", "PATIENT_ENDED", "REVOKE_ALL", "PERSON_CLOSED"]);
+const shareEndReasonV2 = z.enum(["VISIT_ENDED", "EXPIRED", "PATIENT_ENDED", "REVOKE_ALL", "PERSON_CLOSED", "APPOINTMENT_CANCELLED"]);
+const consultMode = z.enum(["IN_PERSON", "VIDEO"]);
+const doctorStatus = z.enum(["UNVERIFIED", "PENDING", "VERIFIED", "SUSPENDED", "REJECTED"]);
 const accessRequestStatus = z.enum(["REQUESTED", "APPROVED", "DECLINED", "CANCELLED", "EXPIRED"]);
 const sensitiveCategory = z.enum(["MENTAL_HEALTH", "SEXUAL_HEALTH", "HIV", "SUBSTANCE_USE", "REPRODUCTIVE_HEALTH"]);
 const resuscitationStatus = z.enum(["ACTIVATED", "ACTIVE", "STABILIZED", "HANDED_OVER", "DISPOSITION_PENDING", "CLOSED"]);
@@ -1410,6 +1415,20 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({ shareId: id, personId: id, from: shareStatus, to: shareStatus, endedReason: shareEndReason.optional() }).strict(),
   }),
   contract({
+    // Week 5a: a BOOKING share (attached to a directory booking) and its window's start.
+    type: "RecordShareCreated", version: 2, aggregateType: "RECORD_SHARE", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "consent sharing (a code issued with a share; an access request approved; a directory booking with a share)",
+    payload: z.object({
+      shareId: id, personId: id, kind: shareKindV2, status: shareStatus, purpose: sharePurpose, categories: z.array(shareCategory).min(1),
+      sensitiveCategories: z.array(sensitiveCategory), hasPeriod: z.boolean(), expiresAt: iso, validFrom: iso.optional(),
+    }).strict(),
+  }),
+  contract({
+    type: "RecordShareStatusChanged", version: 2, aggregateType: "RECORD_SHARE", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "consent sharing (redeemed, the visit ended, expired, ended by the person, revoke-all, account closed, the booking cancelled)",
+    payload: z.object({ shareId: id, personId: id, from: shareStatus, to: shareStatus, endedReason: shareEndReasonV2.optional() }).strict(),
+  }),
+  contract({
     type: "AccessRequested", version: 1, aggregateType: "ACCESS_REQUEST", scope: "PERSON",
     sensitivity: "SENSITIVE", producer: "consent sharing (requestAccess: a doctor or facility asks the person)",
     payload: z.object({
@@ -1433,6 +1452,45 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({
       notificationId: id, personId: id, from: z.enum(["PENDING"]), to: z.enum(["SENT", "NO_CHANNEL", "FAILED"]), channel: z.enum(["EMAIL", "SMS"]).optional(),
     }).strict(),
+  }),
+  // ── Week 5a — the doctor network (docs/DOCTOR_NETWORK_DESIGN.md §9, §14) ──
+  contract({
+    type: "DoctorRegistered", version: 1, aggregateType: "DOCTOR", scope: "PLATFORM",
+    sensitivity: "INTERNAL", producer: "doctor network (registerDoctor: a doctor's own login)",
+    payload: z.object({ doctorId: id, stateCouncil: z.string().min(2).max(10) }).strict(),
+  }),
+  contract({
+    type: "DoctorVerificationStatusChanged", version: 1, aggregateType: "DOCTOR", scope: "PLATFORM",
+    sensitivity: "INTERNAL", producer: "doctor network (submitted for checking; approved, rejected or suspended by the platform team)",
+    payload: z.object({ doctorId: id, from: doctorStatus, to: doctorStatus, method: z.enum(["DOCUMENT_CHECK", "HPR"]).optional(), reasonCode: z.string().min(1).max(40).optional() }).strict(),
+  }),
+  contract({
+    type: "DoctorVerificationCaseChanged", version: 1, aggregateType: "DOCTOR_VERIFICATION_CASE", scope: "PLATFORM",
+    sensitivity: "INTERNAL", producer: "doctor network (a case opened, more asked for, decided, or its documents deleted after 90 days)",
+    payload: z.object({
+      caseId: id, doctorId: id, from: z.enum(["OPEN", "INFO_REQUESTED", "APPROVED", "REJECTED"]).nullable(),
+      to: z.enum(["OPEN", "INFO_REQUESTED", "APPROVED", "REJECTED", "DOCUMENTS_PURGED"]), reasonCode: z.string().min(1).max(40).optional(),
+    }).strict(),
+  }),
+  contract({
+    type: "DoctorProfileUpdated", version: 1, aggregateType: "DOCTOR", scope: "PLATFORM",
+    sensitivity: "LOW", producer: "doctor network (updateOwnProfile: which public fields changed)",
+    payload: z.object({ doctorId: id, fields: z.array(z.enum(["languages", "displayName", "listed", "specialties"])).min(1) }).strict(),
+  }),
+  contract({
+    type: "DoctorStaffLinkChanged", version: 1, aggregateType: "DOCTOR_STAFF_LINK", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "doctor network (a doctor claims their staff profile; the facility admin approves or rejects)",
+    payload: z.object({ linkId: id, doctorId: id, staffId: id, from: z.enum(["PENDING", "ACTIVE", "REJECTED", "ENDED"]).nullable(), to: z.enum(["PENDING", "ACTIVE", "REJECTED", "ENDED"]) }).strict(),
+  }),
+  contract({
+    type: "PracticeLocationChanged", version: 1, aggregateType: "PRACTICE_LOCATION", scope: "PLATFORM",
+    sensitivity: "LOW", producer: "doctor network (a hospital or clinic location added or changed)",
+    payload: z.object({ locationId: id, doctorId: id, kind: z.enum(["HOSPITAL", "CLINIC"]), active: z.boolean(), modes: z.array(consultMode).min(1) }).strict(),
+  }),
+  contract({
+    type: "DirectoryBookingCreated", version: 1, aggregateType: "DIRECTORY_BOOKING", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "doctor network (bookThroughDirectory: the appointment, its location and mode, and the share if any)",
+    payload: z.object({ bookingId: id, personId: id, appointmentId: id, doctorId: id, locationId: id, mode: consultMode, shareId: optId }).strict(),
   }),
   contract({
     type: "PersonAccessRevokedAll", version: 1, aggregateType: "PERSON", scope: "PERSON",

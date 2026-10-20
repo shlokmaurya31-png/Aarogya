@@ -114,6 +114,9 @@ export async function personAccess(actor: PersonActor, personId: string, purpose
   }
   // Staff never read the person's own profile, contacts, links or log.
   if (purpose !== "UPLOADS") return null;
+  // Week 5a: nor, as a doctor, their own uploads (the same human; src/lib/doctors/self.ts).
+  const { staffIsSubject } = await import("@/lib/doctors/self");
+  if (await staffIsSubject(actor.userId, personId)) return null;
   if (actor.kind === "SHARE") {
     const { resolveShare } = await import("@/lib/sharing/resolve");
     const share = await resolveShare({ userId: actor.userId, facilityId: actor.facilityId, role: actor.role }, actor.shareRef);

@@ -1,6 +1,6 @@
 # Doctor network: design (5a)
 
-- **Status:** Revision 1, 2026-10-19. A design only; nothing here is built until it is approved.
+- **Status:** Revision 2, 2026-10-20. Built in Week 5a on branch `foundation/w5a-doctors`; §14 records the answers given with the task and where the code departs from this text.
 - **Spec:** `docs/PRODUCT_SPEC.md` feature C (doctor network).
 - **Builds on:**
   - **Staff:** `HospitalStaffProfile` (a doctor's role at one facility: department, specialty text, licence number), `DepartmentMembership` and staff membership (`ensurePrimaryMembership`).
@@ -35,6 +35,7 @@
 11. Order of wiring
 12. Decisions taken for you
 13. Open questions
+14. As built (Week 5a)
 
 ## 1. Goals and non-goals
 
@@ -244,3 +245,49 @@ Catalogue conventions: ids and closed codes only, `.strict()`, v1 unless noted.
 5. **Experience:** derive it from the registration year, or let the doctor state it (and verify how)?
 6. **Same human, two roles:** should a doctor be able to switch to their patient account without logging out? The recommendation is no, for now.
 7. **Clinical advisor:** the symptom list, its specialty map and the fallback wording.
+
+## 14. As built (Week 5a, 2026-10-20)
+
+Built on branch `foundation/w5a-doctors`. The answers to §13 were given with the task; where they and §1–§12 differ, this section holds.
+
+### 14.1 Answers to the open questions (§13)
+
+| # | Question | Answer, as built |
+|---|---|---|
+| 1 | Verifier | **The platform team**, by hand, against the medical register; a 48-hour target (`dueAt` on each case; the queue is oldest-due first and flags overdue). HPR later. The permission is `doctor:verify`, held by the platform admin (`AAROGYA_ADMIN`) only: no new role, and never a facility admin. A verifier can't decide their own case. |
+| 2 | Fees at hospitals | **A hospital location uses the hospital's tariff** (the cash `CONSULT_OPD` line, read live); a doctor can't set a fee there. **A doctor's own clinic uses the doctor's fee.** |
+| 3 | Home visits | **None at launch.** `ConsultMode` is `IN_PERSON` and `VIDEO` only. |
+| 4 | Teleconsults | **VIDEO is designed, the provider not chosen.** A video booking is a `TELEMEDICINE` appointment on the same engine; nothing is recorded (there is no recording field or flow). |
+| 5 | Experience | **"Registered since YYYY"**: the registration year the verifier confirms against the register. There is no claimed-experience field anywhere. |
+| 6 | Same human, two roles | **Separate `DoctorProfile` and `Person`, never joined.** A doctor's tools never open their own record: at each access the resolvers compare the doctor login's email with the person's account and verified contacts (`src/lib/doctors/self.ts`), refuse on a match (404-shaped), and store nothing about it. A doctor's patient login can't book them. |
+| 7 | Clinical advisor | **~50 symptom → specialty rows seeded as version 1, each `PENDING_CLINICAL_ADVISOR`.** The search screen says so, and a general physician is always offered. |
+
+### 14.2 Code
+
+- `src/lib/doctors/`: `vocab.ts` (specialties, councils, degrees, reasons, the symptom seed), `profile.ts`, `verification.ts`, `locations.ts` (staff links, hospital and clinic locations, fees), `directory.ts` (search, profile, slots), `slots.ts` (the `DoctorNextSlot` projection and the `directory-slots` consumer), `booking.ts` (booking with a share, the `share-lifecycle` consumer), `self.ts`.
+- Migration `20261025100000_doctor_network` (additive): `DoctorProfile`, `DoctorQualification`, `DoctorSpecialty`, `DoctorStaffLink`, `PracticeLocation`, `DoctorVerificationCase`, `SymptomSpecialtyMap`, `DoctorNextSlot`, `DirectoryBooking`; `RecordShareKind.BOOKING`, `ShareEndReason.APPOINTMENT_CANCELLED`, `RecordShare.validFrom`.
+- The engine: `bookAppointmentTx` (the booking's transaction body, so a directory booking, its share and its event commit together) with an optional facility check; `getAvailableSlots` takes a facility filter (one doctor, several places, one lock).
+- Shares: `BOOKING` shares resolve like a request's (the named doctor, at the named facility) and only inside `[validFrom, expiresAt)`.
+- Events: `DoctorRegistered`, `DoctorVerificationStatusChanged`, `DoctorVerificationCaseChanged`, `DoctorProfileUpdated`, `PracticeLocationChanged` (PLATFORM); `DoctorStaffLinkChanged` (FACILITY); `DirectoryBookingCreated` (PERSON); `RecordShareCreated` v2 and `RecordShareStatusChanged` v2 (the BOOKING kind, `validFrom`, the APPOINTMENT_CANCELLED reason; v1 kept).
+- Runner: the next-slot sweep and the 90-day purge of verification documents.
+
+### 14.3 Departures
+
+1. **No `AppointmentBooked` v2.** A directory booking emits `AppointmentBooked` v1 and `DirectoryBookingCreated` (with the appointment, location, mode and share) in the same transaction; the channel is that second event.
+2. **No `TELE` location kind.** VIDEO is a mode of a hospital or clinic location.
+3. **No `DoctorScheduleChanged` event.** Schedule blocks and absences change through existing services without an event; the next-slot sweep (every tick, rows older than 6 hours or in the past) is the backstop, and appointment events refresh at once.
+4. **The model is `DoctorProfile`** (the task's name), not `Doctor`.
+5. **A staff link is to the doctor's own staff profile** (the same login): the doctor claims it, the facility's admin approves. The clinic reuses that profile with a membership at the clinic facility (one profile, one lock across places).
+6. **"Their own record" covers the doctor tools of the network and the person-level reads:** shares (code, request, booking), the AI on every staff path, and person uploads (`personAccess`). A doctor reading their own facility chart at their own hospital, as that hospital's staff, is not blocked here: that is the hospital's record and its own access rules (an open question for the security audit, checklist item 6).
+7. **Verification documents** go in the existing private `verification` bucket.
+
+### 14.4 Gates
+
+| Gate | Checks |
+|---|---|
+| `verify-postgres-doctor-verification` | 24: registering, the case and its 48-hour due date, the queue, document access, approval with the confirmed year, rejection, suspension (out of search and new bookings, existing appointment kept), the 90-day document purge |
+| `verify-postgres-doctor-directory` | 24: every filter, the hospital tariff vs the clinic fee, no home visits, "registered since", the symptom map (pending the clinical advisor), deterministic ranking, public fields only (canaries), staff links needing the right admin |
+| `verify-postgres-directory-booking` | 21: the booking lands right and creates the facility record, concurrency (one wins), a stale projection never double-books, the BOOKING share's scope and window, cancellation ends it, VIDEO as TELEMEDICINE, the same human refused |
+| `verify-postgres-doctor-leaks` | 9: no share, no access (AI, view, download); a booking without a share gives nothing; a LABS-only share shows exactly labs (control); search carries no patient data |
+| Core journey | Search by knee pain → book with a CONDITIONS share → the brief cites the knee diagnosis only → cancel → the share ends, the brief is refused |
+| Browser smoke (`e2e/directory.spec.ts`) | The patient searches by symptom and books with a share; the doctor opens the booking's visit brief and sees the shared result cited, labelled verified |

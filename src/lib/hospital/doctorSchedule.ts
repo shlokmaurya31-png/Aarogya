@@ -18,10 +18,12 @@ export interface AvailableSlot {
 /**
  * Computes bookable slots for one doctor on one date: each slot of each clinic
  * session that passes the D7 bookability rule (no absence, not off shift) and
- * has capacity left.
+ * has capacity left. Optionally only one facility's sessions.
  */
-export async function getAvailableSlots(staffId: string, date: Date): Promise<AvailableSlot[]> {
+export async function getAvailableSlots(staffId: string, date: Date, opts: { facilityId?: string } = {}): Promise<AvailableSlot[]> {
   const ctx = await loadDayContext(prisma, staffId, date);
+  // Week 5a: one doctor, several places: only that facility's sessions (the lock and overlaps stay per doctor).
+  if (opts.facilityId) ctx.sessions = ctx.sessions.filter((s) => s.facilityId === opts.facilityId);
   if (ctx.sessions.length === 0) return [];
   const dayStart = ctx.dayStart;
   const dayEnd = new Date(dayStart.getTime() + 24 * 3_600_000);

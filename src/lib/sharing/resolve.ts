@@ -1,4 +1,5 @@
-import type { RagSensitiveCategory, ShareCategory } from "@prisma/client";
+import type { RagSensitiveCategory, RecordShare, ShareCategory } from "@prisma/client";
+import { staffIsSubject } from "@/lib/doctors/self";
 import { prisma } from "@/lib/db";
 import { careRelationship } from "@/lib/person/access";
 import { resolvePatientIdsForRead } from "@/lib/patient/merge";
@@ -17,7 +18,11 @@ import type { AccessVia } from "./accessLog";
  *     recipient doctor (the one who asked) at the facility it was approved
  *     for; for a facility request, also only while that facility has an
  *     active care relationship with the person (4c answer, §15);
- *   - the person's account is ACTIVE.
+ *   - a booking (Week 5a): the share is ACTIVE, inside [validFrom, expiresAt),
+ *     and the caller is its doctor at the booked facility;
+ *   - the person's account is ACTIVE;
+ *   - the caller isn't reading their own record (a doctor who is also the
+ *     patient: src/lib/doctors/self.ts), whatever the share says.
  * A code issued before 4c has no share: it reads under the legacy code
  * scope (the four record categories, no uploads, nothing sensitive; §4.3).
  */
@@ -25,7 +30,7 @@ export interface ShareScope {
   ref: string;
   shareId: string | null;
   sessionId: string | null;
-  via: Extract<AccessVia, "SHARE_CODE" | "ACCESS_REQUEST">;
+  via: Extract<AccessVia, "SHARE_CODE" | "ACCESS_REQUEST" | "BOOKING">;
   legacy: boolean;
   personId: string | null;
   /** The record the requester knows (a code: the issuing record; a request: the requester's own). */
@@ -63,9 +68,11 @@ export async function resolveShare(actor: ShareActor, ref: string): Promise<Shar
     }
     const share = await prisma.recordShare.findUnique({ where: { id: live.shareId } });
     if (!share || share.status !== "ACTIVE" || share.expiresAt <= now || share.recipientUserId !== actor.userId || !(await personActive(share.personId))) return null;
+    if (await staffIsSubject(actor.userId, share.personId)) return null;
     return { ref, shareId: share.id, sessionId: live.id, via: "SHARE_CODE", legacy: false, personId: share.personId, subjectPatientId: live.patientId, ...(await expand(share.patientIds)), categories: share.categories, sensitive: share.sensitiveCategories, recordedFrom: share.recordedFrom, recordedTo: share.recordedTo, expiresAt: share.expiresAt };
   }
   const share = await prisma.recordShare.findUnique({ where: { id: ref } });
+  if (share?.kind === "BOOKING") return resolveBooking(actor, ref, share, now);
   if (!share || share.kind !== "REQUEST" || share.status !== "ACTIVE" || share.expiresAt <= now || !share.accessRequestId) return null;
   if (actor.role !== "DOCTOR" || share.recipientFacilityId !== actor.facilityId) return null;
   const request = await prisma.accessRequest.findUnique({ where: { id: share.accessRequestId }, select: { patientId: true, requesterKind: true } });
@@ -80,5 +87,17 @@ export async function resolveShare(actor: ShareActor, ref: string): Promise<Shar
     if (!treating) return null;
   }
   if (!(await personActive(share.personId))) return null;
+  if (await staffIsSubject(actor.userId, share.personId)) return null;
   return { ref, shareId: share.id, sessionId: null, via: "ACCESS_REQUEST", legacy: false, personId: share.personId, subjectPatientId: request.patientId, ...(await expand(share.patientIds)), categories: share.categories, sensitive: share.sensitiveCategories, recordedFrom: share.recordedFrom, recordedTo: share.recordedTo, expiresAt: share.expiresAt };
+}
+
+/** Week 5a: a directory booking's share, for its doctor at the booked facility, inside its window. */
+async function resolveBooking(actor: ShareActor, ref: string, share: RecordShare, now: Date): Promise<ShareScope | null> {
+  if (share.status !== "ACTIVE" || share.expiresAt <= now || (share.validFrom && share.validFrom > now)) return null;
+  if (actor.role !== "DOCTOR" || share.recipientUserId !== actor.userId || share.recipientFacilityId !== actor.facilityId) return null;
+  const booking = await prisma.directoryBooking.findUnique({ where: { shareId: share.id }, select: { appointmentId: true } });
+  const appt = booking ? await prisma.appointment.findUnique({ where: { id: booking.appointmentId }, select: { patientId: true, facilityId: true } }) : null;
+  if (!appt || appt.facilityId !== actor.facilityId) return null;
+  if (!(await personActive(share.personId)) || (await staffIsSubject(actor.userId, share.personId))) return null;
+  return { ref, shareId: share.id, sessionId: null, via: "BOOKING", legacy: false, personId: share.personId, subjectPatientId: appt.patientId, ...(await expand(share.patientIds)), categories: share.categories, sensitive: share.sensitiveCategories, recordedFrom: share.recordedFrom, recordedTo: share.recordedTo, expiresAt: share.expiresAt };
 }

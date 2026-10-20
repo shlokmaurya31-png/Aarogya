@@ -22,6 +22,7 @@ import { ensureConfigSeed } from "../src/lib/config/seed";
 import { seedDemoLicensure } from "./seedData/licensure";
 import { syncSeededOrderStatuses } from "./seedData/orderStatus";
 import { importInnVersion } from "../src/lib/medicines/reference";
+import { seedSymptomMap } from "./seedData/symptomMap";
 import { INN_STARTER, INN_STARTER_VERSION } from "../src/lib/medicines/innStarter";
 
 const prisma = new PrismaClient();
@@ -214,6 +215,7 @@ async function main() {
   await seedClinicalCatalogue(prisma);
   await seedChargeCaptureTariffs(prisma);
   await seedDemoLicensure(prisma);
+  await seedSymptomMap(prisma);
   // Week 4a: the curated WHO INN starter version (idempotent; versions are never edited).
   if (!(await prisma.medicineReference.count({ where: { source: "WHO_INN", version: INN_STARTER_VERSION } }))) await importInnVersion(INN_STARTER_VERSION, INN_STARTER);
   console.log(`Order statuses derived for ${await syncSeededOrderStatuses(prisma)} specific order(s).`);

@@ -33,6 +33,8 @@ export const PERSON_SCOPED_MODELS = [
   "RecordShare",
   "AccessRequest",
   "PersonNotification",
+  // Week 5a — a booking made through the doctor directory (the appointment itself is the facility's).
+  "DirectoryBooking",
 ] as const;
 
 /** Facility-owned models that reference a Person. */

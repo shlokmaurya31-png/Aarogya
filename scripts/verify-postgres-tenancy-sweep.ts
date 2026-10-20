@@ -368,6 +368,8 @@ const SEGMENT_MODELS: Record<string, string> = {
   "shares/[id]": "RecordShare",
   // 4c fix: a shared upload's signed URL, only through the share.
   "shares/[id]/documents/[documentId]": "PersonDocument",
+  // Week 5a: a doctor's claim on a staff profile, decided by that facility's admin.
+  "doctor-links/[id]": "DoctorStaffLink",
 };
 
 type SegmentTarget = { kind: "record"; model: string } | { kind: "static"; values: string[] } | { kind: "unmapped" };
