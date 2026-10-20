@@ -10344,6 +10344,10 @@ enum PersonAccessLogKind {
   ACCESS_REQUESTED
   ACCESS_REQUEST_DECIDED
   ACCESS_REVOKED_ALL
+  /// Week 5b: households.
+  PROXY_GRANT_CHANGED
+  PROXY_ACTION
+  ACCOUNT_CLAIMED
 }
 
 model Person {
@@ -10356,6 +10360,8 @@ model Person {
   dateOfBirth        DateTime?
   dobPrecision       DobPrecision?
   sex                String?
+  /// Week 5b: a household profile with no login of its own (a managed child, a dependent adult) until claimed.
+  managedByHousehold Boolean       @default(false)
   preferredLanguage  String        @default("en")
   version            Int           @default(1)
   createdAt          DateTime      @default(now())
@@ -10910,22 +10916,24 @@ model ExtractedFact {
 
 /// A fact the person confirmed (or corrected) from their upload: theirs, labelled patient-provided.
 model PatientProvidedRecord {
-  id            String                @id @default(cuid())
-  person        Person                @relation(fields: [personId], references: [id])
-  personId      String
-  kind          PatientProvidedKind
-  value         Json
-  source        String                @default("PATIENT_PROVIDED")
-  factId        String                @unique
-  documentId    String
-  pageNo        Int
-  region        Json?
-  handwritten   Boolean               @default(false)
-  effectiveDate DateTime?
-  status        PatientProvidedStatus @default(ACTIVE)
-  version       Int                   @default(1)
-  createdAt     DateTime              @default(now())
-  withdrawnAt   DateTime?
+  id               String                @id @default(cuid())
+  person           Person                @relation(fields: [personId], references: [id])
+  personId         String
+  kind             PatientProvidedKind
+  value            Json
+  source           String                @default("PATIENT_PROVIDED")
+  factId           String                @unique
+  documentId       String
+  pageNo           Int
+  region           Json?
+  handwritten      Boolean               @default(false)
+  /// Week 5b: confirmed by a proxy (a household member acting for the person), labelled "confirmed by proxy".
+  confirmedByProxy Boolean               @default(false)
+  effectiveDate    DateTime?
+  status           PatientProvidedStatus @default(ACTIVE)
+  version          Int                   @default(1)
+  createdAt        DateTime              @default(now())
+  withdrawnAt      DateTime?
 
   @@index([personId, kind, status])
 }
@@ -11424,6 +11432,8 @@ enum PersonNotificationKind {
   ACCESS_SUMMARY
   BREAK_GLASS_ACCESS
   ACCESS_REQUESTED
+  /// Week 5b: a managed child turns 18 within 30 days (to the managers).
+  COMING_OF_AGE
 }
 
 enum PersonNotificationStatus {
@@ -11645,4 +11655,202 @@ model DirectoryBooking {
 
   @@index([personId])
   @@index([doctorId])
+}
+
+// ── Week 5b — households (docs/HOUSEHOLD_DESIGN.md) ─────────────────────────
+// Person-scoped. Membership confers nothing: only a ProxyGrant does, checked
+// by personAccess (the PROXY way in). Every member keeps their own Person.
+
+model Household {
+  id                String          @id @default(cuid())
+  name              String
+  createdByPersonId String
+  status            HouseholdStatus @default(ACTIVE)
+  version           Int             @default(1)
+  createdAt         DateTime        @default(now())
+  closedAt          DateTime?
+
+  members HouseholdMember[]
+}
+
+enum HouseholdStatus {
+  ACTIVE
+  CLOSED
+}
+
+model HouseholdMember {
+  id           String                @id @default(cuid())
+  household    Household             @relation(fields: [householdId], references: [id])
+  householdId  String
+  personId     String
+  memberType   HouseholdMemberType
+  role         HouseholdRole
+  status       HouseholdMemberStatus
+  /// The relationship the manager declared when adding a managed profile (PARENT, LEGAL_GUARDIAN, CHILD, SPOUSE, …).
+  relationship String?
+  joinedAt     DateTime?
+  leftAt       DateTime?
+  version      Int                   @default(1)
+  createdAt    DateTime              @default(now())
+
+  @@unique([householdId, personId])
+  @@index([personId, status])
+}
+
+enum HouseholdMemberType {
+  SELF
+  MANAGED_MINOR
+  DEPENDENT_ADULT
+  LINKED_ADULT
+}
+
+enum HouseholdRole {
+  MANAGER
+  MEMBER
+}
+
+enum HouseholdMemberStatus {
+  INVITED
+  PENDING_CONSENT
+  ACTIVE
+  /// Came of age: waiting for the member to claim their own login.
+  AWAITING_CLAIM
+  LEFT
+  REMOVED
+}
+
+/// Who may act for a member, how, and over which categories (§5).
+model ProxyGrant {
+  id                  String                 @id @default(cuid())
+  memberPersonId      String
+  proxyPersonId       String
+  householdId         String?
+  basis               ProxyBasis
+  permissions         ProxyPermission[]
+  categories          ShareCategory[]
+  sensitiveCategories RagSensitiveCategory[] @default([])
+  status              ProxyGrantStatus
+  grantedByPersonId   String
+  /// How the grant was established (closed codes and ids only): the consent method, the staff who checked, the reviewed document.
+  evidence            Json                   @default("{}")
+  validUntil          DateTime?
+  lapsedReason        String?
+  version             Int                    @default(1)
+  createdAt           DateTime               @default(now())
+  revokedAt           DateTime?
+
+  @@index([memberPersonId, status])
+  @@index([proxyPersonId, status])
+}
+
+enum ProxyBasis {
+  GUARDIAN
+  RECORDED_CONSENT
+  MEMBER_CHOICE
+}
+
+enum ProxyPermission {
+  VIEW
+  UPLOAD
+  BOOK
+  SHARE
+  INSURANCE
+  USE_AI
+}
+
+enum ProxyGrantStatus {
+  PENDING_CONFIRMATION
+  ACTIVE
+  REVOKED
+  LAPSED
+}
+
+/// A dependent adult's consent to a proxy, by one of the three accepted methods (5b decision).
+model DependentConsent {
+  id                String                 @id @default(cuid())
+  memberPersonId    String
+  proxyPersonId     String
+  householdId       String
+  method            DependentConsentMethod
+  status            DependentConsentStatus @default(PENDING)
+  /// OWN_CODE: the code's hash and expiry (sent to the adult's own verified contact).
+  codeHash          String?
+  codeExpiresAt     DateTime?
+  /// TWO_STAFF: the two staff who checked in person (different people, the same facility).
+  firstStaffUserId  String?
+  secondStaffUserId String?
+  facilityId        String?
+  /// LEGAL_DOCUMENT: the reviewed document (a person upload) and the reviewing staff.
+  documentId        String?
+  reviewedByUserId  String?
+  documentKind      String?
+  decidedAt         DateTime?
+  createdAt         DateTime               @default(now())
+  version           Int                    @default(1)
+
+  @@index([memberPersonId, status])
+}
+
+enum DependentConsentMethod {
+  OWN_CODE
+  TWO_STAFF_IN_PERSON
+  LEGAL_DOCUMENT
+}
+
+enum DependentConsentStatus {
+  PENDING
+  CONFIRMED
+  REFUSED
+  EXPIRED
+}
+
+/// Verifiable parental consent for a child's profile: a code to the parent's verified phone + a relationship declaration (pending lawyer review).
+model ParentalConsent {
+  id               String    @id @default(cuid())
+  householdId      String
+  parentPersonId   String
+  /// Set once confirmed (the child's Person is created then).
+  minorPersonId    String?
+  minorDisplayName String
+  minorDateOfBirth DateTime
+  minorSex         String?
+  relationship     String
+  phoneLast4       String
+  codeHash         String
+  codeExpiresAt    DateTime
+  confirmedAt      DateTime?
+  declarationText  String
+  createdAt        DateTime  @default(now())
+
+  @@index([parentPersonId])
+}
+
+/// A claim at 18 (or by a dependent adult taking control back): an invitation to the member's own contact, or in person.
+model MemberClaim {
+  id                    String            @id @default(cuid())
+  personId              String
+  method                MemberClaimMethod
+  status                MemberClaimStatus @default(OPEN)
+  contactKind           String?
+  contactValue          String?
+  codeHash              String?
+  codeExpiresAt         DateTime?
+  verifiedByStaffUserId String?
+  claimedUserId         String?
+  createdAt             DateTime          @default(now())
+  completedAt           DateTime?
+
+  @@index([personId, status])
+}
+
+enum MemberClaimMethod {
+  OWN_CONTACT
+  IN_PERSON
+}
+
+enum MemberClaimStatus {
+  OPEN
+  COMPLETED
+  EXPIRED
+  CANCELLED
 }
