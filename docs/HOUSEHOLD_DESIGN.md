@@ -1,6 +1,6 @@
 # Households: design (5b)
 
-- **Status:** Revision 1, 2026-10-19. A design only; nothing here is built until it is approved.
+- **Status:** Revision 2, 2026-10-20. Built in Week 5b on branch `foundation/w5b-households`; §14 records the answers given with the task and where the code departs from this text.
 - **Spec:** `docs/PRODUCT_SPEC.md` feature D (household accounts), principle 7 ("one person, one record"), and the guardrail on children.
 - **Builds on:**
   - **Person identity** (`docs/PERSON_IDENTITY_DESIGN.md`):
@@ -30,6 +30,7 @@
 11. Order of wiring
 12. Decisions taken for you
 13. Open questions
+14. As built (Week 5b)
 
 ## 1. Goals and non-goals
 
@@ -240,3 +241,45 @@ All are PERSON scope, SENSITIVE (except where noted), with ids and closed codes 
 4. **Claiming without a contact:** how does a member who has never had their own phone or email claim at 18? In person at a facility (the existing in-person verification)?
 5. **Proxy-confirmed facts:** should a facility weigh them differently from member-confirmed ones in conflict detection?
 6. **DPDP verifiable parental consent:** what verification of the guardian's identity is required at household creation for a child's profile?
+
+## 14. As built (Week 5b, 2026-10-20)
+
+Built on branch `foundation/w5b-households`. Where this section and §1–§13 differ, this section holds.
+
+### 14.1 Answers given with the task
+
+| Question | Answer, as built |
+|---|---|
+| A dependent adult's proxy (§13.1) | **One of three:** the adult's own code (sent to their own phone or email, never one that belongs to another profile, the manager's included); a **two-staff in-person check** (two different staff members of one facility, each recording it, the adult present; the family gives them the member reference shown on screen, and staff never see a list of who is waiting); or a **staff-reviewed legal document** (a power of attorney, a guardianship or other court order, uploaded to the adult's profile; the reviewer reads it through a 5-minute URL, audited). Until then the grant is `PENDING_CONFIRMATION` and gives nothing. |
+| Adolescent confidentiality (§13.2) | **Guardians don't see a 12–17-year-old's sensitive categories.** For a child under 12 the guardian may opt in per grant; from 12 an opt-in is refused, and one stored earlier is ignored at read time (pending lawyer review). |
+| Member limit (§13.3) | **8 members per household**, the manager's own profile included (invited and pending members count). |
+| Claiming without a contact (§13.4) | **In person:** a facility staff member checks the member's ID (type and last 4 recorded, audited) and hands over a one-time code; the member claims with it at `/claim`. |
+| Proxy-confirmed facts (§13.5) | **Labelled "confirmed by proxy"** wherever patient-provided entries appear: the entry (`PatientProvidedRecord.confirmedByProxy`), its description, the timeline, the AI index and the answer's labels. Conflict detection is unchanged. |
+| Verifiable parental consent (§13.6) | **A code to the parent's own verified phone + a relationship declaration** (mother, father or legal guardian; the declaration's text is stored with the consent). Pending lawyer review. |
+
+### 14.2 Code
+
+- `src/lib/household/`: `vocab.ts`, `grants.ts` (grants, `proxyGrantFor`, the switcher, a member's own view and control of their proxies), `households.ts` (households, children, dependent adults, linked adults), `dependentConsent.ts`, `comingOfAge.ts` (the sweep, claims, restoring grants), `proxy.ts` (VIEW, UPLOAD, BOOK, SHARE, INSURANCE).
+- `personAccess` gains the `PROXY` way in; every proxy route goes through it. Membership alone gives nothing.
+- The 4a/4b refusals are replaced by permission checks: fact review takes a member with UPLOAD (`reviewedVia: PROXY`); the AI's patient modes take a `PROXY` path with USE_AI over the grant's categories and opt-ins; uploads and bookings act for a Person, with the proxy recorded as the actor.
+- Migration `20261026100000_households` (additive), with CHECKs and one live grant per member and proxy.
+- Events: `HouseholdCreated`, `HouseholdMemberStatusChanged`, `ProxyGrantChanged`, `DependentConsentChanged`, `MemberCameOfAge`, `MemberAccountClaimed`; `PersonCreated` v2 (source `HOUSEHOLD`) and `PersonNotificationQueued` v2 (`COMING_OF_AGE`, the 30-day notice).
+- Screens: `/patient/household` (the household, adding a child, inviting, the profile switcher, acting for a member, who acts for you), `/claim`. Staff actions are APIs (`/api/hospital/household/…`).
+
+### 14.3 Departures
+
+1. **Existing facility delegations are left as they are** (§8): the offer to convert one into a proxy grant isn't built; delegations keep working unchanged and stay refused by the AI.
+2. **The grant's basis can change:** when an adult member changes a grant, it becomes theirs (`MEMBER_CHOICE`).
+3. **A managed profile has its creator's data classification** (a synthetic family stays synthetic). For real data, a guardian deciding the child's processing consents (`DOCUMENT_PROCESSING`, `AI_ASSISTANCE`) isn't wired: those decisions are still owner-only, so a real child's uploads aren't read until that is added (pre-launch item 22).
+4. **No household support process** for a household left with no manager (§4): managed profiles are never deleted; reattachment is a support task (pre-launch item 22).
+5. **A Person merge** re-points households and grants; a membership the surviving person already has is removed rather than duplicated, and a grant that would point at the same person is revoked.
+
+### 14.4 Gates
+
+| Gate | Checks |
+|---|---|
+| `verify-postgres-household-proxies` | 42: parental consent (code, declaration, date of birth), the GUARDIAN grant, membership gives nothing, each permission exactly, SHARE never more than VIEW, "confirmed by proxy", every proxy action logged, the three dependent-adult methods, a linked adult's own choice and removal, the 8-member limit |
+| `verify-postgres-coming-of-age` | 19: the 30-day notice, the birthday (grants and consents lapse, the manager sees nothing), YEAR precision, claiming by own contact and in person, restoring by choice, a dependent adult taking control back |
+| `verify-postgres-proxy-leaks` | 14: sensitive canaries absent without an opt-in on every path and present with it (under 12), refused and ignored from 12, member A's proxy sees nothing of member B, a removed proxy at once, USE_AI and staff modes |
+| Core journey | A parent adds a child → uploads for them (confirmed by proxy) → books for them → the child turns 18 → the parent's access lapses |
+| Browser smoke (`e2e/household.spec.ts`) | Start a household → add a child with the code → switch → upload → confirm (by proxy) |
