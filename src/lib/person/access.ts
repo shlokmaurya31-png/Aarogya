@@ -27,6 +27,11 @@ import { resolvePatientIdsForRead } from "@/lib/patient/merge";
  *           UPLOADS: their uploads, filtered by the share (period, sensitive
  *           opt-ins) by the caller (src/lib/sharing/history.ts). The share is
  *           resolved here, on every call (src/lib/sharing/resolve.ts).
+ *   CARD_SHARE (Week 5c) facility staff and the person's insurance cards
+ *           (purpose INSURANCE) only: an ACTIVE, unexpired CardShare of
+ *           this person for the staff member's facility (a pre-arrival
+ *           check-in), for that one card. Owners and PROXY grants with
+ *           INSURANCE reach cards too; nothing else does.
  *
  * Nothing here takes a personId from a request as authority: callers pass the
  * id they are asking about and get a grant or nothing.
@@ -36,13 +41,17 @@ export type PersonActor =
   | { kind: "OWNER"; userId: string }
   | { kind: "STAFF"; userId: string; facilityId: string }
   | { kind: "SHARE"; userId: string; facilityId: string; role: string; shareRef: string }
-  | { kind: "PROXY"; userId: string; permission: import("@prisma/client").ProxyPermission };
+  | { kind: "PROXY"; userId: string; permission: import("@prisma/client").ProxyPermission }
+  | { kind: "CARD_SHARE"; userId: string; facilityId: string; cardShareId: string };
 
-export type PersonPurpose = "PROFILE" | "UPLOADS";
+/** Week 5c: INSURANCE is the person's insurance cards. */
+export type PersonPurpose = "PROFILE" | "UPLOADS" | "INSURANCE";
 
 export interface PersonGrant {
   personId: string;
-  via: "OWNER" | "CARE_RELATIONSHIP" | "SHARE" | "PROXY";
+  via: "OWNER" | "CARE_RELATIONSHIP" | "SHARE" | "PROXY" | "CARD_SHARE";
+  /** The card a CARD_SHARE grant opens (one card, for one facility). */
+  cardId?: string;
   /** The resolved share, for a SHARE grant: the caller applies its filters. */
   share?: import("@/lib/sharing/resolve").ShareScope;
   /** The proxy's grant, for a PROXY grant: the caller applies its categories. */
@@ -121,11 +130,21 @@ export async function personAccess(actor: PersonActor, personId: string, purpose
     return (await ownedPersonId(actor.userId)) === personId ? { personId, via: "OWNER" } : null;
   }
   if (actor.kind === "PROXY") {
+    // Cards only with INSURANCE, whatever was asked for.
+    if (purpose === "INSURANCE" && actor.permission !== "INSURANCE") return null;
     const { proxyGrantFor } = await import("@/lib/household/grants");
     const proxy = await proxyGrantFor(actor.userId, personId, actor.permission);
     return proxy ? { personId, via: "PROXY", proxy } : null;
   }
-  // Staff never read the person's own profile, contacts, links or log.
+  if (actor.kind === "CARD_SHARE") {
+    if (purpose !== "INSURANCE") return null;
+    const cs = await prisma.cardShare.findUnique({ where: { id: actor.cardShareId } });
+    if (!cs || cs.personId !== personId || cs.recipientFacilityId !== actor.facilityId || cs.status !== "ACTIVE" || cs.expiresAt <= new Date()) return null;
+    const { staffIsSubject } = await import("@/lib/doctors/self");
+    if (await staffIsSubject(actor.userId, personId)) return null;
+    return { personId, via: "CARD_SHARE", cardId: cs.cardId };
+  }
+  // Staff never read the person's own profile, contacts, links or log (nor their cards but by a card share).
   if (purpose !== "UPLOADS") return null;
   // Week 5a: nor, as a doctor, their own uploads (the same human; src/lib/doctors/self.ts).
   const { staffIsSubject } = await import("@/lib/doctors/self");

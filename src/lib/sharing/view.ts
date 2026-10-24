@@ -12,7 +12,8 @@ import { resolveShare, type ShareActor } from "./resolve";
  */
 export async function viewSharedRecord(actor: ShareActor, ref: string, surface: AccessSurface) {
   const scope = await resolveShare(actor, ref);
-  if (!scope) throw new NotFoundError();
+  // Week 5c: a claim's documents open one by one (the download), never as a record view.
+  if (!scope || scope.via === "CLAIM") throw new NotFoundError();
   const history = await shareHistory(scope);
   if (!history) throw new NotFoundError();
   // A code from before 4c has no share; its record's person (if linked) still sees the access.

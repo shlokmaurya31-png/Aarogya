@@ -138,6 +138,13 @@ export const AGGREGATE_TYPES = [
   "HOUSEHOLD_MEMBER",
   "PROXY_GRANT",
   "DEPENDENT_CONSENT",
+  // Week 5c — patient insurance and check-in.
+  "INSURANCE_CARD",
+  "CARD_SHARE",
+  "PRE_ARRIVAL_CHECKIN",
+  "CLAIM_DOCUMENT_REQUEST",
+  "FACILITY_PAYMENT_GATEWAY",
+  "PATIENT_PAYMENT_ORDER",
 ] as const;
 export type AggregateType = (typeof AGGREGATE_TYPES)[number];
 

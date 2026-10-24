@@ -246,6 +246,10 @@ async function mergePersonsTx(tx: Tx, req: { id: string; personId: string; sourc
   await tx.proxyGrant.updateMany({ where: { memberPersonId: from }, data: { memberPersonId: to } });
   await tx.proxyGrant.updateMany({ where: { proxyPersonId: from }, data: { proxyPersonId: to } });
   await tx.memberClaim.updateMany({ where: { personId: from }, data: { personId: to } });
+  // Week 5c: cards, card shares and pre-arrival check-ins follow the surviving Person.
+  await tx.insuranceCard.updateMany({ where: { personId: from }, data: { personId: to } });
+  await tx.cardShare.updateMany({ where: { personId: from }, data: { personId: to } });
+  await tx.preArrivalCheckIn.updateMany({ where: { personId: from }, data: { personId: to } });
   // Choices: the same choice carries; two different choices both lapse, so the
   // person is asked again (never silently pick one).
   const now = new Date();

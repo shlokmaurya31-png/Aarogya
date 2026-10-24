@@ -24,6 +24,8 @@ export async function createShareTx(tx: Prisma.TransactionClient, input: {
   recipientUserId?: string | null; recipientFacilityId?: string | null; accessRequestId?: string;
   /** Week 5a: a BOOKING share reads only from here. */
   validFrom?: Date;
+  /** Week 5c: a CLAIM share covers exactly these uploads. */
+  documentIds?: string[];
 }): Promise<RecordShare> {
   const c = input.choice;
   const share = await tx.recordShare.create({
@@ -31,7 +33,7 @@ export async function createShareTx(tx: Prisma.TransactionClient, input: {
       personId: input.personId, kind: input.kind, status: input.status, purpose: c.purpose, categories: c.categories, sensitiveCategories: c.sensitiveCategories,
       recordedFrom: c.recordedFrom, recordedTo: c.recordedTo, patientIds: input.patientIds, expiresAt: input.expiresAt, createdByUserId: input.createdByUserId,
       recipientUserId: input.recipientUserId ?? null, recipientFacilityId: input.recipientFacilityId ?? null, accessRequestId: input.accessRequestId,
-      activatedAt: input.status === "ACTIVE" ? new Date() : null, validFrom: input.validFrom ?? null,
+      activatedAt: input.status === "ACTIVE" ? new Date() : null, validFrom: input.validFrom ?? null, documentIds: input.documentIds ?? [],
     },
   });
   await tx.personAccessLogEntry.create({ data: { personId: input.personId, kind: "SHARE_CREATED", actorUserId: input.createdByUserId, accessingFacilityId: input.recipientFacilityId ?? null, detail: { shareId: share.id, kind: share.kind, categories: share.categories, sensitive: share.sensitiveCategories.length } } });
@@ -41,6 +43,7 @@ export async function createShareTx(tx: Prisma.TransactionClient, input: {
       shareId: share.id, personId: input.personId, kind: share.kind, status: share.status, purpose: share.purpose, categories: share.categories,
       sensitiveCategories: share.sensitiveCategories, hasPeriod: Boolean(share.recordedFrom || share.recordedTo), expiresAt: share.expiresAt.toISOString(),
       ...(share.validFrom ? { validFrom: share.validFrom.toISOString() } : {}),
+      ...(share.kind === "CLAIM" ? { documentCount: share.documentIds.length } : {}),
     },
   });
   return share;

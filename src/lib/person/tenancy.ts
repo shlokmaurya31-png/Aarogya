@@ -38,6 +38,9 @@ export const PERSON_SCOPED_MODELS = [
   // Week 5b — households: a member's place in a household, and a member's claim of their own login.
   "HouseholdMember",
   "MemberClaim",
+  // Week 5c — a member's insurance cards, and a card shared with one facility for one visit.
+  "InsuranceCard",
+  "CardShare",
 ] as const;
 
 /** Facility-owned models that reference a Person. */
@@ -51,6 +54,8 @@ export const FACILITY_MODELS_WITH_PERSON = [
   "ClinicalDocument",
   // Week 4a: a conflict between a person's record and a facility's verified one.
   "RecordConflict",
+  // Week 5c: a pre-arrival check-in is the facility's (its visit), made by the Person.
+  "PreArrivalCheckIn",
 ] as const;
 
 /**

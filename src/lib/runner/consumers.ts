@@ -11,6 +11,9 @@ import { ragIndexer } from "@/lib/consumers/ragIndexer";
 import { personNotifier } from "@/lib/consumers/personNotifier";
 import { directorySlots } from "@/lib/doctors/slots";
 import { shareLifecycle } from "@/lib/doctors/booking";
+import { checkInLifecycle } from "@/lib/insurance/checkin";
+import { claimDocumentsLifecycle } from "@/lib/insurance/claimDocuments";
+import { patientInsuranceNotify } from "@/lib/insurance/notify";
 import { docAllergyBridge, docConflicts, docExtract, docMerge, docOcr, docPageSplit, docTranslate, docWithdrawal } from "@/lib/consumers/documentPipeline";
 
 /**
@@ -19,7 +22,7 @@ import { docAllergyBridge, docConflicts, docExtract, docMerge, docOcr, docPageSp
  * dispatch without, say, the workflow engine (previously a side-effect import
  * in individual routes). Idempotent: registration is keyed by name.
  */
-export const EXPECTED_CONSUMERS = ["observability-projection", "workflow-engine", "task-generator", "mar-scheduler", "notification-dispatch", "charge-capture", "stock-movement", "claim-drafting", "discharge-readiness", "doc-page-split", "doc-ocr", "doc-translate", "doc-extract", "doc-merge", "doc-allergy-bridge", "doc-withdrawal", "doc-conflicts", "rag-indexer", "person-notifier", "directory-slots", "share-lifecycle"] as const;
+export const EXPECTED_CONSUMERS = ["observability-projection", "workflow-engine", "task-generator", "mar-scheduler", "notification-dispatch", "charge-capture", "stock-movement", "claim-drafting", "discharge-readiness", "doc-page-split", "doc-ocr", "doc-translate", "doc-extract", "doc-merge", "doc-allergy-bridge", "doc-withdrawal", "doc-conflicts", "rag-indexer", "person-notifier", "directory-slots", "share-lifecycle", "checkin-lifecycle", "claim-documents-lifecycle", "patient-insurance-notify"] as const;
 
 export function registerAllConsumers(): string[] {
   registerConsumer(workflowConsumer);
@@ -42,5 +45,8 @@ export function registerAllConsumers(): string[] {
   registerConsumer(personNotifier);
   registerConsumer(directorySlots);
   registerConsumer(shareLifecycle);
+  registerConsumer(checkInLifecycle);
+  registerConsumer(claimDocumentsLifecycle);
+  registerConsumer(patientInsuranceNotify);
   return getConsumerNames();
 }

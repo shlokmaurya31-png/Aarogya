@@ -121,6 +121,15 @@ export const ACTION_POLICIES: Record<string, ActionPolicy> = {
     auditDecision: true,
     description: "Review and revoke emergency access windows for a facility.",
   },
+  // Week 5c: the facility's own payment-gateway account (patients pay the hospital, never Aarogya).
+  "paymentgateway.manage": {
+    permission: "hospital:admin:manage",
+    dataClass: "SECURITY",
+    requireFacility: true,
+    breakGlassAllowed: false,
+    auditDecision: true,
+    description: "Configure the facility's own payment-gateway account (test mode).",
+  },
   // 5b follow-up: staff who read their own chart (recorded as SELF_ACCESS).
   "selfaccess.review": {
     permission: "hospital:admin:manage",

@@ -30,7 +30,7 @@ export interface ShareScope {
   ref: string;
   shareId: string | null;
   sessionId: string | null;
-  via: Extract<AccessVia, "SHARE_CODE" | "ACCESS_REQUEST" | "BOOKING">;
+  via: Extract<AccessVia, "SHARE_CODE" | "ACCESS_REQUEST" | "BOOKING" | "CHECKIN" | "CLAIM">;
   legacy: boolean;
   personId: string | null;
   /** The record the requester knows (a code: the issuing record; a request: the requester's own). */
@@ -43,6 +43,8 @@ export interface ShareScope {
   recordedFrom: Date | null;
   recordedTo: Date | null;
   expiresAt: Date | null;
+  /** Week 5c: a CLAIM share reads exactly these uploads. */
+  documentIds?: string[];
 }
 
 export interface ShareActor { userId: string; facilityId: string; role: string }
@@ -73,6 +75,8 @@ export async function resolveShare(actor: ShareActor, ref: string): Promise<Shar
   }
   const share = await prisma.recordShare.findUnique({ where: { id: ref } });
   if (share?.kind === "BOOKING") return resolveBooking(actor, ref, share, now);
+  if (share?.kind === "CHECKIN") return resolveCheckIn(actor, ref, share, now);
+  if (share?.kind === "CLAIM") return resolveClaim(actor, ref, share, now);
   if (!share || share.kind !== "REQUEST" || share.status !== "ACTIVE" || share.expiresAt <= now || !share.accessRequestId) return null;
   if (actor.role !== "DOCTOR" || share.recipientFacilityId !== actor.facilityId) return null;
   const request = await prisma.accessRequest.findUnique({ where: { id: share.accessRequestId }, select: { patientId: true, requesterKind: true } });
@@ -100,4 +104,25 @@ async function resolveBooking(actor: ShareActor, ref: string, share: RecordShare
   if (!appt || appt.facilityId !== actor.facilityId) return null;
   if (!(await personActive(share.personId)) || (await staffIsSubject(actor.userId, share.personId))) return null;
   return { ref, shareId: share.id, sessionId: null, via: "BOOKING", legacy: false, personId: share.personId, subjectPatientId: appt.patientId, ...(await expand(share.patientIds)), categories: share.categories, sensitive: share.sensitiveCategories, recordedFrom: share.recordedFrom, recordedTo: share.recordedTo, expiresAt: share.expiresAt };
+}
+
+/** Week 5c: a pre-arrival check-in's share, for the visit's doctor (or the admitting doctor) at that facility, until it ends. */
+async function resolveCheckIn(actor: ShareActor, ref: string, share: RecordShare, now: Date): Promise<ShareScope | null> {
+  if (share.status !== "ACTIVE" || share.expiresAt <= now) return null;
+  if (actor.role !== "DOCTOR" || share.recipientUserId !== actor.userId || share.recipientFacilityId !== actor.facilityId) return null;
+  const ci = await prisma.preArrivalCheckIn.findUnique({ where: { shareId: share.id }, select: { patientId: true, facilityId: true, status: true } });
+  if (!ci || ci.facilityId !== actor.facilityId || ci.status === "LAPSED" || ci.status === "CANCELLED") return null;
+  if (!(await personActive(share.personId)) || (await staffIsSubject(actor.userId, share.personId))) return null;
+  return { ref, shareId: share.id, sessionId: null, via: "CHECKIN", legacy: false, personId: share.personId, subjectPatientId: ci.patientId, ...(await expand(share.patientIds)), categories: share.categories, sensitive: share.sensitiveCategories, recordedFrom: share.recordedFrom, recordedTo: share.recordedTo, expiresAt: share.expiresAt };
+}
+
+/** Week 5c: documents the patient attached for a claim: the facility's billing staff, exactly those uploads, while the claim is open. */
+const CLAIM_ROLES = ["BILLING_STAFF", "HOSPITAL_ADMIN"];
+async function resolveClaim(actor: ShareActor, ref: string, share: RecordShare, now: Date): Promise<ShareScope | null> {
+  if (share.status !== "ACTIVE" || share.expiresAt <= now) return null;
+  if (!CLAIM_ROLES.includes(actor.role) || share.recipientFacilityId !== actor.facilityId || !share.documentIds.length) return null;
+  const req = await prisma.claimDocumentRequest.findUnique({ where: { shareId: share.id }, select: { patientId: true, facilityId: true } });
+  if (!req || req.facilityId !== actor.facilityId) return null;
+  if (!(await personActive(share.personId)) || (await staffIsSubject(actor.userId, share.personId))) return null;
+  return { ref, shareId: share.id, sessionId: null, via: "CLAIM", legacy: false, personId: share.personId, subjectPatientId: req.patientId, ...(await expand(share.patientIds)), categories: ["UPLOADS"], sensitive: share.sensitiveCategories, recordedFrom: null, recordedTo: null, expiresAt: share.expiresAt, documentIds: share.documentIds };
 }

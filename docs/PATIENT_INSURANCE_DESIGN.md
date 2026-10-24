@@ -1,6 +1,6 @@
 # Patient insurance and no queues: design (5c)
 
-- **Status:** Revision 1, 2026-10-19. A design only; nothing here is built until it is approved.
+- **Status:** Revision 2, 2026-10-24. Built in Week 5c on branch `foundation/w5c-insurance`; §14 records the decisions given with the task and where the code departs from this text.
 - **Spec:** `docs/PRODUCT_SPEC.md` feature F (insurance and no queues).
 - **Builds on:**
   - **Revenue cycle:** coverage (`PatientCoverage`, `Payer`, `PayerPlan`, `CoverageStatusChanged`), pre-authorization (`PreAuthorization`, `PreauthStatusChanged`, `PreauthDecided`) and claims (`Claim`, `ClaimSubmission`, `ClaimQuery`, `ClaimSettlement`, `ClaimStatusChanged`, `ClaimSubmitted`, `ClaimSettled`, `ClaimQueryStatusChanged`). See `docs/PHASE_5_REVENUE_CYCLE.md`.
@@ -230,3 +230,52 @@ Catalogue conventions apply, v1.
 4. **Government schemes (PM-JAY, state schemes):** should the scheme ID be a card type with its own verification path?
 5. **Claim queries:** may the patient answer queries directly (text), or only by attaching documents through the facility?
 6. **Co-pay and non-payables:** should the patient see the line items behind their share, and from which codes?
+
+## 14. As built (Week 5c, 2026-10-24)
+
+Where this section and §1–§13 differ, this section holds.
+
+### 14.1 Decisions given with the task
+
+| Topic | As built |
+|---|---|
+| Cards | Per household member (the member, or a proxy with INSURANCE): payer type (`PRIVATE_INSURER`, `CORPORATE`, `GOVERNMENT_SCHEME` with a scheme code: `PM_JAY`, `CGHS`, `ESIC`, `STATE_SCHEME`), insurer, plan, member and policy numbers (AES-256-GCM under `INSURANCE_CARD_KEY_<v>`; no key, no card), validity, photos. Photos are re-encoded as JPEG (no EXIF) and stored in the uploads bucket, never as a `PersonDocument`, so the document pipeline never reads them; there is no AI card reading. |
+| PM-JAY | A payer type, verified at the desk (manual) for now. |
+| Pre-arrival window | From 24 hours before a booked visit (REQUESTED, CONFIRMED, RESCHEDULED) or a planned admission (`AdmissionRequest.plannedAdmissionAt`, PENDING or BED_RESERVED) until **1 hour before** (§3's "30 minutes after" is replaced). |
+| Check-in | Confirm the facility's details (read-only; "something is wrong" sends the patient to the desk), an optional CHECKIN share for the visit's doctor (the admitting doctor for an admission; a directory booking's share is reused), a card (a `CardShare` for this facility until 2 days after the visit) or "I'll pay myself", and a token (`P-001`… per facility and visit day). The desk sees the patient pre-registered. |
+| Eligibility | **Never waited for.** A card's check-in shows "eligibility pending" until staff verify it (manual now; `ELIGIBILITY` is reserved for NHCX); the desk can mark READY and the patient arrive meanwhile. Verification creates (or reuses) the facility's `PatientCoverage` with `sourceCardId`. |
+| Patient views | Pre-authorization, cashless at discharge, the itemised bill, the patient's share, and the claim from submitted through under review and decided to settled, in plain words; notifications (`INSURANCE_UPDATE`, `BILL_READY`, `DOCUMENTS_REQUESTED`, `CHECKIN_OPEN`) to the patient and their INSURANCE proxies, with no amount, diagnosis or name. |
+| Pay your share | To the **hospital's own** gateway account (`FacilityPaymentGateway`, Razorpay, per facility, TEST mode only). Only the public key id is stored; the secrets come from the environment under the facility's `secretRef`. The amount is the server's share; the payment is recorded only from the facility's verified webhook (`payment.captured`, the exact amount), allocated to the invoice. |
+| Claim queries | Patients never answer the insurer. The hospital asks (`ClaimDocumentRequest`, plain words); the patient attaches uploads: a CLAIM share of exactly those documents for the facility's billing staff. |
+
+### 14.2 Code
+
+- `src/lib/insurance/`: `vocab.ts`, `cardCrypto.ts`, `cards.ts`, `cardShares.ts` (card shares, the desk's verification), `checkin.ts` (the window, submitting, the desk, arrival, `checkin-lifecycle`, the stale sweep), `status.ts` (the projection and `patientShare`), `claimDocuments.ts` (requests, attaching, `claim-documents-lifecycle`), `notify.ts` (`patient-insurance-notify`, the check-in-open sweep), `hospitalPayments.ts` (the gateway, orders, the webhook).
+- `personAccess`: purpose `INSURANCE`; a `CARD_SHARE` way in (one card, one facility, while the card share lasts); a PROXY reaches cards only with INSURANCE.
+- Share resolution: CHECKIN (the named doctor at that facility, while the check-in is open) and CLAIM (the facility's billing staff or admins, exactly `documentIds`; never a record view, never the AI).
+- Migration `20261028100000_patient_insurance` (additive).
+- Events: `InsuranceCardChanged`, `CardShareStatusChanged` (PERSON); `PreArrivalCheckInSubmitted`, `PreArrivalCheckInStatusChanged`, `CoverageVerifiedFromCard`, `ClaimDocumentRequestChanged`, `FacilityPaymentGatewayChanged`, `PatientPaymentOrderChanged` (FACILITY); `RecordShareCreated` v3 and `RecordShareStatusChanged` v3 (the CHECKIN and CLAIM kinds, their end reasons; v1 and v2 kept); `PersonNotificationQueued` v3 (the new kinds).
+- Routes: `/api/patient/insurance/{cards,status,pay,orders,claim-documents}`, `/api/patient/checkin`; `/api/hospital/checkins`, `/api/hospital/claims/[id]/document-requests`, `/api/hospital/claim-document-requests/[id]`, `/api/hospital/payment-gateway`; the webhook `/api/payments/hospital/[facilityId]/webhook`.
+- Screens: `/patient/insurance` (cards, visits and bills, pay, claim progress, documents asked), `/patient/checkin`, a "Check in" link on upcoming appointments; the front desk's "Pre-registered today"; claim documents on the claims worklist; the gateway on billing settings.
+- Runner: card-share expiry, stale check-ins, "check-in is open".
+
+### 14.3 Departures
+
+1. **The token is issued at check-in; the queue entry on arrival.** The desk marks arrival (the existing `checkInAppointment`, then the doctor's queue when READY, registration otherwise). "I'm here" by location (§4) isn't built.
+2. **The patient's share before the claim is decided** uses the insurer's cashless approval (an approved pre-authorization), labelled "final once the claim is decided"; with neither, it is "not yet known". A bill counts as self-pay only with no claim, no pre-authorization and no active coverage at the facility.
+3. **Claim documents are hospital requests,** not NHCX `ClaimQuery` answers; ID proofs are never attached this way (shown at the desk), and a document that looks sensitive needs the patient's confirmation.
+4. **No Razorpay test account was used** (that needs credentials): the Razorpay calls are the existing adapter's, exercised on an injected transport in the gates; the browser smoke stubs order creation only (`HOSPITAL_GATEWAY_STUB=1`, refused on a production deployment) and pays through a webhook signed with the run's secret.
+5. **Event payload keys avoid "card"** (`insuranceId`, `insuranceShareId`, `hasInsurance`): the sensitive-key guard forbids any key containing it (payment cards), and was not weakened.
+6. **A planned admission's check-in ends at arrival**; the admission continues at the admission desk.
+7. **Proxies:** BOOK checks a member in; attaching a card also needs INSURANCE, and a share needs SHARE.
+
+### 14.4 Gates
+
+| Gate | Checks |
+|---|---|
+| `verify-postgres-insurance-cards` | 28: no key, no card; encrypted and masked; edit screen only; payer types and PM-JAY; EXIF stripped, not a PersonDocument; owner, INSURANCE proxy, no other proxy, nobody else; staff only through an active card share of their facility (logged); removing ends card shares; no number in any event |
+| `verify-postgres-pre-arrival` | 33: the window; submitting (details, card share, CHECKIN share, token, events); once per visit; the desk list; READY without eligibility; verification into coverage (`sourceCardId`); arrival queues; NEEDS_DESK paths; lapsing on cancel, no-show and the sweep; cancelling; proxies; a planned admission; "check-in is open" once |
+| `verify-postgres-patient-insurance-status` | 28: self-pay; the stages (pre-auth, cashless, bill, claim steps, the share recomputed); "not yet known"; claim documents (exact documents, no ID proofs, sensitive confirmed, no record view, no AI, no doctor, no other facility, ending at settlement); notifications without amounts, once each, to INSURANCE proxies; canaries; a proxy without INSURANCE |
+| `verify-postgres-hospital-payments` | 25: not configured; TEST only, secrets only in the environment, admins only; the server's amount with the hospital's own key; 404s and proxies; wrong signatures, another facility's secret, wrong amount, unknown order and replays change nothing; the verified webhook records and allocates; payment.failed; the stub refused in production; no secret in audits |
+| Core journey | The knee patient: card → pre-arrival check-in → desk verifies → doctor's queue → planned knee replacement (pre-auth approved) → discharge → itemised bill and share → the hospital asks for the MRI and the patient attaches it → pay the share (verified webhook) → claim settled, the document share ended |
+| Browser smoke (`e2e/insurance.spec.ts`) | Add a card → pre-arrival check-in with it (token, eligibility pending) → the desk sees them pre-registered, verifies the card, ready, arrived → discharge → the itemised bill and the share → pay the share in test mode → the claim settled |

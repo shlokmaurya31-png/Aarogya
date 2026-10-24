@@ -69,7 +69,7 @@ export interface AiAccess {
   /** Live facts (§7.4): read from these records, if the scope allows their categories. */
   live: { patientIds: string[]; facilityIds: string[]; medications: boolean; allergies: boolean; patientProvidedAllergies: boolean; nurseView: boolean; period?: { from?: Date; to?: Date } };
   /** Week 4c: the share's person (for the access log) and how the caller got in. */
-  share?: { personId: string | null; via: "SHARE_CODE" | "ACCESS_REQUEST" | "BOOKING"; categories: string[] };
+  share?: { personId: string | null; via: "SHARE_CODE" | "ACCESS_REQUEST" | "BOOKING" | "CHECKIN"; categories: string[] };
   permit: AiPermit;
   real: boolean;
 }
@@ -158,6 +158,8 @@ export async function resolveAiAccess(actor: AiActor, req: AccessRequest): Promi
     if (actor.role !== "DOCTOR") throw new AiAccessError(403, "MODE_NOT_ALLOWED");
     const share = await resolveShare({ userId: actor.userId, facilityId: actor.facilityId, role: actor.role }, req.shareId);
     if (!share || !share.patientIds.includes(patient.id)) throw new AiAccessError(404, "NOT_FOUND");
+    // Week 5c: a claim's documents are for billing staff to read, never for the AI.
+    if (share.via === "CLAIM") throw new AiAccessError(404, "NOT_FOUND");
     const g = await recordGate();
     const from = latest(share.recordedFrom ?? undefined, req.period?.from);
     const to = earliest(share.recordedTo ?? undefined, req.period?.to);

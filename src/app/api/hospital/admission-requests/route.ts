@@ -34,6 +34,8 @@ const RequestSchema = z.object({
   priority: z.enum(["ROUTINE", "URGENT", "EMERGENCY"]).optional(),
   reason: z.string().min(1),
   expectedLosDays: z.number().int().min(0).optional(),
+  /** Week 5c: a planned admission's expected date and time (ISO). */
+  plannedAdmissionAt: z.string().datetime().optional(),
   facilityId: z.string().optional(),
 });
 
@@ -61,6 +63,7 @@ export async function POST(req: NextRequest) {
       priority: parsed.data.priority,
       reason: parsed.data.reason,
       expectedLosDays: parsed.data.expectedLosDays,
+      plannedAdmissionAt: parsed.data.plannedAdmissionAt ? new Date(parsed.data.plannedAdmissionAt) : null,
       byUserId: session.userId,
     });
     return { request };

@@ -25,6 +25,7 @@
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-core-journey.ts
  */
 import "./lib/gateBootstrap";
+import { createHmac } from "node:crypto";
 import { prisma } from "../src/lib/db";
 import { registerPatient } from "../src/lib/patient/registration";
 import { registerEdArrival } from "../src/lib/hospital/emergency";
@@ -74,6 +75,14 @@ import { child as householdChild, manager as householdManager } from "./lib/hous
 import { bookForMember, uploadForMember, viewMember } from "../src/lib/household/proxy";
 import { sweepComingOfAge } from "../src/lib/household/comingOfAge";
 import { comingOfAge } from "../src/lib/household/vocab";
+import { addCard } from "../src/lib/insurance/cards";
+import { deskDecide, markArrived, submitPreArrival } from "../src/lib/insurance/checkin";
+import { verifyCheckInCard } from "../src/lib/insurance/cardShares";
+import { insuranceStatus } from "../src/lib/insurance/status";
+import { attachClaimDocuments, requestClaimDocuments } from "../src/lib/insurance/claimDocuments";
+import { handleGatewayWebhook, payShare, setFacilityGateway, setGatewayTransportForTest } from "../src/lib/insurance/hospitalPayments";
+import { recordClaimDecision, settleClaim, submitClaim } from "../src/lib/hospital/billing/claims";
+import { INSURER, admissionFor, appointmentIn, cardKeyForRun, issueBill } from "./lib/insuranceFixture";
 import { revokeAllAccess } from "../src/lib/sharing/revokeAll";
 import { decidePersonConsent } from "../src/lib/person/consent";
 import { personDocumentDownload, staffPersonDocuments, uploadPersonDocument, withdrawPersonDocument } from "../src/lib/person/documents";
@@ -554,9 +563,66 @@ async function main() {
     const kidAfter = await viewMember(parent.userId, kid.childPersonId).then(() => "seen", (e) => e?.constructor?.name ?? "error");
     report("5b: the child turns 18: the guardian grant lapses and the parent sees nothing (404)",
       (await prisma.proxyGrant.findUniqueOrThrow({ where: { id: kid.grantId } })).lapsedReason === "CAME_OF_AGE" && kidAfter === "NotFoundError", kidAfter);
+
+    // Week 5c: the knee patient adds their insurance card → checks in before a visit with it (a token,
+    // eligibility pending) → the desk verifies the card (the facility's coverage) and they go straight to
+    // the doctor → a planned knee replacement: pre-authorization approved → discharge → the itemised bill
+    // and their share → the hospital asks for the MRI and they attach it → they pay their share to the
+    // hospital's own gateway (a signed webhook) → the claim is settled and the document share ends.
+    cardKeyForRun();
+    const deskAdmin = await facilityAdmin(a.facilityId);
+    const deskStaff = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { userId: deskAdmin.userId }, select: { id: true } });
+    const card = await addCard({ userId: k.userId }, { payerType: "PRIVATE_INSURER", payerId: INSURER, memberId: `CJ${kRun.toUpperCase()}KN33` });
+    const visitAppt = await appointmentIn({ patientId: kPatient, facilityId: a.facilityId, doctorStaffId: ortho.id }, 5);
+    const ci = await submitPreArrival({ userId: k.userId }, { appointmentId: visitAppt.id, detailsConfirmed: true, cardId: card.id, share: { categories: ["CONDITIONS"] } });
+    report("5c: pre-arrival check-in with the card: a token, eligibility pending (the insurer isn't waited for)", /^P-\d{3}$/.test(ci.token) && ci.eligibility === "PENDING");
+    const desk = { userId: deskAdmin.userId, facilityId: a.facilityId };
+    const verified = await verifyCheckInCard(desk, ci.id, { outcome: "VERIFIED" });
+    await deskDecide(desk, ci.id, { status: "READY" });
+    const arrived = await markArrived({ ...desk, staffId: deskStaff.id }, ci.id);
+    report("5c: the desk verifies the card into the facility's coverage and the patient goes straight to the doctor's queue",
+      verified.eligibility === "VERIFIED" && arrived.queueType === "OPD_DOCTOR" && (await prisma.patientCoverage.findUniqueOrThrow({ where: { id: verified.coverageId! } })).sourceCardId === card.id);
+    const adm = await admissionFor(kPatient, a.facilityId, ortho.id);
+    const pre = await prisma.$transaction((t) => requestPreAuth(t, { coverageId: verified.coverageId!, encounterId: adm.encounterId, requestedAmountMinor: 25_000_000, requestedByUserId: deskAdmin.userId }));
+    await prisma.$transaction((t) => decidePreAuth(t, pre.id, { status: "APPROVED", approvedAmountMinor: 20_000_000, byUserId: deskAdmin.userId }));
+    await initiateDischarge(adm.admissionId, deskAdmin.userId, ortho.id);
+    const kInv = await issueBill({ encounterId: adm.encounterId, patientId: kPatient, facilityId: a.facilityId, byUserId: deskAdmin.userId }, [["Knee replacement", 180_000], ["Room (4 days)", 40_000], ["Medicines", 6_000]]);
+    await drain();
+    const kClaim = await prisma.claim.findUniqueOrThrow({ where: { invoiceId: kInv.id } });
+    let kBill = (await insuranceStatus({ userId: k.userId })).visits.find((x) => x.encounterId === adm.encounterId)!.bills[0];
+    report("5c: discharge → the itemised bill; the share from the cashless approval (₹2,26,000 − ₹2,00,000); the claim drafted",
+      kBill.lines.length === 3 && kBill.share.basis === "CASHLESS_APPROVAL" && kBill.share.shareMinor === 2_600_000 && kBill.claim?.status === "DRAFT");
+    const kReq = await requestClaimDocuments(desk, kClaim.id, "The insurer asks for the MRI report of the knee.");
+    await attachClaimDocuments({ userId: k.userId }, kReq.id, { documentIds: [mri.id] });
+    const kReqRow = await prisma.claimDocumentRequest.findUniqueOrThrow({ where: { id: kReq.id } });
+    const billingRead = await personDocumentDownload({ kind: "SHARE", userId: deskAdmin.userId, facilityId: a.facilityId, role: "HOSPITAL_ADMIN", shareRef: kReqRow.shareId! }, mri.id);
+    report("5c: the hospital asks for the MRI; the patient attaches it (a CLAIM share of exactly it); billing opens it", kReqRow.status === "FULFILLED" && !!billingRead.url);
+    process.env.RAZORPAY_KEY_SECRET__CJ_JOURNEY = "cj-key-secret";
+    process.env.RAZORPAY_WEBHOOK_SECRET__CJ_JOURNEY = `cj-hook-${kRun}`;
+    setGatewayTransportForTest(async (r) => ({ status: 200, body: JSON.stringify({ id: `order_cj${kRun}`, amount: JSON.parse(r.body ?? "{}").amount, status: "created" }) }));
+    await setFacilityGateway(desk, { keyId: "rzp_test_cjjourney01", secretRef: "CJ_JOURNEY", enabled: true });
+    const kOrder = await payShare({ userId: k.userId }, kInv.id);
+    if (kOrder.status !== "READY") throw new Error("journey: no order");
+    const hook = JSON.stringify({ event: "payment.captured", payload: { payment: { entity: { id: `pay_cj${kRun}`, order_id: kOrder.providerOrderRef, amount: kOrder.amountMinor, status: "captured", method: "card" } } } });
+    const hookOutcome = await handleGatewayWebhook(a.facilityId, hook, createHmac("sha256", `cj-hook-${kRun}`).update(hook).digest("hex"));
+    setGatewayTransportForTest(null);
+    const kOrderRow = await prisma.patientPaymentOrder.findUniqueOrThrow({ where: { id: kOrder.orderId } });
+    report("5c: the patient pays their share to the hospital's gateway: recorded only from the verified webhook, allocated to the bill",
+      hookOutcome === "PAID" && kOrder.amountMinor === 2_600_000 && kOrderRow.status === "PAID" && (await prisma.paymentAllocation.count({ where: { paymentId: kOrderRow.paymentId!, invoiceId: kInv.id } })) === 1);
+    await prisma.$transaction((t) => submitClaim(t, kClaim.id, { byUserId: deskAdmin.userId }));
+    await prisma.$transaction((t) => recordClaimDecision(t, kClaim.id, { status: "UNDER_REVIEW", byUserId: deskAdmin.userId }));
+    await prisma.$transaction((t) => recordClaimDecision(t, kClaim.id, { status: "APPROVED", approvedAmountMinor: 20_000_000, byUserId: deskAdmin.userId }));
+    await prisma.$transaction((t) => settleClaim(t, kClaim.id, { settledAmountMinor: 20_000_000, byUserId: deskAdmin.userId }));
+    await drain();
+    kBill = (await insuranceStatus({ userId: k.userId })).visits.find((x) => x.encounterId === adm.encounterId)!.bills[0];
+    report("5c: the claim goes from submitted to settled; the claim's document share ends; nothing more is due; the patient was told at each step",
+      kBill.claim?.status === "SETTLED" && kBill.claim.steps.every((x) => x.done) && kBill.share.dueMinor === 0
+        && (await prisma.recordShare.findUniqueOrThrow({ where: { id: kReqRow.shareId! } })).endedReason === "CLAIM_CLOSED"
+        && (await prisma.personNotification.count({ where: { personId: kPerson, kind: { in: ["INSURANCE_UPDATE", "BILL_READY", "DOCUMENTS_REQUESTED"] } } })) >= 5);
+    directoryEventIds.push(...(await prisma.domainEventOutbox.findMany({ where: { aggregateId: { in: [ci.id, card.id, kInv.id, kClaim.id, kReq.id, kOrder.orderId, pre.id, kReqRow.shareId!, visitAppt.id] } }, select: { eventId: true } })).map((e) => e.eventId));
   }
 
-  // Every consumer took part in the journey (the directory booking included).
+  // Every consumer took part in the journey (the directory booking and the 5c insurance story included).
   const consumersSeen = new Set((await prisma.domainEventDelivery.findMany({ where: { eventId: { in: [...ids, ...directoryEventIds] }, status: "PROCESSED" }, select: { consumerName: true }, distinct: ["consumerName"] })).map((d) => d.consumerName));
   const missing = EXPECTED_CONSUMERS.filter((c) => !consumersSeen.has(c));
   report(`Every registered consumer (${EXPECTED_CONSUMERS.length}) processed journey events`, missing.length === 0, missing.join(",") || [...consumersSeen].sort().join(","));

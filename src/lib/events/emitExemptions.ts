@@ -161,6 +161,8 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/rag/interactions.ts#purgeProxyAiText": { category: "CONSUMER_OUTPUT", reason: "retained AI text of a family member whose access was revoked (FamilyAccessRevoked already emitted)" },
   "src/lib/rag/interactions.ts#logInteraction": { category: "BOOKKEEPING", reason: "the AI interaction log (metadata and encrypted text), BOOKKEEPING by design (docs/RAG_DESIGN.md §3.3); no record changes" },
   "src/lib/household/dependentConsent.ts#legalDocumentUrl": { category: "BOOKKEEPING", reason: "Week 5b: the reviewing staff member's read of a legal document, in the member's access log (part of the read)" },
+  "src/lib/insurance/cards.ts#cardForEdit": { category: "BOOKKEEPING", reason: "Week 5c: a proxy's read of a member's card, in the member's access log (part of the read)" },
+  "src/lib/insurance/cards.ts#staffCard": { category: "BOOKKEEPING", reason: "Week 5c: a facility's read of a card through its card share, in the member's access log (part of the read)" },
   "src/lib/household/proxy.ts#logProxy": { category: "BOOKKEEPING", reason: "Week 5b: a proxy's action in the member's access log (docs/HOUSEHOLD_DESIGN.md §5): part of the action, no record changes" },
   "src/lib/rag/access.ts#resolveAiAccess": { category: "BOOKKEEPING", reason: "Week 5b: a proxy's AI request in the member's access log (part of the read)" },
   "src/lib/household/guardianConsent.ts#startGuardianConsent": { category: "PROCESS_STEP", reason: "Week 5b: a pending guardian's choice for a managed child (the code sent); confirming it records the consent", boundary: ["PersonConsentDecided"] },

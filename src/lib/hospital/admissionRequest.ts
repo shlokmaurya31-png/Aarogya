@@ -57,11 +57,14 @@ export async function createAdmissionRequest(input: {
   priority?: "ROUTINE" | "URGENT" | "EMERGENCY";
   reason: string;
   expectedLosDays?: number;
+  /** Week 5c: a planned admission's expected date (pre-arrival check-in opens 24 hours before). */
+  plannedAdmissionAt?: Date | null;
   byUserId: string;
 }) {
   return prisma.$transaction(async (tx) => {
     const request = await tx.admissionRequest.create({
       data: {
+        plannedAdmissionAt: input.plannedAdmissionAt ?? null,
         patientId: input.patientId,
         encounterId: input.encounterId,
         facilityId: input.facilityId,

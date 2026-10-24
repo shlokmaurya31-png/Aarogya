@@ -62,7 +62,7 @@ async function main() {
   report("The share: BOOKING, ACTIVE, for that doctor at Noida, the default categories (uploads in, notes out, nothing sensitive)",
     share.kind === "BOOKING" && share.status === "ACTIVE" && share.recipientUserId === doc.userId && share.recipientFacilityId === NOIDA && share.categories.includes("UPLOADS") && !share.categories.includes("CLINICAL_NOTES") && share.sensitiveCategories.length === 0);
   report("…valid from a day before the slot to a day after it", share.validFrom!.getTime() === appt.scheduledStart.getTime() - 86_400_000 && share.expiresAt.getTime() === appt.scheduledEnd.getTime() + 86_400_000);
-  report("…with RecordShareCreated (v2, kind BOOKING)", (await eventsOf(share.id, "RecordShareCreated")).some((e) => e.eventVersion === 2 && (e.payload as { kind?: string }).kind === "BOOKING"));
+  report("…with RecordShareCreated (v3 since 5c, kind BOOKING)", (await eventsOf(share.id, "RecordShareCreated")).some((e) => e.eventVersion === 3 && (e.payload as { kind?: string }).kind === "BOOKING"));
 
   // 2. Reading through it.
   const actor = { userId: doc.userId, facilityId: NOIDA, role: "DOCTOR" };

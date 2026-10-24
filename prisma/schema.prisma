@@ -3463,6 +3463,8 @@ model PatientCoverage {
   status        CoverageStatus @default(ACTIVE)
   addedByUserId String
   createdAt     DateTime       @default(now())
+  /// Week 5c: the patient's InsuranceCard this coverage was verified from (at the desk, or by eligibility later).
+  sourceCardId  String?
 
   preAuths PreAuthorization[]
   claims   Claim[]
@@ -4363,6 +4365,8 @@ model AdmissionRequest {
   priority           RequestPriority        @default(ROUTINE)
   reason             String
   expectedLosDays    Int?
+  /// Week 5c: when a planned admission is expected (pre-arrival check-in opens 24 hours before).
+  plannedAdmissionAt DateTime?
   status             AdmissionRequestStatus @default(PENDING) // PENDING | DEFERRED | BED_RESERVED | ADMITTED | REJECTED | CANCELLED
   reviewedBy         HospitalStaffProfile?  @relation("AdmissionReviewedBy", fields: [reviewedByStaffId], references: [id])
   reviewedByStaffId  String?
@@ -11295,6 +11299,10 @@ enum RecordShareKind {
   REQUEST
   /// Week 5a: attached to a directory booking, for its doctor, from a day before the slot to a day after.
   BOOKING
+  /// Week 5c: attached at pre-arrival check-in, for the visit's doctor (or the admitting doctor), until a day after the visit.
+  CHECKIN
+  /// Week 5c: documents the patient attached for a claim the hospital is preparing; exactly those documents, for the facility's billing staff, for the claim's life.
+  CLAIM
 }
 
 enum RecordShareStatus {
@@ -11334,6 +11342,10 @@ enum ShareEndReason {
   PERSON_CLOSED
   /// Week 5a: the booking it was attached to was cancelled.
   APPOINTMENT_CANCELLED
+  /// Week 5c: the check-in it was attached to lapsed or was cancelled.
+  CHECKIN_ENDED
+  /// Week 5c: the claim it was attached to was closed or settled.
+  CLAIM_CLOSED
 }
 
 enum AccessRequesterKind {
@@ -11368,6 +11380,8 @@ model RecordShare {
   accessRequestId     String?                @unique
   /// Week 5a: a BOOKING share reads only from here (a day before the slot); null = from creation.
   validFrom           DateTime?
+  /// Week 5c: a CLAIM share covers exactly these uploads (and nothing else).
+  documentIds         String[]               @default([])
   expiresAt           DateTime
   createdByUserId     String
   createdAt           DateTime               @default(now())
@@ -11444,6 +11458,14 @@ enum PersonNotificationKind {
   ACCESS_REQUESTED
   /// Week 5b: a managed child turns 18 within 30 days (to the managers).
   COMING_OF_AGE
+  /// Week 5c: pre-arrival check-in is open for a visit or a planned admission.
+  CHECKIN_OPEN
+  /// Week 5c: a pre-authorization, cashless decision or claim changed (no amounts in the text).
+  INSURANCE_UPDATE
+  /// Week 5c: the hospital asked for documents for a claim.
+  DOCUMENTS_REQUESTED
+  /// Week 5c: a bill is ready (the itemised bill and the patient's share).
+  BILL_READY
 }
 
 enum PersonNotificationStatus {
@@ -11915,4 +11937,223 @@ enum MemberClaimStatus {
   COMPLETED
   EXPIRED
   CANCELLED
+}
+
+// ── Week 5c — patient insurance and check-in (docs/PATIENT_INSURANCE_DESIGN.md) ──
+// InsuranceCard and CardShare are person-scoped (patient-provided; a facility
+// trusts a card only after its staff verify it into PatientCoverage).
+// PreArrivalCheckIn, ClaimDocumentRequest, FacilityPaymentGateway and
+// PatientPaymentOrder are the facility's.
+
+enum InsurancePayerType {
+  PRIVATE_INSURER
+  CORPORATE
+  GOVERNMENT_SCHEME
+}
+
+enum InsuranceCardStatus {
+  ACTIVE
+  REMOVED
+}
+
+/// A member's insurance card. The member and policy numbers are encrypted
+/// (INSURANCE_CARD_KEY_<version>) and shown masked to the last 4. The photos
+/// are stored like uploads but are never a PersonDocument, so the document
+/// pipeline never reads them.
+model InsuranceCard {
+  id              String              @id @default(cuid())
+  personId        String
+  payerType       InsurancePayerType
+  /// GOVERNMENT_SCHEME only: a code from GOVERNMENT_SCHEMES (PM_JAY, …).
+  scheme          String?
+  payerId         String?
+  payerName       String
+  planName        String?
+  memberIdCipher  String
+  memberIdLast4   String
+  policyCipher    String?
+  policyLast4     String?
+  keyVersion      Int
+  validFrom       DateTime?
+  validTo         DateTime?
+  frontImageRef   String?
+  backImageRef    String?
+  status          InsuranceCardStatus @default(ACTIVE)
+  addedByPersonId String
+  version         Int                 @default(1)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  removedAt       DateTime?
+
+  @@index([personId, status])
+}
+
+enum CardShareStatus {
+  ACTIVE
+  ENDED
+}
+
+/// A card shared with one facility for one visit (a pre-arrival check-in).
+model CardShare {
+  id                  String          @id @default(cuid())
+  cardId              String
+  personId            String
+  recipientFacilityId String
+  checkInId           String?         @unique
+  status              CardShareStatus @default(ACTIVE)
+  expiresAt           DateTime
+  endedAt             DateTime?
+  endedReason         String?
+  createdByPersonId   String
+  createdAt           DateTime        @default(now())
+  version             Int             @default(1)
+
+  @@index([personId, status])
+  @@index([recipientFacilityId, status])
+}
+
+enum PreArrivalKind {
+  APPOINTMENT
+  ADMISSION
+}
+
+enum PreArrivalStatus {
+  SUBMITTED
+  READY
+  NEEDS_DESK
+  ARRIVED
+  LAPSED
+  CANCELLED
+}
+
+/// Insurance at check-in: never waits for the insurer. PENDING until staff verify the card.
+enum PreArrivalEligibility {
+  SELF_PAY
+  PENDING
+  VERIFIED
+  NOT_VERIFIED
+}
+
+/// A patient's check-in before arriving: details confirmed, an optional share
+/// and card, and a token; the desk sees them as pre-registered.
+model PreArrivalCheckIn {
+  id                  String                @id @default(cuid())
+  facilityId          String
+  kind                PreArrivalKind
+  appointmentId       String?               @unique
+  admissionRequestId  String?               @unique
+  patientId           String
+  personId            String
+  status              PreArrivalStatus      @default(SUBMITTED)
+  needsDeskReason     String?
+  eligibility         PreArrivalEligibility
+  /// The queue token, e.g. "P-017": per facility and India day.
+  token               String
+  tokenDay            String
+  shareId             String?               @unique
+  cardShareId         String?               @unique
+  submittedByPersonId String
+  submittedAt         DateTime              @default(now())
+  decidedByUserId     String?
+  decidedAt           DateTime?
+  arrivedAt           DateTime?
+  version             Int                   @default(1)
+
+  @@unique([facilityId, tokenDay, token])
+  @@index([facilityId, status])
+  @@index([personId])
+}
+
+enum ClaimDocumentRequestStatus {
+  OPEN
+  FULFILLED
+  CANCELLED
+}
+
+/// The hospital asks the patient for documents for a claim (an insurer's
+/// query). The patient doesn't answer the insurer; they attach uploads,
+/// which reach the facility through a CLAIM share of exactly those documents.
+model ClaimDocumentRequest {
+  id                String                     @id @default(cuid())
+  facilityId        String
+  claimId           String
+  patientId         String
+  /// What is needed, in plain words (staff-written; no clinical detail is required).
+  description       String
+  status            ClaimDocumentRequestStatus @default(OPEN)
+  shareId           String?                    @unique
+  requestedByUserId String
+  fulfilledByUserId String?
+  createdAt         DateTime                   @default(now())
+  fulfilledAt       DateTime?
+  version           Int                        @default(1)
+
+  @@index([facilityId, status])
+  @@index([patientId, status])
+  @@index([claimId])
+}
+
+enum FacilityGatewayMode {
+  TEST
+  LIVE
+}
+
+/// A facility's own payment-gateway account: patients' payments go to the
+/// HOSPITAL, never through an Aarogya account. Only the public key id is
+/// stored; the secrets come from the environment under the facility's
+/// secretRef (RAZORPAY_KEY_SECRET__<REF>, RAZORPAY_WEBHOOK_SECRET__<REF>).
+model FacilityPaymentGateway {
+  id                 String              @id @default(cuid())
+  facilityId         String              @unique
+  provider           String              @default("RAZORPAY")
+  mode               FacilityGatewayMode @default(TEST)
+  keyId              String
+  secretRef          String
+  enabled            Boolean             @default(false)
+  configuredByUserId String
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  version            Int                 @default(1)
+}
+
+enum PatientPaymentOrderStatus {
+  CREATED
+  PAID
+  FAILED
+}
+
+/// An order created with the facility's gateway for the patient's share of
+/// one invoice. The amount is the server's; it is PAID only from the
+/// gateway's verified webhook.
+model PatientPaymentOrder {
+  id                 String                    @id @default(cuid())
+  facilityId         String
+  invoiceId          String
+  patientId          String
+  amountMinor        Int
+  currency           String                    @default("INR")
+  mode               FacilityGatewayMode
+  providerOrderRef   String                    @unique
+  status             PatientPaymentOrderStatus @default(CREATED)
+  paymentId          String?                   @unique
+  providerPaymentRef String?                   @unique
+  createdByUserId    String
+  createdAt          DateTime                  @default(now())
+  paidAt             DateTime?
+  version            Int                       @default(1)
+
+  @@index([facilityId, status])
+  @@index([invoiceId])
+}
+
+/// Each gateway webhook once (replays change nothing).
+model FacilityGatewayWebhook {
+  id              String   @id @default(cuid())
+  facilityId      String
+  externalEventId String
+  eventType       String
+  outcome         String
+  receivedAt      DateTime @default(now())
+
+  @@unique([facilityId, externalEventId])
 }

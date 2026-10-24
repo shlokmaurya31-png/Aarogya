@@ -14,6 +14,9 @@ import { sweepAccessSummaries } from "@/lib/person/notifications";
 import { sweepNextSlots } from "@/lib/doctors/slots";
 import { purgeVerificationDocuments } from "@/lib/doctors/verification";
 import { sweepComingOfAge } from "@/lib/household/comingOfAge";
+import { sweepExpiredCardShares } from "@/lib/insurance/cardShares";
+import { sweepStaleCheckIns } from "@/lib/insurance/checkin";
+import { sweepCheckInOpen } from "@/lib/insurance/notify";
 import { registerAllConsumers } from "./consumers";
 
 /**
@@ -67,6 +70,7 @@ export interface RunTickResult {
   doctors: { slotsRefreshed: number; documentsPurged: number };
   /** Week 5b: managers told 30 days before a child turns 18; guardian grants lapsed on the day. */
   households: { noticed: number; cameOfAge: number };
+  insurance: { cardSharesEnded: number; checkInsLapsed: number; checkInNotices: number };
   durationMs: number;
   /** True when a batch limit was hit, i.e. there may be more work now. */
   moreWork: boolean;
@@ -110,6 +114,10 @@ export async function runTick(opts: RunTickOptions = {}): Promise<RunTickResult>
     ? { slotsRefreshed: (await sweepNextSlots({ now: opts.now })).refreshed, documentsPurged: (await purgeVerificationDocuments({ now: opts.now })).purged }
     : { slotsRefreshed: 0, documentsPurged: 0 };
   const households = Date.now() - started < budgetMs ? await sweepComingOfAge({ now: opts.now }) : { noticed: 0, cameOfAge: 0 };
+  // Week 5c: card shares past their expiry, check-ins nobody arrived for, and "check-in is open" notices.
+  const insurance = Date.now() - started < budgetMs
+    ? { cardSharesEnded: (await sweepExpiredCardShares(opts.now)).ended, checkInsLapsed: (await sweepStaleCheckIns(opts.now)).lapsed, checkInNotices: (await sweepCheckInOpen(opts.now)).queued }
+    : { cardSharesEnded: 0, checkInsLapsed: 0, checkInNotices: 0 };
 
   return {
     consumers,
@@ -125,6 +133,7 @@ export async function runTick(opts: RunTickOptions = {}): Promise<RunTickResult>
     sharing,
     doctors,
     households,
+    insurance,
     durationMs: Date.now() - started,
     moreWork: events.claimed >= eventBatchSize || workflows.timersFired >= workflowBatchSize || workflows.instancesRun >= workflowBatchSize || mar.missed >= marBatchSize,
   };
