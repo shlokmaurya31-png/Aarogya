@@ -44,6 +44,11 @@ const shareCategory = z.enum(["PRESCRIPTIONS", "LABS", "IMAGING", "DISCHARGE_SUM
 const sharePurpose = z.enum(["CONSULTATION", "SECOND_OPINION", "FOLLOW_UP", "REFERRAL", "OTHER"]);
 const shareEndReason = z.enum(["VISIT_ENDED", "EXPIRED", "PATIENT_ENDED", "REVOKE_ALL", "PERSON_CLOSED"]);
 const shareEndReasonV2 = z.enum(["VISIT_ENDED", "EXPIRED", "PATIENT_ENDED", "REVOKE_ALL", "PERSON_CLOSED", "APPOINTMENT_CANCELLED"]);
+// Week 5c: shares attached at check-in and for a claim's documents.
+const shareKindV3 = z.enum(["CODE", "REQUEST", "BOOKING", "CHECKIN", "CLAIM"]);
+const shareEndReasonV3 = z.enum(["VISIT_ENDED", "EXPIRED", "PATIENT_ENDED", "REVOKE_ALL", "PERSON_CLOSED", "APPOINTMENT_CANCELLED", "CHECKIN_ENDED", "CLAIM_CLOSED"]);
+const preArrivalStatus = z.enum(["SUBMITTED", "READY", "NEEDS_DESK", "ARRIVED", "LAPSED", "CANCELLED"]);
+const preArrivalEligibility = z.enum(["SELF_PAY", "PENDING", "VERIFIED", "NOT_VERIFIED"]);
 const consultMode = z.enum(["IN_PERSON", "VIDEO"]);
 const householdMemberStatus = z.enum(["INVITED", "PENDING_CONSENT", "ACTIVE", "AWAITING_CLAIM", "LEFT", "REMOVED"]);
 const proxyGrantStatus = z.enum(["PENDING_CONFIRMATION", "ACTIVE", "REVOKED", "LAPSED"]);
@@ -1682,6 +1687,79 @@ export const EVENT_CONTRACTS: EventContract[] = [
     type: "RecordConflictAcknowledged", version: 1, aggregateType: "RECORD_CONFLICT", scope: "FACILITY",
     sensitivity: "INTERNAL", producer: "document pipeline (acknowledgeConflict: a clinician saw it, or resolved it by recording a verified entry)",
     payload: z.object({ conflictId: id, patientId: id, status: z.enum(["ACKNOWLEDGED", "RESOLVED_BY_CLINICIAN"]), staffId: id }).strict(),
+  }),
+  // ── Week 5c — patient insurance and check-in (docs/PATIENT_INSURANCE_DESIGN.md §9, §14) ──
+  contract({
+    type: "RecordShareCreated", version: 3, aggregateType: "RECORD_SHARE", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "consent sharing (a code; an approved request; a directory booking; a pre-arrival check-in; documents attached for a claim)",
+    payload: z.object({
+      shareId: id, personId: id, kind: shareKindV3, status: shareStatus, purpose: sharePurpose, categories: z.array(shareCategory).min(1),
+      sensitiveCategories: z.array(sensitiveCategory), hasPeriod: z.boolean(), expiresAt: iso, validFrom: iso.optional(),
+      /** CLAIM only: how many uploads it covers (never which). */
+      documentCount: z.number().int().nonnegative().optional(),
+    }).strict(),
+  }),
+  contract({
+    type: "RecordShareStatusChanged", version: 3, aggregateType: "RECORD_SHARE", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "consent sharing (redeemed, ended, expired, revoked; a booking cancelled; a check-in ended; a claim closed)",
+    payload: z.object({ shareId: id, personId: id, from: shareStatus, to: shareStatus, endedReason: shareEndReasonV3.optional() }).strict(),
+  }),
+  contract({
+    type: "PersonNotificationQueued", version: 3, aggregateType: "PERSON_NOTIFICATION", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "person notifications (the access-summary, coming-of-age and check-in sweeps; the person-notifier; patient-insurance-notify)",
+    payload: z.object({ notificationId: id, personId: id, kind: z.enum(["ACCESS_SUMMARY", "BREAK_GLASS_ACCESS", "ACCESS_REQUESTED", "COMING_OF_AGE", "CHECKIN_OPEN", "INSURANCE_UPDATE", "DOCUMENTS_REQUESTED", "BILL_READY"]) }).strict(),
+  }),
+  contract({
+    type: "InsuranceCardChanged", version: 1, aggregateType: "INSURANCE_CARD", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "insurance cards (addCard, updateCard, setCardPhoto, removeCard: the member or an INSURANCE proxy); never a member or policy number",
+    payload: z.object({
+      insuranceId: id, personId: id, change: z.enum(["ADDED", "UPDATED", "REMOVED"]), status: z.enum(["ACTIVE", "REMOVED"]),
+      payerType: z.enum(["PRIVATE_INSURER", "CORPORATE", "GOVERNMENT_SCHEME"]), hasPhotos: z.boolean(),
+    }).strict(),
+  }),
+  contract({
+    type: "CardShareStatusChanged", version: 1, aggregateType: "CARD_SHARE", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "card shares (made at pre-arrival check-in; ended with the check-in, the card, or by expiry)",
+    payload: z.object({ insuranceShareId: id, insuranceId: id, personId: id, recipientFacilityId: id, from: z.enum(["NONE", "ACTIVE"]), to: z.enum(["ACTIVE", "ENDED"]) }).strict(),
+  }),
+  contract({
+    type: "PreArrivalCheckInSubmitted", version: 1, aggregateType: "PRE_ARRIVAL_CHECKIN", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "pre-arrival check-in (submitPreArrival: the patient or a BOOK proxy)",
+    payload: z.object({
+      checkInId: id, kind: z.enum(["APPOINTMENT", "ADMISSION"]), patientId: id, appointmentId: optId, admissionRequestId: optId,
+      status: z.enum(["SUBMITTED", "NEEDS_DESK"]), eligibility: preArrivalEligibility, hasShare: z.boolean(), hasInsurance: z.boolean(),
+    }).strict(),
+  }),
+  contract({
+    type: "PreArrivalCheckInStatusChanged", version: 1, aggregateType: "PRE_ARRIVAL_CHECKIN", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "pre-arrival check-in (the desk: READY, NEEDS_DESK, ARRIVED; the patient: CANCELLED; checkin-lifecycle and the sweep: LAPSED; card verification)",
+    payload: z.object({
+      checkInId: id, patientId: id, from: preArrivalStatus, to: preArrivalStatus,
+      needsDeskReason: z.enum(["CARD_NOT_VERIFIED", "DETAILS_MISMATCH", "PAYMENT_BEFORE_CONSULTATION", "DOCUMENTS_NEEDED"]).optional(),
+    }).strict(),
+  }),
+  contract({
+    type: "CoverageVerifiedFromCard", version: 1, aggregateType: "PRE_ARRIVAL_CHECKIN", scope: "FACILITY",
+    sensitivity: "LOW", producer: "card verification (verifyCheckInCard: staff checked the card at the desk; eligibility later)",
+    payload: z.object({ checkInId: id, patientId: id, insuranceShareId: id, coverageId: optId, method: z.enum(["MANUAL", "ELIGIBILITY"]), outcome: z.enum(["VERIFIED", "NOT_VERIFIED"]) }).strict(),
+  }),
+  contract({
+    type: "ClaimDocumentRequestChanged", version: 1, aggregateType: "CLAIM_DOCUMENT_REQUEST", scope: "FACILITY",
+    sensitivity: "LOW", producer: "claim documents (the hospital asks; the patient attaches uploads; the hospital cancels); never what is asked",
+    payload: z.object({ requestId: id, claimId: id, patientId: id, from: z.enum(["NONE", "OPEN"]), to: z.enum(["OPEN", "FULFILLED", "CANCELLED"]), shareId: optId }).strict(),
+  }),
+  contract({
+    type: "FacilityPaymentGatewayChanged", version: 1, aggregateType: "FACILITY_PAYMENT_GATEWAY", scope: "FACILITY",
+    sensitivity: "LOW", producer: "hospital payments (setFacilityGateway: the facility's own gateway account); never a key or secret",
+    payload: z.object({ gatewayId: id, provider: z.enum(["RAZORPAY"]), mode: z.enum(["TEST", "LIVE"]), enabled: z.boolean() }).strict(),
+  }),
+  contract({
+    type: "PatientPaymentOrderChanged", version: 1, aggregateType: "PATIENT_PAYMENT_ORDER", scope: "FACILITY",
+    sensitivity: "LOW", producer: "hospital payments (payShare: an order with the facility's gateway; its verified webhook: paid or failed)",
+    payload: z.object({
+      orderId: id, invoiceId: id, patientId: id, from: z.enum(["NONE", "CREATED"]), to: z.enum(["CREATED", "PAID", "FAILED"]),
+      amountMinor: minor, currency, mode: z.enum(["TEST", "LIVE"]), paymentId: optId,
+    }).strict(),
   }),
 ];
 

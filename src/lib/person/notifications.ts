@@ -47,6 +47,22 @@ const TEXTS: Record<string, Texts> = {
       title: "A child in your family turns 18 soon",
       body: `A profile you manage becomes its owner's own in ${d.days} day${d.days === 1 ? "" : "s"}. From then on you see it only if they choose. Open Aarogya to hand it over.`,
     }),
+    CHECKIN_OPEN: () => ({
+      title: "You can check in before you arrive",
+      body: "Check-in is open for your visit. Confirm your details, add your insurance card and get your token in Aarogya, so you don't wait at the desk.",
+    }),
+    INSURANCE_UPDATE: () => ({
+      title: "An update on your insurance",
+      body: "Something changed with your insurance approval, bill or claim. Open Aarogya to see what it means for you.",
+    }),
+    DOCUMENTS_REQUESTED: () => ({
+      title: "The hospital needs a document for your claim",
+      body: "The hospital asked for a document to support your insurance claim. Open Aarogya to see what is needed and attach it.",
+    }),
+    BILL_READY: () => ({
+      title: "Your bill is ready",
+      body: "Your itemised bill is ready. Open Aarogya to see it and your share to pay.",
+    }),
   },
   hi: {
     ACCESS_SUMMARY: (d) => ({
@@ -64,6 +80,22 @@ const TEXTS: Record<string, Texts> = {
     COMING_OF_AGE: (d) => ({
       title: "आपके परिवार में कोई जल्द 18 का होगा",
       body: `आपके द्वारा प्रबंधित एक प्रोफ़ाइल ${d.days} दिन में उसके मालिक की अपनी हो जाएगी। उसके बाद आप उसे तभी देखेंगे जब वे चुनें। सौंपने के लिए Aarogya खोलें।`,
+    }),
+    CHECKIN_OPEN: () => ({
+      title: "आने से पहले चेक-इन करें",
+      body: "आपकी विज़िट के लिए चेक-इन खुल गया है। Aarogya में अपनी जानकारी की पुष्टि करें, बीमा कार्ड जोड़ें और टोकन लें, ताकि डेस्क पर इंतज़ार न करना पड़े।",
+    }),
+    INSURANCE_UPDATE: () => ({
+      title: "आपके बीमा के बारे में नई जानकारी",
+      body: "आपकी बीमा स्वीकृति, बिल या क्लेम में कुछ बदला है। आपके लिए इसका क्या अर्थ है, यह देखने के लिए Aarogya खोलें।",
+    }),
+    DOCUMENTS_REQUESTED: () => ({
+      title: "आपके क्लेम के लिए अस्पताल को एक दस्तावेज़ चाहिए",
+      body: "अस्पताल ने आपके बीमा क्लेम के लिए एक दस्तावेज़ माँगा है। क्या चाहिए, यह देखने और उसे जोड़ने के लिए Aarogya खोलें।",
+    }),
+    BILL_READY: () => ({
+      title: "आपका बिल तैयार है",
+      body: "आपका विस्तृत बिल तैयार है। उसे और आपको चुकाने वाला हिस्सा देखने के लिए Aarogya खोलें।",
     }),
   },
 };

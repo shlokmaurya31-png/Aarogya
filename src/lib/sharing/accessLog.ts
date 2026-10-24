@@ -6,7 +6,7 @@ import { prisma } from "@/lib/db";
  * from which facility, through which way in, on which surface, which
  * categories. Part of the read (bookkeeping), not a state change.
  */
-export type AccessVia = "SHARE_CODE" | "ACCESS_REQUEST" | "BOOKING" | "TREATING" | "ORG_CONSENT" | "BREAK_GLASS";
+export type AccessVia = "SHARE_CODE" | "ACCESS_REQUEST" | "BOOKING" | "CHECKIN" | "CLAIM" | "TREATING" | "ORG_CONSENT" | "BREAK_GLASS";
 export type AccessSurface = "CONSULT_VIEW" | "SHARED_RECORD_VIEW" | "AI_ASK" | "DOCUMENT_DOWNLOAD";
 
 export async function logRecordAccess(input: {

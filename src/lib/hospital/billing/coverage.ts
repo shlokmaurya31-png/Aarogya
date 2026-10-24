@@ -55,6 +55,8 @@ export async function addPatientCoverage(
     validTo?: Date | null;
     priorityOrder?: number;
     addedByUserId: string;
+    /** Week 5c: the patient's InsuranceCard it was verified from. */
+    sourceCardId?: string | null;
   }
 ) {
   const priorityOrder = input.priorityOrder ?? 1;
@@ -77,6 +79,7 @@ export async function addPatientCoverage(
       validTo: input.validTo ?? null,
       priorityOrder,
       addedByUserId: input.addedByUserId,
+      sourceCardId: input.sourceCardId ?? null,
     },
   });
   await emitCoverageStatus(tx, coverage, null, input.addedByUserId);

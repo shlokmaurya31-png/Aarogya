@@ -33,7 +33,9 @@ export function sensitiveAllowed(allowed: readonly RagSensitiveCategory[], input
  * share's own person, a current document that isn't an ID proof, uploaded
  * inside the period, and not sensitive unless opted in.
  */
-export function sharedDocumentVisible(scope: ShareScope, doc: { personId: string; status: string; type: string; title: string; uploadedAt: Date }): boolean {
+export function sharedDocumentVisible(scope: ShareScope, doc: { id?: string; personId: string; status: string; type: string; title: string; uploadedAt: Date }): boolean {
+  // Week 5c: a CLAIM share is exactly its documents.
+  if (scope.documentIds && (!doc.id || !scope.documentIds.includes(doc.id))) return false;
   return scope.categories.includes("UPLOADS") && !!scope.personId && doc.personId === scope.personId && doc.status === "CURRENT" && doc.type !== "ID_PROOF"
     && inPeriod(doc.uploadedAt, scope.recordedFrom, scope.recordedTo) && sensitiveAllowed(scope.sensitive, { texts: texts(doc.title) });
 }
