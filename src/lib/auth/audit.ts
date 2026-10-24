@@ -90,6 +90,9 @@ export type AuditEventType =
   // Week 5b — households.
   | "household.minor.added"
   | "household.guardianConsent.decided"
+  | "security.selfAccess"
+  | "security.loginPhone.verified"
+  | "security.loginPhone.removed"
   | "household.dependent.firstCheck"
   | "household.dependent.confirmed"
   | "household.dependent.documentReviewed"

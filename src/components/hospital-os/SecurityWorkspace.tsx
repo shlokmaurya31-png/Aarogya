@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ShieldAlert, Siren, FileLock2, Activity, AlertTriangle } from "lucide-react";
+import { ShieldAlert, Siren, FileLock2, Activity, AlertTriangle, UserCheck } from "lucide-react";
 import { Card, CardLabel } from "@/components/ui/Card";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { useToastStore } from "@/store/useToastStore";
@@ -10,6 +10,7 @@ import { ToastViewport } from "@/components/shared/ToastViewport";
 import type { ApiResult, Serialized } from "@/lib/types/api";
 import type { listBreakGlass, breakGlassAbuseReport, EMERGENCY_CONTEXTS } from "@/lib/auth/authorize/breakGlass";
 import type { listPrivacyRequests, PRIVACY_REQUEST_TYPES, describeRetention } from "@/lib/auth/authorize/privacy";
+import type { selfAccessReport } from "@/lib/doctors/self";
 
 /** GET /api/hospital/security/break-glass */
 interface BreakGlassView {
@@ -24,6 +25,9 @@ interface PrivacyView {
   retention: Serialized<ReturnType<typeof describeRetention>>;
 }
 
+/** GET /api/hospital/security/self-access */
+type SelfAccessView = ApiResult<typeof selfAccessReport>;
+
 /**
  * Phase C4 — Hospital OS trust and security workspace.
  *
@@ -36,11 +40,12 @@ interface PrivacyView {
  *     says so, naming the mechanism that IS enforced.
  *   - No token, secret or clinical payload is rendered anywhere.
  */
-type Tab = "overview" | "breakglass" | "privacy" | "sessions";
+type Tab = "overview" | "breakglass" | "selfaccess" | "privacy" | "sessions";
 
 const TABS: { id: Tab; label: string; icon: typeof ShieldAlert }[] = [
   { id: "overview", label: "Overview", icon: Activity },
   { id: "breakglass", label: "Emergency Access", icon: Siren },
+  { id: "selfaccess", label: "Own-Chart Reads", icon: UserCheck },
   { id: "privacy", label: "Privacy Requests", icon: FileLock2 },
   { id: "sessions", label: "Sessions & MFA", icon: ShieldAlert },
 ];
@@ -65,6 +70,7 @@ export function SecurityWorkspace() {
   const [tab, setTab] = useState<Tab>("overview");
   const [breakGlass, setBreakGlass] = useState<BreakGlassView | null>(null);
   const [privacy, setPrivacy] = useState<PrivacyView | null>(null);
+  const [selfAccess, setSelfAccess] = useState<SelfAccessView | null>(null);
 
   const loadBreakGlass = useCallback(() => {
     fetch("/api/hospital/security/break-glass")
@@ -73,6 +79,10 @@ export function SecurityWorkspace() {
   const loadPrivacy = useCallback(() => {
     fetch("/api/hospital/security/privacy-requests")
       .then((r) => r.json()).then((d) => setPrivacy(d ?? null)).catch(() => setPrivacy(null));
+  }, []);
+  useEffect(() => {
+    fetch("/api/hospital/security/self-access")
+      .then((r) => (r.ok ? r.json() : null)).then((d) => setSelfAccess(d ?? null)).catch(() => setSelfAccess(null));
   }, []);
   useEffect(loadBreakGlass, [loadBreakGlass]);
   useEffect(loadPrivacy, [loadPrivacy]);
@@ -112,6 +122,7 @@ export function SecurityWorkspace() {
             <Metric label="Emergency access open" value={report?.active ?? 0} tone={(report?.active ?? 0) > 0 ? "amber" : "neutral"} />
             <Metric label="Lapsed, unswept" value={report?.lapsed ?? 0} tone={(report?.lapsed ?? 0) > 0 ? "amber" : "neutral"} />
             <Metric label="Activated, never used" value={report?.unused ?? 0} tone={(report?.unused ?? 0) > 0 ? "amber" : "neutral"} />
+            <Metric label="Own-chart reads (30 days)" value={selfAccess?.total ?? 0} tone={(selfAccess?.total ?? 0) > 0 ? "amber" : "neutral"} />
             <Metric label="Privacy requests" value={privacy?.requests?.length ?? 0} />
           </div>
           <p className="mt-3 rounded-xl border border-hairline px-3 py-2 text-[11px] leading-relaxed text-text-tertiary">
@@ -119,6 +130,29 @@ export function SecurityWorkspace() {
             for a bounded period. It never unlocks external disclosure, never crosses a
             facility boundary, and every use is recorded.
           </p>
+        </Card>
+      )}
+
+      {tab === "selfaccess" && (
+        <Card>
+          <CardLabel>Staff who read their own chart</CardLabel>
+          <p className="mt-2 text-[11px] leading-relaxed text-text-tertiary">
+            Staff may read their own chart here (they may be treated here), but every read is recorded as
+            self-access: the login&apos;s email or a verified work phone matches the patient&apos;s own verified contact.
+            Last {selfAccess?.windowDays ?? 30} days.
+          </p>
+          {(selfAccess?.entries ?? []).length === 0 && <p className="mt-3 text-xs text-text-tertiary">No self-access recorded.</p>}
+          <div className="mt-3 flex flex-wrap gap-2">
+            {(selfAccess?.byStaff ?? []).map((b) => <Metric key={b.userId} label={b.name} value={b.count} tone="amber" />)}
+          </div>
+          <div className="mt-3 space-y-1.5" aria-label="Self-access entries">
+            {(selfAccess?.entries ?? []).map((e, i) => (
+              <div key={`${e.at}-${i}`} className="flex flex-wrap justify-between gap-2 rounded-xl border border-hairline px-3 py-1.5 text-[12px]">
+                <span>{e.name} · {e.uhid ?? "record"} · {e.surface?.toLowerCase() ?? "chart"}</span>
+                <span className="text-text-tertiary">{new Date(e.at).toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
         </Card>
       )}
 

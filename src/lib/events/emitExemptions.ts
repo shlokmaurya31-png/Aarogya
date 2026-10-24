@@ -117,6 +117,9 @@ export const EMITTING_HELPERS: Record<string, string[]> = {
 };
 
 export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
+  "src/lib/auth/loginPhones.ts#startLoginPhone": { category: "ACCOUNT_SECURITY", reason: "5b follow-up: a work login's phone awaiting its code; audited on verification, never an event (a login's contact detail, used only for the same-human check)" },
+  "src/lib/auth/loginPhones.ts#confirmLoginPhone": { category: "ACCOUNT_SECURITY", reason: "5b follow-up: a work login's phone verified; audited (security.loginPhone.verified), never an event" },
+  "src/lib/auth/loginPhones.ts#removeLoginPhone": { category: "ACCOUNT_SECURITY", reason: "5b follow-up: a work login's phone removed (it still counts for the same-human check); audited (security.loginPhone.removed), never an event" },
   "src/lib/auth/credentials.ts#replacePasswordHash": { category: "ACCOUNT_SECURITY", reason: "password change and reset; audited (security.password.*), never an event: events must not carry credentials" },
   "src/lib/hospital/admission.ts#updateDischargePlan": { category: "OPERATIONAL_DETAIL", reason: "staff readiness flags and expected discharge time, read only by finalizeDischarge; a hold (DischargeHoldChanged) is the event-bearing block" },
   "src/lib/hospital/encounterRecords.ts#updateEncounterDetails": { category: "OPERATIONAL_DETAIL", reason: "triage level and attending clinician on the encounter row; status changes emit through transitionEncounter" },

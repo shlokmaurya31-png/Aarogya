@@ -4,6 +4,7 @@ import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, NotFoundError } from "@/lib/auth/rbac";
 import { buildPatientTimeline } from "@/lib/patient/timeline";
 import { recordAuditEvent } from "@/lib/auth/audit";
+import { noteStaffChartRead } from "@/lib/doctors/self";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return withApiErrors(async () => {
@@ -13,6 +14,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
     const patient = await prisma.patient.findUnique({ where: { id } });
     if (!patient || patient.facilityId !== facilityId) throw new NotFoundError("Patient not found.");
+    // 5b follow-up: reading one's own chart as staff is allowed, recorded as SELF_ACCESS (src/lib/doctors/self.ts).
+    await noteStaffChartRead({ userId: session.userId, facilityId }, patient.id, "TIMELINE");
 
     const timeline = await buildPatientTimeline(id, { kind: "STAFF", facilityId });
 

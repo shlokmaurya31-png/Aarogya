@@ -11459,6 +11459,31 @@ enum PersonNotificationStatus {
 // doctors only). A doctor's professional identity is never joined to a
 // Person (decision 2): a doctor who is also a patient has a separate login.
 
+/// Week 5b follow-up: a verified phone of a staff or doctor login (patients'
+/// phones are PersonContacts). Used only to tell whether a login and a Person
+/// are the same human (src/lib/doctors/self.ts); never shown to anyone else.
+model LoginPhone {
+  id            String           @id @default(cuid())
+  userId        String
+  phone         String
+  status        LoginPhoneStatus @default(PENDING)
+  codeHash      String?
+  codeExpiresAt DateTime?
+  attempts      Int              @default(0)
+  verifiedAt    DateTime?
+  removedAt     DateTime?
+  createdAt     DateTime         @default(now())
+
+  @@index([userId, status])
+  @@index([phone, status])
+}
+
+enum LoginPhoneStatus {
+  PENDING
+  VERIFIED
+  REMOVED
+}
+
 /// A doctor's professional identity, owned by their DOCTOR login.
 model DoctorProfile {
   id                 String                   @id @default(cuid())

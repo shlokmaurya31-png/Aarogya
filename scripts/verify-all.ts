@@ -142,6 +142,7 @@ const ORDER = [
   "verify-postgres-doctor-directory",
   "verify-postgres-directory-booking",
   "verify-postgres-doctor-leaks",
+  "verify-postgres-doctor-self-access",
   // Week 5b: households.
   "verify-postgres-household-proxies",
   "verify-postgres-coming-of-age",

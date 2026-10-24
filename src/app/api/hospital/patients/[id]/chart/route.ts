@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, NotFoundError } from "@/lib/auth/rbac";
+import { noteStaffChartRead } from "@/lib/doctors/self";
 
 /**
  * The unified longitudinal patient record (brief §69/§108): every
@@ -15,7 +16,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     // diagnoses, medication/lab/imaging orders including results), which
     // patient:read over-granted to FRONT_DESK/BILLING_STAFF (roles with no
     // other clinical permission). clinical:chart:read is the narrower gate.
-    const { facilityId } = await requireFacilityStaff("clinical:chart:read", searchParams.get("facilityId") ?? undefined);
+    const { session, facilityId } = await requireFacilityStaff("clinical:chart:read", searchParams.get("facilityId") ?? undefined);
     const { id } = await params;
 
     const patient = await prisma.patient.findUnique({
@@ -34,6 +35,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       },
     });
     if (!patient || patient.facilityId !== facilityId) throw new NotFoundError("Patient not found.");
+    // 5b follow-up: reading one's own chart as staff is allowed, recorded as SELF_ACCESS (src/lib/doctors/self.ts).
+    await noteStaffChartRead({ userId: session.userId, facilityId }, patient.id, "CHART");
 
     const encounterIds = patient.encounters.map((e) => e.id);
 
