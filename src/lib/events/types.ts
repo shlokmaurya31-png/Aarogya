@@ -133,6 +133,11 @@ export const AGGREGATE_TYPES = [
   "DOCTOR_STAFF_LINK",
   "PRACTICE_LOCATION",
   "DIRECTORY_BOOKING",
+  // Week 5b — households (person-scoped).
+  "HOUSEHOLD",
+  "HOUSEHOLD_MEMBER",
+  "PROXY_GRANT",
+  "DEPENDENT_CONSENT",
 ] as const;
 export type AggregateType = (typeof AGGREGATE_TYPES)[number];
 

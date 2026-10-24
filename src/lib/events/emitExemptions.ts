@@ -117,6 +117,9 @@ export const EMITTING_HELPERS: Record<string, string[]> = {
 };
 
 export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
+  "src/lib/auth/loginPhones.ts#startLoginPhone": { category: "ACCOUNT_SECURITY", reason: "5b follow-up: a work login's phone awaiting its code; audited on verification, never an event (a login's contact detail, used only for the same-human check)" },
+  "src/lib/auth/loginPhones.ts#confirmLoginPhone": { category: "ACCOUNT_SECURITY", reason: "5b follow-up: a work login's phone verified; audited (security.loginPhone.verified), never an event" },
+  "src/lib/auth/loginPhones.ts#removeLoginPhone": { category: "ACCOUNT_SECURITY", reason: "5b follow-up: a work login's phone removed (it still counts for the same-human check); audited (security.loginPhone.removed), never an event" },
   "src/lib/auth/credentials.ts#replacePasswordHash": { category: "ACCOUNT_SECURITY", reason: "password change and reset; audited (security.password.*), never an event: events must not carry credentials" },
   "src/lib/hospital/admission.ts#updateDischargePlan": { category: "OPERATIONAL_DETAIL", reason: "staff readiness flags and expected discharge time, read only by finalizeDischarge; a hold (DischargeHoldChanged) is the event-bearing block" },
   "src/lib/hospital/encounterRecords.ts#updateEncounterDetails": { category: "OPERATIONAL_DETAIL", reason: "triage level and attending clinician on the encounter row; status changes emit through transitionEncounter" },
@@ -157,6 +160,13 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/rag/backfill.ts#backfillFacility": { category: "BOOKKEEPING", reason: "the backfill's resumable cursor; it emits no events by design (docs/RAG_DESIGN.md §5.7)" },
   "src/lib/rag/interactions.ts#purgeProxyAiText": { category: "CONSUMER_OUTPUT", reason: "retained AI text of a family member whose access was revoked (FamilyAccessRevoked already emitted)" },
   "src/lib/rag/interactions.ts#logInteraction": { category: "BOOKKEEPING", reason: "the AI interaction log (metadata and encrypted text), BOOKKEEPING by design (docs/RAG_DESIGN.md §3.3); no record changes" },
+  "src/lib/household/dependentConsent.ts#legalDocumentUrl": { category: "BOOKKEEPING", reason: "Week 5b: the reviewing staff member's read of a legal document, in the member's access log (part of the read)" },
+  "src/lib/household/proxy.ts#logProxy": { category: "BOOKKEEPING", reason: "Week 5b: a proxy's action in the member's access log (docs/HOUSEHOLD_DESIGN.md §5): part of the action, no record changes" },
+  "src/lib/rag/access.ts#resolveAiAccess": { category: "BOOKKEEPING", reason: "Week 5b: a proxy's AI request in the member's access log (part of the read)" },
+  "src/lib/household/guardianConsent.ts#startGuardianConsent": { category: "PROCESS_STEP", reason: "Week 5b: a pending guardian's choice for a managed child (the code sent); confirming it records the consent", boundary: ["PersonConsentDecided"] },
+  "src/lib/household/households.ts#startAddMinor": { category: "PROCESS_STEP", reason: "Week 5b: a pending parental consent (the code sent); confirming it creates the child's profile", boundary: ["HouseholdMemberStatusChanged", "ProxyGrantChanged"] },
+  "src/lib/household/comingOfAge.ts#startClaimOwnContact": { category: "PROCESS_STEP", reason: "Week 5b: an open claim (the code sent to the member's own contact)", boundary: ["MemberAccountClaimed"] },
+  "src/lib/household/comingOfAge.ts#startClaimInPerson": { category: "PROCESS_STEP", reason: "Week 5b: an open claim after the in-person check (audited)", boundary: ["MemberAccountClaimed"] },
   "src/lib/sharing/accessLog.ts#logRecordAccess": { category: "BOOKKEEPING", reason: "a read of the person's record in their access log (docs/CONSENT_SHARING_DESIGN.md §7.1): part of the read, no record changes" },
   "src/lib/rag/interactions.ts#logRateLimited": { category: "BOOKKEEPING", reason: "metadata of a refused AI request (outcome RATE_LIMITED), part of the interaction log" },
   "src/lib/rag/interactions.ts#purgeExpiredAiInteractions": { category: "BOOKKEEPING", reason: "retention sweep of the AI interaction log (text at expiry, metadata after a year)" },

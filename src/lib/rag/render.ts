@@ -21,7 +21,7 @@ export type SourceInput =
   | { sourceType: "REFERRAL"; reason: string; to?: string | null; priority: string; status: string; notes?: string | null; at: Date }
   | { sourceType: "DISCHARGE_SUMMARY"; summary: unknown; dischargeType?: string | null; at: Date }
   | { sourceType: "GENERATED_DOCUMENT" | "CLINICAL_DOCUMENT"; docType: string; title: string; patientVisible: boolean; at: Date }
-  | { sourceType: "PATIENT_PROVIDED_RECORD"; kind: "DIAGNOSIS" | "MEDICATION_HISTORY" | "LAB_RESULT" | "PROCEDURE" | "ALLERGY"; value: Record<string, unknown>; at: Date; handwritten: boolean; documentTitle?: string | null }
+  | { sourceType: "PATIENT_PROVIDED_RECORD"; kind: "DIAGNOSIS" | "MEDICATION_HISTORY" | "LAB_RESULT" | "PROCEDURE" | "ALLERGY"; value: Record<string, unknown>; at: Date; handwritten: boolean; documentTitle?: string | null; byProxy?: boolean }
   | { sourceType: "PATIENT_DOCUMENT"; docType: string; title: string; at: Date };
 
 export interface Rendered {
@@ -36,6 +36,8 @@ export interface Rendered {
   audience: RagAudience;
   origin: RagOrigin;
   handwritten: boolean;
+  /** Week 5b: a patient-provided entry a household proxy confirmed (labelled "confirmed by proxy"). */
+  byProxy?: boolean;
   /** "[Lab result · Hemoglobin · 2026-10-14 · verified]" */
   context: string;
 }
@@ -73,7 +75,7 @@ const PP_CATEGORY: Record<string, RagCategory> = { DIAGNOSIS: "DIAGNOSES", MEDIC
 function base(sourceType: RagSourceType, label: string, title: string, at: Date, more: Partial<Rendered> & Pick<Rendered, "sections" | "categories">): Rendered {
   const origin = more.origin ?? "VERIFIED";
   const handwritten = more.handwritten ?? false;
-  const originLabel = origin === "VERIFIED" ? "verified" : handwritten ? "patient-provided · handwritten" : "patient-provided";
+  const originLabel = origin === "VERIFIED" ? "verified" : `patient-provided${more.byProxy ? " · confirmed by proxy" : ""}${handwritten ? " · handwritten" : ""}`;
   return {
     sourceType, label, title, recordedAt: at, origin, handwritten,
     sensitiveCategory: more.sensitiveCategory ?? null, audience: more.audience ?? "PATIENT_VISIBLE",
@@ -161,8 +163,8 @@ export function renderSource(s: SourceInput): Rendered {
       }[s.kind]();
       const title = String(v.analyte ?? v.name ?? v.substance ?? v.text ?? s.kind);
       return base("PATIENT_PROVIDED_RECORD", s.kind === "LAB_RESULT" ? "Uploaded lab value" : "Uploaded record", title, s.at, {
-        sections: [{ text: sentence(`${body}${from}; dated ${isoDay(s.at)}${s.handwritten ? "; handwritten" : ""}`) }],
-        categories: ["UPLOADS", PP_CATEGORY[s.kind]], origin: "PATIENT_PROVIDED", handwritten: s.handwritten,
+        sections: [{ text: sentence(`${body}${from}; dated ${isoDay(s.at)}${s.handwritten ? "; handwritten" : ""}${s.byProxy ? "; confirmed by proxy" : ""}`) }],
+        categories: ["UPLOADS", PP_CATEGORY[s.kind]], origin: "PATIENT_PROVIDED", handwritten: s.handwritten, byProxy: s.byProxy,
         sensitiveCategory: sensitiveCategoryOf({ code: typeof v.icd10 === "string" ? v.icd10 : null, texts: [String(v.text ?? ""), String(v.analyte ?? ""), String(v.name ?? "")] }),
       });
     }

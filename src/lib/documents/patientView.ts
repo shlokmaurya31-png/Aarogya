@@ -5,6 +5,7 @@ import { emitDomainEvent } from "@/lib/events/emit";
 import { getStorageAdapter } from "@/lib/storage";
 import { requireOwnedPerson } from "@/lib/person/access";
 import { createRun, TERMINAL_RUN } from "./pipelineState";
+import { reviewer } from "./review";
 
 /**
  * Week 4a — what the person sees of their documents' processing
@@ -15,8 +16,9 @@ import { createRun, TERMINAL_RUN } from "./pipelineState";
 const SIGNED_URL_SECONDS = 300;
 export const COULD_NOT_READ = "We couldn't read this document; it is saved as it is.";
 
-async function ownDocument(userId: string, documentId: string) {
-  const personId = await requireOwnedPerson(userId);
+async function ownDocument(userId: string, documentId: string, memberPersonId?: string) {
+  // The person, or (Week 5b) a proxy with UPLOAD for the named member.
+  const personId = memberPersonId ? (await reviewer(userId, memberPersonId)).personId : await requireOwnedPerson(userId);
   const doc = await prisma.personDocument.findUnique({ where: { id: documentId }, select: { id: true, personId: true, status: true, type: true } });
   if (!doc || doc.personId !== personId || doc.status !== "CURRENT") throw new NotFoundError();
   return { personId, doc };
@@ -68,9 +70,9 @@ export async function pageView(userId: string, documentId: string, pageNo: numbe
 export const REPROCESS_REASONS = ["PATIENT_REQUEST", "LANGUAGE_CHANGED"] as const;
 
 /** A fresh run of a document (e.g. after changing the app language). Only when no run is open. */
-export async function requestReprocess(userId: string, documentId: string, reason: unknown) {
+export async function requestReprocess(userId: string, documentId: string, reason: unknown, memberPersonId?: string) {
   if (!(REPROCESS_REASONS as readonly unknown[]).includes(reason)) throw new BadRequestError(`reason must be one of ${REPROCESS_REASONS.join(", ")}.`);
-  const { personId, doc } = await ownDocument(userId, documentId);
+  const { personId, doc } = await ownDocument(userId, documentId, memberPersonId);
   if (doc.type === "ID_PROOF") throw new BadRequestError("ID proofs are never processed.");
   const person = await prisma.person.findUniqueOrThrow({ where: { id: personId }, select: { preferredLanguage: true } });
   try {
@@ -78,6 +80,7 @@ export async function requestReprocess(userId: string, documentId: string, reaso
       const latest = await tx.documentProcessing.findFirst({ where: { documentId }, orderBy: { run: "desc" }, select: { status: true } });
       if (latest && !TERMINAL_RUN.includes(latest.status)) throw new ConflictError("This document is still being processed or awaits your review.");
       const r = await createRun(tx, { personId, documentId, targetLanguage: person.preferredLanguage });
+      if (memberPersonId) await tx.personAccessLogEntry.create({ data: { personId, kind: "PROXY_ACTION", actorUserId: userId, detail: { via: "PROXY", action: "REPROCESS", documentId } } });
       await emitDomainEvent(tx, { type: "DocumentReprocessRequested", aggregateId: r.id, personId, actorUserId: userId, payload: { processingId: r.id, documentId, personId, reason: reason as (typeof REPROCESS_REASONS)[number] } });
       return r;
     });

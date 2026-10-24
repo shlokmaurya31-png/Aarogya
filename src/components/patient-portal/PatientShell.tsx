@@ -20,6 +20,7 @@ const NAV = [
   { href: "/patient", label: "Home", icon: Home },
   { href: "/patient/appointments", label: "Appointments", icon: CalendarDays },
   { href: "/patient/doctors", label: "Find a doctor", icon: Stethoscope },
+  { href: "/patient/household", label: "Household", icon: Users },
   { href: "/patient/queue", label: "Queue", icon: ListChecks },
   { href: "/patient/share", label: "Share access", icon: KeyRound },
   { href: "/patient/records", label: "Records", icon: ClipboardList },

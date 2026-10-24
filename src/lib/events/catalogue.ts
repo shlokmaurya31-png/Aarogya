@@ -45,6 +45,8 @@ const sharePurpose = z.enum(["CONSULTATION", "SECOND_OPINION", "FOLLOW_UP", "REF
 const shareEndReason = z.enum(["VISIT_ENDED", "EXPIRED", "PATIENT_ENDED", "REVOKE_ALL", "PERSON_CLOSED"]);
 const shareEndReasonV2 = z.enum(["VISIT_ENDED", "EXPIRED", "PATIENT_ENDED", "REVOKE_ALL", "PERSON_CLOSED", "APPOINTMENT_CANCELLED"]);
 const consultMode = z.enum(["IN_PERSON", "VIDEO"]);
+const householdMemberStatus = z.enum(["INVITED", "PENDING_CONSENT", "ACTIVE", "AWAITING_CLAIM", "LEFT", "REMOVED"]);
+const proxyGrantStatus = z.enum(["PENDING_CONFIRMATION", "ACTIVE", "REVOKED", "LAPSED"]);
 const doctorStatus = z.enum(["UNVERIFIED", "PENDING", "VERIFIED", "SUSPENDED", "REJECTED"]);
 const accessRequestStatus = z.enum(["REQUESTED", "APPROVED", "DECLINED", "CANCELLED", "EXPIRED"]);
 const sensitiveCategory = z.enum(["MENTAL_HEALTH", "SEXUAL_HEALTH", "HIV", "SUBSTANCE_USE", "REPRODUCTIVE_HEALTH"]);
@@ -1341,6 +1343,12 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({ personId: id, source: z.enum(PERSON_SOURCES) }).strict(),
   }),
   contract({
+    // Week 5b: a household profile (a managed child or a dependent adult) is a Person too.
+    type: "PersonCreated", version: 2, aggregateType: "PERSON", scope: "PERSON",
+    sensitivity: "INTERNAL", producer: "person identity (createPersonForAccount: sign-up, the identity migration; households: a managed profile)",
+    payload: z.object({ personId: id, source: z.enum([...PERSON_SOURCES, "HOUSEHOLD"]) }).strict(),
+  }),
+  contract({
     type: "PersonPatientLinked", version: 1, aggregateType: "PERSON_PATIENT_LINK", scope: "FACILITY",
     sensitivity: "SENSITIVE", producer: "person identity (recordActiveLink: self-created at sign-up, phone code, in-person ID, ABHA)",
     payload: z.object({ linkId: id, personId: id, patientId: id, method: personLinkMethod }).strict(),
@@ -1447,11 +1455,61 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({ notificationId: id, personId: id, kind: z.enum(["ACCESS_SUMMARY", "BREAK_GLASS_ACCESS", "ACCESS_REQUESTED"]) }).strict(),
   }),
   contract({
+    // Week 5b: COMING_OF_AGE, to a household's managers.
+    type: "PersonNotificationQueued", version: 2, aggregateType: "PERSON_NOTIFICATION", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "person notifications (the access-summary and coming-of-age sweeps; the person-notifier on BreakGlassStatusChanged and AccessRequested)",
+    payload: z.object({ notificationId: id, personId: id, kind: z.enum(["ACCESS_SUMMARY", "BREAK_GLASS_ACCESS", "ACCESS_REQUESTED", "COMING_OF_AGE"]) }).strict(),
+  }),
+  contract({
     type: "PersonNotificationStatusChanged", version: 1, aggregateType: "PERSON_NOTIFICATION", scope: "PERSON",
     sensitivity: "SENSITIVE", producer: "person notifications (the person-notifier delivered it, found no channel, or failed)",
     payload: z.object({
       notificationId: id, personId: id, from: z.enum(["PENDING"]), to: z.enum(["SENT", "NO_CHANNEL", "FAILED"]), channel: z.enum(["EMAIL", "SMS"]).optional(),
     }).strict(),
+  }),
+  // ── Week 5b — households (docs/HOUSEHOLD_DESIGN.md §9, §14) ──
+  contract({
+    type: "HouseholdCreated", version: 1, aggregateType: "HOUSEHOLD", scope: "PERSON",
+    sensitivity: "INTERNAL", producer: "households (createHousehold: the creator's own login)",
+    payload: z.object({ householdId: id, personId: id }).strict(),
+  }),
+  contract({
+    type: "HouseholdMemberStatusChanged", version: 1, aggregateType: "HOUSEHOLD_MEMBER", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "households (a member added, invited, consenting, accepted, left, removed, come of age, claimed)",
+    payload: z.object({
+      personId: id,
+      householdId: id, memberId: id, memberPersonId: id, memberType: z.enum(["SELF", "MANAGED_MINOR", "DEPENDENT_ADULT", "LINKED_ADULT"]),
+      from: householdMemberStatus.nullable(), to: householdMemberStatus,
+    }).strict(),
+  }),
+  contract({
+    type: "ProxyGrantChanged", version: 1, aggregateType: "PROXY_GRANT", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "households (a proxy grant created, confirmed, changed, revoked or lapsed)",
+    payload: z.object({
+      personId: id,
+      grantId: id, memberPersonId: id, proxyPersonId: id, basis: z.enum(["GUARDIAN", "RECORDED_CONSENT", "MEMBER_CHOICE"]),
+      from: proxyGrantStatus.nullable(), to: proxyGrantStatus, permissions: z.array(z.enum(["VIEW", "UPLOAD", "BOOK", "SHARE", "INSURANCE", "USE_AI"])).min(1),
+      categories: z.array(shareCategory).min(1), sensitiveCount: z.number().int().min(0), lapsedReason: z.enum(["CAME_OF_AGE", "MEMBER_CLAIMED", "MEMBER_CLOSED"]).optional(),
+    }).strict(),
+  }),
+  contract({
+    type: "DependentConsentChanged", version: 1, aggregateType: "DEPENDENT_CONSENT", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "households (a dependent adult's consent to a proxy: own code, two staff in person, or a reviewed legal document)",
+    payload: z.object({
+      personId: id,
+      consentId: id, memberPersonId: id, method: z.enum(["OWN_CODE", "TWO_STAFF_IN_PERSON", "LEGAL_DOCUMENT"]),
+      from: z.enum(["PENDING", "CONFIRMED", "REFUSED", "EXPIRED"]).nullable(), to: z.enum(["PENDING", "CONFIRMED", "REFUSED", "EXPIRED"]),
+    }).strict(),
+  }),
+  contract({
+    type: "MemberCameOfAge", version: 1, aggregateType: "PERSON", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "households (sweepComingOfAge: a managed child turned 18; guardian grants lapsed)",
+    payload: z.object({ personId: id, memberPersonId: id, householdId: id }).strict(),
+  }),
+  contract({
+    type: "MemberAccountClaimed", version: 1, aggregateType: "PERSON", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "households (completeClaim: the member's own login, by their own contact or in person)",
+    payload: z.object({ personId: id, memberPersonId: id, method: z.enum(["OWN_CONTACT", "IN_PERSON"]) }).strict(),
   }),
   // ── Week 5a — the doctor network (docs/DOCTOR_NETWORK_DESIGN.md §9, §14) ──
   contract({
@@ -1514,6 +1572,16 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({
       personId: id, consentId: id, purpose: z.enum(["SHARE_UPLOADS_WITH_TREATING", "DOCUMENT_PROCESSING", "AI_ASSISTANCE", "AI_TEXT_RETENTION"]),
       decision: z.enum(["GRANTED", "DECLINED"]), previous: z.enum(["NONE", "GRANTED", "DECLINED"]), scopes: z.array(z.enum(["SAFETY_REVIEW"])),
+    }).strict(),
+  }),
+  // Week 5b follow-up: a guardian decides a managed minor's processing and AI consents.
+  contract({
+    type: "PersonConsentDecided", version: 3, aggregateType: "PERSON", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "person identity (decidePersonConsent: the person's own choice; confirmGuardianConsent: a managed minor's guardian, after the parental-consent check)",
+    payload: z.object({
+      personId: id, consentId: id, purpose: z.enum(["SHARE_UPLOADS_WITH_TREATING", "DOCUMENT_PROCESSING", "AI_ASSISTANCE", "AI_TEXT_RETENTION"]),
+      decision: z.enum(["GRANTED", "DECLINED"]), previous: z.enum(["NONE", "GRANTED", "DECLINED"]), scopes: z.array(z.enum(["SAFETY_REVIEW"])),
+      decidedAs: z.enum(["SELF", "GUARDIAN"]),
     }).strict(),
   }),
   // ── Document pipeline (Week 4a) ───────────────────────────────────────────

@@ -143,12 +143,12 @@ export async function loadSource(ref: SourceRef): Promise<Loaded> {
       return { action: "INDEX", owner, input: { sourceType: ref.sourceType, docType: c.generatedDocument?.type ?? c.type, title: c.title, patientVisible: c.accessPolicy === "PATIENT_VISIBLE", at: c.createdAt }, supersedes: c.supersedesId ? [{ sourceType: ref.sourceType, sourceId: c.supersedesId }] : [] };
     }
     case "PATIENT_PROVIDED_RECORD": {
-      const r = await prisma.patientProvidedRecord.findUnique({ where: { id }, select: { personId: true, kind: true, value: true, status: true, effectiveDate: true, createdAt: true, handwritten: true, documentId: true } });
+      const r = await prisma.patientProvidedRecord.findUnique({ where: { id }, select: { personId: true, kind: true, value: true, status: true, effectiveDate: true, createdAt: true, handwritten: true, documentId: true, confirmedByProxy: true } });
       if (!r) return gone;
       if (r.status === "WITHDRAWN") return { action: "WITHDRAW", reason: "REJECTED_BY_PATIENT" };
       if (r.status === "SUPERSEDED") return { action: "WITHDRAW", reason: "AMENDED" };
       const doc = r.documentId ? await prisma.personDocument.findUnique({ where: { id: r.documentId }, select: { title: true } }) : null;
-      return { action: "INDEX", owner: { kind: "PERSON", personId: r.personId }, input: { sourceType: "PATIENT_PROVIDED_RECORD", kind: r.kind, value: r.value as Record<string, unknown>, at: r.effectiveDate ?? r.createdAt, handwritten: r.handwritten, documentTitle: doc?.title ?? null }, supersedes: [] };
+      return { action: "INDEX", owner: { kind: "PERSON", personId: r.personId }, input: { sourceType: "PATIENT_PROVIDED_RECORD", kind: r.kind, value: r.value as Record<string, unknown>, at: r.effectiveDate ?? r.createdAt, handwritten: r.handwritten, documentTitle: doc?.title ?? null, byProxy: r.confirmedByProxy }, supersedes: [] };
     }
     case "PATIENT_DOCUMENT": {
       const d = await prisma.personDocument.findUnique({ where: { id }, select: { personId: true, type: true, title: true, status: true, uploadedAt: true } });

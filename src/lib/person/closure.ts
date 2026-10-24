@@ -146,6 +146,10 @@ export async function purgeClosedPersons(opts: { now?: Date; batchSize?: number 
       await tx.recordShare.deleteMany({ where: { personId } });
       await tx.personNotification.deleteMany({ where: { personId } });
       await tx.directoryBooking.deleteMany({ where: { personId } });
+      // Week 5b: no one acts for or as a closed account; its household places end; open claims go.
+      await tx.proxyGrant.updateMany({ where: { OR: [{ memberPersonId: personId }, { proxyPersonId: personId }], status: { in: ["ACTIVE", "PENDING_CONFIRMATION"] } }, data: { status: "REVOKED", revokedAt: now } });
+      await tx.householdMember.updateMany({ where: { personId, status: { in: ["ACTIVE", "INVITED", "PENDING_CONSENT", "AWAITING_CLAIM"] } }, data: { status: "LEFT", leftAt: now } });
+      await tx.memberClaim.deleteMany({ where: { personId } });
       await tx.personAccessLogEntry.deleteMany({ where: { personId } });
       await tx.personAccount.updateMany({ where: { personId, endedAt: null }, data: { endedAt: now } });
       await tx.person.update({ where: { id: personId }, data: { purgedAt: now, displayName: "Closed account", dateOfBirth: null, dobPrecision: null, sex: null, version: { increment: 1 } } });

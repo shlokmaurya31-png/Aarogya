@@ -40,15 +40,19 @@ const earliest = (a?: Date, b?: Date) => (a && b ? (a < b ? a : b) : a ?? b);
  *   OWN           the patient (their OWNER login): their own records (every
  *                 ACTIVE link) and their own uploads and facts, patient-
  *                 visible entries only
- * A proxy (family member) is refused: the USE_AI permission arrives with
- * households (5b). Every refusal is 404-shaped for a record the caller can't
+ *   PROXY         (Week 5b) a household proxy with USE_AI for the record's
+ *                 Person: the patient-audience modes only, over what the
+ *                 grant's categories and sensitive opt-ins allow, with the
+ *                 member's own AI consent (a guardian's for a child). A
+ *                 facility delegation (PatientDelegation) is not a proxy and
+ *                 stays refused. Every refusal is 404-shaped for a record the caller can't
  * see, 403 for a mode or path they can't use.
  */
 export type AiActor =
   | { kind: "STAFF"; userId: string; role: Role; facilityId: string }
   | { kind: "PATIENT"; userId: string };
 
-export type AccessPath = "TREATING" | "NURSE_ASSIGNED" | "SHARE" | "ORG_CONSENT" | "OWN";
+export type AccessPath = "TREATING" | "NURSE_ASSIGNED" | "SHARE" | "ORG_CONSENT" | "OWN" | "PROXY";
 
 export interface AiAccess {
   mode: AiMode;
@@ -117,8 +121,8 @@ export async function resolveAiAccess(actor: AiActor, req: AccessRequest): Promi
   if (actor.kind === "PATIENT") {
     if (!PATIENT_MODES.includes(req.mode)) throw new AiAccessError(403, "MODE_NOT_ALLOWED");
     const own = await selfPatientIds(actor.userId);
-    // A delegate's view (a family member) is refused until households add USE_AI (5b): same answer as "not yours".
-    if (!own.includes(patient.id)) throw new AiAccessError(404, "NOT_FOUND");
+    // Not their own record: only a household proxy with USE_AI for its Person (Week 5b); anything else is "not yours".
+    if (!own.includes(patient.id)) return proxyAccess(actor.userId, req, spec.audience, subject, period);
     const personId = await ownedPersonId(actor.userId);
     if (!personId || !(await personAccess({ kind: "OWNER", userId: actor.userId }, personId, "PROFILE"))) throw new AiAccessError(404, "NOT_FOUND");
     const links = await prisma.personPatientLink.findMany({ where: { personId, status: "ACTIVE" }, select: { patientId: true, facilityId: true } });
@@ -209,6 +213,29 @@ export async function resolveAiAccess(actor: AiActor, req: AccessRequest): Promi
   return {
     ...base, path: actor.role === "NURSE" ? "NURSE_ASSIGNED" : "TREATING", scope: { segments },
     live: { patientIds, facilityIds: [actor.facilityId], medications: true, allergies: true, patientProvidedAllergies: !!personGrant, nurseView: actor.role === "NURSE" },
+    permit: g.permit, real: g.real,
+  };
+}
+
+/** Week 5b: a household proxy's AI over the member's record, within the grant. */
+async function proxyAccess(userId: string, req: AccessRequest, audience: AiAudience, subject: AiAccess["subject"], period: { recordedFrom?: Date; recordedTo?: Date }): Promise<AiAccess> {
+  if (!subject.personId) throw new AiAccessError(404, "NOT_FOUND");
+  const grant = await personAccess({ kind: "PROXY", userId, permission: "USE_AI" }, subject.personId, "UPLOADS");
+  if (!grant?.proxy) throw new AiAccessError(404, "NOT_FOUND");
+  const p = grant.proxy;
+  const links = await prisma.personPatientLink.findMany({ where: { personId: subject.personId, status: "ACTIVE" }, select: { patientId: true, facilityId: true } });
+  const ids = [...new Set((await Promise.all(links.map((l) => resolvePatientIdsForRead(l.patientId)))).flat())];
+  const facilityIds = [...new Set(links.map((l) => l.facilityId))];
+  const categories = ragCategoriesFor(p.categories);
+  const g = await gate({ personId: subject.personId });
+  const segments: ScopeSegment[] = [
+    { path: "PROXY", facility: { patientIds: ids, facilityIds }, categories: categories.filter((c) => c !== "UPLOADS"), sensitive: p.sensitive, audiences: ["PATIENT_VISIBLE"], origins: ["VERIFIED"], ...period },
+  ];
+  if (p.categories.includes("UPLOADS")) segments.push({ path: "PROXY", personId: subject.personId, categories, sensitive: p.sensitive, audiences: ["PATIENT_VISIBLE"], origins: ["PATIENT_PROVIDED"], ...period });
+  await prisma.personAccessLogEntry.create({ data: { personId: subject.personId, kind: "PROXY_ACTION", actorUserId: userId, detail: { via: "PROXY", proxyPersonId: p.proxyPersonId, action: "USE_AI", mode: req.mode } } });
+  return {
+    mode: req.mode, audience, path: "PROXY", scope: { segments }, subject, callerFacilityId: null, callerOrganizationId: null,
+    live: { patientIds: ids, facilityIds, medications: p.categories.includes("PRESCRIPTIONS"), allergies: true, patientProvidedAllergies: p.categories.includes("UPLOADS"), nurseView: false },
     permit: g.permit, real: g.real,
   };
 }

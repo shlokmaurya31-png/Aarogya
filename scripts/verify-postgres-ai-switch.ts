@@ -72,7 +72,8 @@ async function main() {
   report("CHECK: the database refuses a scope on another purpose",
     await refused(prisma.personConsent.create({ data: { personId, purpose: "AI_ASSISTANCE", decision: "GRANTED", scopes: ["SAFETY_REVIEW"], decidedByUserId: a.userId, status: "SUPERSEDED", supersededAt: new Date() } })));
   const ev = await prisma.domainEventOutbox.findFirst({ where: { eventType: "PersonConsentDecided", aggregateId: personId }, orderBy: { seq: "desc" } });
-  report("PersonConsentDecided is v2 and carries the purpose and scopes, nothing else", ev?.eventVersion === 2 && (ev.payload as { purpose?: string; scopes?: string[] }).purpose === "AI_TEXT_RETENTION" && (ev.payload as { scopes?: string[] }).scopes?.join() === "SAFETY_REVIEW");
+  // v3 since Week 5b (decidedAs: SELF here, GUARDIAN for a guardian's choice for a child).
+  report("PersonConsentDecided is v3 and carries the purpose, scopes and who decided, nothing else", ev?.eventVersion === 3 && (ev.payload as { purpose?: string; scopes?: string[] }).purpose === "AI_TEXT_RETENTION" && (ev.payload as { scopes?: string[] }).scopes?.join() === "SAFETY_REVIEW" && (ev.payload as { decidedAs?: string }).decidedAs === "SELF" && Object.keys(ev.payload as object).sort().join() === "consentId,decidedAs,decision,personId,previous,purpose,scopes");
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();

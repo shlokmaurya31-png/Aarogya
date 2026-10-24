@@ -97,7 +97,11 @@ export async function registerPatientAccount(input: SelfRegistrationInput): Prom
  * opens a routed link request. Owner only.
  */
 export async function connectFacilityRecord(userId: string, input: { facilityId: string; fullName: string; sex: string; phone?: string; dob?: Date }) {
-  const personId = await requireOwnedPerson(userId);
+  return connectFacilityRecordFor(await requireOwnedPerson(userId), userId, input);
+}
+
+/** Week 5b: the same, for a Person, by their own login or a proxy the caller has already checked (a household's BOOK). */
+export async function connectFacilityRecordFor(personId: string, userId: string, input: { facilityId: string; fullName: string; sex: string; phone?: string; dob?: Date }) {
   const facility = await registrationFacility(input.facilityId);
   if (await prisma.personPatientLink.count({ where: { personId, facilityId: facility.id, status: { in: ["ACTIVE", "PENDING_VERIFICATION", "REVERIFICATION_REQUIRED"] } } })) {
     throw new ConflictError("Your record at this facility is already connected or being verified.");
@@ -113,6 +117,10 @@ export async function connectFacilityRecord(userId: string, input: { facilityId:
     });
     await recordAuditEvent("patient.account.registered", userId, { patientId: patient.id, facilityId: facility.id, via: "connect" }, { facilityId: facility.id, patientId: patient.id });
     return { status: "LINKED_NEW" as const, patientId: patient.id };
+  }
+  // A possible match is verified by the person themselves (their own contact or in person): a proxy never opens one.
+  if (!(await prisma.personAccount.findFirst({ where: { personId, userId, role: "OWNER", endedAt: null }, select: { id: true } }))) {
+    throw new ConflictError("They may already have a record at this hospital: it must be verified before booking.");
   }
   const { request, route } = await prisma.$transaction((tx) => openLinkRequest(tx, { userId, personId, facilityId: facility.id, best, claimed }));
   return outcomeFor(userId, request, route);

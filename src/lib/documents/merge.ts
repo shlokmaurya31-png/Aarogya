@@ -136,7 +136,7 @@ async function addRecord(tx: Tx, f: ExtractedFact, kind: NonNullable<(typeof REC
   const own = value.specimenDate ?? value.date ?? value.onsetDate;
   const effectiveDate = parseDocumentDate(own) ?? parseDocumentDate(await documentDate(tx, f.processingId));
   const record = await tx.patientProvidedRecord.create({
-    data: { personId: f.personId, kind, value: value as Prisma.InputJsonValue, factId: f.id, documentId, pageNo: f.pageNo, region: (f.region ?? undefined) as Prisma.InputJsonValue | undefined, handwritten: f.handwritten, effectiveDate },
+    data: { personId: f.personId, kind, value: value as Prisma.InputJsonValue, factId: f.id, documentId, pageNo: f.pageNo, confirmedByProxy: f.reviewedVia === "PROXY", region: (f.region ?? undefined) as Prisma.InputJsonValue | undefined, handwritten: f.handwritten, effectiveDate },
   });
   const r = await tx.extractedFact.updateMany({ where: { id: f.id, recordEntryId: null }, data: { recordEntryId: record.id } });
   if (r.count !== 1) throw new Error("A fact was merged twice.");
@@ -239,9 +239,9 @@ export async function patientProvidedRecordsFor(viewer: DocumentViewer, patientI
 }
 
 /** How an entry reads on the timeline: what it is, from the patient's document, its values as confirmed. */
-export function describePatientProvided(r: Pick<PatientProvidedRecord, "kind" | "value" | "handwritten">): string {
+export function describePatientProvided(r: Pick<PatientProvidedRecord, "kind" | "value" | "handwritten"> & { confirmedByProxy?: boolean }): string {
   const v = r.value as Record<string, string | undefined>;
-  const hw = r.handwritten ? ", handwritten" : "";
+  const hw = `${r.handwritten ? ", handwritten" : ""}${r.confirmedByProxy ? ", confirmed by proxy" : ""}`;
   const join = (...xs: (string | undefined)[]) => xs.filter(Boolean).join(" ");
   switch (r.kind) {
     case "LAB_RESULT": return `Lab result from the patient's document${hw}: ${join(v.analyte, v.value, v.unit)}`;

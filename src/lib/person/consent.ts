@@ -34,19 +34,20 @@ export async function decidePersonConsent(input: { userId: string; purpose: stri
  * emitted. No change if the same choice is already in force. Week 4c:
  * shared with revoke-all, which declines "share uploads" in its own transaction.
  */
-export async function recordPersonConsentTx(tx: Prisma.TransactionClient, input: { personId: string; userId: string; purpose: PersonConsentPurpose; decision: PersonConsentDecision; scopes: string[] }) {
+export async function recordPersonConsentTx(tx: Prisma.TransactionClient, input: { personId: string; userId: string; purpose: PersonConsentPurpose; decision: PersonConsentDecision; scopes: string[]; guardianCheckId?: string }) {
   const { personId, purpose, decision, scopes } = input;
+  const decidedAs = input.guardianCheckId ? "GUARDIAN" : "SELF";
   const current = await tx.personConsent.findFirst({ where: { personId, purpose, status: "ACTIVE" } });
-  if (current?.decision === decision && [...current.scopes].sort().join() === scopes.join()) return { consent: current, changed: false };
+  if (current?.decision === decision && current.decidedAs === decidedAs && [...current.scopes].sort().join() === scopes.join()) return { consent: current, changed: false };
   if (current) {
     const r = await tx.personConsent.updateMany({ where: { id: current.id, status: "ACTIVE" }, data: { status: "SUPERSEDED", supersededAt: new Date() } });
     if (r.count !== 1) throw new ConflictError("This choice changed concurrently. Refresh and try again.");
   }
-  const consent = await tx.personConsent.create({ data: { personId, purpose, decision, scopes, decidedByUserId: input.userId } });
-  await tx.personAccessLogEntry.create({ data: { personId, kind: "CONSENT_DECIDED", actorUserId: input.userId, detail: { consentId: consent.id, purpose, decision } } });
+  const consent = await tx.personConsent.create({ data: { personId, purpose, decision, scopes, decidedByUserId: input.userId, decidedAs, guardianCheckId: input.guardianCheckId ?? null } });
+  await tx.personAccessLogEntry.create({ data: { personId, kind: "CONSENT_DECIDED", actorUserId: input.userId, detail: { consentId: consent.id, purpose, decision, decidedAs } } });
   await emitDomainEvent(tx, {
     type: "PersonConsentDecided", aggregateId: personId, personId, actorUserId: input.userId,
-    payload: { personId, consentId: consent.id, purpose, decision, previous: current?.decision ?? "NONE", scopes: scopes as "SAFETY_REVIEW"[] },
+    payload: { personId, consentId: consent.id, purpose, decision, previous: current?.decision ?? "NONE", scopes: scopes as "SAFETY_REVIEW"[], decidedAs },
   });
   return { consent, changed: true };
 }

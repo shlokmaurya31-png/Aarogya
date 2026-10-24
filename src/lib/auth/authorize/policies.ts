@@ -121,6 +121,15 @@ export const ACTION_POLICIES: Record<string, ActionPolicy> = {
     auditDecision: true,
     description: "Review and revoke emergency access windows for a facility.",
   },
+  // 5b follow-up: staff who read their own chart (recorded as SELF_ACCESS).
+  "selfaccess.review": {
+    permission: "hospital:admin:manage",
+    dataClass: "SECURITY",
+    requireFacility: true,
+    breakGlassAllowed: false,
+    auditDecision: true,
+    description: "Review staff members' reads of their own chart at the facility.",
+  },
 
   // ── Audit. Sensitive in its own right. ───────────────────────────────────
   "audit.read.facility": {

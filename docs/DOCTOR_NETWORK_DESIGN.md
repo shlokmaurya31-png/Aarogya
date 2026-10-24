@@ -278,7 +278,7 @@ Built on branch `foundation/w5a-doctors`. The answers to §13 were given with th
 3. **No `DoctorScheduleChanged` event.** Schedule blocks and absences change through existing services without an event; the next-slot sweep (every tick, rows older than 6 hours or in the past) is the backstop, and appointment events refresh at once.
 4. **The model is `DoctorProfile`** (the task's name), not `Doctor`.
 5. **A staff link is to the doctor's own staff profile** (the same login): the doctor claims it, the facility's admin approves. The clinic reuses that profile with a membership at the clinic facility (one profile, one lock across places).
-6. **"Their own record" covers the doctor tools of the network and the person-level reads:** shares (code, request, booking), the AI on every staff path, and person uploads (`personAccess`). A doctor reading their own facility chart at their own hospital, as that hospital's staff, is not blocked here: that is the hospital's record and its own access rules (an open question for the security audit, checklist item 6).
+6. **"Their own record" covers the doctor tools of the network and the person-level reads:** shares (code, request, booking), the AI on every staff path, and person uploads (`personAccess`). A doctor reading their own facility chart at their own hospital, as that hospital's staff, is allowed but recorded (§14.5).
 7. **Verification documents** go in the existing private `verification` bucket.
 
 ### 14.4 Gates
@@ -291,3 +291,12 @@ Built on branch `foundation/w5a-doctors`. The answers to §13 were given with th
 | `verify-postgres-doctor-leaks` | 9: no share, no access (AI, view, download); a booking without a share gives nothing; a LABS-only share shows exactly labs (control); search carries no patient data |
 | Core journey | Search by knee pain → book with a CONDITIONS share → the brief cites the knee diagnosis only → cancel → the share ends, the brief is refused |
 | Browser smoke (`e2e/directory.spec.ts`) | The patient searches by symptom and books with a share; the doctor opens the booking's visit brief and sees the shared result cited, labelled verified |
+| `verify-postgres-doctor-self-access` | 24: verifying a work phone; the phone match however written (before: the share and the AI open; after: share, AI and upload 404, booking refused); a removed phone still counts; an own-chart read recorded as SELF_ACCESS and reported to admins only; other reads record nothing; the four chart routes call the recorder |
+
+### 14.5 Self-access (5b follow-up)
+
+- **Phones too.** The same-human check (`src/lib/doctors/self.ts`) also compares every phone ever verified on the doctor's login (`LoginPhone`, verified by a code sent to it; `src/lib/auth/loginPhones.ts`) with the person's verified phones, by the last 10 digits. A removed phone still counts, so removing it never reopens the record. A phone can be verified on one work login at a time. Patients' phones stay `PersonContact`s; a patient or student login can't add a work phone.
+- **Their own chart at their own facility, as staff:** allowed (they may be treated there) but recorded. The four chart read routes (`/api/hospital/patients/[id]`, `…/chart`, `…/summary`, `…/timeline`) call `noteStaffChartRead`: when the record's Person (an ACTIVE link of the record or one merged into it) is the same human as the staff login, an audit row `security.selfAccess` with `accessKind: SELF_ACCESS` and the surface, the facility and the record. Any staff role, not only doctors.
+- **The self-access report** (`GET /api/hospital/security/self-access`, the "Own-chart reads" tab of the security workspace): the last 30 days, per staff member and per read; the facility's admins only (`selfaccess.review`, `hospital:admin:manage`).
+- No domain event: verifying a work phone is a login's contact detail (audited, `ACCOUNT_SECURITY`), and a self-access read is an audit of a read.
+- Screen: "Your verified work phones" on the doctor workspace.
