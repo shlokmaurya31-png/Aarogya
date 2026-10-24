@@ -12,6 +12,8 @@
  *   - Week 5a: a verified, listed general physician in the directory (a
  *     hospital location at Pune with sessions all day, so a slot is always
  *     inside the booking share's window), with a login.
+ *   - Week 5 final: a lab technician, a nurse and a pharmacist with logins,
+ *     and an all-day clinic schedule for the doctor (the front desk books it);
  *   - Week 5c: the visit two hours ahead (inside the pre-arrival window),
  *     the facility admin's login (the desk), and the Pune facility's own
  *     test-mode payment gateway (secrets from this run's environment).
@@ -30,6 +32,7 @@ import { recordAllergy } from "../../src/lib/hospital/clinicalRecords";
 import { issueAccessCode, redeemAccessCode } from "../../src/lib/patient/accessSession";
 import { fixtureById, fixturePdf } from "../../src/lib/documents/fixtures";
 import { ensurePrimaryMembership } from "../../prisma/seedData/staffMembership";
+import { seedDemoLicensure } from "../../prisma/seedData/licensure";
 import { registerDoctor, updateOwnProfile } from "../../src/lib/doctors/profile";
 import { decideVerification, submitVerification } from "../../src/lib/doctors/verification";
 import { addHospitalLocation, claimStaffProfile, decideStaffLink } from "../../src/lib/doctors/locations";
@@ -47,6 +50,11 @@ export interface E2eFixture {
   networkDoctor: { email: string; name: string };
   /** Week 5c: the facility admin (the desk), the visit to check in for, the gateway's secret reference. */
   desk: { email: string };
+  /** Week 5 final: the hospital journeys' other logins. */
+  labTech: { email: string };
+  nurse: { email: string; name: string };
+  pharmacist: { email: string };
+  frontDesk: { email: string };
   appointmentId: string;
   gatewaySecretRef: string;
   shareId: string;
@@ -124,6 +132,21 @@ export async function buildE2eFixture(outDir: string): Promise<E2eFixture> {
   void doc;
   await drain();
 
+  // Week 5 final: the lab, the ward and the pharmacy; the doctor's clinic all day (the desk books it).
+  const login = async (role: "LAB_TECHNICIAN" | "NURSE" | "PHARMACIST" | "FRONT_DESK", label: string) => {
+    const u = await prisma.user.create({ data: { email: `e2e-${role.toLowerCase()}-${tag}@verify.aarogya`, passwordHash: hash, role, displayName: `Smoke ${label} ${tag}` } });
+    await prisma.hospitalStaffProfile.create({ data: { userId: u.id, departmentId: dept.id, displayRole: label } });
+    await ensurePrimaryMembership(prisma, u.id, PUNE, { isAdmin: false });
+    return u;
+  };
+  const labUser = await login("LAB_TECHNICIAN", "Lab technician");
+  const nurseUser = await login("NURSE", "Nurse");
+  const pharmacistUser = await login("PHARMACIST", "Pharmacist");
+  const frontDeskUser = await login("FRONT_DESK", "Front desk");
+  for (let dow = 0; dow < 7; dow++) await prisma.doctorScheduleBlock.create({ data: { staffId: staff.id, facilityId: PUNE, dayOfWeek: dow, startMinute: 0, endMinute: 1440, slotDurationMinutes: 15 } });
+  // The demo licensure (synthetic): the doctor may prescribe, the pharmacist dispense, the lab verify.
+  await seedDemoLicensure(prisma as never);
+
   // Week 5c: the facility's own payment gateway, in test mode (the run's secrets are in the environment).
   const { setFacilityGateway } = await import("../../src/lib/insurance/hospitalPayments");
   await setFacilityGateway({ userId: adminUser.id, facilityId: PUNE }, { keyId: `rzp_test_e2e${tag}`.slice(0, 40), secretRef: E2E_GATEWAY_REF, mode: "TEST", enabled: true });
@@ -134,6 +157,7 @@ export async function buildE2eFixture(outDir: string): Promise<E2eFixture> {
   const fixture: E2eFixture = {
     tag, password, patient: { email, patientId, name, verifiedPhone }, doctor: { email: doctorUser.email, name: doctorName }, networkDoctor: { email: netUser.email, name: netName },
     desk: { email: adminUser.email }, appointmentId: appointment.id, gatewaySecretRef: E2E_GATEWAY_REF,
+    labTech: { email: labUser.email }, nurse: { email: nurseUser.email, name: nurseUser.displayName }, pharmacist: { email: pharmacistUser.email }, frontDesk: { email: frontDeskUser.email },
     shareId: redeemed.id, samplePdf, sampleTitle: `Blood count ${tag}`,
   };
   writeFileSync(path.join(outDir, "fixture.json"), JSON.stringify(fixture, null, 2));

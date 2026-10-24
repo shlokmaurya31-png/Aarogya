@@ -68,9 +68,9 @@ import { DEFAULT_SHARE_CATEGORIES, parseShareChoice } from "../src/lib/sharing/c
 import { viewSharedRecord } from "../src/lib/sharing/view";
 import { indexSource } from "../src/lib/rag/indexer";
 import { registerPatientAccount } from "../src/lib/patient/selfRegistration";
-import { searchDirectory, locationSlots } from "../src/lib/doctors/directory";
+import { searchDirectory } from "../src/lib/doctors/directory";
 import { bookThroughDirectory, cancelOwnDirectoryBooking } from "../src/lib/doctors/booking";
-import { facilityAdmin, networkDoctor, verifier } from "./lib/doctorFixture";
+import { daySlots, facilityAdmin, networkDoctor, verifier } from "./lib/doctorFixture";
 import { child as householdChild, manager as householdManager } from "./lib/householdFixture";
 import { bookForMember, uploadForMember, viewMember } from "../src/lib/household/proxy";
 import { sweepComingOfAge } from "../src/lib/household/comingOfAge";
@@ -522,8 +522,8 @@ async function main() {
     await drain();
     const found = await searchDirectory({ symptom: "KNEE_PAIN" });
     report("5a: searching by knee pain finds the verified orthopaedist", found.results.some((r) => r.doctorId === netOrtho.doctorId));
-    const next = (await prisma.doctorNextSlot.findUniqueOrThrow({ where: { practiceLocationId: netOrtho.locationId! } })).nextSlotAt!;
-    const slot = (await locationSlots(netOrtho.locationId!, next))[0];
+    const { slots: orthoSlots } = await daySlots(netOrtho.locationId!, 2);
+    const slot = orthoSlots[0];
     const booked = await bookThroughDirectory(k.userId, { locationId: netOrtho.locationId, start: slot.start, reason: "Right knee pain", share: { categories: ["CONDITIONS"] } });
     await prisma.recordShare.update({ where: { id: booked.shareId! }, data: { validFrom: new Date(Date.now() - 60_000) } });
     const bookedAppt = await prisma.appointment.findUniqueOrThrow({ where: { id: booked.appointmentId } });
@@ -552,7 +552,7 @@ async function main() {
     const kidEntries = await prisma.patientProvidedRecord.findMany({ where: { personId: kid.childPersonId, documentId: kidDoc.id, status: "ACTIVE" } });
     report("5b: a parent adds a child and uploads a report for them: the confirmed values are the child's, patient-provided, confirmed by proxy",
       kidEntries.length > 0 && kidEntries.every((e) => e.source === "PATIENT_PROVIDED" && e.confirmedByProxy), String(kidEntries.length));
-    const kidSlot = (await locationSlots(netOrtho.locationId!, next))[1];
+    const kidSlot = orthoSlots[1];
     const kidBooking = await bookForMember(parent.userId, kid.childPersonId, { locationId: netOrtho.locationId, start: kidSlot.start, reason: "Knee pain after football" });
     const kidAppt = await prisma.appointment.findUniqueOrThrow({ where: { id: kidBooking.appointmentId } });
     const kidLink = await prisma.personPatientLink.findFirst({ where: { personId: kid.childPersonId, patientId: kidAppt.patientId, status: "ACTIVE" } });

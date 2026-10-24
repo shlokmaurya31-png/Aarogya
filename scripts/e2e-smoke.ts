@@ -2,6 +2,7 @@
  * Week 4c (4b follow-up b) — browser smoke tests (Playwright, Chromium):
  *   npm run e2e:smoke            (builds the app first)
  *   npm run e2e:smoke -- --no-build
+ *   npm run e2e:smoke -- --no-build e2e/opd.spec.ts   (anything else goes to Playwright)
  *
  * Against a LOCAL database only (E2E_DATABASE_URL, default the verify
  * database; the same refusals as verify:all: never Supabase, never a remote
@@ -64,7 +65,7 @@ async function main() {
     worker.stdout!.on("data", (d) => (workerLog += d));
     worker.stderr!.on("data", (d) => (workerLog += d));
     children.push(worker);
-    const pw = spawnSync(BIN("playwright"), ["test", "--config", "playwright.config.ts"], {
+    const pw = spawnSync(BIN("playwright"), ["test", "--config", "playwright.config.ts", ...process.argv.slice(2).filter((a) => a !== "--no-build")], {
       cwd: ROOT, stdio: "inherit", env: { ...process.env, E2E_BASE_URL: app.base, E2E_FIXTURE: path.join(OUT, "fixture.json") },
     });
     code = pw.status ?? 1;

@@ -1,12 +1,13 @@
 # Data dictionary
 
-Every Prisma model (257), with its owner module, tenancy scope, whether it holds
+Every Prisma model (312), with its owner module, tenancy scope, whether it holds
 PHI, and any fields that duplicate data held elsewhere. **Duplicates are listed
 for decision; resolved ones say how they were resolved.** D1–D5 and D7–D9 were
 resolved on 2026-10-14; D6 (`Task` ↔ `WorkflowTask`) waits for Week 3.
 
 Generated from the schema (Prisma DMMF) and the code on 2026-10-14, then
-reviewed by hand. The conceptual duplicates in §1.1 are hand-written; the
+reviewed by hand; the person-level and Week 4–5 models (Phase 0 to 5c) were
+added on 2026-10-24 under "Person-level and network models". The conceptual duplicates in §1.1 are hand-written; the
 rest is derived. When the schema changes, regenerate the tables rather than
 editing them.
 
@@ -19,13 +20,15 @@ editing them.
   - **patient**: belongs to a patient, scoped through the patient's facility.
   - **user**: belongs to an account.
   - **platform**: global reference data or platform-only.
+  - **person**: belongs to a Person (no facility); read only through
+    `personAccess` (src/lib/person/tenancy.ts lists them).
   - "(via X)": the scope comes from a required parent.
 - **PHI**: **PHI** if the row is about an identifiable patient (it has a
   `patientId`, directly or through a required parent); **PII** for personal
   data of staff, students or accounts that isn't health data; otherwise
   **no**.
 
-**Totals**: 257 models: 111 PHI, 5 PII, 141 neither.
+**Totals**: 312 models in the schema now. The 2026-10-14 tables: 111 PHI, 5 PII, 141 neither. Added 2026-10-24 (56 models from Phase 0 to Week 5c that the first pass predates): 37 PHI, 6 PII, 13 neither.
 
 ## 1. Duplicated data (for decision)
 
@@ -624,3 +627,102 @@ covers the seed and every gate's rows.
 | `StaffingRequirement` | facility | no | — |
 | `WorkforceAssignment` | facility | no | — |
 
+### Person-level and network models (Phase 0 to Week 5c)
+
+Person-scoped rows carry `personId` and no facility; "facility · patient (names a person)" rows are the facility's and also carry the Person. PHI here includes a person's own health data (uploads, facts, consents, cards) whichever facility, if any, it came from.
+
+#### person identity (src/lib/person)
+
+| Model | Scope | PHI | Duplicates |
+|---|---|---|---|
+| `Person` | person | PHI | — |
+| `PersonAccount` | person | PII | — |
+| `PersonContact` | person | PHI | — |
+| `PersonIdentifier` | person | PHI | — |
+| `PersonPatientLink` | facility · patient (names a person) | PHI | — |
+| `PersonAccessLogEntry` | person | PHI | — |
+| `PersonConsent` | person | PHI | — |
+| `PersonMergeRequest` | person | no | — |
+| `PersonMergeRecord` | person | no | — |
+| `PersonDocument` | person | PHI | — |
+| `PersonNotification` | person | PHI | — |
+
+#### document pipeline (src/lib/documents)
+
+| Model | Scope | PHI | Duplicates |
+|---|---|---|---|
+| `DocumentProcessing` | person | PHI | — |
+| `DocumentProcessingStep` | person | PHI | — |
+| `DocumentPage` | person | PHI | — |
+| `ExtractedText` | person | PHI | — |
+| `Translation` | person | PHI | — |
+| `ExtractedFact` | person | PHI | — |
+| `PatientProvidedRecord` | person | PHI | — |
+| `RecordConflict` | facility · patient (names a person) | PHI | — |
+| `PatientAllergyNotice` | facility · patient | PHI | — |
+
+#### clinical safety (src/lib/hospital)
+
+| Model | Scope | PHI | Duplicates |
+|---|---|---|---|
+| `AllergyStatusEntry` | facility · patient | PHI | — |
+| `DischargeHold` | facility | PHI | — |
+| `MedicineReference` | platform | no | — |
+
+#### AI over the record (src/lib/rag)
+
+| Model | Scope | PHI | Duplicates |
+|---|---|---|---|
+| `RagDocument` | facility · patient, or person (row by row, `ownerType`) | PHI | — |
+| `RagChunk` | facility · patient, or person (row by row, `ownerType`) | PHI | — |
+| `RagEmbedding` | facility · patient, or person (row by row, `ownerType`) | PHI | — |
+| `RagEmbeddingSpace` | platform | no | — |
+| `AiInteraction` | facility · patient, or person (row by row, `ownerType`) | PHI | — |
+| `AiTextReadLog` | person (via parent) | PHI | — |
+| `RagBackfillCursor` | platform | no | — |
+
+#### consent sharing (src/lib/sharing)
+
+| Model | Scope | PHI | Duplicates |
+|---|---|---|---|
+| `RecordShare` | person (shared with one facility) | PHI | — |
+| `AccessRequest` | person | PHI | — |
+
+#### doctor network (src/lib/doctors)
+
+| Model | Scope | PHI | Duplicates |
+|---|---|---|---|
+| `DoctorProfile` | platform (a doctor's or a login's own) | PII | — |
+| `DoctorQualification` | platform (a doctor's or a login's own) | PII | — |
+| `DoctorSpecialty` | platform (a doctor's or a login's own) | no | — |
+| `DoctorStaffLink` | facility | no | — |
+| `PracticeLocation` | platform (a doctor's or a login's own) | no | — |
+| `DoctorVerificationCase` | platform (a doctor's or a login's own) | PII | — |
+| `SymptomSpecialtyMap` | platform | no | — |
+| `DoctorNextSlot` | platform (a doctor's or a login's own) | no | — |
+| `DirectoryBooking` | person | PHI | — |
+| `LoginPhone` | platform (a doctor's or a login's own) | PII | — |
+
+#### households (src/lib/household)
+
+| Model | Scope | PHI | Duplicates |
+|---|---|---|---|
+| `Household` | person | no | — |
+| `HouseholdMember` | person | PHI | — |
+| `ProxyGrant` | person | PHI | — |
+| `DependentConsent` | facility · patient (names a person) | PHI | — |
+| `ParentalConsent` | person | PHI | — |
+| `GuardianConsentCheck` | person | PHI | — |
+| `MemberClaim` | person | PII | — |
+
+#### patient insurance and check-in (src/lib/insurance)
+
+| Model | Scope | PHI | Duplicates |
+|---|---|---|---|
+| `InsuranceCard` | person | PHI | — |
+| `CardShare` | person (shared with one facility) | PHI | — |
+| `PreArrivalCheckIn` | facility · patient (names a person) | PHI | — |
+| `ClaimDocumentRequest` | facility · patient | PHI | — |
+| `FacilityPaymentGateway` | facility | no | — |
+| `PatientPaymentOrder` | facility · patient | PHI | — |
+| `FacilityGatewayWebhook` | facility | no | — |
