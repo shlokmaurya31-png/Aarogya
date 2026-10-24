@@ -71,6 +71,74 @@ function AddChild({ householdId, onDone }: { householdId: string; onDone: () => 
   );
 }
 
+const CHOICES: { purpose: string; label: string; scopes?: string[] }[] = [
+  { purpose: "DOCUMENT_PROCESSING", label: "Read their uploaded reports (so you can check what was found)" },
+  { purpose: "AI_ASSISTANCE", label: "Let the AI assistant explain their record" },
+  { purpose: "AI_TEXT_RETENTION", label: "Keep AI questions and answers for safety review", scopes: ["SAFETY_REVIEW"] },
+];
+const DECIDED: Record<string, string> = { GRANTED: "Yes", DECLINED: "No", LAPSED: "Lapsed at 18" };
+
+/** A guardian's choices for a child (Week 5b): the same check as adding the child, a code to your phone and your declaration. They lapse at 18. */
+function GuardianChoices({ profile }: { profile: Profile }) {
+  const [current, setCurrent] = useState<Record<string, { decision: string; decidedAs: string } | null>>({});
+  const [pending, setPending] = useState<{ purpose: string; decision: string; scopes?: string[] } | null>(null);
+  const [relationship, setRelationship] = useState("MOTHER");
+  const [declaration, setDeclaration] = useState(false);
+  const [check, setCheck] = useState<{ checkId: string; sentTo: string } | null>(null);
+  const [code, setCode] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    call(`/api/patient/members/${profile.personId}/consents`, undefined, "GET").then((r) => { if (alive && r.ok) setCurrent(r.data); });
+    return () => { alive = false; };
+  }, [profile, tick]);
+  async function start() {
+    if (!pending) return;
+    const r = await call(`/api/patient/members/${profile.personId}/consents`, { ...pending, scopes: pending.decision === "GRANTED" ? pending.scopes : undefined, relationship, declaration });
+    if (r.ok) { setCheck(r.data); setMsg(null); } else setMsg(r.error);
+  }
+  async function confirm() {
+    if (!check) return;
+    const r = await call(`/api/patient/members/${profile.personId}/consents/confirm`, { checkId: check.checkId, code });
+    if (r.ok) { setMsg("Saved as your choice for them. It lapses when they turn 18."); setPending(null); setCheck(null); setCode(""); setDeclaration(false); setTick((t) => t + 1); } else setMsg(r.error);
+  }
+  return (
+    <Card>
+      <SectionTitle><span className="inline-flex items-center gap-2"><ShieldCheck size={15} /> Your choices for {profile.name}</span></SectionTitle>
+      <ul className="space-y-1.5 text-[12.5px]" aria-label="Guardian choices">
+        {CHOICES.map((c) => (
+          <li key={c.purpose} className="flex flex-wrap items-center gap-2">
+            <span className="flex-1">{c.label}: <span className="font-medium">{current[c.purpose] ? DECIDED[current[c.purpose]!.decision] : "Not chosen"}</span></span>
+            <button onClick={() => { setPending({ purpose: c.purpose, decision: "GRANTED", scopes: c.scopes }); setCheck(null); }} className="rounded-md border border-hairline px-2 py-0.5 text-[12px]">Allow</button>
+            <button onClick={() => { setPending({ purpose: c.purpose, decision: "DECLINED" }); setCheck(null); }} className="rounded-md border border-hairline px-2 py-0.5 text-[12px]">Don&apos;t allow</button>
+          </li>
+        ))}
+      </ul>
+      {pending && !check && (
+        <div className="mt-3 space-y-2" role="region" aria-label="Confirm your choice">
+          <select aria-label="You are the child's" value={relationship} onChange={(e) => setRelationship(e.target.value)} className="rounded-md border border-hairline bg-transparent px-2 py-1 text-[12.5px]">
+            <option value="MOTHER">Mother</option><option value="FATHER">Father</option><option value="LEGAL_GUARDIAN">Legal guardian</option>
+          </select>
+          <label className="flex items-start gap-2 text-[12px] text-text-secondary">
+            <input type="checkbox" checked={declaration} onChange={(e) => setDeclaration(e.target.checked)} className="mt-0.5" />
+            I declare that I am this child&apos;s parent or legal guardian and make this choice on their behalf. It lapses when they turn 18, and they will then choose for themselves.
+          </label>
+          <button onClick={start} disabled={!declaration} className="rounded-md bg-cyan px-3 py-1.5 text-[12.5px] font-medium text-ink disabled:opacity-50">Send me a code</button>
+        </div>
+      )}
+      {check && (
+        <div className="mt-3">
+          <p className="text-[12.5px]">We sent a code to your phone {check.sentTo}.</p>
+          <input aria-label="Choice code" inputMode="numeric" value={code} onChange={(e) => setCode(e.target.value)} className="rounded-md border border-hairline bg-transparent px-2 py-1.5 font-mono text-[13px]" />
+          <button onClick={confirm} className="ml-2 rounded-md bg-cyan px-3 py-1.5 text-[12.5px] font-medium text-ink">Confirm</button>
+        </div>
+      )}
+      {msg && <p className="mt-2 text-[12px] text-text-secondary" role="status">{msg}</p>}
+    </Card>
+  );
+}
+
 function MemberPanel({ profile }: { profile: Profile }) {
   const [view, setView] = useState<{ record: (SharedRecordData & { patient: { id: string } }) | null; uploads: { id: string; title: string }[] } | null>(null);
   const [facts, setFacts] = useState<Fact[]>([]);
@@ -114,6 +182,7 @@ function MemberPanel({ profile }: { profile: Profile }) {
     <div role="region" className="space-y-4" aria-label={`Acting for ${profile.name}`}>
       <p className="rounded-xl border border-accent/30 bg-accent/[0.06] px-3 py-2 text-[12.5px]">Acting for <span className="font-semibold">{profile.name}</span>. You may: {profile.permissions.join(", ").toLowerCase()}. Everything you do here is in their access log.</p>
       {can("VIEW") && (view?.record ? <SharedRecordSections data={view.record} /> : <Empty>{view ? `No hospital records yet${view.uploads.length ? `; documents: ${view.uploads.map((u) => u.title).join(", ")}` : ""}.` : "Loading…"}</Empty>)}
+      {profile.basis === "GUARDIAN" && <GuardianChoices profile={profile} />}
       {can("UPLOAD") && (
         <Card>
           <SectionTitle><span className="inline-flex items-center gap-2"><Upload size={15} /> Upload a report for {profile.name}</span></SectionTitle>

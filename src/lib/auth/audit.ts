@@ -89,6 +89,7 @@ export type AuditEventType =
   | "doctor.directory.booked"
   // Week 5b — households.
   | "household.minor.added"
+  | "household.guardianConsent.decided"
   | "household.dependent.firstCheck"
   | "household.dependent.confirmed"
   | "household.dependent.documentReviewed"

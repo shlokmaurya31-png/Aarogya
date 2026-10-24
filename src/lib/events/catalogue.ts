@@ -1574,6 +1574,16 @@ export const EVENT_CONTRACTS: EventContract[] = [
       decision: z.enum(["GRANTED", "DECLINED"]), previous: z.enum(["NONE", "GRANTED", "DECLINED"]), scopes: z.array(z.enum(["SAFETY_REVIEW"])),
     }).strict(),
   }),
+  // Week 5b follow-up: a guardian decides a managed minor's processing and AI consents.
+  contract({
+    type: "PersonConsentDecided", version: 3, aggregateType: "PERSON", scope: "PERSON",
+    sensitivity: "SENSITIVE", producer: "person identity (decidePersonConsent: the person's own choice; confirmGuardianConsent: a managed minor's guardian, after the parental-consent check)",
+    payload: z.object({
+      personId: id, consentId: id, purpose: z.enum(["SHARE_UPLOADS_WITH_TREATING", "DOCUMENT_PROCESSING", "AI_ASSISTANCE", "AI_TEXT_RETENTION"]),
+      decision: z.enum(["GRANTED", "DECLINED"]), previous: z.enum(["NONE", "GRANTED", "DECLINED"]), scopes: z.array(z.enum(["SAFETY_REVIEW"])),
+      decidedAs: z.enum(["SELF", "GUARDIAN"]),
+    }).strict(),
+  }),
   // ── Document pipeline (Week 4a) ───────────────────────────────────────────
   // PERSON-scoped: a Person's own documents belong to no facility. Ids, closed
   // codes and counts only: no text, values, names or languages beyond codes.

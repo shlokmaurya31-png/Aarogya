@@ -10529,6 +10529,11 @@ enum PersonConsentDecision {
   DECLINED
 }
 
+enum PersonConsentDecider {
+  SELF
+  GUARDIAN
+}
+
 enum PersonConsentStatus {
   ACTIVE
   SUPERSEDED
@@ -10555,6 +10560,11 @@ model PersonConsent {
   /// AI_TEXT_RETENTION only: SAFETY_REVIEW lets safety reviewers read retained text.
   scopes   String[]  @default([])
   lapsedAt DateTime?
+
+  /// Week 5b: SELF (the person's own login) or GUARDIAN (a managed minor's guardian, after the parental-consent check). A guardian's choice lapses at 18 like any choice made before then.
+  decidedAs       PersonConsentDecider @default(SELF)
+  /// GUARDIAN only: the GuardianConsentCheck that confirmed it.
+  guardianCheckId String?
 
   @@index([personId, purpose, status])
 }
@@ -11823,6 +11833,33 @@ model ParentalConsent {
   createdAt        DateTime  @default(now())
 
   @@index([parentPersonId])
+}
+
+/// Week 5b: a guardian's choice about a managed minor's DOCUMENT_PROCESSING,
+/// AI_ASSISTANCE or AI_TEXT_RETENTION, waiting for the code sent to the
+/// guardian's own verified phone and the relationship declaration. Confirming
+/// it records the PersonConsent (decidedAs GUARDIAN).
+model GuardianConsentCheck {
+  id               String                @id @default(cuid())
+  minorPersonId    String
+  guardianPersonId String
+  guardianUserId   String
+  grantId          String
+  purpose          PersonConsentPurpose
+  decision         PersonConsentDecision
+  scopes           String[]              @default([])
+  relationship     String
+  declarationText  String
+  phoneLast4       String
+  codeHash         String
+  codeExpiresAt    DateTime
+  attempts         Int                   @default(0)
+  confirmedAt      DateTime?
+  consentId        String?
+  createdAt        DateTime              @default(now())
+
+  @@index([minorPersonId])
+  @@index([guardianPersonId])
 }
 
 /// A claim at 18 (or by a dependent adult taking control back): an invitation to the member's own contact, or in person.

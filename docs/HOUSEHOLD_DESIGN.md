@@ -270,7 +270,7 @@ Built on branch `foundation/w5b-households`. Where this section and §1–§13 d
 
 1. **Existing facility delegations are left as they are** (§8): the offer to convert one into a proxy grant isn't built; delegations keep working unchanged and stay refused by the AI.
 2. **The grant's basis can change:** when an adult member changes a grant, it becomes theirs (`MEMBER_CHOICE`).
-3. **A managed profile has its creator's data classification** (a synthetic family stays synthetic). For real data, a guardian deciding the child's processing consents (`DOCUMENT_PROCESSING`, `AI_ASSISTANCE`) isn't wired: those decisions are still owner-only, so a real child's uploads aren't read until that is added (pre-launch item 22).
+3. **A managed profile has its creator's data classification** (a synthetic family stays synthetic). For a real child, the guardian decides `DOCUMENT_PROCESSING`, `AI_ASSISTANCE` and `AI_TEXT_RETENTION` (§14.5).
 4. **No household support process** for a household left with no manager (§4): managed profiles are never deleted; reattachment is a support task (pre-launch item 22).
 5. **A Person merge** re-points households and grants; a membership the surviving person already has is removed rather than duplicated, and a grant that would point at the same person is revoked.
 
@@ -281,5 +281,15 @@ Built on branch `foundation/w5b-households`. Where this section and §1–§13 d
 | `verify-postgres-household-proxies` | 42: parental consent (code, declaration, date of birth), the GUARDIAN grant, membership gives nothing, each permission exactly, SHARE never more than VIEW, "confirmed by proxy", every proxy action logged, the three dependent-adult methods, a linked adult's own choice and removal, the 8-member limit |
 | `verify-postgres-coming-of-age` | 19: the 30-day notice, the birthday (grants and consents lapse, the manager sees nothing), YEAR precision, claiming by own contact and in person, restoring by choice, a dependent adult taking control back |
 | `verify-postgres-proxy-leaks` | 14: sensitive canaries absent without an opt-in on every path and present with it (under 12), refused and ignored from 12, member A's proxy sees nothing of member B, a removed proxy at once, USE_AI and staff modes |
+| `verify-postgres-guardian-consent` | 33: a real child's upload skipped until the guardian decides, then processed (and an earlier one processed again); the check (declaration, relationship, a code to the guardian's own phone; wrong, reused, expired and five wrong codes); recorded `decidedAs GUARDIAN` with `PersonConsentDecided` v3 and the access log; the AI consents; who may decide; everything lapses at 18 |
 | Core journey | A parent adds a child → uploads for them (confirmed by proxy) → books for them → the child turns 18 → the parent's access lapses |
 | Browser smoke (`e2e/household.spec.ts`) | Start a household → add a child with the code → switch → upload → confirm (by proxy) |
+
+### 14.5 A guardian's consents for a child (follow-up)
+
+- **What:** `DOCUMENT_PROCESSING`, `AI_ASSISTANCE` and `AI_TEXT_RETENTION` (with `SAFETY_REVIEW`) for a `MANAGED_MINOR` under 18. Sharing with treating hospitals stays a share, made by a proxy with SHARE.
+- **Who:** the holder of an ACTIVE `GUARDIAN` grant with the purpose's permission (UPLOAD for processing, USE_AI for the AI ones). Not a dependent adult's proxy, not another proxy.
+- **How:** the parental-consent check again: the relationship declaration (its text stored on `GuardianConsentCheck`) and a code to the guardian's own verified phone. Five wrong codes end a check; the grant and the age are checked again on confirming.
+- **Recorded as** the child's `PersonConsent` with `decidedAs = GUARDIAN` and the check's id; `PersonConsentDecided` v3 carries `decidedAs` (`SELF` for the person's own choice). Like every choice made before 18, it lapses on the 18th birthday.
+- **Earlier uploads** skipped for want of consent aren't re-run by themselves: the guardian (UPLOAD) can ask for one to be processed again; it is in the child's access log.
+- Routes: `GET/POST /api/patient/members/[personId]/consents`, `POST …/consents/confirm`, `POST …/documents/[documentId]/reprocess`. Screen: "Your choices for <child>" on `/patient/household`.

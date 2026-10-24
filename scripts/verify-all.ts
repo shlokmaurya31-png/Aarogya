@@ -146,6 +146,7 @@ const ORDER = [
   "verify-postgres-household-proxies",
   "verify-postgres-coming-of-age",
   "verify-postgres-proxy-leaks",
+  "verify-postgres-guardian-consent",
   // §7: the core-journey replay test, extended at each spine step.
   "verify-postgres-core-journey",
   // Batch 4: bounded retries; runs after the tenancy sweep (checks its fixtures)

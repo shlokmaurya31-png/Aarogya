@@ -43,3 +43,7 @@ export function comingOfAge(dob: Date, precision: string | null | undefined): Da
   }
   return new Date(Date.UTC(dob.getUTCFullYear() + ADULT_AT + 1, 0, 1));
 }
+
+/** What a guardian declares when deciding a child's processing or AI consent (pending lawyer review). */
+export const GUARDIAN_CONSENT_DECLARATION =
+  "I declare that I am this child's parent or legal guardian and that I make this choice on their behalf. I understand that it lapses when they turn 18, and that they will then choose for themselves.";

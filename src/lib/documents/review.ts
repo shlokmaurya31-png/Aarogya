@@ -52,7 +52,7 @@ const BAND_ORDER = { LOW: 0, MEDIUM: 1, HIGH: 2 } as const;
 type Via = "SELF" | "PROXY";
 
 /** Who reviews: the person themselves, or a proxy with UPLOAD for the named member. */
-async function reviewer(userId: string, memberPersonId?: unknown): Promise<{ personId: string; via: Via }> {
+export async function reviewer(userId: string, memberPersonId?: unknown): Promise<{ personId: string; via: Via }> {
   if (typeof memberPersonId === "string" && memberPersonId) {
     const { requireProxy } = await import("@/lib/household/grants");
     const p = await requireProxy(userId, memberPersonId, "UPLOAD");
