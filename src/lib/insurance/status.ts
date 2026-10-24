@@ -16,7 +16,8 @@ import { activeLinkedPatients } from "@/lib/sharing/shares";
  *
  * The patient's share is computed only here, from the invoice and the
  * insurer's decided values:
- *   self-pay invoice                      the invoice total;
+ *   self-pay (no claim, no pre-authorization,
+ *     no active coverage at the facility)  the invoice total;
  *   claim approved / partly / settled     total minus the insurer's amount;
  *   claim rejected                        the total;
  *   cashless approved (pre-auth APPROVED,
@@ -71,14 +72,14 @@ export async function personPatientIds(personId: string): Promise<string[]> {
 export interface ShareResult { known: boolean; insurerMinor: number | null; shareMinor: number | null; paidByYouMinor: number; dueMinor: number; basis: "SELF_PAY" | "CLAIM" | "CLAIM_REJECTED" | "CASHLESS_APPROVAL" | "UNKNOWN"; text: string }
 
 /** The patient's share of one invoice, from decided values only (see above). Exported for the payment path. */
-export function patientShare(inv: Pick<Invoice, "status" | "totalMinor" | "payerId">, payerIsCash: boolean, claim: Pick<Claim, "status" | "approvedAmountMinor" | "settledAmountMinor"> | null, preAuth: Pick<PreAuthorization, "status" | "approvedAmountMinor"> | null, paidByYouMinor: number): ShareResult {
+export function patientShare(inv: Pick<Invoice, "status" | "totalMinor">, insured: boolean, claim: Pick<Claim, "status" | "approvedAmountMinor" | "settledAmountMinor"> | null, preAuth: Pick<PreAuthorization, "status" | "approvedAmountMinor"> | null, paidByYouMinor: number): ShareResult {
   const unknown = (text: string): ShareResult => ({ known: false, insurerMinor: null, shareMinor: null, paidByYouMinor, dueMinor: 0, basis: "UNKNOWN", text });
   if (!(VISIBLE as readonly string[]).includes(inv.status)) return unknown("Not yet known: the bill isn't final.");
   const done = (basis: ShareResult["basis"], insurer: number, text: string): ShareResult => {
     const share = Math.max(0, inv.totalMinor - insurer);
     return { known: true, insurerMinor: insurer, shareMinor: share, paidByYouMinor, dueMinor: Math.max(0, share - paidByYouMinor), basis, text };
   };
-  if (!inv.payerId || payerIsCash) return done("SELF_PAY", 0, "You pay this bill yourself.");
+  if (!insured) return done("SELF_PAY", 0, "You pay this bill yourself.");
   if (claim && DECIDED.includes(claim.status) && typeof (claim.settledAmountMinor ?? claim.approvedAmountMinor) === "number") {
     return done("CLAIM", Math.min(inv.totalMinor, (claim.settledAmountMinor ?? claim.approvedAmountMinor)!), "Your share, after your insurer's decision.");
   }
@@ -87,6 +88,17 @@ export function patientShare(inv: Pick<Invoice, "status" | "totalMinor" | "payer
     return done("CASHLESS_APPROVAL", Math.min(inv.totalMinor, preAuth.approvedAmountMinor), "Your share, from your insurer's cashless approval. It is final once the claim is decided.");
   }
   return unknown("Not yet known: waiting for your insurer's decision.");
+}
+
+/**
+ * Is this bill an insured one? A claim, a pre-authorization for the visit, an
+ * insurer on the invoice, or any ACTIVE coverage at the facility when it was
+ * issued: then the share waits for the insurer rather than showing the total.
+ */
+export async function invoiceInsured(inv: Pick<Invoice, "patientId" | "issuedAt" | "payerId">, payerIsCash: boolean, hasClaim: boolean, hasPreAuth: boolean): Promise<boolean> {
+  if (hasClaim || hasPreAuth || (inv.payerId && !payerIsCash)) return true;
+  const at = inv.issuedAt ?? new Date();
+  return (await prisma.patientCoverage.count({ where: { patientId: inv.patientId, status: "ACTIVE", validFrom: { lte: at }, OR: [{ validTo: null }, { validTo: { gte: at } }] } })) > 0;
 }
 
 /** What the patient paid themselves towards an invoice (not the insurer's settlement). */
@@ -119,7 +131,8 @@ export async function insuranceStatus(a: { userId: string; memberPersonId?: stri
     const bills = [];
     for (const inv of e.invoices) {
       const paid = await paidByPatient(inv.id);
-      const share = patientShare(inv, inv.payer?.type === "CASH", inv.claim, preAuth, paid);
+      const insured = await invoiceInsured(inv, inv.payer?.type === "CASH", !!inv.claim, !!preAuth);
+      const share = patientShare(inv, insured, inv.claim, preAuth, paid);
       bills.push({
         invoiceId: inv.id, invoiceNumber: inv.invoiceNumber, statusLabel: inv.status === "PAID" ? "Paid" : inv.status === "PARTIALLY_PAID" ? "Partly paid" : "To pay", currency: inv.currency,
         totalMinor: inv.totalMinor, payer: inv.payer && inv.payer.type !== "CASH" ? inv.payer.name : "You (self-pay)",

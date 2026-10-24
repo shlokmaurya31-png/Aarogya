@@ -151,6 +151,8 @@ const ORDER = [
   // Week 5c: patient insurance and check-in.
   "verify-postgres-insurance-cards",
   "verify-postgres-pre-arrival",
+  "verify-postgres-patient-insurance-status",
+  "verify-postgres-hospital-payments",
   // §7: the core-journey replay test, extended at each spine step.
   "verify-postgres-core-journey",
   // Batch 4: bounded retries; runs after the tenancy sweep (checks its fixtures)

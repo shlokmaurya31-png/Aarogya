@@ -7,7 +7,7 @@ import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 import { RazorpayBillingProvider } from "@/lib/billing/provider/razorpay";
 import { fetchTransport, type HttpTransport } from "@/lib/billing/provider/http";
 import { allocatePayment, recordPayment } from "@/lib/hospital/billing/payments";
-import { insurancePerson, patientShare, personPatientIds } from "./status";
+import { insurancePerson, invoiceInsured, patientShare, personPatientIds } from "./status";
 
 /**
  * Week 5c — "pay your share" (docs/PATIENT_INSURANCE_DESIGN.md §6, §14).
@@ -128,7 +128,8 @@ export async function shareDue(personId: string, invoiceId: string) {
   const inv = await prisma.invoice.findUnique({ where: { id: invoiceId }, include: { payer: { select: { type: true } }, claim: true, encounter: { select: { preAuthorizations: { orderBy: { requestedAt: "desc" }, take: 1 } } } } });
   if (!inv || !(await personPatientIds(personId)).includes(inv.patientId)) throw new NotFoundError();
   const paid = (await prisma.paymentAllocation.findMany({ where: { invoiceId: inv.id, payment: { method: { not: "INSURANCE_SETTLEMENT" }, status: "RECEIVED" } }, select: { amountMinor: true } })).reduce((s, r) => s + r.amountMinor, 0);
-  const share = patientShare(inv, inv.payer?.type === "CASH", inv.claim, inv.encounter.preAuthorizations[0] ?? null, paid);
+  const preAuth = inv.encounter.preAuthorizations[0] ?? null;
+  const share = patientShare(inv, await invoiceInsured(inv, inv.payer?.type === "CASH", !!inv.claim, !!preAuth), inv.claim, preAuth, paid);
   // Never more than the invoice still has outstanding.
   return { inv, share, due: Math.min(share.dueMinor, Math.max(0, inv.totalMinor - inv.allocatedMinor)) };
 }
