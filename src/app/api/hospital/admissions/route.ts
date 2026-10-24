@@ -12,8 +12,10 @@ export async function GET(req: NextRequest) {
     const { facilityId } = await requireFacilityStaff("encounter:read", searchParams.get("facilityId") ?? undefined);
 
     const admissions = await prisma.admission.findMany({
-      where: { encounter: { facilityId }, discharge: { is: null } },
-      include: { encounter: { include: { patient: true } }, bed: { include: { ward: true } } },
+      // Still in the hospital: not discharged yet, or a discharge in progress (the Discharge Command
+      // Center finalizes those; excluding them hid every initiated discharge from it).
+      where: { encounter: { facilityId }, OR: [{ discharge: { is: null } }, { discharge: { is: { dischargedAt: null } } }] },
+      include: { encounter: { include: { patient: true } }, bed: { include: { ward: true } }, discharge: true },
       orderBy: { admittedAt: "desc" },
     });
     return { admissions };

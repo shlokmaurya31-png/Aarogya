@@ -5,8 +5,13 @@ name: CI
 #   Test & Build      migrate a fresh Postgres, unit tests, production build
 #   Integrity gates   npm run verify:all: every scripts/verify-postgres-*.ts
 #                     against a reset + migrated + seeded Postgres
-#   Browser smoke     npm run e2e:smoke: Playwright (Chromium) through the
-#                     patient's upload journey and the doctor's visit brief
+#   Browser smoke     npm run e2e:smoke: Playwright (Chromium) through the core
+#                     journeys (e2e/*.spec.ts): OPD visit; ED → admission → ICU →
+#                     OT → discharge → invoice → claim draft; a medication round
+#                     with a missed dose; a critical lab result acknowledged;
+#                     upload → review → timeline → explain; directory booking with
+#                     a share → visit brief; households; pre-arrival check-in →
+#                     pay share
 #   Migration drift   prisma/migrations must reproduce schema.prisma exactly
 #   Lint              ESLint, zero warnings allowed
 #
