@@ -45,8 +45,14 @@ async function main() {
   const P = await sharer();
   await lab(P.pune, P.punEnc, "Haemoglobin", `10.2 dirlab${tag}`);
   await drain();
-  const day = (await prisma.doctorNextSlot.findUniqueOrThrow({ where: { practiceLocationId: doc.locationId! } })).nextSlotAt!;
-  const slots = await locationSlots(doc.locationId!, day);
+  const first = (await prisma.doctorNextSlot.findUniqueOrThrow({ where: { practiceLocationId: doc.locationId! } })).nextSlotAt!;
+  // Four free slots on one day: late in the day the next slot's day may have fewer left, so take the next day then.
+  let day = first;
+  let slots = await locationSlots(doc.locationId!, day);
+  for (let i = 1; slots.length < 4 && i <= 7; i++) {
+    day = new Date(first.getTime() + i * 86_400_000);
+    slots = await locationSlots(doc.locationId!, day);
+  }
   const [s1, s2, s3, s4] = slots;
 
   // 1. Booking at a facility where the patient has no record.
