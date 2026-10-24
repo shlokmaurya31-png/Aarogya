@@ -71,8 +71,8 @@ originating `Charge`.
 **Deposits are unallocated Payments, not a separate model** — "money
 received with no invoice to apply it to yet" already is exactly what an
 unallocated payment means; a parallel `Deposit` table would just duplicate
-the ledger (see `deposits.ts`, a thin discoverability wrapper over
-`recordPayment`). `idempotencyKey @unique` is the payment-race anchor.
+the ledger (a deposit is a `recordPayment` with no allocation; the
+`deposits.ts` wrapper was removed in Week 5 as unused). `idempotencyKey @unique` is the payment-race anchor.
 `allocatedMinor`/`refundedMinor` are guarded running caches, CAS-updated
 in the same transaction as the child row they summarize — not a blind
 increment like the old `Bill.totalAmount`.
@@ -123,7 +123,6 @@ src/lib/hospital/billing/
   preauth.ts           PreAuthorization CRUD + transitions
   invoices.ts          draft/addLine/issue/void, refreshInvoicePaymentStatus
   payments.ts          recordPayment (idempotent), allocatePayment (CAS), voidPayment
-  deposits.ts          thin re-export of recordPayment (see Payment above)
   refunds.ts           requestRefund/approveRefund/completeRefund
   adjustments.ts        createAdjustment/approve/reject
   claims.ts            transition table + submit/decision/settle/close
