@@ -7,6 +7,7 @@ import { StatusPill } from "@/components/ui/StatusPill";
 import { useToastStore } from "@/store/useToastStore";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { minorToRupees } from "@/lib/hospital/billing/money";
+import { ClaimDocuments } from "@/components/hospital-os/ClaimDocuments";
 
 interface ClaimRow {
   id: string;
@@ -134,6 +135,7 @@ export function ClaimsWorklist() {
                 </div>
               )}
               {active.denialReason && <p className="text-red-600">Denied: {active.denialReason}</p>}
+              {!["SETTLED", "CLOSED"].includes(active.status) && <ClaimDocuments claimId={active.id} />}
             </div>
           )}
         </Card>

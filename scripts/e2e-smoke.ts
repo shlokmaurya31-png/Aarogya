@@ -32,6 +32,11 @@ async function main() {
     AI_REAL_DATA_ENABLED: "false", SMS_PROVIDER: "outbox",
     // This run's own key for the AI interaction text (never a real key).
     AI_TEXT_KEY_VERSION: "1", AI_TEXT_KEY_1: randomBytes(32).toString("base64"),
+    // Week 5c: this run's card key, and the Pune facility's test-mode gateway secrets; order
+    // creation is stubbed (no Razorpay test account here), the payment arrives as a signed webhook.
+    INSURANCE_CARD_KEY_VERSION: "1", INSURANCE_CARD_KEY_1: randomBytes(32).toString("base64"),
+    RAZORPAY_KEY_SECRET__E2E_SMOKE: randomBytes(18).toString("hex"), RAZORPAY_WEBHOOK_SECRET__E2E_SMOKE: randomBytes(18).toString("hex"),
+    HOSPITAL_GATEWAY_STUB: "1",
   });
   console.log(`e2e:smoke — against ${target.host}/${target.name}`);
 

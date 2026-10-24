@@ -110,7 +110,7 @@ function encryptedNumbers(memberId: string | undefined, policy: string | null | 
 /** The card as anyone but its edit screen sees it: masked numbers, no photo refs. */
 export function cardView(c: InsuranceCard) {
   return {
-    id: c.id, payerType: c.payerType, payerTypeLabel: PAYER_TYPE_LABEL[c.payerType], scheme: c.scheme, payerName: c.payerName, planName: c.planName,
+    id: c.id, payerType: c.payerType, payerTypeLabel: PAYER_TYPE_LABEL[c.payerType], scheme: c.scheme, payerId: c.payerId, payerName: c.payerName, planName: c.planName,
     memberIdMasked: maskLast4(c.memberIdLast4), policyMasked: maskLast4(c.policyLast4), validFrom: c.validFrom?.toISOString().slice(0, 10) ?? null, validTo: c.validTo?.toISOString().slice(0, 10) ?? null,
     hasFront: !!c.frontImageRef, hasBack: !!c.backImageRef, version: c.version,
   };

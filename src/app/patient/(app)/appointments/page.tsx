@@ -1,10 +1,17 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Card, SectionTitle, Empty, Unavailable, usePatientData, formatDateTime, StatusPill } from "@/components/patient-portal/ui";
 
 interface Appt { id: string; doctorName: string; department: string | null; scheduledStart: string; statusLabel: string; typeLabel: string; reason: string | null; canCancel: boolean; }
 interface Doctor { staffId: string; name: string; role: string; department: string | null; slotMinutes: number; }
+
+/** Week 5c: pre-arrival check-in opens 24 hours before and closes 1 hour before. */
+function checkInOpen(start: string) {
+  const ms = new Date(start).getTime() - Date.now();
+  return ms > 3_600_000 && ms <= 24 * 3_600_000;
+}
 
 export default function AppointmentsPage() {
   const { state, reload } = usePatientData<{ upcoming: Appt[]; past: Appt[] }>("/api/patient/appointments");
@@ -69,6 +76,7 @@ export default function AppointmentsPage() {
                 </div>
                 <div className="flex items-center gap-2">
                   <StatusPill label={a.statusLabel} tone="info" />
+                  {checkInOpen(a.scheduledStart) && <Link href={`/patient/checkin?appointmentId=${a.id}`} className="rounded-md bg-cyan px-2 py-1 text-[11px] font-medium text-white">Check in</Link>}
                   {a.canCancel && <button onClick={() => cancel(a.id)} className="rounded-md border border-hairline px-2 py-1 text-[11px] text-text-secondary hover:border-red/30 hover:text-red">Cancel</button>}
                 </div>
               </li>

@@ -366,6 +366,10 @@ const SEGMENT_MODELS: Record<string, string> = {
   // Week 4c: person-scoped; staff reach them only as requester or recipient.
   "access-requests/[id]": "AccessRequest",
   "shares/[id]": "RecordShare",
+  // Week 5c: pre-arrival check-ins and claim document requests (facility-owned).
+  "checkins/[id]": "PreArrivalCheckIn",
+  "claim-document-requests/[id]": "ClaimDocumentRequest",
+  "claim-document-requests/[id]/documents/[documentId]": "PersonDocument",
   // 4c fix: a shared upload's signed URL, only through the share.
   "shares/[id]/documents/[documentId]": "PersonDocument",
   // Week 5a: a doctor's claim on a staff profile, decided by that facility's admin.

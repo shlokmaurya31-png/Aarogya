@@ -12,6 +12,9 @@
  *   - Week 5a: a verified, listed general physician in the directory (a
  *     hospital location at Pune with sessions all day, so a slot is always
  *     inside the booking share's window), with a login.
+ *   - Week 5c: the visit two hours ahead (inside the pre-arrival window),
+ *     the facility admin's login (the desk), and the Pune facility's own
+ *     test-mode payment gateway (secrets from this run's environment).
  * Import only after DATABASE_URL points at the smoke database.
  */
 import { randomBytes } from "node:crypto";
@@ -33,6 +36,8 @@ import { addHospitalLocation, claimStaffProfile, decideStaffLink } from "../../s
 import { refreshNextSlot } from "../../src/lib/doctors/slots";
 
 export const PUNE = "fac-amc-pune";
+/** Week 5c: the smoke run's gateway secrets live under this reference (scripts/e2e-smoke.ts sets them). */
+export const E2E_GATEWAY_REF = "E2E_SMOKE";
 
 export interface E2eFixture {
   tag: string;
@@ -40,6 +45,10 @@ export interface E2eFixture {
   patient: { email: string; patientId: string; name: string; verifiedPhone: string };
   doctor: { email: string; name: string };
   networkDoctor: { email: string; name: string };
+  /** Week 5c: the facility admin (the desk), the visit to check in for, the gateway's secret reference. */
+  desk: { email: string };
+  appointmentId: string;
+  gatewaySecretRef: string;
   shareId: string;
   samplePdf: string;
   sampleTitle: string;
@@ -86,7 +95,7 @@ export async function buildE2eFixture(outDir: string): Promise<E2eFixture> {
   await prisma.$transaction((tx) => emitFacilityEvent(tx, { type: "LabResultReleased", aggregateId: hb.id, facilityId: PUNE, payload: { resultId: hb.id, orderId: order.id, patientId } }));
   await recordAllergy({ patientId, facilityId: PUNE, substance: "Penicillin", reaction: "rash", severity: "severe", byUserId: doctorUser.id });
   const start = new Date(Date.now() + 2 * 3_600_000);
-  await prisma.appointment.create({ data: { facilityId: PUNE, doctorStaffId: staff.id, patientId, scheduledStart: start, scheduledEnd: new Date(start.getTime() + 900_000), createdByStaffId: staff.id, reason: "Follow-up for low hemoglobin" } });
+  const appointment = await prisma.appointment.create({ data: { facilityId: PUNE, doctorStaffId: staff.id, patientId, scheduledStart: start, scheduledEnd: new Date(start.getTime() + 900_000), createdByStaffId: staff.id, reason: "Follow-up for low hemoglobin" } });
 
   // The share: the patient's visit code, redeemed by the doctor.
   const issued = await issueAccessCode(patientId, a.userId, "E2E smoke visit");
@@ -115,11 +124,16 @@ export async function buildE2eFixture(outDir: string): Promise<E2eFixture> {
   void doc;
   await drain();
 
+  // Week 5c: the facility's own payment gateway, in test mode (the run's secrets are in the environment).
+  const { setFacilityGateway } = await import("../../src/lib/insurance/hospitalPayments");
+  await setFacilityGateway({ userId: adminUser.id, facilityId: PUNE }, { keyId: `rzp_test_e2e${tag}`.slice(0, 40), secretRef: E2E_GATEWAY_REF, mode: "TEST", enabled: true });
+
   mkdirSync(outDir, { recursive: true });
   const samplePdf = path.join(outDir, "sample-report.pdf");
   writeFileSync(samplePdf, await fixturePdf(fixtureById("lab-en-cbc")!));
   const fixture: E2eFixture = {
     tag, password, patient: { email, patientId, name, verifiedPhone }, doctor: { email: doctorUser.email, name: doctorName }, networkDoctor: { email: netUser.email, name: netName },
+    desk: { email: adminUser.email }, appointmentId: appointment.id, gatewaySecretRef: E2E_GATEWAY_REF,
     shareId: redeemed.id, samplePdf, sampleTitle: `Blood count ${tag}`,
   };
   writeFileSync(path.join(outDir, "fixture.json"), JSON.stringify(fixture, null, 2));

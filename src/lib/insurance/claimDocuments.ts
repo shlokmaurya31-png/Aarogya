@@ -89,6 +89,8 @@ export async function attachClaimDocuments(a: { userId: string; memberPersonId?:
 
 /** Billing staff: the facility's requests for a claim, and the documents attached (download each through the CLAIM share). */
 export async function claimDocumentRequests(staff: { facilityId: string }, claimId: string) {
+  const claim = await prisma.claim.findUnique({ where: { id: claimId }, select: { facilityId: true } });
+  if (!claim || claim.facilityId !== staff.facilityId) throw new NotFoundError();
   const rows = await prisma.claimDocumentRequest.findMany({ where: { claimId, facilityId: staff.facilityId }, orderBy: { createdAt: "desc" } });
   const shares = await prisma.recordShare.findMany({ where: { id: { in: rows.map((r) => r.shareId).filter((x): x is string => !!x) } }, select: { id: true, status: true, documentIds: true } });
   const docs = await prisma.personDocument.findMany({ where: { id: { in: shares.flatMap((s) => (s.status === "ACTIVE" ? s.documentIds : [])) }, status: "CURRENT" }, select: { id: true, title: true } });
