@@ -16,12 +16,12 @@ import { randomBytes } from "node:crypto";
 import { prisma } from "../src/lib/db";
 import { registerAllConsumers } from "../src/lib/runner/consumers";
 import { bookThroughDirectory } from "../src/lib/doctors/booking";
-import { locationSlots, searchDirectory } from "../src/lib/doctors/directory";
+import { searchDirectory } from "../src/lib/doctors/directory";
 import { viewSharedRecord } from "../src/lib/sharing/view";
 import { askAi, AskError } from "../src/lib/rag/ask";
 import { personDocumentDownload } from "../src/lib/person/documents";
 import { NOIDA, drain, lab, medicine, notFound, reporter, sharer, tag, upload } from "./lib/shareFixture";
-import { facilityAdmin, networkDoctor, verifier } from "./lib/doctorFixture";
+import { daySlots, facilityAdmin, networkDoctor, verifier } from "./lib/doctorFixture";
 
 const { report, done } = reporter();
 process.env.AI_TEXT_KEY_VERSION = "1";
@@ -50,8 +50,7 @@ async function main() {
   report("The patient's upload can't be opened by guessing a share (404)", await notFound(personDocumentDownload({ kind: "SHARE", userId: doc.userId, facilityId: NOIDA, role: "DOCTOR", shareRef: P.pune }, up)));
 
   // Booked without a share.
-  const day = (await prisma.doctorNextSlot.findUniqueOrThrow({ where: { practiceLocationId: doc.locationId! } })).nextSlotAt!;
-  const [s1, s2] = await locationSlots(doc.locationId!, day);
+  const [s1, s2] = (await daySlots(doc.locationId!, 2)).slots;
   const plain = await bookThroughDirectory(P.userId, { locationId: doc.locationId, start: s1.start });
   const noidaRecord = (await prisma.appointment.findUniqueOrThrow({ where: { id: plain.appointmentId } })).patientId;
   await prisma.encounter.deleteMany({ where: { patientId: noidaRecord } });
