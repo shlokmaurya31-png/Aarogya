@@ -21,6 +21,7 @@ import { recordTriage } from "../src/lib/hospital/triage";
 import { bookAppointment } from "../src/lib/hospital/appointment";
 import { DoctorNotBookableError } from "../src/lib/hospital/bookability";
 import { ensurePrimaryMembership } from "../prisma/seedData/staffMembership";
+import { gateClock } from "./lib/testClock";
 
 let pass = 0;
 let fail = 0;
@@ -66,8 +67,7 @@ async function main() {
   }
 
   // 3. Contrast: scheduled booking with the same doctor is refused.
-  const start = new Date(Date.now() + 2 * 86_400_000);
-  start.setHours(10, 0, 0, 0);
+  const start = gateClock.at(2, 10);
   const booked = await bookAppointment({
     facilityId, doctorStaffId: doctor.id, patientId: patient.id, scheduledStart: start, scheduledEnd: new Date(start.getTime() + 15 * 60_000),
     createdByStaffId: frontDesk.id, byUserId: frontDesk.userId,

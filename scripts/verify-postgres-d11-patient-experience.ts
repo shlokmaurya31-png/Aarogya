@@ -28,6 +28,7 @@ import { getAbhaStatus } from "../src/lib/patient/experience/abha";
 import { ensurePrimaryMembership } from "../prisma/seedData/staffMembership";
 import { linkAccountForGate } from "./lib/personFixture";
 import { carries } from "./lib/payloadValues";
+import { gateClock } from "./lib/testClock";
 
 let pass = 0, fail = 0; const failures: string[] = [];
 const ok = (l: string) => { pass++; console.log(`  ✓ ${l}`); };
@@ -214,7 +215,7 @@ async function main() {
 
   // ── 5. Appointment booking: ownership, cross-facility, concurrency ──────
   console.log("5. Appointments");
-  const slot = (() => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(10, 0, 0, 0); return d; })();
+  const slot = gateClock.at(1, 10); // tomorrow 10:00 (India), the gate clock's
   await expectOk("patient can list bookable doctors in own facility", async () => {
     const s = await resolveReadScope(ctxA); const docs = await listBookableDoctors(s);
     if (!docs.some((d) => d.staffId === ID.staff)) throw new Error("doctor missing");

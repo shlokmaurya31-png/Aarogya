@@ -30,6 +30,7 @@ import { SMS_OUTBOX_FILE } from "../src/lib/messaging/sms";
 import { replayEvent } from "../src/lib/events/replay";
 import { loadActorMemberships } from "../src/lib/auth/tenantContext";
 import { NOIDA, PUNE, drain, eventsOf, reporter, sharer, staff } from "./lib/shareFixture";
+import { gateClock } from "./lib/testClock";
 
 const { report, done } = reporter();
 const outbox = (file: string) => (existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as { to: string; subject?: string; text: string }) : []);
@@ -72,7 +73,7 @@ async function main() {
   report("A redelivered activation writes nothing new (one per break-glass)", (await prisma.personNotification.count({ where: { personId: P.personId, kind: "BREAK_GLASS_ACCESS" } })) === 1);
 
   // 3. The daily summary.
-  const now = new Date();
+  const now = gateClock.now();
   const yesterday = istDay(new Date(istDay(now).start.getTime() - 1));
   const at = (h: number) => new Date(yesterday.start.getTime() + h * 3_600_000);
   for (const [who, h] of [[noidaDoc.userId, 2], [noidaDoc.userId, 5], [puneDoc.userId, 9]] as const) {

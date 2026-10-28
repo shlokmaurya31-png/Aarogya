@@ -32,6 +32,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { assertGateDatabase } from "./lib/gateGuard";
+import { GATE_TZ } from "./lib/testClock";
 import { resolveVerifyTarget } from "./lib/verifyTarget";
 
 const ROOT = path.resolve(__dirname, "..");
@@ -375,7 +376,9 @@ async function main() {
   // Every child (reset, seed, gates, the apps the HTTP gates start) sees only
   // the verify database. Next.js and Prisma never override a variable that
   // is already set, so .env cannot point them back at the dev database.
-  childEnv = { ...process.env, DATABASE_URL: target.url, DIRECT_URL: target.url };
+  // TZ: every gate and the apps it starts share one day, the India day
+  // (Flagship 1a, scripts/lib/testClock.ts).
+  childEnv = { ...process.env, DATABASE_URL: target.url, DIRECT_URL: target.url, TZ: GATE_TZ };
   // The hard guard (scripts/lib/gateGuard.ts): the reset and every gate run
   // only against aarogya_verify on localhost. Each gate re-checks on start.
   assertGateDatabase(childEnv);

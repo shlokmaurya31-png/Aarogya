@@ -30,6 +30,7 @@ import { requestAppointment } from "../src/lib/patient/experience/appointments";
 import type { PatientAccessScope } from "../src/lib/patient/context";
 import { ensurePrimaryMembership } from "../prisma/seedData/staffMembership";
 import { linkAccountForGate } from "./lib/personFixture";
+import { gateClock } from "./lib/testClock";
 
 let pass = 0;
 let fail = 0;
@@ -40,13 +41,9 @@ function report(name: string, ok: boolean, detail?: string) {
 }
 const ALL = ["PERSONAL", "APPOINTMENTS", "QUEUE", "RECORDS", "REPORTS", "PRESCRIPTIONS", "MEDICATIONS", "BILLING", "INSURANCE", "CONSENT"] as const;
 
-/** Local midnight `days` from today, plus hh:mm. */
+/** Midnight (India, the gates' time zone) `days` from today, plus hh:mm: the gate clock's. */
 function at(days: number, hh = 0, mm = 0): Date {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  d.setDate(d.getDate() + days);
-  d.setHours(hh, mm, 0, 0);
-  return d;
+  return gateClock.at(days, hh, mm);
 }
 const hhmm = (iso: string) => { const d = new Date(iso); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
 
