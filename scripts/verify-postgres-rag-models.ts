@@ -35,7 +35,8 @@ const tag = Date.now().toString(36);
 
 async function main() {
   const patient = await prisma.patient.findFirstOrThrow({ where: { facilityId: "fac-amc-pune" }, select: { id: true, facilityId: true, facility: { select: { organizationId: true } } } });
-  const person = await prisma.person.findFirstOrThrow({ select: { id: true } });
+  // Flagship 2c: the gate's own Person (it borrowed one an earlier gate made, so it failed alone).
+  const person = await prisma.person.create({ data: { displayName: `RAG models ${tag}` }, select: { id: true } });
   const base = { sourceVersion: 1, contentHash: "h", audience: "STAFF_ONLY" as const, title: "t", recordedAt: new Date(), embeddingModel: "mock-hash-1024", embeddingDim: 1024 };
   const fac = { ownerType: "FACILITY_PATIENT" as const, organizationId: patient.facility.organizationId, facilityId: patient.facilityId, patientId: patient.id, origin: "VERIFIED" as const, categories: ["LABS" as const] };
   let n = 0;

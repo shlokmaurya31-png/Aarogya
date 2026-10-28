@@ -76,6 +76,9 @@ async function main() {
 
   // The invoice list's `total` must count what the page lists, search included
   // (it once ignored invoiceNumber and counted every invoice in the facility).
+  // Flagship 2c: a second invoice of the gate's own, so "fewer than the facility's" means something
+  // on a fresh database too (the seed has one; earlier gates used to add the rest).
+  await prisma.invoice.create({ data: { billingAccountId: invoice.billingAccountId, encounterId: invoice.encounterId, patientId: invoice.patientId, facilityId: invoice.facilityId, generatedByUserId: invoice.generatedByUserId, invoiceNumber: `SRCH-${Date.now().toString(36)}`.toUpperCase() } });
   const where = invoiceListWhere(facility.id, { invoiceNumber: invoice.invoiceNumber!.toLowerCase() });
   const [listed, total, all] = await Promise.all([
     prisma.invoice.findMany({ where, select: { id: true } }),
