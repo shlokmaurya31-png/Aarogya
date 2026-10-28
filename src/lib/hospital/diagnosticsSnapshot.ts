@@ -1,3 +1,4 @@
+import { ImagingOrderStatus, LabOrderStatus } from "@prisma/client";
 import { prisma } from "@/lib/db";
 
 /**
@@ -66,16 +67,27 @@ export function mapToDiagnosticStatus(input: {
 }
 
 /**
- * De-duplicated volume/pending/critical diagnostics aggregate (brief §3) —
+ * Flagship 1c: the open statuses as a list (every status but the two final
+ * ones, so a new status is open until listed here), so the counts below can use
+ * the status index: `status NOT IN (…)` through the encounter join was a full
+ * scan of every order the facility ever had.
+ */
+const OPEN_LAB_ORDER = Object.values(LabOrderStatus).filter((s) => s !== "RESULTED" && s !== "CANCELLED");
+const OPEN_IMAGING_ORDER = Object.values(ImagingOrderStatus).filter((s) => s !== "REPORTED" && s !== "CANCELLED");
+
+/**
+ * De-duplicated pending/critical diagnostics aggregate (brief §3) —
  * replaces the near-identical queries that were independently copy-pasted
  * between commandCenter.ts and doctor/dashboard/route.ts. Every number is
  * a live Prisma count, facility-scoped, same query shapes those two call
  * sites already used (not new logic, just de-duplicated).
+ *
+ * Flagship 1c: the two all-time order counts ("volume", named "today" but
+ * counting every order ever) are gone: nothing read them, and they scanned
+ * the whole order history on every dashboard load.
  */
 export async function getDiagnosticsOperationalCounts(facilityId: string) {
   const [
-    labOrdersToday,
-    imagingOrdersToday,
     pendingLabResults,
     pendingImagingResults,
     criticalLabResults,
@@ -87,10 +99,8 @@ export async function getDiagnosticsOperationalCounts(facilityId: string) {
     studiesScheduledAwaitingArrival,
     reportsPendingVerification,
   ] = await Promise.all([
-    prisma.labOrder.count({ where: { encounter: { facilityId } } }),
-    prisma.imagingOrder.count({ where: { encounter: { facilityId } } }),
-    prisma.labOrder.count({ where: { encounter: { facilityId }, status: { notIn: ["RESULTED", "CANCELLED"] } } }),
-    prisma.imagingOrder.count({ where: { encounter: { facilityId }, status: { notIn: ["REPORTED", "CANCELLED"] } } }),
+    prisma.labOrder.count({ where: { encounter: { facilityId }, status: { in: OPEN_LAB_ORDER } } }),
+    prisma.imagingOrder.count({ where: { encounter: { facilityId }, status: { in: OPEN_IMAGING_ORDER } } }),
     prisma.labResult.count({ where: { isCritical: true, acknowledgedAt: null, isCurrent: true, labOrder: { encounter: { facilityId } } } }),
     prisma.imagingReport.count({ where: { isCritical: true, acknowledgedAt: null, isCurrent: true, imagingOrder: { encounter: { facilityId } } } }),
     prisma.specimen.count({ where: { facilityId, status: "COLLECTION_PENDING" } }),
@@ -102,7 +112,6 @@ export async function getDiagnosticsOperationalCounts(facilityId: string) {
   ]);
 
   return {
-    volume: { labOrders: labOrdersToday, imagingOrders: imagingOrdersToday },
     pending: {
       lab: pendingLabResults,
       imaging: pendingImagingResults,

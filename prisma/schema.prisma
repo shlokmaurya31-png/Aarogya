@@ -2621,6 +2621,8 @@ model ClinicalNote {
   amendmentReason String?
 
   @@index([encounterId])
+  /// Flagship 1c: unsigned notes, by author (the doctor workspace).
+  @@index([status, authorStaffId])
 }
 
 model Problem {
@@ -2798,6 +2800,8 @@ model LabOrder {
 
   @@index([encounterId])
   @@index([status])
+  /// Flagship 1c: a patient's orders, newest first (the timeline and the chart).
+  @@index([patientId, orderedAt])
 }
 
 model LabResult {
@@ -2847,6 +2851,8 @@ model LabResult {
   @@index([specimenId])
   @@index([isCurrent])
   @@index([isCritical, acknowledgedAt, isCurrent])
+  /// Flagship 1c: results awaiting verification (the diagnostics snapshot).
+  @@index([status, isCurrent])
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -3080,6 +3086,8 @@ model ImagingOrder {
 
   @@index([encounterId])
   @@index([status])
+  /// Flagship 1c: a patient's orders, newest first (the timeline and the chart).
+  @@index([patientId, orderedAt])
 }
 
 /**
