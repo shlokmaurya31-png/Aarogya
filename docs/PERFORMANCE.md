@@ -81,3 +81,9 @@ The chart and the timeline return pages now: newest first, by an opaque cursor, 
 | Timeline, next page | — | 9 KB |
 
 Measured with `npm run perf:gate -- --fresh` on 2026-10-29: all 17 endpoints within budget (chart p95 41 ms, timeline 42 ms). "Document review (facts to confirm)" is 130 KB and is the next one to page.
+
+## Flagship 2f: the concurrent load test
+
+`npm run perf:load` (not in verify:all) runs 50 simulated users for 5 minutes against a production build on the perf seed: 10 front desk, 15 doctors, 13 nurses (one write: recording vitals), 10 patients and 2 admins, each waiting 1–3 s between actions. It reports each endpoint's p50/p95/p99 and error rate (`.perf-report/load.md`), and fails on any p95 over 500 ms or any error.
+
+Run on 2026-10-29, a single laptop (app, database and load generator on one machine): **7,280 calls (24/s), 0 errors; overall p95 115 ms, p99 159 ms; all 17 endpoints within budget.** The slowest p95s: visit brief (AI, mock provider) 198 ms, command centre 181 ms, patient search 132 ms. The first run's only failure was the test's own: it asked for visit briefs on patients without AI consent, which the app correctly answers 404; the mix now asks only for the consented heavy patient.

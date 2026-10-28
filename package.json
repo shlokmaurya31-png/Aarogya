@@ -41,7 +41,8 @@
     "e2e:smoke": "tsx scripts/e2e-smoke.ts",
     "e2e": "tsx scripts/e2e-smoke.ts",
     "perf:seed": "tsx scripts/perf-gate.ts --fresh --seed-only",
-    "perf:gate": "tsx scripts/perf-gate.ts"
+    "perf:gate": "tsx scripts/perf-gate.ts",
+    "perf:load": "tsx scripts/perf-load.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
