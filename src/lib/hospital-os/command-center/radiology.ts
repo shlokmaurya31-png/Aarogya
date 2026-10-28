@@ -1,6 +1,5 @@
 import { prisma } from "@/lib/db";
-import { getDiagnosticsOperationalCounts } from "@/lib/hospital/diagnosticsSnapshot";
-import type { CommandContext } from "./authz";
+import { diagnosticsFor, type CommandContext } from "./authz";
 import { metric, driver, section } from "./_build";
 import type { CommandSection } from "./types";
 
@@ -13,7 +12,7 @@ export async function getRadiology(ctx: CommandContext): Promise<CommandSection>
   const f = ctx.facilityId;
   const warnMin = ctx.thresholds.radiologyTat.warning ?? 480;
   const [diag, reports] = await Promise.all([
-    getDiagnosticsOperationalCounts(f),
+    diagnosticsFor(ctx),
     prisma.imagingReport.findMany({
       where: { isCurrent: true, reportedAt: { gte: ctx.window.from, lte: ctx.window.to }, imagingOrder: { encounter: { facilityId: f } } },
       select: { reportedAt: true, imagingOrder: { select: { orderedAt: true } } },

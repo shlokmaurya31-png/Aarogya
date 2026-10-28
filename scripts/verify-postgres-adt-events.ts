@@ -43,6 +43,7 @@ import { checkInAppointment, cancelAppointment } from "../src/lib/hospital/appoi
 import { transitionEncounter } from "../src/lib/hospital/encounterStateMachine";
 import { runTick } from "../src/lib/runner/tick";
 import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
+import { gateClock } from "./lib/testClock";
 
 let pass = 0;
 let fail = 0;
@@ -113,7 +114,7 @@ async function main() {
   report("openEncounter emits EncounterOpened", (await types(opd.id)).join() === "EncounterOpened");
   await transitionEncounter(opd.id, "CANCELLED", { byUserId: by, reason: "gate" });
   report("transitionEncounter to a terminal status emits EncounterClosed", count(await types(opd.id), "EncounterClosed") === 1);
-  const start = new Date(Date.now() + 3 * 86_400_000);
+  const start = gateClock.at(3, 10);
   const appt = (offsetMin: number) => prisma.appointment.create({
     data: { facilityId, doctorStaffId: doctor.id, patientId: patient.id, scheduledStart: new Date(start.getTime() + offsetMin * 60_000), scheduledEnd: new Date(start.getTime() + (offsetMin + 15) * 60_000), createdByStaffId: doctor.id, reason: "Follow-up" },
   });

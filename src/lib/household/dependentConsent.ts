@@ -5,6 +5,8 @@ import { BadRequestError, ConflictError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { emitDomainEvent } from "@/lib/events/emit";
 import { sendSms, maskPhone } from "@/lib/messaging/sms";
+import { messageText } from "@/lib/notifications/texts";
+import { personLanguage } from "@/lib/person/notifications";
 import { sendEmail } from "@/lib/email/send";
 import { isStaffInFacility } from "@/lib/auth/staffFacility";
 import { grantEventTx } from "./grants";
@@ -69,8 +71,10 @@ export async function sendOwnCode(userId: string, householdId: string, memberPer
     await consentEventTx(tx, c, null, userId);
     return c;
   });
-  const text = `Aarogya: someone in your family asked to help manage your health record. If you agree, give them this code: ${code}. It expires in ${CODE_TTL_MINUTES} minutes. If you don't agree, ignore this message.`;
-  const sent = contact.kind === "PHONE" ? await sendSms(contact.value, text) : await sendEmail({ to: contact.value, subject: "A request to help manage your health record", text });
+  // In the member's own language: the message is for them (Flagship 1b).
+  const lang = await personLanguage(memberPersonId);
+  const text = messageText("code.DEPENDENT_CONSENT", lang, { code, minutes: CODE_TTL_MINUTES }).text;
+  const sent = contact.kind === "PHONE" ? await sendSms(contact.value, text) : await sendEmail({ to: contact.value, subject: messageText("code.DEPENDENT_CONSENT.subject", lang).text, text });
   if (!sent.delivered) throw new ConflictError("The code couldn't be sent. Try again later.");
   return { consentId: c.id, sentTo: contact.kind === "PHONE" ? maskPhone(contact.value) : contact.value.replace(/^(.).*(@.*)$/, "$1•••$2") };
 }

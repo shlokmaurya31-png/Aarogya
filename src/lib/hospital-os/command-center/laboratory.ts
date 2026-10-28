@@ -1,6 +1,5 @@
 import { prisma } from "@/lib/db";
-import { getDiagnosticsOperationalCounts } from "@/lib/hospital/diagnosticsSnapshot";
-import type { CommandContext } from "./authz";
+import { diagnosticsFor, type CommandContext } from "./authz";
 import { metric, driver, section } from "./_build";
 import type { CommandSection } from "./types";
 
@@ -15,7 +14,7 @@ export async function getLaboratory(ctx: CommandContext): Promise<CommandSection
   const f = ctx.facilityId;
   const warnMin = ctx.thresholds.labTat.warning ?? 240;
   const [diag, results] = await Promise.all([
-    getDiagnosticsOperationalCounts(f),
+    diagnosticsFor(ctx),
     prisma.labResult.findMany({
       where: { isCurrent: true, resultedAt: { gte: ctx.window.from, lte: ctx.window.to }, labOrder: { encounter: { facilityId: f } } },
       select: { resultedAt: true, labOrder: { select: { orderedAt: true } } },

@@ -17,6 +17,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { GATE_TZ } from "./lib/testClock";
 import { resolveVerifyTarget } from "./lib/verifyTarget";
 
 const ROOT = path.resolve(__dirname, "..");
@@ -29,6 +30,8 @@ async function main() {
   // Everything below (fixture, app, worker, tests) sees only this database and the mock providers.
   Object.assign(process.env, {
     DATABASE_URL: target.url, DIRECT_URL: target.url,
+    // Flagship 1a: the fixture, app, worker and browser share the India day (scripts/lib/testClock.ts).
+    TZ: GATE_TZ,
     DOCUMENT_AI_PROVIDER: "mock", RECORD_AI_PROVIDER: "mock", AI_PROVIDER: "mock", ANTHROPIC_API_KEY: "", VOYAGE_API_KEY: "",
     AI_REAL_DATA_ENABLED: "false", SMS_PROVIDER: "outbox",
     // This run's own key for the AI interaction text (never a real key).

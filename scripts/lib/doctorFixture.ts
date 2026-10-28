@@ -12,6 +12,7 @@ import { addClinicLocation, addHospitalLocation, claimStaffProfile, decideStaffL
 import { refreshNextSlot } from "../../src/lib/doctors/slots";
 import { locationSlots } from "../../src/lib/doctors/directory";
 import { tag } from "./shareFixture";
+import { gateClock } from "./testClock";
 
 let seq = 0;
 const PDF = Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n");
@@ -84,16 +85,14 @@ export async function networkDoctor(facilityId: string, v: { id: string }, admin
 }
 
 /**
- * A day with at least `need` free slots at a location, and its slots: the
- * next slot's day if it still has enough, else the next day that does. Late
- * in the India day the gate sessions have only a slot or two left.
+ * The gate clock's booking day (the India day after tomorrow, scripts/lib/testClock.ts)
+ * at a location, with its free slots, which must number at least `need`. The whole
+ * day lies ahead, so the count is the sessions' own whatever the time now (it used
+ * to be "the next slot's day", which late in the India day had a slot or two left).
  */
 export async function daySlots(locationId: string, need: number) {
-  const first = (await prisma.doctorNextSlot.findUniqueOrThrow({ where: { practiceLocationId: locationId } })).nextSlotAt!;
-  for (let i = 0; i <= 7; i++) {
-    const day = new Date(first.getTime() + i * 86_400_000);
-    const slots = await locationSlots(locationId, day);
-    if (slots.length >= need) return { day, slots };
-  }
-  throw new Error(`no day with ${need} free slots at ${locationId}`);
+  const day = gateClock.bookingDay();
+  const slots = await locationSlots(locationId, day);
+  if (slots.length < need) throw new Error(`only ${slots.length} free slots (need ${need}) at ${locationId} on ${day.toISOString()}`);
+  return { day, slots };
 }

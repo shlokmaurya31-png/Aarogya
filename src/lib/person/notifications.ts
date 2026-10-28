@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { emitDomainEvent } from "@/lib/events/emit";
 import { sendEmail } from "@/lib/email/send";
 import { sendSms } from "@/lib/messaging/sms";
+import { messageText, textDirection } from "@/lib/notifications/texts";
 import { requireOwnedPerson } from "./access";
 
 /**
@@ -28,82 +29,19 @@ import { requireOwnedPerson } from "./access";
  */
 const IST_OFFSET_MS = 330 * 60_000;
 
-type Texts = Record<PersonNotificationKind, (d: Record<string, number>) => { title: string; body: string }>;
-const TEXTS: Record<string, Texts> = {
-  en: {
-    ACCESS_SUMMARY: (d) => ({
-      title: "Who opened your health record yesterday",
-      body: `Your record was opened ${d.opens} time${d.opens === 1 ? "" : "s"} by ${d.people} ${d.people === 1 ? "person" : "people"} yesterday. Open Aarogya to see who, and to stop any access you didn't expect.`,
-    }),
-    BREAK_GLASS_ACCESS: () => ({
-      title: "Your record was opened in an emergency",
-      body: "A hospital opened your health record using emergency access. Every emergency access is reviewed. Open Aarogya to see who and when.",
-    }),
-    ACCESS_REQUESTED: () => ({
-      title: "A request to see your health record",
-      body: "A doctor or hospital has asked to see part of your health record. Open Aarogya to approve or decline it. Nothing is shared until you approve.",
-    }),
-    COMING_OF_AGE: (d) => ({
-      title: "A child in your family turns 18 soon",
-      body: `A profile you manage becomes its owner's own in ${d.days} day${d.days === 1 ? "" : "s"}. From then on you see it only if they choose. Open Aarogya to hand it over.`,
-    }),
-    CHECKIN_OPEN: () => ({
-      title: "You can check in before you arrive",
-      body: "Check-in is open for your visit. Confirm your details, add your insurance card and get your token in Aarogya, so you don't wait at the desk.",
-    }),
-    INSURANCE_UPDATE: () => ({
-      title: "An update on your insurance",
-      body: "Something changed with your insurance approval, bill or claim. Open Aarogya to see what it means for you.",
-    }),
-    DOCUMENTS_REQUESTED: () => ({
-      title: "The hospital needs a document for your claim",
-      body: "The hospital asked for a document to support your insurance claim. Open Aarogya to see what is needed and attach it.",
-    }),
-    BILL_READY: () => ({
-      title: "Your bill is ready",
-      body: "Your itemised bill is ready. Open Aarogya to see it and your share to pay.",
-    }),
-  },
-  hi: {
-    ACCESS_SUMMARY: (d) => ({
-      title: "कल आपका स्वास्थ्य रिकॉर्ड किसने देखा",
-      body: `कल आपका रिकॉर्ड ${d.people} व्यक्ति/व्यक्तियों ने ${d.opens} बार खोला। कौन था, यह देखने और कोई अनचाही पहुँच बंद करने के लिए Aarogya खोलें।`,
-    }),
-    BREAK_GLASS_ACCESS: () => ({
-      title: "आपातकाल में आपका रिकॉर्ड खोला गया",
-      body: "एक अस्पताल ने आपातकालीन पहुँच से आपका स्वास्थ्य रिकॉर्ड खोला। हर आपातकालीन पहुँच की समीक्षा होती है। किसने और कब, यह देखने के लिए Aarogya खोलें।",
-    }),
-    ACCESS_REQUESTED: () => ({
-      title: "आपका स्वास्थ्य रिकॉर्ड देखने का अनुरोध",
-      body: "किसी डॉक्टर या अस्पताल ने आपके स्वास्थ्य रिकॉर्ड का कुछ हिस्सा देखने का अनुरोध किया है। स्वीकार या अस्वीकार करने के लिए Aarogya खोलें। आपकी स्वीकृति के बिना कुछ भी साझा नहीं होता।",
-    }),
-    COMING_OF_AGE: (d) => ({
-      title: "आपके परिवार में कोई जल्द 18 का होगा",
-      body: `आपके द्वारा प्रबंधित एक प्रोफ़ाइल ${d.days} दिन में उसके मालिक की अपनी हो जाएगी। उसके बाद आप उसे तभी देखेंगे जब वे चुनें। सौंपने के लिए Aarogya खोलें।`,
-    }),
-    CHECKIN_OPEN: () => ({
-      title: "आने से पहले चेक-इन करें",
-      body: "आपकी विज़िट के लिए चेक-इन खुल गया है। Aarogya में अपनी जानकारी की पुष्टि करें, बीमा कार्ड जोड़ें और टोकन लें, ताकि डेस्क पर इंतज़ार न करना पड़े।",
-    }),
-    INSURANCE_UPDATE: () => ({
-      title: "आपके बीमा के बारे में नई जानकारी",
-      body: "आपकी बीमा स्वीकृति, बिल या क्लेम में कुछ बदला है। आपके लिए इसका क्या अर्थ है, यह देखने के लिए Aarogya खोलें।",
-    }),
-    DOCUMENTS_REQUESTED: () => ({
-      title: "आपके क्लेम के लिए अस्पताल को एक दस्तावेज़ चाहिए",
-      body: "अस्पताल ने आपके बीमा क्लेम के लिए एक दस्तावेज़ माँगा है। क्या चाहिए, यह देखने और उसे जोड़ने के लिए Aarogya खोलें।",
-    }),
-    BILL_READY: () => ({
-      title: "आपका बिल तैयार है",
-      body: "आपका विस्तृत बिल तैयार है। उसे और आपको चुकाने वाला हिस्सा देखने के लिए Aarogya खोलें।",
-    }),
-  },
-};
-
-/** The text in the person's language, or English where there is no translation yet (a pre-launch item). */
+/**
+ * The text in the person's language (Flagship 1b: all eleven app languages,
+ * src/lib/notifications/texts.ts), or English when theirs isn't one of them.
+ */
 export function notificationText(kind: PersonNotificationKind, language: string, detail: Record<string, number> = {}) {
-  const lang = TEXTS[language] ? language : "en";
-  return { language: lang, ...TEXTS[lang][kind](detail) };
+  const title = messageText(`notify.${kind}.title`, language, detail);
+  return { language: title.language, title: title.text, body: messageText(`notify.${kind}.body`, language, detail).text };
+}
+
+/** A person's language for what Aarogya sends them (English when unknown). */
+export async function personLanguage(personId: string | null | undefined): Promise<string> {
+  if (!personId) return "en";
+  return (await prisma.person.findUnique({ where: { id: personId }, select: { preferredLanguage: true } }))?.preferredLanguage ?? "en";
 }
 
 /** Writes a notification (once per dedupeKey) with PersonNotificationQueued. Null if it already exists. */
@@ -176,9 +114,9 @@ export async function sweepAccessSummaries(opts: { now?: Date; batchSize?: numbe
   return { queued };
 }
 
-/** The person's own notifications, newest first. */
+/** The person's own notifications, newest first, with each one's language and text direction (Urdu is right-to-left). */
 export async function listOwnNotifications(userId: string, limit = 30) {
   const personId = await requireOwnedPerson(userId);
   const rows = await prisma.personNotification.findMany({ where: { personId }, orderBy: { createdAt: "desc" }, take: Math.min(100, Math.max(1, limit)) });
-  return rows.map((n) => ({ id: n.id, kind: n.kind, title: n.title, body: n.body, createdAt: n.createdAt.toISOString(), status: n.status }));
+  return rows.map((n) => ({ id: n.id, kind: n.kind, title: n.title, body: n.body, language: n.language, dir: textDirection(n.language), createdAt: n.createdAt.toISOString(), status: n.status }));
 }

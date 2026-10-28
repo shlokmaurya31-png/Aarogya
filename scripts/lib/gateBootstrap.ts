@@ -11,6 +11,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parseEnv } from "node:util";
 import { gateDatabaseProblem } from "./gateGuard";
+import { GATE_TZ } from "./testClock";
 
 function effectiveEnv(): Record<string, string | undefined> {
   const file = path.resolve(__dirname, "..", "..", ".env");
@@ -24,3 +25,9 @@ if (problem) {
   console.error("Run gates through `npm run verify:all`, or set DATABASE_URL and DIRECT_URL to postgresql://…@localhost:5432/aarogya_verify.");
   process.exit(2);
 }
+
+// Flagship 1a: one time zone for every gate, however it was started (by hand,
+// verify:all or CI), so the local day the clinic sessions use is the India day
+// the check-ins and summaries use. Set before any module reads the time; Node
+// re-reads TZ when it changes, and the apps a gate starts inherit it.
+process.env.TZ = GATE_TZ;

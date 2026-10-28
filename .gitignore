@@ -62,6 +62,7 @@ next-env.d.ts
 
 # verify:all reports
 /.verify-report/
+/.perf-report/
 /.eval-report/
 /.e2e/
 /test-results/
