@@ -21,8 +21,15 @@ interface Slot { start: string; end: string }
 const rupees = (m: number | null) => (m === null ? "Fee at the desk" : `₹${(m / 100).toLocaleString("en-IN")}`);
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "No free slot in the next two weeks");
 
+/**
+ * The India calendar day (YYYY-MM-DD) of an instant: the day the slots API reads.
+ * Not the ISO string's own date, which is the UTC day and, from midnight to
+ * 05:30 India time, yesterday (every slot of it already past).
+ */
+const indiaDay = (at: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
+
 function Booker({ doctor, loc, onBooked }: { doctor: Entry; loc: Loc; onBooked: (msg: string) => void }) {
-  const [day, setDay] = useState(() => (loc.nextSlotAt ?? new Date().toISOString()).slice(0, 10));
+  const [day, setDay] = useState(() => indiaDay(loc.nextSlotAt ? new Date(loc.nextSlotAt) : new Date()));
   const [slots, setSlots] = useState<Slot[] | null>(null);
   const [start, setStart] = useState("");
   const [mode, setMode] = useState(loc.modes[0] ?? "IN_PERSON");
