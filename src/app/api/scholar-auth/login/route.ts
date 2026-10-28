@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
   const emailLimit = await rateLimit(emailKey, PER_EMAIL, WINDOW_MS);
   if (!emailLimit.allowed) return tooMany(emailLimit.retryAfterMs);
 
-  const user = await prisma.user.findUnique({ where: { email } });
+  const user = await prisma.user.findUnique({ where: { email }, omit: { passwordHash: false } });
   const ok = await verifyPassword(password, user?.passwordHash ?? (await getDummyHash()));
   if (!user || !ok) {
     return NextResponse.json({ error: "Invalid email or password." }, { status: 401 });
