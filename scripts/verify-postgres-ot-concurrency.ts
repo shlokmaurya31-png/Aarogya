@@ -88,8 +88,15 @@ async function main() {
     const attempt = () => recordItemUsage({ surgeryId: s.id, facilityId: facility.id, usageType: "IMPLANT", itemId: item.id, itemLotId: lot.id, quantity: 1, locationId: loc.id, recordedByStaffId: staff.id, actorUserId: staff.userId, byUserId: staff.userId }).then(() => ({ ok: true as const }), (err) => ({ ok: false as const, err }));
     const [r1, r2] = await Promise.all([attempt(), attempt()]);
     const succeeded = [r1, r2].filter((r) => r.ok).length;
-    // Spine step 8: stock moves in the stock-movement consumer (SurgeryItemUsed), so run it.
-    await runTick({ budgetMs: 20_000 });
+    // Spine step 8: stock moves in the stock-movement consumer (SurgeryItemUsed), so run it, until
+    // this case's own two events are dispatched: one tick could spend its budget on the earlier
+    // gates' backlog first, and a later gate that registers other consumers would then take them.
+    const ids = (await prisma.surgeryItemUsage.findMany({ where: { surgeryId: s.id }, select: { id: true } })).map((u) => u.id);
+    for (let i = 0; i < 10; i++) {
+      await runTick({ budgetMs: 20_000 });
+      const open = await prisma.domainEventOutbox.count({ where: { eventType: "SurgeryItemUsed", status: { in: ["PENDING", "RETRY", "PROCESSING"] }, OR: ids.map((id) => ({ payload: { path: ["usageId"], equals: id } })) } });
+      if (open === 0) break;
+    }
     const balance = await prisma.stockBalance.findFirst({ where: { itemId: item.id, lotId: lot.id, locationId: loc.id } });
     const consumedUsages = await prisma.surgeryItemUsage.count({ where: { surgeryId: s.id, stockConsumed: true } });
     report("D: implant inventory over-issue safety — at most one stock-consuming use succeeds, on-hand never negative", (balance?.onHandQty ?? 0) >= 0 && consumedUsages <= 1 && succeeded >= 1, `succeeded=${succeeded}, onHand=${balance?.onHandQty}, consumedUsages=${consumedUsages}`);
