@@ -160,6 +160,8 @@ const ORDER = [
   "verify-postgres-core-journey",
   // Batch 4: bounded retries; runs after the tenancy sweep (checks its fixtures)
   "verify-postgres-bounded-retry",
+  // Flagship 2b: one consumer registry in every entry point (HTTP; builds the app)
+  "verify-postgres-consumer-registry",
   // Runs last among the gates: checks every row the earlier gates created.
   "verify-postgres-facility-consistency",
   // Runs late: its whole-database check covers every earlier gate's orders.

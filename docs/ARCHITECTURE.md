@@ -86,7 +86,7 @@ Every state change emits a domain event in the same transaction. Details: `docs/
   - the next-slot projection;
   - coming of age;
   - card-share expiry and stale check-ins.
-- **Consumers** are registered in one place (`src/lib/runner/consumers.ts`, `EXPECTED_CONSUMERS`). Each consumer:
+- **Consumers** are registered in one place (`src/lib/runner/consumers.ts`, `CONSUMER_REGISTRY`). Every entry point (the worker, `POST /api/cron/tick`, the platform dispatch route, the gates) registers the whole registry; the dispatcher refuses to run while any of it is missing, and marks an event PROCESSED only when every consumer listed for its type has handled it (Flagship 2b; `verify-postgres-consumer-registry`). Each consumer:
   - has a stable name;
   - handles listed types;
   - is idempotent (delivery is at least once, ledgered per event and consumer in `DomainEventDelivery`);
