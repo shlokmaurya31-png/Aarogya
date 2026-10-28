@@ -10,6 +10,7 @@ import { registerDoctor, updateOwnProfile } from "../../src/lib/doctors/profile"
 import { decideVerification, submitVerification } from "../../src/lib/doctors/verification";
 import { addClinicLocation, addHospitalLocation, claimStaffProfile, decideStaffLink } from "../../src/lib/doctors/locations";
 import { refreshNextSlot } from "../../src/lib/doctors/slots";
+import { locationSlots } from "../../src/lib/doctors/directory";
 import { tag } from "./shareFixture";
 
 let seq = 0;
@@ -80,4 +81,19 @@ export async function networkDoctor(facilityId: string, v: { id: string }, admin
     await refreshNextSlot(locationId);
   }
   return { ...login, doctorId: doctor.id, locationId };
+}
+
+/**
+ * A day with at least `need` free slots at a location, and its slots: the
+ * next slot's day if it still has enough, else the next day that does. Late
+ * in the India day the gate sessions have only a slot or two left.
+ */
+export async function daySlots(locationId: string, need: number) {
+  const first = (await prisma.doctorNextSlot.findUniqueOrThrow({ where: { practiceLocationId: locationId } })).nextSlotAt!;
+  for (let i = 0; i <= 7; i++) {
+    const day = new Date(first.getTime() + i * 86_400_000);
+    const slots = await locationSlots(locationId, day);
+    if (slots.length >= need) return { day, slots };
+  }
+  throw new Error(`no day with ${need} free slots at ${locationId}`);
 }

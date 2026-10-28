@@ -36,7 +36,8 @@
     "rag:backfill": "tsx scripts/rag-backfill.ts",
     "eval:rag": "tsx scripts/eval-rag.ts",
     "eval:rag:real": "tsx scripts/eval-rag.ts --provider real",
-    "e2e:smoke": "tsx scripts/e2e-smoke.ts"
+    "e2e:smoke": "tsx scripts/e2e-smoke.ts",
+    "e2e": "tsx scripts/e2e-smoke.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

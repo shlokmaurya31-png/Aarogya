@@ -30,7 +30,7 @@ import { viewSharedRecord } from "../src/lib/sharing/view";
 import { askAi } from "../src/lib/rag/ask";
 import { registerPatientAccount } from "../src/lib/patient/selfRegistration";
 import { NOIDA, PUNE, drain, eventsOf, lab, notFound, refused, reporter, sharer, tag } from "./lib/shareFixture";
-import { facilityAdmin, networkDoctor, verifier } from "./lib/doctorFixture";
+import { daySlots, facilityAdmin, networkDoctor, verifier } from "./lib/doctorFixture";
 
 const { report, done } = reporter();
 process.env.AI_TEXT_KEY_VERSION = "1";
@@ -45,8 +45,7 @@ async function main() {
   const P = await sharer();
   await lab(P.pune, P.punEnc, "Haemoglobin", `10.2 dirlab${tag}`);
   await drain();
-  const day = (await prisma.doctorNextSlot.findUniqueOrThrow({ where: { practiceLocationId: doc.locationId! } })).nextSlotAt!;
-  const slots = await locationSlots(doc.locationId!, day);
+  const { day, slots } = await daySlots(doc.locationId!, 4);
   const [s1, s2, s3, s4] = slots;
 
   // 1. Booking at a facility where the patient has no record.
@@ -97,7 +96,7 @@ async function main() {
   report("A mode the location lacks is refused", await refused(bookThroughDirectory(P.userId, { locationId: doc2.locationId, start: s4.start, mode: "VIDEO" })));
 
   // 5. The same human.
-  const self = await registerPatientAccount({ facilityId: PUNE, fullName: "Dr Self as patient", email: `self-${tag}@verify.aarogya`, passwordHash: "x", sex: "M", dob: new Date("1980-01-01") });
+  const self = await registerPatientAccount({ facilityId: PUNE, fullName: `Dr Self as patient ${tag}`, email: `self-${tag}@verify.aarogya`, passwordHash: "x", sex: "M", dob: new Date("1980-01-01") });
   const selfPerson = (await prisma.personAccount.findUniqueOrThrow({ where: { userId: self.userId } })).personId;
   const docEmail = (await prisma.user.findUniqueOrThrow({ where: { id: doc.userId }, select: { email: true } })).email;
   await prisma.personContact.create({ data: { personId: selfPerson, kind: "EMAIL", value: docEmail, verifiedAt: new Date() } });

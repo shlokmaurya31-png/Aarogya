@@ -41,7 +41,7 @@ interface RecordPaymentInput {
  * Records a received payment. A deposit/advance is simply a Payment with
  * zero allocations — "money received with no invoice to apply it to yet"
  * already IS an unallocated payment, so there is no separate Deposit model
- * (see deposits.ts, a thin discoverability wrapper over this function).
+ * (record it here with no allocation).
  * Idempotent on idempotencyKey — the payment-race anchor: the same
  * client/gateway-generated key on retry must never produce two postings.
  */

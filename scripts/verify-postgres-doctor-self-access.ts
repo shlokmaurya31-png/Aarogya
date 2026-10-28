@@ -25,7 +25,6 @@ process.env.SMS_PROVIDER = "outbox";
 import { prisma } from "../src/lib/db";
 import { registerAllConsumers } from "../src/lib/runner/consumers";
 import { bookThroughDirectory } from "../src/lib/doctors/booking";
-import { locationSlots } from "../src/lib/doctors/directory";
 import { viewSharedRecord } from "../src/lib/sharing/view";
 import { askAi, AskError } from "../src/lib/rag/ask";
 import { personDocumentDownload } from "../src/lib/person/documents";
@@ -33,7 +32,7 @@ import { confirmLoginPhone, removeLoginPhone, startLoginPhone, listLoginPhones }
 import { isSameHuman, noteStaffChartRead, selfAccessReport } from "../src/lib/doctors/self";
 import { authorizeAccess } from "../src/lib/auth/authorize/engine";
 import { PUNE, NOIDA, drain, notFound, refused, reporter, sharer, staff, tag, upload } from "./lib/shareFixture";
-import { facilityAdmin, networkDoctor, verifier } from "./lib/doctorFixture";
+import { daySlots, facilityAdmin, networkDoctor, verifier } from "./lib/doctorFixture";
 import { lastSmsCode } from "./lib/householdFixture";
 
 const { report, done } = reporter();
@@ -62,8 +61,7 @@ async function main() {
   report("Someone else can't confirm it (404)", await notFound(confirmLoginPhone(admin.userId, s1.phoneId, lastSmsCode(personPhone))));
 
   // 2. Before the match: the doctor opens a booking share (control).
-  const day = (await prisma.doctorNextSlot.findUniqueOrThrow({ where: { practiceLocationId: doc.locationId! } })).nextSlotAt!;
-  const [slot1, slot2] = await locationSlots(doc.locationId!, day);
+  const [slot1, slot2] = (await daySlots(doc.locationId!, 2)).slots;
   const b = await bookThroughDirectory(P.userId, { locationId: doc.locationId, start: slot1.start, share: { categories: ["LABS", "UPLOADS"] } });
   await prisma.recordShare.update({ where: { id: b.shareId! }, data: { validFrom: new Date(Date.now() - 60_000) } });
   report("Control: before the phone is verified, not the same human, and the share opens", !(await isSameHuman(doc, P.personId)) && !!(await viewSharedRecord(actor, b.shareId!, "SHARED_RECORD_VIEW")));
