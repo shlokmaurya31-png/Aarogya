@@ -5,6 +5,8 @@ import { BadRequestError, ConflictError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { emitDomainEvent } from "@/lib/events/emit";
 import { sendSms, maskPhone } from "@/lib/messaging/sms";
+import { messageText } from "@/lib/notifications/texts";
+import { personLanguage } from "@/lib/person/notifications";
 import { sendEmail } from "@/lib/email/send";
 import { ownedPersonId, requireOwnedPerson } from "@/lib/person/access";
 import { ALL_PERMISSIONS, grantEventTx, parseCategories, parsePermissions } from "./grants";
@@ -97,7 +99,7 @@ export async function startAddMinor(userId: string, householdId: string, body: R
       codeExpiresAt: new Date(Date.now() + CODE_TTL_MINUTES * 60_000), declarationText: PARENTAL_DECLARATION,
     },
   });
-  const sent = await sendSms(phone.value, `Aarogya: your code to add your child's profile is ${code}. It expires in ${CODE_TTL_MINUTES} minutes. Don't share it.`);
+  const sent = await sendSms(phone.value, messageText("code.CHILD_ADD", await personLanguage(personId), { code, minutes: CODE_TTL_MINUTES }).text);
   if (!sent.delivered) throw new ConflictError("The code couldn't be sent. Try again later.");
   return { consentId: consent.id, sentTo: maskPhone(phone.value), expiresAt: consent.codeExpiresAt.toISOString() };
 }

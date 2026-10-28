@@ -6,6 +6,8 @@ import { BadRequestError, ConflictError, NotFoundError } from "@/lib/auth/rbac";
 import { verifyPassword } from "@/lib/auth/password";
 import { sendEmail } from "@/lib/email/send";
 import { sendSms } from "@/lib/messaging/sms";
+import { messageText } from "@/lib/notifications/texts";
+import { personLanguage } from "./notifications";
 import { emitDomainEvent } from "@/lib/events/emit";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 import { ownedPersonId, requireOwnedPerson } from "./access";
@@ -148,12 +150,15 @@ export async function startPersonMerge(userId: string, input: { otherEmail: stri
     data: { personId, sourcePersonId, initiatedByUserId: userId, targetCodeHash: "pending", sourceCodeHash: "pending", expiresAt: new Date(Date.now() + CODE_TTL_MS) },
   });
   await prisma.personMergeRequest.update({ where: { id: req.id }, data: { targetCodeHash: hash(req.id, "T", t), sourceCodeHash: hash(req.id, "S", s) } });
-  const text = (code: string) => `Your Aarogya code to combine two accounts is ${code}. It expires in 15 minutes. If you didn't ask to combine accounts, ignore this and change your password.`;
+  // Each account's own language (Flagship 1b).
+  const [langT, langS] = await Promise.all([personLanguage(personId), personLanguage(sourcePersonId)]);
+  const text = (code: string, lang: string) => messageText("code.MERGE", lang, { code, minutes: CODE_TTL_MS / 60_000 }).text;
+  const subject = (lang: string) => messageText("code.MERGE.subject", lang).text;
   const [a, b] = channel === "PHONE"
-    ? await Promise.all([sendSms(phones[0]!, text(t)), sendSms(phones[1]!, text(s))])
+    ? await Promise.all([sendSms(phones[0]!, text(t, langT)), sendSms(phones[1]!, text(s, langS))])
     : await Promise.all([
-      sendEmail({ to: me.email, subject: "Combine your Aarogya accounts", text: text(t) }),
-      sendEmail({ to: other!.email, subject: "Combine your Aarogya accounts", text: text(s) }),
+      sendEmail({ to: me.email, subject: subject(langT), text: text(t, langT) }),
+      sendEmail({ to: other!.email, subject: subject(langS), text: text(s, langS) }),
     ]);
   if (!a.delivered || !b.delivered) {
     await prisma.personMergeRequest.update({ where: { id: req.id }, data: { status: "FAILED" } });

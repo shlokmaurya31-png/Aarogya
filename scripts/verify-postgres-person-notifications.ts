@@ -9,7 +9,9 @@
  *     person whose record was opened, with the counts; none for a person
  *     nobody opened; today's opens wait for tomorrow; running it again writes
  *     nothing;
- *   - in the person's language (Hindi), English where there's no translation;
+ *   - in the person's language (Hindi; Flagship 1b: Tamil and Urdu too, Urdu
+ *     right-to-left, the counts as digits), English for a language the app
+ *     doesn't have;
  *     by SMS to a verified phone when there's no account to email; NO_CHANNEL
  *     otherwise;
  *   - every write and delivery emits its event; the person lists only their own.
@@ -96,8 +98,9 @@ async function main() {
   const today = await prisma.personNotification.findUnique({ where: { dedupeKey: `ACCESS_SUMMARY:${Q.personId}:${istDay(now).day}` } });
   report("Tomorrow, today's open is summarized (1 open, 1 person)", !!today && (today.detail as { opens?: number }).opens === 1 && (today.detail as { people?: number }).people === 1);
 
-  // 4. Language fallback and channels.
-  await prisma.person.update({ where: { id: quiet.personId }, data: { preferredLanguage: "ta" } });
+  // 4. Language fallback and channels. Flagship 1b: all eleven app languages have
+  // texts now, so the fallback is shown with one the app doesn't have.
+  await prisma.person.update({ where: { id: quiet.personId }, data: { preferredLanguage: "fr" } });
   // No account to email (as for a member without their own login): the account's link is ended.
   await prisma.personAccount.updateMany({ where: { personId: quiet.personId }, data: { endedAt: new Date() } });
   const noEmail = (await prisma.personAccount.count({ where: { personId: quiet.personId, endedAt: null } })) === 0;
@@ -105,7 +108,7 @@ async function main() {
   await sweepAccessSummaries({ now });
   await drain();
   const qn = await prisma.personNotification.findFirst({ where: { personId: quiet.personId, kind: "ACCESS_SUMMARY" } });
-  report("No translation yet (Tamil): written in English, and says so in its language field", !!qn && qn.language === "en" && /opened/.test(qn.body));
+  report("No translation (a language the app doesn't have): written in English, and says so in its language field", !!qn && qn.language === "en" && /opened/.test(qn.body));
   if (noEmail) {
     report("No account to email and no verified phone: NO_CHANNEL, with its event", !!qn && (await prisma.personNotification.findUniqueOrThrow({ where: { id: qn.id } })).status === "NO_CHANNEL" && (await eventsOf(qn.id, "PersonNotificationStatusChanged")).some((e) => (e.payload as { to?: string }).to === "NO_CHANNEL"));
     const phone = `+9198${String(Date.now()).slice(-8)}`;
@@ -117,6 +120,19 @@ async function main() {
     report("With a verified phone and no account to email: sent by SMS", !!viaSms && viaSms.status === "SENT" && viaSms.channel === "SMS" && outbox(SMS_OUTBOX_FILE).some((m) => m.to === phone));
   } else {
     report("(the account couldn't be detached: the channel fallback is untested)", false);
+  }
+
+  // 4b. Flagship 1b: Tamil and Urdu, through the same sweep.
+  for (const [lang, word] of [["ta", "முறை"], ["ur", "بار"]] as const) {
+    const L = await sharer();
+    await prisma.person.update({ where: { id: L.personId }, data: { preferredLanguage: lang } });
+    for (const h of [9, 11]) await prisma.personAccessLogEntry.create({ data: { personId: L.personId, kind: "RECORD_ACCESSED", actorUserId: noidaDoc.userId, accessingFacilityId: NOIDA, detail: { via: "SHARE_CODE", surface: "CONSULT_VIEW" }, createdAt: at(h) } });
+    await sweepAccessSummaries({ now });
+    await drain();
+    const ln = await prisma.personNotification.findFirst({ where: { personId: L.personId, kind: "ACCESS_SUMMARY" } });
+    const listed = (await listOwnNotifications(L.userId)).find((x) => x.id === ln?.id);
+    report(`In ${lang === "ta" ? "Tamil" : "Urdu"}: the summary in that language, the count as the digit 2, ${lang === "ur" ? "right-to-left" : "left-to-right"}, delivered`,
+      !!ln && ln.language === lang && ln.body.includes(word) && /(^|\D)2(\D|$)/.test(ln.body) && !/opened/.test(ln.body) && listed?.dir === (lang === "ur" ? "rtl" : "ltr") && ln.status !== "PENDING");
   }
 
   // 5. The person's own list.

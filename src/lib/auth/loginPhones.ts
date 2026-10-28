@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { BadRequestError, ConflictError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { maskPhone, sendSms } from "@/lib/messaging/sms";
+import { messageText } from "@/lib/notifications/texts";
 import { normalizePhone } from "@/lib/person/linking";
 
 /**
@@ -45,7 +46,8 @@ export async function startLoginPhone(userId: string, raw: unknown) {
   const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
   const row = await prisma.loginPhone.create({ data: { userId, phone } });
   await prisma.loginPhone.update({ where: { id: row.id }, data: { codeHash: hash(row.id, code), codeExpiresAt: new Date(Date.now() + CODE_TTL_MS) } });
-  const sent = await sendSms(phone, `Aarogya: your code to verify this phone on your work login is ${code}. It expires in 10 minutes. Don't share it.`);
+  // A work login has no language of its own: English (Flagship 1b; the other ten exist for when it does).
+  const sent = await sendSms(phone, messageText("code.WORK_PHONE", "en", { code, minutes: CODE_TTL_MS / 60_000 }).text);
   if (!sent.delivered) throw new ConflictError("The code couldn't be sent. Try again later.");
   return { phoneId: row.id, sentTo: maskPhone(phone) };
 }

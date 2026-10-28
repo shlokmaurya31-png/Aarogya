@@ -4,6 +4,8 @@ import { prisma } from "@/lib/db";
 import { BadRequestError, ConflictError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { sendSms, maskPhone } from "@/lib/messaging/sms";
+import { messageText } from "@/lib/notifications/texts";
+import { personLanguage } from "@/lib/person/notifications";
 import { CONSENT_SCOPES, recordPersonConsentTx } from "@/lib/person/consent";
 import { requireProxy } from "./grants";
 import { hashCode } from "./households";
@@ -76,7 +78,7 @@ export async function startGuardianConsent(userId: string, minorPersonId: string
       relationship: choice.relationship, declarationText: GUARDIAN_CONSENT_DECLARATION, phoneLast4: phone.value.slice(-4), codeHash: hashCode(code), codeExpiresAt: new Date(Date.now() + CODE_TTL_MINUTES * 60_000),
     },
   });
-  const sent = await sendSms(phone.value, `Aarogya: your code to confirm a choice for your child's profile is ${code}. It expires in ${CODE_TTL_MINUTES} minutes. Don't share it.`);
+  const sent = await sendSms(phone.value, messageText("code.GUARDIAN_CHOICE", await personLanguage(p.proxyPersonId), { code, minutes: CODE_TTL_MINUTES }).text);
   if (!sent.delivered) throw new ConflictError("The code couldn't be sent. Try again later.");
   return { checkId: check.id, sentTo: maskPhone(phone.value), expiresAt: check.codeExpiresAt.toISOString() };
 }

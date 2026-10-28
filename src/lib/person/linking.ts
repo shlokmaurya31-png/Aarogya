@@ -6,6 +6,8 @@ import { BadRequestError, ConflictError, NotFoundError } from "@/lib/auth/rbac";
 import { parseEnum } from "@/lib/enumValue";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 import { sendSms, maskPhone } from "@/lib/messaging/sms";
+import { messageText } from "@/lib/notifications/texts";
+import { personLanguage } from "./notifications";
 import { sendEmail } from "@/lib/email/send";
 import { recordActiveLink } from "./person";
 import { requireOwnedPerson } from "./access";
@@ -174,7 +176,7 @@ export async function submitSecondFactor(userId: string, input: { kind: string; 
     where: { id: r.id },
     data: { status: "OTP_SENT", method: "OTP_RECORD_CONTACT", secondFactor: kind, secondFactorOk: true, otpHash: codeHash(r.id, code), otpExpiresAt: new Date(Date.now() + OTP_TTL_MS) },
   });
-  const sent = await sendSms(record.phone!, `Your Aarogya verification code is ${code}. It expires in 10 minutes. Never share it.`);
+  const sent = await sendSms(record.phone!, messageText("code.LINK", await personLanguage(personId), { code, minutes: OTP_TTL_MS / 60_000 }).text);
   if (!sent.delivered) {
     await toInPerson(r, "PHONE_UNREACHABLE");
     return { status: "IN_PERSON_REQUIRED" as const };

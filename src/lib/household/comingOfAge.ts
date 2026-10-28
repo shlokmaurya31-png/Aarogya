@@ -7,7 +7,8 @@ import { sendSms, maskPhone } from "@/lib/messaging/sms";
 import { sendEmail } from "@/lib/email/send";
 import { hashPassword } from "@/lib/auth/password";
 import { isStaffInFacility } from "@/lib/auth/staffFacility";
-import { queuePersonNotificationTx } from "@/lib/person/notifications";
+import { personLanguage, queuePersonNotificationTx } from "@/lib/person/notifications";
+import { messageText } from "@/lib/notifications/texts";
 import { grantEventTx } from "./grants";
 import { hashCode, requireManaged } from "./households";
 import { CODE_TTL_MINUTES, COMING_OF_AGE_NOTICE_DAYS, comingOfAge } from "./vocab";
@@ -72,8 +73,10 @@ export async function startClaimOwnContact(userId: string, householdId: string, 
   if (managerContacts.some((x) => x.value === contact.value)) throw new ConflictError("The claim code must go to their own phone or email, not yours.");
   const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
   const claim = await prisma.memberClaim.create({ data: { personId: memberPersonId, method: "OWN_CONTACT", contactKind: contact.kind, contactValue: contact.value, codeHash: hashCode(code), codeExpiresAt: new Date(Date.now() + CODE_TTL_MINUTES * 60_000) } });
-  const text = `Aarogya: your health record is ready for you to take over. Your code is ${code} (expires in ${CODE_TTL_MINUTES} minutes). Use it in the app with "Claim my profile".`;
-  const sent = contact.kind === "PHONE" ? await sendSms(contact.value, text) : await sendEmail({ to: contact.value, subject: "Take over your Aarogya health record", text });
+  // In the member's own language: the profile becomes theirs (Flagship 1b).
+  const lang = await personLanguage(memberPersonId);
+  const text = messageText("code.CLAIM", lang, { code, minutes: CODE_TTL_MINUTES }).text;
+  const sent = contact.kind === "PHONE" ? await sendSms(contact.value, text) : await sendEmail({ to: contact.value, subject: messageText("code.CLAIM.subject", lang).text, text });
   if (!sent.delivered) throw new ConflictError("The code couldn't be sent. Try again later.");
   return { claimId: claim.id, sentTo: contact.kind === "PHONE" ? maskPhone(contact.value) : "their email" };
 }
