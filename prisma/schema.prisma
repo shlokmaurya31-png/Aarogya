@@ -976,6 +976,10 @@ model Facility {
   // non-ACTIVE facility (or one under a non-ACTIVE organization) refuses normal
   // operations at the tenant-context boundary; clinical data is never deleted.
   status         FacilityStatus @default(ACTIVE)
+  /// Flagship 2a: the facility's IANA time zone. Clinic sessions, "today",
+  /// check-in windows and summaries are computed in it, never in the server's
+  /// own zone (src/lib/time/zone.ts). Every facility today is in India.
+  timeZone       String         @default("Asia/Kolkata")
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @default(now()) @updatedAt
   suspendedAt    DateTime?
@@ -12055,7 +12059,7 @@ model PreArrivalCheckIn {
   status              PreArrivalStatus      @default(SUBMITTED)
   needsDeskReason     String?
   eligibility         PreArrivalEligibility
-  /// The queue token, e.g. "P-017": per facility and India day.
+  /// The queue token, e.g. "P-017": per facility and facility day (its time zone).
   token               String
   tokenDay            String
   shareId             String?               @unique

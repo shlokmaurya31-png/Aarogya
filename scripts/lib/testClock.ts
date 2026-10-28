@@ -6,11 +6,12 @@
  *
  * Two parts:
  *   1. One time zone. Every gate, the apps and workers they start, and the
- *      browser journeys run with TZ=Asia/Kolkata (GATE_TZ), so the process's
- *      local day (clinic sessions, `localDayStart`) is the India day (check-in
- *      tokens, access summaries). Without it the gates ran in London on a
- *      laptop and in UTC in CI, and "today" meant two different days for
- *      5½ hours of every day. gateBootstrap applies it before anything loads.
+ *      browser journeys run with TZ=Asia/Kolkata (GATE_TZ). Since Flagship 2a
+ *      the services no longer depend on it (each facility's own zone decides
+ *      its day, src/lib/time/zone.ts, proved under UTC and Los Angeles by
+ *      verify-postgres-time-zones); the pin keeps the gates' own fixture
+ *      arithmetic (getHours in reports) in one zone. gateBootstrap applies it
+ *      before anything loads.
  *   2. Fixed anchors. A gate reads `gateClock.now()` (frozen when the process
  *      starts) and picks days and times from it that are far from any boundary:
  *      `bookingDay()` is the India day after tomorrow, so every clinic session

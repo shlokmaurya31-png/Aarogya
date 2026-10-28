@@ -1,4 +1,5 @@
 import type { PersonNotificationKind, Prisma } from "@prisma/client";
+import { DEFAULT_TIME_ZONE, zonedDay } from "@/lib/time/zone";
 import { prisma } from "@/lib/db";
 import { emitDomainEvent } from "@/lib/events/emit";
 import { sendEmail } from "@/lib/email/send";
@@ -27,7 +28,6 @@ import { requireOwnedPerson } from "./access";
  * The text carries no names, facilities or clinical detail; the app shows who.
  * One per fact (dedupeKey), so a redelivered event writes nothing new.
  */
-const IST_OFFSET_MS = 330 * 60_000;
 
 /**
  * The text in the person's language (Flagship 1b: all eleven app languages,
@@ -80,12 +80,14 @@ export async function deliverPersonNotification(notificationId: string): Promise
   return to;
 }
 
-/** The India day (YYYY-MM-DD) a moment falls in, and that day's bounds. */
+/**
+ * The India day (YYYY-MM-DD) a moment falls in, and that day's bounds. A
+ * Person has no facility, so their daily summary uses the platform's zone
+ * (Flagship 2a: explicit, never the server's own).
+ */
 export function istDay(at: Date): { day: string; start: Date; end: Date } {
-  const local = new Date(at.getTime() + IST_OFFSET_MS);
-  const day = local.toISOString().slice(0, 10);
-  const start = new Date(new Date(`${day}T00:00:00Z`).getTime() - IST_OFFSET_MS);
-  return { day, start, end: new Date(start.getTime() + 86_400_000) };
+  const { day, start, end } = zonedDay(at, DEFAULT_TIME_ZONE);
+  return { day, start, end };
 }
 
 /**

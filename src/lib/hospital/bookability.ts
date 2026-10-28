@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient, DoctorScheduleBlock } from "@prisma/client";
 import { ConflictError } from "@/lib/auth/rbac";
+import { dayKey, zonedDay, zonedInstant } from "@/lib/time/zone";
 
 /**
  * D7: when a doctor can be booked. One rule, used by slot listing and by
@@ -14,7 +15,9 @@ import { ConflictError } from "@/lib/auth/rbac";
  * COMPLETED shift. On a day with no roster, the clinic session alone is the
  * working time — outpatient doctors aren't necessarily rostered.
  *
- * Session hours are minutes from local midnight, as before.
+ * Session hours are minutes from midnight in the facility's time zone
+ * (Flagship 2a, pre-launch item 25: never the server's own zone), and the day
+ * is that zone's day.
  */
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -31,29 +34,33 @@ export class DoctorNotBookableError extends ConflictError {
 }
 
 export interface DayContext {
+  /** The facility's day (YYYY-MM-DD) and zone. */
+  day: string;
+  timeZone: string;
   dayStart: Date;
+  dayEnd: Date;
   sessions: DoctorScheduleBlock[];
   absences: { startAt: Date; endAt: Date | null }[];
   shifts: { startAt: Date; endAt: Date; status: string }[];
 }
 
-export function localDayStart(at: Date): Date {
-  const d = new Date(at);
-  d.setHours(0, 0, 0, 0);
-  return d;
+/** The instant a session minute falls at on the context's day (in its zone). */
+export function sessionInstant(ctx: Pick<DayContext, "day" | "timeZone">, minute: number): Date {
+  return zonedInstant(ctx.day, minute, ctx.timeZone);
 }
 
-function sameLocalDate(a: Date, b: Date): boolean {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-}
-
-/** Everything the rule needs for one doctor on the local day containing `at`. */
-export async function loadDayContext(db: Db, staffId: string, at: Date): Promise<DayContext> {
-  const dayStart = localDayStart(at);
-  const dayEnd = new Date(dayStart.getTime() + 24 * 3_600_000);
+/**
+ * Everything the rule needs for one doctor on the day containing `at` (or the
+ * day named by a YYYY-MM-DD key) in `timeZone`, the facility's zone.
+ */
+export async function loadDayContext(db: Db, staffId: string, at: Date | string, timeZone: string): Promise<DayContext> {
+  const { day, start: dayStart, end: dayEnd, weekday } = zonedDay(at, timeZone);
+  // A one-off session's date is a calendar date, stored as a midnight in some
+  // zone: read a day either side and keep the ones whose date is this day.
+  const near = { gte: new Date(dayStart.getTime() - 86_400_000), lt: new Date(dayEnd.getTime() + 86_400_000) };
   const [blocks, absences, shifts] = await Promise.all([
     db.doctorScheduleBlock.findMany({
-      where: { staffId, OR: [{ dayOfWeek: dayStart.getDay(), specificDate: null }, { specificDate: { gte: dayStart, lt: dayEnd } }] },
+      where: { staffId, OR: [{ dayOfWeek: weekday, specificDate: null }, { specificDate: near }] },
       orderBy: [{ specificDate: { sort: "desc", nulls: "last" } }, { createdAt: "asc" }, { id: "asc" }],
     }),
     db.staffAbsence.findMany({
@@ -65,14 +72,23 @@ export async function loadDayContext(db: Db, staffId: string, at: Date): Promise
       select: { startAt: true, endAt: true, status: true },
     }),
   ]);
-  const sessions = blocks.filter((b) => (b.specificDate ? sameLocalDate(b.specificDate, dayStart) : b.dayOfWeek === dayStart.getDay()));
-  return { dayStart, sessions, absences, shifts };
+  const sessions = blocks.filter((b) => (b.specificDate ? specificDay(b.specificDate, timeZone) === day : b.dayOfWeek === weekday));
+  return { day, timeZone, dayStart, dayEnd, sessions, absences, shifts };
+}
+
+/**
+ * The calendar date of a one-off session. Stored as UTC midnight (a
+ * YYYY-MM-DD from the API) or as the zone's midnight (older rows written under
+ * a server in India time): both name the same date in a zone east of UTC.
+ */
+export function specificDay(d: Date, timeZone: string): string {
+  return d.getUTCHours() === 0 && d.getUTCMinutes() === 0 ? d.toISOString().slice(0, 10) : dayKey(d, timeZone);
 }
 
 /** The session containing [start, end), or why the doctor isn't bookable then. */
 export function evaluateBookability(ctx: DayContext, start: Date, end: Date):
   { bookable: true; session: DoctorScheduleBlock } | { bookable: false; reason: NotBookableReason } {
-  const at = (minute: number) => ctx.dayStart.getTime() + minute * 60_000;
+  const at = (minute: number) => sessionInstant(ctx, minute).getTime();
   const session = ctx.sessions.find((s) => at(s.startMinute) <= start.getTime() && end.getTime() <= at(s.endMinute));
   if (!session) return { bookable: false, reason: "NO_SESSION" };
   const absent = ctx.absences.some((a) => a.startAt.getTime() < end.getTime() && (a.endAt === null || a.endAt.getTime() > start.getTime()));
@@ -85,8 +101,8 @@ export function evaluateBookability(ctx: DayContext, start: Date, end: Date):
 }
 
 /** Throws DoctorNotBookableError unless the doctor is bookable for [start, end). */
-export async function assertBookable(db: Db, staffId: string, start: Date, end: Date): Promise<DoctorScheduleBlock> {
-  const result = evaluateBookability(await loadDayContext(db, staffId, start), start, end);
+export async function assertBookable(db: Db, staffId: string, start: Date, end: Date, timeZone: string): Promise<DoctorScheduleBlock> {
+  const result = evaluateBookability(await loadDayContext(db, staffId, start, timeZone), start, end);
   if (!result.bookable) throw new DoctorNotBookableError(result.reason);
   return result.session;
 }

@@ -1,4 +1,5 @@
 import { BadRequestError } from "@/lib/auth/rbac";
+import { DEFAULT_TIME_ZONE, startOfZonedDay } from "@/lib/time/zone";
 
 /**
  * Phase D10 — bounded time windows. Every metric documents whether it is point-in-time,
@@ -16,11 +17,12 @@ export interface TimeWindow {
 const MAX_RANGE_DAYS = 400;
 const day = 86_400_000;
 
-export function resolveWindow(key?: string | null, fromISO?: string | null, toISO?: string | null, now = new Date()): TimeWindow {
+/** `timeZone` is the facility's: "today" starts at its midnight (Flagship 2a). */
+export function resolveWindow(key?: string | null, fromISO?: string | null, toISO?: string | null, now = new Date(), timeZone = DEFAULT_TIME_ZONE): TimeWindow {
   const to = new Date(now);
   switch (key) {
     case "today": {
-      const from = new Date(now); from.setHours(0, 0, 0, 0);
+      const from = startOfZonedDay(now, timeZone);
       return { key: "today", from, to, label: "Today" };
     }
     case "7d": return { key: "7d", from: new Date(now.getTime() - 7 * day), to, label: "Last 7 days" };
@@ -39,6 +41,7 @@ export function resolveWindow(key?: string | null, fromISO?: string | null, toIS
   }
 }
 
-export function startOfToday(now = new Date()): Date {
-  const d = new Date(now); d.setHours(0, 0, 0, 0); return d;
+/** The start of the facility's day (in its time zone, never the server's). */
+export function startOfToday(now: Date, timeZone: string): Date {
+  return startOfZonedDay(now, timeZone);
 }

@@ -12,7 +12,7 @@ import type { CommandSection } from "./types";
  */
 export async function getCapacity(ctx: CommandContext): Promise<CommandSection> {
   const f = ctx.facilityId;
-  const today = startOfToday(ctx.now);
+  const today = startOfToday(ctx.now, ctx.timeZone);
   const [byStatus, total, admissionsToday, dischargesToday, blocked, pendingTransfers, pendingAdmitReq, dischargeReadyWaiting] = await Promise.all([
     prisma.bed.groupBy({ by: ["status"], where: { facilityId: f }, _count: true }),
     prisma.bed.count({ where: { facilityId: f } }),

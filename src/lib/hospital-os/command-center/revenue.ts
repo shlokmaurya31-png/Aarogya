@@ -13,7 +13,7 @@ import type { CommandSection } from "./types";
  */
 export async function getRevenue(ctx: CommandContext): Promise<CommandSection> {
   const f = ctx.facilityId;
-  const today = startOfToday(ctx.now);
+  const today = startOfToday(ctx.now, ctx.timeZone);
   const [billedToday, collectedToday, outstanding, openInvoices, unallocatedPayments] = await Promise.all([
     prisma.invoice.aggregate({ _sum: { totalMinor: true }, where: { facilityId: f, issuedAt: { gte: today }, status: { not: "VOID" } } }),
     prisma.payment.aggregate({ _sum: { amountMinor: true }, where: { facilityId: f, receivedAt: { gte: today }, status: "RECEIVED" } }),
