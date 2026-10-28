@@ -187,7 +187,9 @@ export async function inviteLinkedAdult(userId: string, householdId: string, ema
     const m = await tx.householdMember.create({ data: { householdId, personId: invitee, memberType: "LINKED_ADULT", role: "MEMBER", status: "INVITED" } });
     await memberEventTx(tx, m, null, userId);
   });
-  await sendEmail({ to: email.trim().toLowerCase(), subject: "You've been invited to a family on Aarogya", text: "Someone invited you to their family on Aarogya. Open the app to accept or decline. Nobody sees your record unless you choose what they may see." }).catch(() => undefined);
+  // Flagship 2e: in the invitee's own language (they have an account, so a Person with one).
+  const lang = await personLanguage(invitee);
+  await sendEmail({ to: email.trim().toLowerCase(), subject: messageText("account.INVITED.subject", lang).text, text: messageText("account.INVITED.body", lang).text }).catch(() => undefined);
   return { status: "INVITED" as const };
 }
 
