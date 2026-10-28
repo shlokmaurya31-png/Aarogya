@@ -116,6 +116,8 @@ const ORDER = [
   "verify-postgres-walk-ins",
   // Flagship 2a: a facility's day is its own under any server zone (HTTP; builds the app)
   "verify-postgres-time-zones",
+  // Flagship 2d: the chart and the timeline in exact pages
+  "verify-postgres-pagination",
   "verify-postgres-schema-constraints",
   // Week 3: workflow spine
   "verify-postgres-runner",

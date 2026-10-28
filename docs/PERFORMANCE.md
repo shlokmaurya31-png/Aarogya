@@ -68,3 +68,16 @@ Found with the database's slow-statement log during a gate run:
 - **Front desk search** is an `ILIKE` over names (67 ms at 40,000 patients). A trigram index is the remedy past a few hundred thousand.
 - **The AI endpoints** spend most of their time in retrieval (an exact cosine scan, by design; docs/RAG_DESIGN.md §3.2a) and the mock answer. With a real model, the model's latency dominates and streaming hides it; the budget here covers the server's own work.
 - **Concurrency:** this gate is one user at a time. A load test with concurrent users (the OPD morning rush) is separate work.
+
+## Flagship 2d: the chart and the timeline in pages
+
+The chart and the timeline return pages now: newest first, by an opaque cursor, with a small summary header on the first page (`src/lib/hospital/chart.ts`, `timelinePage` in `src/lib/patient/timeline.ts`). The chart's header always carries every current medication order and every unacknowledged critical result, so nothing that needs acting on falls off a page. The screens load more as you scroll. `perf:gate` adds a 60 KB size budget for the first and next pages of both, for the heavy perf patient.
+
+| Response (heavy patient) | Before | After |
+|---|---|---|
+| Chart, first page | 451 KB | 18 KB |
+| Chart, next page of lab orders | — | 15 KB |
+| Timeline, first page | 331 KB | 9 KB |
+| Timeline, next page | — | 9 KB |
+
+Measured with `npm run perf:gate -- --fresh` on 2026-10-29: all 17 endpoints within budget (chart p95 41 ms, timeline 42 ms). "Document review (facts to confirm)" is 130 KB and is the next one to page.
