@@ -1,6 +1,6 @@
 # Offline nursing: the ward keeps working on bad Wi-Fi
 
-- **Status:** Design only (Flagship 1d, 2026-10-28). Nothing here is built. It needs approval, and the clinical advisor's sign-off on §6, before any code.
+- **Status:** Designed (Flagship 1d, 2026-10-28); the open questions decided (2026-10-29, §12); phase 1 (the server side) to be built next. The clinical advisor's sign-off on §6 is still needed before any MAR use on a ward.
 - **Scope:** the four nursing screens a ward can't stop for a dropped connection: the **MAR** (the medication round), **vitals**, **intake and output**, and **nursing tasks**.
 - **Not in scope:** ordering, pharmacy verification, admission, transfer and discharge, the doctor's and the front desk's screens, billing. They stay online-only. When the network is down, those follow the hospital's paper downtime procedure, as now.
 - **Builds on:** `administerMedication` (`src/lib/hospital/medicationLifecycle.ts`: a dose moves from DUE only once, by a guarded update), the MAR sweep (`marSweep.ts`: overdue doses become MISSED, and a late dose is recorded against the missed one), `NursingAssignment` (at most one open assignment per patient), `Vital`, `IntakeOutputRecord`, `Task`, the event spine (`docs/ARCHITECTURE.md` §4), and PRODUCT_SPEC principle 6 (weak networks, low-end Android).
@@ -41,7 +41,7 @@ take DOSE LEASES                write COMMANDS to a local outbox       server ap
   - open tasks;
   - the vitals thresholds (`VitalThreshold`) and the early-warning rules.
 
-  The pack carries `issuedAt`, `expiresAt` (default the shift end, at most 12 hours) and the server clock at issue.
+  The pack carries `issuedAt`, `expiresAt` (default **4 hours**; a hospital may allow up to 12, decided §12.4) and the server clock at issue. It also carries the **formulary snapshot** the device checks drug barcodes against offline (§12.5), and a read-only summary of the rest of the ward (§12.3).
 - **Commands, not row edits.** The device never edits a row. It queues commands such as "dose X: GIVEN at T by nurse N", "vitals for encounter E at T", "I/O entry", "task K completed". Each command carries:
   - a client UUID (the idempotency key);
   - the device id and the nurse;
@@ -56,7 +56,8 @@ Applying commands idempotently isn't enough. Two devices, each offline, could ea
 - **Taking a lease.** When the pack is downloaded, the server grants the device a lease on each scheduled dose of the nurse's assigned patients, for the pack's lifetime. The grant is a row per dose with a unique constraint on the dose, so two devices can't both hold one. It emits `DoseLeaseGranted`.
 - **Effect online.** Any other device, and the online MAR, shows a leased dose as "with Nurse A's device until 14:00". It can be given elsewhere only after taking the lease over: the lease holder releases it, or the charge nurse revokes it, which the holder's device learns on its next sync. A dose given online by its lease holder needs no takeover.
 - **Effect offline.** The device offers GIVEN only for doses it holds. Anything else in the pack is read-only, marked "not on this device". When a nurse covers a colleague's patient during a partition, nobody can give that patient's doses offline. The safe answer is the charge nurse's handover, which needs a connection, or the paper downtime sheet (§7).
-- **Release.** Leases end at pack expiry, at handover (a new assignment), on unregistering a device, or by the charge nurse's revocation. Revoking the lease of a device that may be offline is risky, because it may have given the dose already. So the revoked dose is shown "possibly given offline: check the patient and Nurse A" until that device syncs or the revocation is confirmed in person.
+- **Charge-nurse override (decided §12.2).** A charge nurse may take over a lease held by another device, online, with a reason. The override is logged with its reason, emits `DoseLeaseOverridden`, and the original device is told on its next sync (its dose shows "taken over by the charge nurse"). If that device gave the dose offline before learning it, the conflict rules (§5) flag a possible double dose.
+- **Release.** Leases end at pack expiry, at handover (a new assignment), on unregistering a device, or by the charge nurse's revocation or override. Revoking the lease of a device that may be offline is risky, because it may have given the dose already. So the revoked dose is shown "possibly given offline: check the patient and Nurse A" until that device syncs or the revocation is confirmed in person.
 - **Order changes.** A lease is on a dose of an order at a version. If the order is stopped, held or changed while the device is offline, the device doesn't know. That is the remaining risk, handled in §5.
 
 ## 5. Conflict rules
@@ -137,13 +138,13 @@ Every conflict is a row (`OfflineConflict`: kind, severity, the command, the fac
 3. The MAR offline, with leases and the conflict rules, after the advisor signs off §6.
 4. Back-entry from paper.
 
-## 12. Open questions
+## 12. Decisions (2026-10-29; were the open questions)
 
-1. **Shared ward tablets or personal phones?** Leases are per device. A shared tablet passed between nurses needs per-nurse sign-in on the device, and the lease should probably follow the nurse, not the tablet.
-2. **The charge nurse's override:** may a charge nurse give a leased dose offline on her own device in an emergency? This design says no, use the paper sheet. Is that acceptable on a busy ward?
-3. **Pack scope:** only assigned patients (safer, smaller), or the whole ward (handles cover during breaks)? This design defaults to assigned only. The charge nurse can widen it, which gives leases only for the assigned patients.
-4. **How long may a device be offline?** This design says the pack lasts until the shift ends, at most 12 hours. Should it be shorter, say 4 hours?
-5. **Barcode scanning offline:** the wristband scan (positive patient identification) and the drug barcode work offline if the pack carries the patient ids and the formulary barcodes. Is the hospital's formulary barcoded?
-6. **iOS:** Capacitor iOS was never set up. Is the browser PWA enough for any iPad wards?
-7. **Who resolves a critical double-dose conflict,** and in what time, under each hospital's incident policy?
-8. **Is the downtime PDF printed at every shift start** (paper on every ward), or only generated on demand while the network is up?
+1. **Shared ward tablets first. Decided.** Devices are the facility's shared ward tablets, registered per ward; a nurse signs in on the tablet, and a lease is held by the device for the nurse signed in when it was granted. Personal phones are not supported in phase 1.
+2. **The charge nurse may override a lease. Decided.** Online, with a reason; the override is logged with the reason and the original device is told on its next sync (§4). Offline, a dose not on this device still goes to the downtime sheet.
+3. **Pack = the nurse's assigned patients, plus a read-only ward summary. Decided.** Leases and givable doses only for assigned patients; the rest of the ward appears as bed, name, UHID, allergies and open-task counts, never givable.
+4. **Offline limit: 4 hours by default, up to 12 if the hospital allows it. Decided.** A facility setting (`offline.packHours`, 1–12); the pack and its leases expire with it.
+5. **Barcodes offline check a cached formulary snapshot. Decided.** The pack carries the facility's formulary codes for the patients' active orders; a scan that matches none is refused offline.
+6. **The browser app is enough for now. Decided.** No iOS app; the installable browser app covers iPad wards.
+7. **A possible double dose: the charge nurse resolves it within 15 minutes, and the pharmacist is told. Decided.** The conflict is CRITICAL, a task with a 15-minute due time goes to the ward's charge nurse, and the facility's pharmacists are notified.
+8. **A downtime sheet as PDF every shift. Decided.** Generated from the pack at each shift start and kept on the ward (phase 2 of the client; the data is the pack).

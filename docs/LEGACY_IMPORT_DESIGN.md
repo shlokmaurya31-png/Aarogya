@@ -1,6 +1,6 @@
 # Importing a hospital's old HIMS
 
-- **Status:** Design only (Flagship 1d, 2026-10-28). Nothing here is built; it needs approval before code.
+- **Status:** Designed (Flagship 1d, 2026-10-28); the open questions decided (2026-10-29, §10); phase 1 (CSV patients and encounters) to be built next.
 - **What:** bringing a hospital's history from its previous system into Aarogya when it switches over: **patients, encounters, results and bills**, from **CSV exports, HL7 v2 messages or FHIR R4 bundles**.
 - **The rule:** *refuse, don't guess.* A row that can't be mapped exactly is refused with a reason; it never becomes a best guess in a patient's record. Wrong-patient data is worse than missing data.
 - **Builds on:** the staged FHIR import (`src/lib/hospital/interoperability/fhir/import.ts`: an external payload never reaches a clinical table; it is staged as MAPPED / CONFLICT / REJECTED and promoted only by a deliberate review), provenance (`interoperability/provenance.ts`), external identifiers (`externalIdentity.ts`), the patient duplicate and merge tools (`/api/hospital/patients/duplicates`, `merge`), the event spine, and the facility/Person split (`docs/ARCHITECTURE.md` §2).
@@ -16,7 +16,7 @@ The hospital's IT lead and an Aarogya onboarding engineer run it during go-live,
 | **Patients** | `Patient` at the facility, with the old MRN kept as an external identifier (`LEGACY_MRN`, per source system) and a new UHID | A link to a `Person`: the old phone or email on file is **not** verification. People link their own record later through the normal verified flow (`docs/PERSON_IDENTITY_DESIGN.md`) |
 | **Encounters** | `Encounter` (CLOSED, with the old dates, type, department, attending clinician where mappable) plus diagnoses | Open encounters: anyone currently admitted is admitted fresh in Aarogya at go-live, by the ward, with the old stay referenced |
 | **Results** | Lab results (value, unit, reference range, flag, dates) as `LabOrder` + `LabResult` VERIFIED, imaging reports as text | Images (PACS stays where it is; a link if the PACS has one), instrument raw data |
-| **Bills** | **Legacy financial records**: historical invoices as read-only documents, with line totals, payments and the closing balance | Re-pricing, re-issuing, claims. Opening balances (amounts still owed) go in only with finance's signed list, as one opening entry per patient |
+| **Bills** | **Open balances only** (decided §10.1): one opening balance per patient from finance's signed list; historical invoices stay in the old system | Re-pricing, re-issuing, claims, closed historical invoices. Opening balances are hidden in the patient app until legal review (§10.6) |
 | Medications | The last 12 months of prescriptions as historical `MedicationOrder` (COMPLETED), for the chart and allergy safety | Active inpatient orders: re-prescribed at go-live by the treating doctor (an imported order must never drive the MAR) |
 | Allergies | `Allergy` entries, marked "imported, unverified" until a clinician confirms at the next visit | "No known allergies" (absence is not imported as a fact) |
 | Notes, documents | Scanned documents and discharge summaries as attached documents with provenance, if the source has them | Free-text notes are imported only as documents, never parsed into structured data |
@@ -125,13 +125,13 @@ Refused rows stay in staging with their reason. The hospital can fix them at the
 4. Bills and opening balances with finance sign-off.
 5. Retraction and the reconcile report.
 
-## 10. Open questions
+## 10. Decisions (2026-10-29; were the open questions)
 
-1. **How far back?** All history, or the last N years with older years as documents only? (Storage, cost and RAG index size grow with it.)
-2. **Imported results in trends and AI:** should imported lab values appear in the chart's graphs beside Aarogya's own, or only in a separate "history" tab until a clinician has seen them?
-3. **Clinician identity:** imported visits name clinicians who may not have Aarogya logins. Keep them as text ("Dr A Sharma (legacy)"), or create inactive staff profiles?
-4. **HL7 variants:** which HIMS vendors do the first hospitals use, and do they export HL7 or only CSV? Each vendor's HL7 needs its own profile and test files.
-5. **Consent and DPDP:** the hospital is the data fiduciary for its own records, and moving them into its new system is the same purpose. Does legal agree that no per-patient notice is needed, beyond the facility's updated privacy notice?
-6. **Opening balances:** imported as amounts the patient owes (which the patient app would then show), or kept facility-only until the finance team confirms each one?
-7. **Active inpatients at go-live:** a paper bridge for the cut-over night, or a short "import admitted patients" step with re-prescription?
-8. **Who may sign off** the mapping: the hospital's medical superintendent, or each department head for its own codes?
+1. **How far back: 3 years of clinical data; bills as open balances only. Decided.** Older history stays in the old system (read-only), or comes in later as documents.
+2. **Imported results show in trends, labelled "imported". Decided.** Units are converted only on an exact mapping in the profile (a test and unit pair); anything else is refused.
+3. **Clinicians without Aarogya logins are kept as text names. Decided.** "Dr A Sharma (legacy)"; no inactive staff profiles are created.
+4. **Formats: CSV first, then HL7 v2 ADT and ORU, then FHIR. Decided.**
+5. **Per-patient notice under DPDP goes to the lawyer list. Decided.** Until the lawyers answer, no import into a live facility with real data; the real-data switch stays off.
+6. **Opening balances are hidden in the patient app until legal review. Decided.**
+7. **Patients admitted on cut-over night come in as active admissions, with a manual checklist. Decided.** A ward-by-ward checklist (bed, re-prescription by the treating doctor, allergies confirmed) closes each one; an imported order never drives the MAR.
+8. **The hospital's medical records officer signs off the mapping. Decided.**

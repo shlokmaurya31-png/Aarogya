@@ -1,6 +1,6 @@
 # ABDM certification plan (M1–M3, v3 APIs)
 
-- **Status:** Plan only (Flagship 1d, 2026-10-28). No ABDM call has been made with a valid credential yet. Pre-launch items 5 (certification) and 20 (consent mapping) depend on this plan.
+- **Status:** Plan (Flagship 1d, 2026-10-28); the open questions decided (2026-10-29, §7). No ABDM call has been made with a valid credential yet. Pre-launch items 5 (certification) and 20 (consent mapping) depend on this plan.
 - **Source of truth for what exists:** `docs/interoperability/abdm-contract-matrix.md` (verified against ABDM Milestone 3 v2.5, 2025-03-03, and the NRCeS FHIR IG 6.5.0), `abdm-architecture.md`, `abdm-sandbox-verification.md`, `abdm-production-checklist.md`. Code: `src/lib/hospital/interoperability/abdm/` and `.../fhir/`.
 - **Rule carried over from Phase C:** no code is written against a guessed contract. Where this plan says *to verify*, the M1 or M2 document (or the current NHA process) hasn't been obtained, and the step starts by obtaining it.
 
@@ -98,13 +98,13 @@ Getting to production (the usual NHA path; *to verify* the current steps and ord
 | WASA findings delay go-live | Run pre-launch item 6's audit early; WASA on a feature-frozen staging build |
 | ABDM outage | Already designed for: the hospital keeps working, and exchanges queue and fail visibly (`abdm-architecture.md` §8) |
 
-## 7. Open questions
+## 7. Decisions (2026-10-29; were the open questions)
 
-1. **Is Aarogya's patient app a PHR app** in ABDM's sense (its own certification, where the patient approves consent in our app), or does the patient use ABDM's own app for approvals? That changes M1 and M3 scope a lot.
-2. **Which entity applies:** Aarogya as a technology provider for many facilities, or each facility as its own integrator using our software? This affects HFR, the bridge and the agreements.
-3. **ABHA creation in scope at all,** or only verifying an ABHA a person already has? Creation pulls in Aadhaar OTP flows.
-4. **Scan and Share:** in scope for the first hospitals' OPD (it fits the 5c check-in)?
-5. **Which care contexts** to offer: every encounter, or episodes (a whole admission, a course of antenatal visits)? Display names must carry no sensitive detail.
-6. **Sensitive categories over ABDM:** 4c lets a person opt in per share. An ABDM artefact has hiTypes but no sensitive-category concept. Do we withhold sensitive records from ABDM pushes unless the person opted in locally? This plan says yes.
-7. **WASA scope and auditor:** one assessment for both pre-launch item 6 and WASA, or two?
-8. **Billing data:** ABDM has an invoice record type in newer IG versions (*to verify*). The local mapping marks BILLING unsupported. Revisit when the IG is re-verified.
+1. **The patient app is a PHR app** in ABDM's sense, certified later (after M2/M3): patients will approve consent in Aarogya. Until it is certified, they approve in ABDM's own app. Decided.
+2. **Aarogya applies as the software vendor; each facility registers itself** (its own HFR entry, its own HIP/HIU identity, its own agreements). Decided; this matches §4.6.
+3. **ABHA: verify-only for now, no creation.** No Aadhaar OTP flow is built. Decided.
+4. **Scan and Share is in scope** for the first hospitals' OPD (it fits the 5c check-in). Decided; to verify its current API and certification route first (§3.1).
+5. **Care contexts: OPD visits, discharge summaries, lab reports and prescriptions.** Display names carry no sensitive detail. Decided.
+6. **Sensitive records are withheld from ABDM pushes unless the person opted in** locally for that category. Decided.
+7. **One combined security assessment** for WASA and pre-launch item 6, if the auditor agrees; otherwise WASA first. Decided.
+8. **Billing data:** unchanged; revisit when the IG is re-verified (still open, not one of the decided questions).
