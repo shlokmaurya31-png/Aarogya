@@ -4,20 +4,25 @@ import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { getAvailableSlots } from "@/lib/hospital/doctorSchedule";
 import { isStaffInFacility } from "@/lib/auth/staffFacility";
+import { parseDayKey } from "@/lib/time/zone";
 
-/** Computed bookable slots for one doctor on one date (brief §7/§6) — never a persisted slot table. */
+/**
+ * Computed bookable slots for one doctor on one date (brief §7/§6) — never a
+ * persisted slot table. The date is this facility's day in its time zone, and
+ * only this facility's sessions are listed (Flagship 2a).
+ */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ staffId: string }> }) {
   return withApiErrors(async () => {
     const { staffId } = await params;
     const { searchParams } = new URL(req.url);
     const { facilityId } = await requireFacilityStaff("patient:read", searchParams.get("facilityId") ?? undefined);
-    const date = searchParams.get("date");
+    const date = parseDayKey(searchParams.get("date"));
     if (!date) throw new BadRequestError("date (yyyy-mm-dd) is required.");
 
     const staff = await prisma.hospitalStaffProfile.findUnique({ where: { id: staffId } });
     if (!staff || !(await isStaffInFacility(prisma, staff.id, facilityId))) throw new NotFoundError("Doctor not found.");
 
-    const slots = await getAvailableSlots(staffId, new Date(`${date}T00:00:00`));
+    const slots = await getAvailableSlots(staffId, date, { facilityId });
     return { slots };
   });
 }

@@ -68,3 +68,22 @@ Found with the database's slow-statement log during a gate run:
 - **Front desk search** is an `ILIKE` over names (67 ms at 40,000 patients). A trigram index is the remedy past a few hundred thousand.
 - **The AI endpoints** spend most of their time in retrieval (an exact cosine scan, by design; docs/RAG_DESIGN.md §3.2a) and the mock answer. With a real model, the model's latency dominates and streaming hides it; the budget here covers the server's own work.
 - **Concurrency:** this gate is one user at a time. A load test with concurrent users (the OPD morning rush) is separate work.
+
+## Flagship 2d: the chart and the timeline in pages
+
+The chart and the timeline return pages now: newest first, by an opaque cursor, with a small summary header on the first page (`src/lib/hospital/chart.ts`, `timelinePage` in `src/lib/patient/timeline.ts`). The chart's header always carries every current medication order and every unacknowledged critical result, so nothing that needs acting on falls off a page. The screens load more as you scroll. `perf:gate` adds a 60 KB size budget for the first and next pages of both, for the heavy perf patient.
+
+| Response (heavy patient) | Before | After |
+|---|---|---|
+| Chart, first page | 451 KB | 18 KB |
+| Chart, next page of lab orders | — | 15 KB |
+| Timeline, first page | 331 KB | 9 KB |
+| Timeline, next page | — | 9 KB |
+
+Measured with `npm run perf:gate -- --fresh` on 2026-10-29: all 17 endpoints within budget (chart p95 41 ms, timeline 42 ms). "Document review (facts to confirm)" is 130 KB and is the next one to page.
+
+## Flagship 2f: the concurrent load test
+
+`npm run perf:load` (not in verify:all) runs 50 simulated users for 5 minutes against a production build on the perf seed: 10 front desk, 15 doctors, 13 nurses (one write: recording vitals), 10 patients and 2 admins, each waiting 1–3 s between actions. It reports each endpoint's p50/p95/p99 and error rate (`.perf-report/load.md`), and fails on any p95 over 500 ms or any error.
+
+Run on 2026-10-29, a single laptop (app, database and load generator on one machine): **7,280 calls (24/s), 0 errors; overall p95 115 ms, p99 159 ms; all 17 endpoints within budget.** The slowest p95s: visit brief (AI, mock provider) 198 ms, command centre 181 ms, patient search 132 ms. The first run's only failure was the test's own: it asked for visit briefs on patients without AI consent, which the app correctly answers 404; the mix now asks only for the consented heavy patient.

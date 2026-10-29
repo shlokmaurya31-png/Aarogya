@@ -12,7 +12,7 @@ import type { CommandSection } from "./types";
  */
 export async function getStaffing(ctx: CommandContext): Promise<CommandSection> {
   const f = ctx.facilityId;
-  const today = startOfToday(ctx.now);
+  const today = startOfToday(ctx.now, ctx.timeZone);
   const [activeNow, scheduledToday, cancelledToday, overdueTasks, unassignedAdmitted, activeAssignments] = await Promise.all([
     prisma.staffShift.count({ where: { facilityId: f, status: "SCHEDULED", startAt: { lte: ctx.now }, endAt: { gte: ctx.now } } }),
     prisma.staffShift.count({ where: { facilityId: f, status: { in: ["SCHEDULED", "COMPLETED"] }, startAt: { gte: today } } }),

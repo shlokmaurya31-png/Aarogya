@@ -287,7 +287,7 @@ bounded by its own batch size and the shared time budget:
 2. `tickWorkflows({ batchSize: 100 })` (timers, then runnable instances)
 3. `sweepMedicationSchedule({ batchSize: 500 })` (§3.4)
 
-It imports `@/lib/workflows/register` (and the new consumer registrations)
+It imports `registerAllConsumers` (`src/lib/runner/consumers.ts`; the side-effect `@/lib/workflows/register` module was removed in Flagship 2b) (and the new consumer registrations)
 itself, so no entry point can run the dispatcher without the workflow
 consumer, which is a trap today (the registration is a side-effect import in
 one route).

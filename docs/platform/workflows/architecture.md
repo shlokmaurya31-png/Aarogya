@@ -39,7 +39,7 @@ DOMAIN MUTATION → DOMAIN EVENT (D6 outbox) → D6 DISPATCHER → WORKFLOW CONS
 
 D6 consumers self-register at module load. The workflow consumer
 (`src/lib/workflows/consumer.ts`) self-registers on import; the D6 dispatch route,
-the workflow routes, and the gate import `@/lib/workflows/register` so the consumer
+the workflow routes, and the gate import `registerAllConsumers` (`src/lib/runner/consumers.ts`; the side-effect `@/lib/workflows/register` module was removed in Flagship 2b) so the consumer
 is present whenever dispatch runs. Dependency direction is **workflows → events**
 only; the events layer never imports workflows.
 

@@ -13,7 +13,11 @@
  * windows, document versions), so the database is always reset first:
  *
  *   default        reset + migrate + seed once, then run every script in order
- *   --fresh-each   reset + migrate + seed before EACH script (isolates failures)
+ *   --fresh-each   a fresh database before EACH script (isolates failures):
+ *                  reset + migrate + seed once, kept as a template database
+ *                  (<verify name>_template on the same local server), and
+ *                  aarogya_verify re-created from it before every script
+ *                  (`npm run verify:isolated`, Flagship 2c; nightly in CI)
  *   --only <pat>   run only scripts whose name contains <pat> (repeatable,
  *                  comma-separated also accepted)
  *   --timeout <s>  per-script timeout in seconds (default 300)
@@ -110,6 +114,14 @@ const ORDER = [
   "verify-postgres-location-history",
   "verify-postgres-bookability",
   "verify-postgres-walk-ins",
+  // Flagship 2a: a facility's day is its own under any server zone (HTTP; builds the app)
+  "verify-postgres-time-zones",
+  // Flagship 2d: the chart and the timeline in exact pages
+  "verify-postgres-pagination",
+  // Flagship 2, step 5: offline nursing, phase 1 (devices, dose leases, sync)
+  "verify-postgres-offline-sync",
+  // Flagship 2, step 6: legacy import, phase 1 (CSV patients and encounters)
+  "verify-postgres-legacy-import",
   "verify-postgres-schema-constraints",
   // Week 3: workflow spine
   "verify-postgres-runner",
@@ -158,6 +170,8 @@ const ORDER = [
   "verify-postgres-core-journey",
   // Batch 4: bounded retries; runs after the tenancy sweep (checks its fixtures)
   "verify-postgres-bounded-retry",
+  // Flagship 2b: one consumer registry in every entry point (HTTP; builds the app)
+  "verify-postgres-consumer-registry",
   // Runs last among the gates: checks every row the earlier gates created.
   "verify-postgres-facility-consistency",
   // Runs late: its whole-database check covers every earlier gate's orders.
@@ -332,6 +346,46 @@ async function resetDatabase() {
   console.log(`done (${fmt(Date.now() - started)})`);
 }
 
+/**
+ * Flagship 2c — the fresh database for --fresh-each, in about a second: after
+ * the one reset + seed, the seeded database is copied into a template, and
+ * before each script the verify database is dropped and re-created from it.
+ * Only the verify database and its own template are touched, on the guarded
+ * local server (the maintenance connection goes to its "postgres" database).
+ */
+let templateReady = false;
+function maintenance(): { url: string; verify: string; template: string } {
+  const u = new URL(childEnv.DATABASE_URL!);
+  const verify = decodeURIComponent(u.pathname.replace(/^\//, ""));
+  if (verify !== "aarogya_verify") throw new Error(`--fresh-each re-creates only aarogya_verify, not "${verify}".`);
+  u.pathname = "/postgres";
+  return { url: u.toString(), verify, template: `${verify}_template` };
+}
+async function maintenanceSql(statements: string[]) {
+  const { PrismaClient } = await import("@prisma/client");
+  const db = new PrismaClient({ datasourceUrl: maintenance().url });
+  try {
+    for (const st of statements) await db.$executeRawUnsafe(st);
+  } finally {
+    await db.$disconnect();
+  }
+}
+async function freshFromTemplate() {
+  const { verify, template } = maintenance();
+  const started = Date.now();
+  process.stdout.write("  fresh database from the seeded template ... ");
+  if (!templateReady) {
+    await maintenanceSql([`DROP DATABASE IF EXISTS "${template}" WITH (FORCE)`, `CREATE DATABASE "${template}" TEMPLATE "${verify}"`]);
+    templateReady = true;
+  } else {
+    await maintenanceSql([`DROP DATABASE IF EXISTS "${verify}" WITH (FORCE)`, `CREATE DATABASE "${verify}" TEMPLATE "${template}"`]);
+  }
+  console.log(`done (${fmt(Date.now() - started)})`);
+}
+async function dropTemplate() {
+  if (templateReady) await maintenanceSql([`DROP DATABASE IF EXISTS "${maintenance().template}" WITH (FORCE)`]);
+}
+
 function lastLines(text: string, n: number): string[] {
   return text.replace(/\s+$/, "").split("\n").slice(-n);
 }
@@ -390,10 +444,10 @@ async function main() {
 
   const started = Date.now();
   const results: Result[] = [];
-  if (!opts.freshEach) await resetDatabase();
+  await resetDatabase();
   for (const [i, name] of names.entries()) {
     console.log(`[${i + 1}/${names.length}] ${name}`);
-    if (opts.freshEach) await resetDatabase();
+    if (opts.freshEach) await freshFromTemplate();
     const t0 = Date.now();
     const r = await run(TSX, [path.join("scripts", `${name}.ts`)], opts.timeoutMs, { measure: true });
     const status = r.timedOut ? "TIMEOUT" : r.code === 0 ? "PASS" : "FAIL";
@@ -411,9 +465,11 @@ async function main() {
     }
   }
 
+  await dropTemplate();
   const md = report(results, opts, host, Date.now() - started);
   mkdirSync(REPORT_DIR, { recursive: true });
   writeFileSync(path.join(REPORT_DIR, "latest.md"), md);
+  if (opts.freshEach) writeFileSync(path.join(REPORT_DIR, "isolated.md"), md);
   console.log("\n" + md.split("\n## ")[0]);
   console.log(`Full report: .verify-report/latest.md`);
   process.exitCode = results.every((r) => r.status === "PASS") ? 0 : 1;

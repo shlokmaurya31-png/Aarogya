@@ -102,11 +102,32 @@ export async function requirePermission(permission: Permission): Promise<Session
   return session;
 }
 
+/** Keys no API response may carry, at any depth (credential material). */
+export const FORBIDDEN_RESPONSE_KEYS = new Set(["passwordHash"]);
+
+/**
+ * JSON for a response body, refusing credential material: a body with a
+ * forbidden key at any depth throws instead of being sent (fail closed).
+ */
+export function safeResponseJson(result: unknown): string {
+  return JSON.stringify(result, (key, value) => {
+    if (FORBIDDEN_RESPONSE_KEYS.has(key)) throw new Error(`Refusing to send a response carrying "${key}".`);
+    return value;
+  }) ?? "null";
+}
+
 /** Wraps a route handler body, turning UnauthorizedError/ForbiddenError into proper HTTP responses. */
 export async function withApiErrors<T>(fn: () => Promise<T>): Promise<NextResponse> {
   try {
     const result = await fn();
-    return NextResponse.json(result);
+    let body: string;
+    try {
+      body = safeResponseJson(result);
+    } catch (e) {
+      console.error(e instanceof Error ? e.message : e);
+      return NextResponse.json({ error: "Internal error." }, { status: 500 });
+    }
+    return new NextResponse(body, { status: 200, headers: { "content-type": "application/json" } });
   } catch (err) {
     if (err instanceof UnauthorizedError) {
       return NextResponse.json({ error: err.message }, { status: 401 });

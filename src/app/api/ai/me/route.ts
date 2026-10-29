@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { facilityTimeZone, startOfZonedDay } from "@/lib/time/zone";
 import { prisma } from "@/lib/db";
 import { requireSession, withApiErrors } from "@/lib/auth/rbac";
 import { roleHasPermission } from "@/lib/auth/permissions";
@@ -33,7 +34,9 @@ export async function GET(req: NextRequest) {
     if (patientId) {
       const user = await getCurrentUser();
       const staffId = user?.hospitalStaffProfile?.id;
-      const startOfDay = new Date(); startOfDay.setUTCHours(0, 0, 0, 0);
+      // From the start of the patient's facility's day, in its time zone (Flagship 2a).
+      const patientFacility = (await prisma.patient.findUnique({ where: { id: patientId }, select: { facilityId: true } }))?.facilityId;
+      const startOfDay = startOfZonedDay(new Date(), await facilityTimeZone(prisma, patientFacility));
       const next = staffId ? await prisma.appointment.findFirst({ where: { patientId, doctorStaffId: staffId, scheduledStart: { gte: startOfDay }, status: { notIn: ["CANCELLED", "NO_SHOW", "COMPLETED"] } }, orderBy: { scheduledStart: "asc" }, select: { id: true } }) : null;
       appointmentId = next?.id ?? null;
     }

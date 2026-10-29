@@ -1,6 +1,7 @@
 import type { FacilityContext } from "@/lib/auth/hospitalRbac";
 import { prisma } from "@/lib/db";
 import { NotFoundError } from "@/lib/auth/rbac";
+import { facilityTimeZone } from "@/lib/time/zone";
 import { buildThresholds } from "./thresholds";
 import { resolveWindow, type TimeWindow } from "./filters";
 import { canSeeSection, type CommandContext, type SectionKey } from "./authz";
@@ -89,10 +90,11 @@ async function ownDepartment(fctx: FacilityContext, departmentId: string | null 
 
 export async function getCommandCenterOverview(fctx: FacilityContext, opts: OverviewOptions = {}): Promise<CommandCenterOverview> {
   const now = new Date();
-  const window: TimeWindow = resolveWindow(opts.window, opts.from, opts.to, now);
+  const timeZone = await facilityTimeZone(prisma, fctx.facilityId);
+  const window: TimeWindow = resolveWindow(opts.window, opts.from, opts.to, now, timeZone);
   const departmentId = await ownDepartment(fctx, opts.departmentId);
   const thresholds = await buildThresholds({ organizationId: fctx.organizationId, facilityId: fctx.facilityId, departmentId });
-  const ctx: CommandContext = { session: fctx.session, organizationId: fctx.organizationId, facilityId: fctx.facilityId, departmentId, window, thresholds, now };
+  const ctx: CommandContext = { session: fctx.session, organizationId: fctx.organizationId, facilityId: fctx.facilityId, departmentId, window, thresholds, now, timeZone };
 
   const wanted = (opts.sections && opts.sections.length ? opts.sections : (Object.keys(RUNNERS) as SectionKey[]));
   const authorized: SectionKey[] = [];
@@ -125,9 +127,10 @@ export async function getCommandCenterSection(fctx: FacilityContext, key: Sectio
   if (!canSeeSection(fctx.session, key)) {
     return { key, label: LABELS[key], status: "UNAVAILABLE", asOf: now.toISOString(), metrics: [], drivers: [], drillDown: null, unavailable: { reason: "restricted" } };
   }
-  const window = resolveWindow(opts.window, opts.from, opts.to, now);
+  const timeZone = await facilityTimeZone(prisma, fctx.facilityId);
+  const window = resolveWindow(opts.window, opts.from, opts.to, now, timeZone);
   const departmentId = await ownDepartment(fctx, opts.departmentId);
   const thresholds = await buildThresholds({ organizationId: fctx.organizationId, facilityId: fctx.facilityId, departmentId });
-  const ctx: CommandContext = { session: fctx.session, organizationId: fctx.organizationId, facilityId: fctx.facilityId, departmentId, window, thresholds, now };
+  const ctx: CommandContext = { session: fctx.session, organizationId: fctx.organizationId, facilityId: fctx.facilityId, departmentId, window, thresholds, now, timeZone };
   return safe(ctx, key, RUNNERS[key]);
 }

@@ -14,7 +14,7 @@
 import "./lib/gateBootstrap";
 import { prisma } from "../src/lib/db";
 import { emitDomainEvent } from "../src/lib/events/emit";
-import "../src/lib/workflows/register";
+import { registerAllConsumers } from "../src/lib/runner/consumers";
 import { createDefinition, publishVersion } from "../src/lib/workflows/definitions";
 import { startWorkflowsForEvent } from "../src/lib/workflows/engine";
 import type { DomainEventEnvelope } from "../src/lib/events/types";
@@ -23,6 +23,7 @@ import {
   getHistory, listOverrides, clearConfigCache,
 } from "../src/lib/config";
 import { loadActorMemberships, type ActorMemberships } from "../src/lib/auth/tenantContext";
+registerAllConsumers();
 
 let pass = 0, fail = 0; const failures: string[] = [];
 const ok = (l: string) => { pass++; console.log(`  ✓ ${l}`); };

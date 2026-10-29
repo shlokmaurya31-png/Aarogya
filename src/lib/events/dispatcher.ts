@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { getEventContract } from "./catalogue";
-import { getConsumersFor, type DomainEventConsumer } from "./consumers";
+import { assertRegistryComplete, getConsumersFor, requiredConsumersFor, type DeclaredConsumer, type DomainEventConsumer } from "./consumers";
 import { classifyEventError, safeMessage, isDataIntegrityCode, DATA_ERROR_ATTEMPTS, type DomainEventEnvelope } from "./types";
 
 /**
@@ -87,6 +87,8 @@ export async function reapStaleClaims(now: Date = new Date()): Promise<number> {
 }
 
 export async function dispatchPendingDomainEvents(opts: DispatchOptions = {}): Promise<DispatchResult> {
+  // Flagship 2b: the whole registry, or nothing (throws before claiming anything).
+  const registry = assertRegistryComplete();
   const now = opts.now ?? new Date();
   const batchSize = Math.min(Math.max(1, opts.batchSize ?? 50), 500);
   const deadline = Date.now() + (opts.maxDurationMs ?? 25_000);
@@ -103,7 +105,7 @@ export async function dispatchPendingDomainEvents(opts: DispatchOptions = {}): P
     if (ids.length === 0) break;
     res.claimed += ids.length;
     for (const id of ids) {
-      const outcome = await processClaimed(id, token, now);
+      const outcome = await processClaimed(id, token, now, registry);
       if (outcome === "PROCESSED") res.processed++;
       else if (outcome === "RETRY") res.retried++;
       else if (outcome === "DEAD_LETTER") res.deadLettered++;
@@ -115,7 +117,7 @@ export async function dispatchPendingDomainEvents(opts: DispatchOptions = {}): P
 
 type Outcome = "PROCESSED" | "RETRY" | "DEAD_LETTER" | "SKIPPED";
 
-async function processClaimed(id: string, token: string, now: Date): Promise<Outcome> {
+async function processClaimed(id: string, token: string, now: Date, registry: readonly DeclaredConsumer[]): Promise<Outcome> {
   const evt = await prisma.domainEventOutbox.findUnique({ where: { id } });
   if (!evt || evt.claimToken !== token || evt.status !== "PROCESSING") return "SKIPPED";
 
@@ -145,14 +147,19 @@ async function processClaimed(id: string, token: string, now: Date): Promise<Out
 
   let anyRetry = false;
   let anyDead = false;
+  const handled = new Set<string>();
   for (const consumer of getConsumersFor(evt.eventType)) {
     const d = await deliverToConsumer(evt.eventId, consumer, envelope, evt.maxAttempts, now);
     if (d === "RETRY") anyRetry = true;
     else if (d === "DEAD_LETTER") anyDead = true;
+    else handled.add(consumer.name);
   }
 
   if (anyRetry) return finalize(id, token, now, "RETRY", null, null);
   if (anyDead) return finalize(id, token, now, "DEAD_LETTER", "CONSUMER_DEAD_LETTER", "One or more consumers permanently failed");
+  // Flagship 2b: PROCESSED only when every consumer the registry lists for this
+  // type has handled it (a consumer unregistered mid-run leaves it to retry).
+  if (requiredConsumersFor(evt.eventType, registry).some((name) => !handled.has(name))) return finalize(id, token, now, "RETRY", null, null);
   return finalize(id, token, now, "PROCESSED", null, null);
 }
 

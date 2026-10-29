@@ -16,6 +16,7 @@ import { HandoffInbox } from "@/components/hospital-os/shared/HandoffInbox";
 import { PatientIdentityPanel } from "@/components/hospital-os/PatientIdentityPanel";
 import { PatientDocumentsPanel } from "@/components/hospital-os/PatientDocumentsPanel";
 import { ageLabel } from "@/lib/patient/age";
+import { LoadMore } from "@/components/hospital-os/shared/LoadMore";
 
 interface TimelineEntry { id: string; timestamp: string; type: string; summary: string; department?: string | null }
 
@@ -42,6 +43,20 @@ interface ChartData {
     studies: { id: string; accessionNumber: string; status: string }[];
   }[];
   carePlans: { id: string; problem: string; goal: string; status: string; interventions: { id: string; description: string; responsibleRole: string; status: string }[] }[];
+  /** Flagship 2d: the chart comes in pages; what needs acting on is always in the summary. */
+  summary: {
+    counts: Record<PagedSection, number>;
+    currentMedicationOrders: ChartData["medicationOrders"];
+    unacknowledgedCritical: { labOrders: ChartData["labOrders"]; imagingOrders: ChartData["imagingOrders"] };
+  };
+  nextCursors: Record<PagedSection, string | null>;
+}
+type PagedSection = "encounters" | "notes" | "vitals" | "medicationOrders" | "labOrders" | "imagingOrders" | "diagnoses";
+
+/** The summary's items first, then the page's, each once. */
+function withPinned<T extends { id: string }>(pinned: T[], items: T[]): T[] {
+  const ids = new Set(pinned.map((x) => x.id));
+  return [...pinned, ...items.filter((x) => !ids.has(x.id))];
 }
 
 const MED_STATUS_TONE: Record<string, "emerald" | "amber" | "red" | "cyan" | "neutral"> = {
@@ -56,6 +71,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
   const [data, setData] = useState<ChartData | null>(null);
   const [tab, setTab] = useState<"orders" | "notes" | "clinical" | "timeline" | "careplan" | "financial">("orders");
   const [timeline, setTimeline] = useState<TimelineEntry[] | null>(null);
+  const [timelineCursor, setTimelineCursor] = useState<string | null>(null);
 
   // Care plan composer (brief §6)
   const [cpProblem, setCpProblem] = useState("");
@@ -92,6 +108,16 @@ export function PatientChart({ patientId }: { patientId: string }) {
     fetch(`/api/hospital/patients/${patientId}/allergy-status`).then((r) => (r.ok ? r.json() : null)).then((d) => setAllergyStatus(d?.current ?? null));
   }, [patientId]);
   useEffect(load, [load]);
+
+  /** The next page of one chart section, appended. */
+  const loadMore = useCallback(async (section: PagedSection) => {
+    const cursor = data?.nextCursors[section];
+    if (!cursor) return;
+    const r = await fetch(`/api/hospital/patients/${patientId}/chart?section=${section}&cursor=${encodeURIComponent(cursor)}`);
+    if (!r.ok) return;
+    const page = (await r.json()) as { items: unknown[]; nextCursor: string | null };
+    setData((d) => (d ? { ...d, [section]: [...(d[section] as unknown[]), ...page.items], nextCursors: { ...d.nextCursors, [section]: page.nextCursor } } : d));
+  }, [data, patientId]);
 
   async function orderMedication(overrideReason?: string) {
     if (!encounterId) { push("Open this patient from an active encounter to place orders.", "amber"); return; }
@@ -191,8 +217,16 @@ export function PatientChart({ patientId }: { patientId: string }) {
   }
 
   function loadTimeline() {
-    fetch(`/api/hospital/patients/${patientId}/timeline`).then((r) => r.json()).then((d) => setTimeline(d.timeline ?? []));
+    fetch(`/api/hospital/patients/${patientId}/timeline`).then((r) => r.json()).then((d) => { setTimeline(d.timeline ?? []); setTimelineCursor(d.nextCursor ?? null); });
   }
+  const loadMoreTimeline = useCallback(async () => {
+    if (!timelineCursor) return;
+    const r = await fetch(`/api/hospital/patients/${patientId}/timeline?cursor=${encodeURIComponent(timelineCursor)}`);
+    if (!r.ok) return;
+    const d = (await r.json()) as { timeline: TimelineEntry[]; nextCursor: string | null };
+    setTimeline((t) => [...(t ?? []), ...d.timeline]);
+    setTimelineCursor(d.nextCursor);
+  }, [patientId, timelineCursor]);
 
   async function createCarePlan() {
     if (!cpProblem.trim() || !cpGoal.trim()) return;
@@ -370,6 +404,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
                   </div>
                 ))}
                 {timeline?.length === 0 && <p className="text-[12px] text-text-tertiary">No history recorded yet.</p>}
+                {timeline && timelineCursor && <LoadMore onLoad={loadMoreTimeline} label="Show older timeline entries" />}
               </div>
             </Card>
           )}
@@ -464,6 +499,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
                     </div>
                   ))}
                   {data.notes.length === 0 && <p className="text-[12px] text-text-tertiary">No notes yet.</p>}
+                  {data.nextCursors.notes && <LoadMore onLoad={() => loadMore("notes")} label="Show older notes" />}
                 </div>
               </Card>
             </>
@@ -501,6 +537,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
                 </div>
               ))}
               {data.diagnoses.length === 0 && <p className="text-[11.5px] text-text-tertiary">No diagnoses recorded.</p>}
+              {data.nextCursors.diagnoses && <LoadMore onLoad={() => loadMore("diagnoses")} label="Show older diagnoses" />}
             </div>
           </Card>
 
@@ -523,7 +560,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
           <Card className="rounded-[20px]">
             <CardLabel>Lab results</CardLabel>
             <div className="mt-2 space-y-2">
-              {data.labOrders.map((l) => {
+              {withPinned(data.summary.unacknowledgedCritical.labOrders, data.labOrders).map((l) => {
                 const result = l.results[0];
                 const specimen = l.specimens[0];
                 return (
@@ -550,13 +587,14 @@ export function PatientChart({ patientId }: { patientId: string }) {
                 );
               })}
               {data.labOrders.length === 0 && <p className="text-[11.5px] text-text-tertiary">No lab orders.</p>}
+              {data.nextCursors.labOrders && <LoadMore onLoad={() => loadMore("labOrders")} label="Show older lab orders" />}
             </div>
           </Card>
 
           <Card className="rounded-[20px]">
             <CardLabel>Imaging</CardLabel>
             <div className="mt-2 space-y-2">
-              {data.imagingOrders.map((im) => {
+              {withPinned(data.summary.unacknowledgedCritical.imagingOrders, data.imagingOrders).map((im) => {
                 const report = im.reports[0];
                 const study = im.studies[0];
                 return (
@@ -574,13 +612,14 @@ export function PatientChart({ patientId }: { patientId: string }) {
                 );
               })}
               {data.imagingOrders.length === 0 && <p className="text-[11.5px] text-text-tertiary">No imaging orders.</p>}
+              {data.nextCursors.imagingOrders && <LoadMore onLoad={() => loadMore("imagingOrders")} label="Show older imaging orders" />}
             </div>
           </Card>
 
           <Card className="rounded-[20px]">
             <CardLabel>Medications</CardLabel>
             <div className="mt-2 space-y-2">
-              {data.medicationOrders.map((m) => (
+              {withPinned(data.summary.currentMedicationOrders, data.medicationOrders).map((m) => (
                 <div key={m.id} className="text-[11.5px]">
                   <div className="flex items-center justify-between">
                     <span>{m.drugName} {m.dose}{m.isControlled ? " ⚠" : ""}</span>
@@ -592,6 +631,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
                 </div>
               ))}
               {data.medicationOrders.length === 0 && <p className="text-[11.5px] text-text-tertiary">No medication orders.</p>}
+              {data.nextCursors.medicationOrders && <LoadMore onLoad={() => loadMore("medicationOrders")} label="Show older medication orders" />}
             </div>
           </Card>
         </div>

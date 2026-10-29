@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import type { DomainEventConsumer } from "@/lib/events/consumers";
 import { getAvailableSlots } from "@/lib/hospital/doctorSchedule";
+import { addDays, dayKey, facilityTimeZone } from "@/lib/time/zone";
 
 /**
  * Week 5a — the next-slot projection (docs/DOCTOR_NETWORK_DESIGN.md §6.3).
@@ -17,8 +18,10 @@ export async function refreshNextSlot(locationId: string, now = new Date()): Pro
   if (!loc) return null;
   let next: Date | null = null;
   if (loc.active) {
+    // The facility's days, from its today (Flagship 2a).
+    const today = dayKey(now, await facilityTimeZone(prisma, loc.facilityId));
     for (let i = 0; i < NEXT_SLOT_HORIZON_DAYS && !next; i++) {
-      const day = new Date(now.getTime() + i * 86_400_000);
+      const day = addDays(today, i);
       const slot = (await getAvailableSlots(loc.staffId, day, { facilityId: loc.facilityId })).find((s) => Date.parse(s.start) > now.getTime());
       if (slot) next = new Date(slot.start);
     }

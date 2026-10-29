@@ -25,6 +25,8 @@ export interface CommandContext {
   window: TimeWindow;
   thresholds: ThresholdMap;
   now: Date;
+  /** The facility's time zone (Flagship 2a): "today" is its day. */
+  timeZone: string;
 }
 
 /**

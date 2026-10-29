@@ -963,25 +963,32 @@ model Organization {
 }
 
 model Facility {
-  id             String         @id @default(cuid())
-  name           String
-  city           String?
+  id               String         @id @default(cuid())
+  name             String
+  city             String?
   /// Stable per-organization identifier (see Organization.slug). Nullable for
   /// the same backfill reason.
-  slug           String?
-  organization   Organization   @relation(fields: [organizationId], references: [id])
-  organizationId String
+  slug             String?
+  organization     Organization   @relation(fields: [organizationId], references: [id])
+  organizationId   String
   // Phase D1 — facility lifecycle. Independent of the organization's: an
   // organization can be ACTIVE while one of its facilities is SUSPENDED. A
   // non-ACTIVE facility (or one under a non-ACTIVE organization) refuses normal
   // operations at the tenant-context boundary; clinical data is never deleted.
-  status         FacilityStatus @default(ACTIVE)
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @default(now()) @updatedAt
-  suspendedAt    DateTime?
-  deactivatedAt  DateTime?
+  status           FacilityStatus @default(ACTIVE)
+  /// Flagship 2a: the facility's IANA time zone. Clinic sessions, "today",
+  /// check-in windows and summaries are computed in it, never in the server's
+  /// own zone (src/lib/time/zone.ts). Every facility today is in India.
+  timeZone         String         @default("Asia/Kolkata")
+  /// Flagship 2, step 5: how long an offline ward pack (and its dose leases) lasts, in hours (1–12; decided 4).
+  offlinePackHours Int            @default(4)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @default(now()) @updatedAt
+  suspendedAt      DateTime?
+  deactivatedAt    DateTime?
 
   memberships          FacilityMembership[]
+  wardDevices          WardDevice[]
   configValues         FacilityConfigValue[]
   // Phase D2 — facility-scoped entitlement overrides (e.g. enabling the ICU
   // module for one facility beyond what the plan grants org-wide).
@@ -1988,16 +1995,19 @@ enum WardType {
 }
 
 model Ward {
-  id           String      @id @default(cuid())
-  name         String
-  wardType     WardType
-  facility     Facility    @relation(fields: [facilityId], references: [id])
-  facilityId   String
-  department   Department? @relation(fields: [departmentId], references: [id])
-  departmentId String?
-  createdAt    DateTime    @default(now())
+  id                 String      @id @default(cuid())
+  name               String
+  wardType           WardType
+  facility           Facility    @relation(fields: [facilityId], references: [id])
+  facilityId         String
+  department         Department? @relation(fields: [departmentId], references: [id])
+  departmentId       String?
+  /// Flagship 2, step 5: the ward's charge nurse (may take over a device's dose lease; told of offline conflicts).
+  chargeNurseStaffId String?
+  createdAt          DateTime    @default(now())
 
-  beds Bed[]
+  beds    Bed[]
+  devices WardDevice[]
 
   @@unique([facilityId, name])
 }
@@ -2149,6 +2159,8 @@ model Patient {
   /// shown as "~34" for anything other than DAY.
   dobPrecision            DobPrecision              @default(DAY)
   phone                   String?
+  /// Flagship 2, step 6: the legacy import batch that created this patient (never linked to a Person by it).
+  importBatchId           String?
   address                 String?
   language                String?                   @default("en")
   communicationPreference String? // "SMS" | "EMAIL" | "CALL" | "NONE"
@@ -2418,6 +2430,8 @@ model Encounter {
   episodeOfCare    EpisodeOfCare?        @relation(fields: [episodeOfCareId], references: [id])
   episodeOfCareId  String?
   type             EncounterType
+  /// Flagship 2, step 6: the legacy import batch that created this (CLOSED) visit.
+  importBatchId    String?
   status           EncounterStatus       @default(REGISTERED)
   chiefComplaint   String?
   triageLevel      Int? // 1 (resuscitation) - 5 (non-urgent), ED only
@@ -2736,29 +2750,37 @@ model MedicationOrder {
 }
 
 model MedicationAdministration {
-  id                      String                         @id @default(cuid())
-  medicationOrder         MedicationOrder                @relation(fields: [medicationOrderId], references: [id])
-  medicationOrderId       String
-  administeredBy          HospitalStaffProfile?          @relation("MedicationAdministrator", fields: [administeredByStaffId], references: [id])
-  administeredByStaffId   String?
-  scheduledAt             DateTime
-  administeredAt          DateTime?
-  status                  MedicationAdministrationStatus @default(DUE)
-  notes                   String?
+  id                              String                         @id @default(cuid())
+  medicationOrder                 MedicationOrder                @relation(fields: [medicationOrderId], references: [id])
+  medicationOrderId               String
+  administeredBy                  HospitalStaffProfile?          @relation("MedicationAdministrator", fields: [administeredByStaffId], references: [id])
+  administeredByStaffId           String?
+  scheduledAt                     DateTime
+  administeredAt                  DateTime?
+  status                          MedicationAdministrationStatus @default(DUE)
+  notes                           String?
   // Phase 3 additions — REFUSED/CANCELLED are new capability (brief §20); GIVEN kept
   // as-is rather than renamed to ADMINISTERED, matching the existing working
   // vocabulary every current route/seed/UI reads (docs/PHASE_3_ARCHITECTURE.md §5).
-  reasonCode              String? // category for HELD/REFUSED/MISSED, e.g. "patient-declined" | "npo" | "unavailable"
-  witnessStaffId          String? // controlled-medication co-sign (brief §25)
-  witness                 HospitalStaffProfile?          @relation("AdministrationWitness", fields: [witnessStaffId], references: [id])
-  safetyChecksConfirmed   Boolean                        @default(false)
+  reasonCode                      String? // category for HELD/REFUSED/MISSED, e.g. "patient-declined" | "npo" | "unavailable"
+  witnessStaffId                  String? // controlled-medication co-sign (brief §25)
+  witness                         HospitalStaffProfile?          @relation("AdministrationWitness", fields: [witnessStaffId], references: [id])
+  safetyChecksConfirmed           Boolean                        @default(false)
   // A late recording of a dose the MAR sweep marked MISSED (reasonCode
   // "not-recorded"): a new row linked to the missed one, which stays as it is.
   // (medicationOrderId, scheduledAt) is unique for scheduled rows (those with
   // no link) by a partial index in migration SQL.
-  lateForAdministrationId String?                        @unique
-  lateFor                 MedicationAdministration?      @relation("LateAdministration", fields: [lateForAdministrationId], references: [id], onDelete: Restrict)
-  lateRecording           MedicationAdministration?      @relation("LateAdministration")
+  lateForAdministrationId         String?                        @unique
+  lateFor                         MedicationAdministration?      @relation("LateAdministration", fields: [lateForAdministrationId], references: [id], onDelete: Restrict)
+  lateRecording                   MedicationAdministration?      @relation("LateAdministration")
+  /// Flagship 2, step 5: a GIVEN recorded from an offline ward device for a
+  /// scheduled dose that was no longer due (given online meanwhile, or
+  /// cancelled when its order stopped). The dose was given, so it is recorded;
+  /// an OfflineConflict flags it. Not unique: the facts are never discarded.
+  offlineGivenForAdministrationId String?
+  offlineGivenFor                 MedicationAdministration?      @relation("OfflineGiven", fields: [offlineGivenForAdministrationId], references: [id], onDelete: Restrict)
+  offlineGivenRecords             MedicationAdministration[]     @relation("OfflineGiven")
+  doseLeases                      DoseLease[]
 
   @@index([medicationOrderId])
   @@index([status])
@@ -12055,7 +12077,7 @@ model PreArrivalCheckIn {
   status              PreArrivalStatus      @default(SUBMITTED)
   needsDeskReason     String?
   eligibility         PreArrivalEligibility
-  /// The queue token, e.g. "P-017": per facility and India day.
+  /// The queue token, e.g. "P-017": per facility and facility day (its time zone).
   token               String
   tokenDay            String
   shareId             String?               @unique
@@ -12164,4 +12186,224 @@ model FacilityGatewayWebhook {
   receivedAt      DateTime @default(now())
 
   @@unique([facilityId, externalEventId])
+}
+
+// ── Flagship 2, step 5 — offline nursing, phase 1 (server side) ──────────────
+// docs/OFFLINE_NURSING_DESIGN.md §13. Facility-scoped. A ward tablet is a
+// WardDevice; at shift start it downloads a WardPack and takes a DoseLease on
+// each due dose of its nurse's assigned patients (one ACTIVE lease per dose, by
+// a partial unique index in the migration), so a dose can be given offline on
+// one device only. Offline work comes back as OfflineCommands (unique client
+// operation id per facility: a replay is a no-op); anything the server can't
+// apply cleanly is an OfflineConflict. A dose recorded as given is never
+// discarded, only flagged.
+
+enum WardDeviceStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum DoseLeaseStatus {
+  ACTIVE
+  RELEASED
+  EXPIRED
+  OVERRIDDEN
+}
+
+enum OfflineCommandKind {
+  DOSE_GIVEN
+  DOSE_HELD
+  DOSE_REFUSED
+}
+
+enum OfflineCommandOutcome {
+  APPLIED
+  APPLIED_WITH_CONFLICT
+  REFUSED
+}
+
+enum OfflineRefusalReason {
+  /// Controlled or high-alert medicines are never given offline.
+  ONLINE_ONLY
+  /// The device's lease had expired when the dose was recorded.
+  LEASE_EXPIRED
+  /// The device never held a lease on this dose.
+  NOT_LEASED
+  /// The dose was no longer due (held or refused, recorded elsewhere).
+  NOT_DUE
+  UNKNOWN_DOSE
+}
+
+enum OfflineConflictKind {
+  POSSIBLE_DOUBLE_DOSE
+  ORDER_CHANGED
+  LEASE_OVERRIDDEN
+  LEASE_EXPIRED
+  NOT_LEASED
+  ONLINE_ONLY
+  CLOCK_SUSPECT
+}
+
+enum OfflineConflictSeverity {
+  WARNING
+  CRITICAL
+}
+
+enum OfflineConflictStatus {
+  OPEN
+  RESOLVED
+}
+
+model WardDevice {
+  id                 String           @id @default(cuid())
+  facility           Facility         @relation(fields: [facilityId], references: [id])
+  facilityId         String
+  ward               Ward             @relation(fields: [wardId], references: [id])
+  wardId             String
+  label              String
+  status             WardDeviceStatus @default(ACTIVE)
+  registeredByUserId String
+  registeredAt       DateTime         @default(now())
+  revokedAt          DateTime?
+  lastSeenAt         DateTime?
+
+  packs  WardPack[]
+  leases DoseLease[]
+
+  @@index([facilityId, status])
+}
+
+model WardPack {
+  id            String     @id @default(cuid())
+  facilityId    String
+  device        WardDevice @relation(fields: [deviceId], references: [id])
+  deviceId      String
+  nurseStaffId  String
+  issuedAt      DateTime   @default(now())
+  expiresAt     DateTime
+  /// Server clock minus the device's clock at issue: added to device times on sync.
+  clockOffsetMs Int        @default(0)
+
+  leases DoseLease[]
+
+  @@index([deviceId])
+}
+
+model DoseLease {
+  id               String                   @id @default(cuid())
+  facilityId       String
+  administration   MedicationAdministration @relation(fields: [administrationId], references: [id])
+  administrationId String
+  device           WardDevice               @relation(fields: [deviceId], references: [id])
+  deviceId         String
+  pack             WardPack                 @relation(fields: [packId], references: [id])
+  packId           String
+  nurseStaffId     String
+  status           DoseLeaseStatus          @default(ACTIVE)
+  grantedAt        DateTime                 @default(now())
+  expiresAt        DateTime
+  endedAt          DateTime?
+  endedByUserId    String?
+  /// The charge nurse's reason, required for an override.
+  overrideReason   String?
+  /// When the holding device was told its lease ended (override, expiry, revocation).
+  holderToldAt     DateTime?
+
+  @@index([deviceId, status])
+  @@index([administrationId])
+}
+
+model OfflineCommand {
+  id                     String                @id @default(cuid())
+  facilityId             String
+  /// The device's own id for the operation: the idempotency key.
+  clientOperationId      String
+  deviceId               String
+  nurseStaffId           String
+  kind                   OfflineCommandKind
+  administrationId       String
+  /// The time on the device, and that time corrected by the pack's clock offset (or the receipt time when suspect).
+  deviceTime             DateTime
+  appliedTime            DateTime
+  receivedAt             DateTime              @default(now())
+  outcome                OfflineCommandOutcome
+  refusalReason          OfflineRefusalReason?
+  /// HELD / REFUSED: the nurse's reason code, as the MAR takes it.
+  reasonCode             String?
+  /// The administration the command wrote (the dose, its late recording, or a second GIVEN).
+  resultAdministrationId String?
+
+  conflicts OfflineConflict[]
+
+  @@unique([facilityId, clientOperationId])
+  @@index([deviceId])
+}
+
+model OfflineConflict {
+  id               String                  @id @default(cuid())
+  facilityId       String
+  command          OfflineCommand          @relation(fields: [commandId], references: [id])
+  commandId        String
+  administrationId String
+  kind             OfflineConflictKind
+  severity         OfflineConflictSeverity
+  status           OfflineConflictStatus   @default(OPEN)
+  /// The task for whoever must look (the charge nurse; for a possible double dose, within 15 minutes).
+  taskId           String?
+  createdAt        DateTime                @default(now())
+  resolvedAt       DateTime?
+  resolvedByUserId String?
+
+  @@index([facilityId, status])
+}
+
+// ── Flagship 2, step 6 — legacy import, phase 1 (docs/LEGACY_IMPORT_DESIGN.md §11) ──
+// Facility-scoped. A file (CSV patients and encounters, with its mapping) is a
+// batch, unique per facility by its hash, so the same file twice is a no-op.
+// Each imported row keeps its source key (the old MRN or visit number), unique
+// per facility and source system: the exact key, and the only way two rows
+// are ever the same record.
+
+enum LegacyImportBatchStatus {
+  COMMITTING
+  COMMITTED
+}
+
+enum LegacyRecordKind {
+  PATIENT
+  ENCOUNTER
+}
+
+model LegacyImportBatch {
+  id                String                  @id @default(cuid())
+  facilityId        String
+  sourceSystem      String
+  /// sha256 of the mapping and the files.
+  fileHash          String
+  status            LegacyImportBatchStatus @default(COMMITTING)
+  /// The dry run's counts (rows, to create, already imported, refused), per file.
+  counts            Json
+  startedByUserId   String
+  startedAt         DateTime                @default(now())
+  committedByUserId String?
+  committedAt       DateTime?
+
+  @@unique([facilityId, fileHash])
+}
+
+model LegacyRecordKey {
+  id            String           @id @default(cuid())
+  facilityId    String
+  sourceSystem  String
+  kind          LegacyRecordKind
+  sourceKey     String
+  /// The Patient or Encounter created for it.
+  targetId      String
+  batchId       String
+  /// ENCOUNTER: the old system's clinician, kept as text ("Dr A Sharma (legacy)"; decided §10.3).
+  clinicianName String?
+  createdAt     DateTime         @default(now())
+
+  @@unique([facilityId, sourceSystem, kind, sourceKey])
+  @@index([batchId])
 }
