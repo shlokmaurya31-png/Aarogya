@@ -379,6 +379,8 @@ const SEGMENT_MODELS: Record<string, string> = {
   // Flagship 2, step 5: offline nursing.
   "offline/devices/[id]": "WardDevice",
   "wards/[id]": "Ward",
+  // Flagship 2, step 6: legacy import.
+  "legacy-import/[batchId]": "LegacyImportBatch",
 };
 
 type SegmentTarget = { kind: "record"; model: string } | { kind: "static"; values: string[] } | { kind: "unmapped" };

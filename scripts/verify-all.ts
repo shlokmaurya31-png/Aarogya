@@ -120,6 +120,8 @@ const ORDER = [
   "verify-postgres-pagination",
   // Flagship 2, step 5: offline nursing, phase 1 (devices, dose leases, sync)
   "verify-postgres-offline-sync",
+  // Flagship 2, step 6: legacy import, phase 1 (CSV patients and encounters)
+  "verify-postgres-legacy-import",
   "verify-postgres-schema-constraints",
   // Week 3: workflow spine
   "verify-postgres-runner",

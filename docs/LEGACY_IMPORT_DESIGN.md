@@ -1,6 +1,6 @@
 # Importing a hospital's old HIMS
 
-- **Status:** Designed (Flagship 1d, 2026-10-28); the open questions decided (2026-10-29, §10); phase 1 (CSV patients and encounters) to be built next.
+- **Status:** Designed (Flagship 1d, 2026-10-28); the open questions decided (2026-10-29, §10); **phase 1 built in Flagship 2** (CSV patients and encounters, dry run and confirmed run, §11).
 - **What:** bringing a hospital's history from its previous system into Aarogya when it switches over: **patients, encounters, results and bills**, from **CSV exports, HL7 v2 messages or FHIR R4 bundles**.
 - **The rule:** *refuse, don't guess.* A row that can't be mapped exactly is refused with a reason; it never becomes a best guess in a patient's record. Wrong-patient data is worse than missing data.
 - **Builds on:** the staged FHIR import (`src/lib/hospital/interoperability/fhir/import.ts`: an external payload never reaches a clinical table; it is staged as MAPPED / CONFLICT / REJECTED and promoted only by a deliberate review), provenance (`interoperability/provenance.ts`), external identifiers (`externalIdentity.ts`), the patient duplicate and merge tools (`/api/hospital/patients/duplicates`, `merge`), the event spine, and the facility/Person split (`docs/ARCHITECTURE.md` §2).
@@ -135,3 +135,15 @@ Refused rows stay in staging with their reason. The hospital can fix them at the
 6. **Opening balances are hidden in the patient app until legal review. Decided.**
 7. **Patients admitted on cut-over night come in as active admissions, with a manual checklist. Decided.** A ward-by-ward checklist (bed, re-prescription by the treating doctor, allergies confirmed) closes each one; an imported order never drives the MAR.
 8. **The hospital's medical records officer signs off the mapping. Decided.**
+
+## 11. As built (Flagship 2, phase 1)
+
+- **CSV patients and encounters into one hospital:** `src/lib/hospital/legacyImport/` and `POST /api/hospital/legacy-import` (dry run), `POST /api/hospital/legacy-import/confirm` (the confirmed run) and `GET /api/hospital/legacy-import/{batchId}`, behind the hospital admin role (`legacy-import:run`).
+- **Mapping file:** a JSON profile naming the source system, the declared date format, the column of each field and the value maps (sex, encounter type, department codes).
+- **Dry run:** parses, maps and validates every row and returns the report (counts; every refused row with its reason and line; the identity-number columns dropped) and its hash, and **writes nothing at all** (no staging rows either: the gate checks every table's row count).
+- **Confirmed run:** only with the dry run's hash (the same file, mapping and hospital data); records the batch (`LegacyImportBatch`, COMMITTING then COMMITTED), then creates patients (new UHIDs) and CLOSED encounters one transaction per row, each with its source key (`LegacyRecordKey`: the old MRN or visit number, and a legacy clinician as text) and its own import event (`LegacyPatientImported`, `LegacyEncounterImported`), and closes with `LegacyImportBatchCommitted`. No live consumer subscribes to them. An interrupted run resumes; imported visits are labelled in the timeline.
+- **Refused, with the line and reason:** a missing field, an unmapped code (sex, visit type, department), a date not in the declared format, before 1900 or in the future, a visit older than the 3-year window, a close before its registration, an unknown department, an invalid phone, an MRN or visit number twice with different details (both rows), a visit for a patient not accepted. A mapping that uses an identity-number column is refused whole.
+- **Exact keys only:** a legacy MRN already imported at this facility is the same patient; nothing else matches. Imported patients are never linked to a Person.
+- **Re-runs:** the same file again is a no-op (the file hash and each row's source key are unique per facility).
+- **Gate:** `verify-postgres-legacy-import` (dry run writes nothing; bad rows refused with reasons; a re-run creates no duplicates; another hospital can't see the import; no Person link; no live consumer reacts).
+- **Not yet (later phases):** results, HL7 and FHIR, medications and allergies, bills and opening balances, retraction, reconcile.

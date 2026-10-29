@@ -2159,6 +2159,8 @@ model Patient {
   /// shown as "~34" for anything other than DAY.
   dobPrecision            DobPrecision              @default(DAY)
   phone                   String?
+  /// Flagship 2, step 6: the legacy import batch that created this patient (never linked to a Person by it).
+  importBatchId           String?
   address                 String?
   language                String?                   @default("en")
   communicationPreference String? // "SMS" | "EMAIL" | "CALL" | "NONE"
@@ -2428,6 +2430,8 @@ model Encounter {
   episodeOfCare    EpisodeOfCare?        @relation(fields: [episodeOfCareId], references: [id])
   episodeOfCareId  String?
   type             EncounterType
+  /// Flagship 2, step 6: the legacy import batch that created this (CLOSED) visit.
+  importBatchId    String?
   status           EncounterStatus       @default(REGISTERED)
   chiefComplaint   String?
   triageLevel      Int? // 1 (resuscitation) - 5 (non-urgent), ED only
@@ -12351,4 +12355,55 @@ model OfflineConflict {
   resolvedByUserId String?
 
   @@index([facilityId, status])
+}
+
+// ── Flagship 2, step 6 — legacy import, phase 1 (docs/LEGACY_IMPORT_DESIGN.md §11) ──
+// Facility-scoped. A file (CSV patients and encounters, with its mapping) is a
+// batch, unique per facility by its hash, so the same file twice is a no-op.
+// Each imported row keeps its source key (the old MRN or visit number), unique
+// per facility and source system: the exact key, and the only way two rows
+// are ever the same record.
+
+enum LegacyImportBatchStatus {
+  COMMITTING
+  COMMITTED
+}
+
+enum LegacyRecordKind {
+  PATIENT
+  ENCOUNTER
+}
+
+model LegacyImportBatch {
+  id                String                  @id @default(cuid())
+  facilityId        String
+  sourceSystem      String
+  /// sha256 of the mapping and the files.
+  fileHash          String
+  status            LegacyImportBatchStatus @default(COMMITTING)
+  /// The dry run's counts (rows, to create, already imported, refused), per file.
+  counts            Json
+  startedByUserId   String
+  startedAt         DateTime                @default(now())
+  committedByUserId String?
+  committedAt       DateTime?
+
+  @@unique([facilityId, fileHash])
+}
+
+model LegacyRecordKey {
+  id            String           @id @default(cuid())
+  facilityId    String
+  sourceSystem  String
+  kind          LegacyRecordKind
+  sourceKey     String
+  /// The Patient or Encounter created for it.
+  targetId      String
+  batchId       String
+  /// ENCOUNTER: the old system's clinician, kept as text ("Dr A Sharma (legacy)"; decided §10.3).
+  clinicianName String?
+  createdAt     DateTime         @default(now())
+
+  @@unique([facilityId, sourceSystem, kind, sourceKey])
+  @@index([batchId])
 }
