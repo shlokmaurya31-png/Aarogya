@@ -53,6 +53,8 @@ export const PERMISSIONS = [
   "clinical:order:lab",
   "clinical:order:imaging",
   "medication:administer",
+  // Flagship 2, step 5 — registering and revoking shared ward tablets, and naming a ward's charge nurse.
+  "nursing:offline:manage",
   "medication:verify",
   "lab:result:enter",
   "lab:result:release",
@@ -843,6 +845,8 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "inventory:request:fulfill",
   ],
   HOSPITAL_ADMIN: [
+    // Flagship 2, step 5 — the facility's ward devices and charge nurses.
+    "nursing:offline:manage",
     // Phase C1 — the facility interoperability administrator: registry
     // mappings, consent lifecycle, exchange authorisation, import review,
     // terminology and connection configuration.

@@ -49,6 +49,12 @@ export class AdministrationNotDueError extends Error {
     super(`This dose is already ${status} — cannot record it again.`);
   }
 }
+/** Flagship 2, step 5: a ward device holds this dose for offline use; only its holder, or the charge nurse's takeover, frees it. */
+export class DoseLeasedError extends Error {
+  constructor() {
+    super("This dose is held by a ward device for offline use. Ask the ward's charge nurse to take it over first.");
+  }
+}
 export class RequiresOverrideError extends Error {
   flags: SafetyFlag[];
   constructor(flags: SafetyFlag[]) {
@@ -473,7 +479,7 @@ export function doseNotGivenReason(status: "REFUSED" | "HELD", reasonCode?: stri
  * NURSE) or MedicationDoseNotGiven (REFUSED / HELD, with a closed reason) in
  * the same transaction. A CANCELLED dose emits nothing.
  */
-export async function administerMedication(input: {
+export interface AdministerInput {
   administrationId: string;
   status: "GIVEN" | "HELD" | "REFUSED" | "MISSED" | "CANCELLED";
   administeredByStaffId?: string;
@@ -482,17 +488,35 @@ export async function administerMedication(input: {
   reasonCode?: string;
   notes?: string;
   byUserId: string;
-}) {
-  return prisma.$transaction(async (tx) => {
+  /** Flagship 2, step 5: when it happened (an offline dose's device time); default now. */
+  administeredAt?: Date;
+  /**
+   * Flagship 2, step 5: recorded from a ward device's offline sync, under its
+   * lease. A dose given offline is recorded even when its order changed
+   * meanwhile (the sync flags it); the online MAR never passes this.
+   */
+  offline?: { leaseId: string; allowInactiveOrder: boolean };
+}
+
+export async function administerMedication(input: AdministerInput) {
+  return prisma.$transaction((tx) => administerMedicationTx(tx, input));
+}
+
+/** administerMedication in the caller's transaction (the offline sync records its command beside it). */
+export async function administerMedicationTx(tx: Tx, input: AdministerInput) {
+  {
     const admin = await tx.medicationAdministration.findUniqueOrThrow({
       where: { id: input.administrationId },
       include: { medicationOrder: true },
     });
     const lateRecording = admin.status === "MISSED" && admin.reasonCode === SWEPT_MISSED_REASON && input.status !== "MISSED";
     if (admin.status !== "DUE" && !lateRecording) throw new AdministrationNotDueError(admin.status);
+    // A dose a ward device holds can be recorded only by that device's sync.
+    const lease = await tx.doseLease.findFirst({ where: { administrationId: admin.id, status: "ACTIVE", expiresAt: { gt: new Date() } }, select: { id: true } });
+    if (lease && lease.id !== input.offline?.leaseId) throw new DoseLeasedError();
 
     if (input.status === "GIVEN") {
-      if (!["ACTIVE", "DISPENSED"].includes(admin.medicationOrder.status)) {
+      if (!["ACTIVE", "DISPENSED"].includes(admin.medicationOrder.status) && !input.offline?.allowInactiveOrder) {
         throw new MedicationOrderNotActiveError(admin.medicationOrder.status);
       }
       if (admin.medicationOrder.isControlled && !input.witnessStaffId) {
@@ -502,7 +526,7 @@ export async function administerMedication(input: {
 
     const recorded = {
       status: input.status,
-      administeredAt: new Date(),
+      administeredAt: input.administeredAt ?? new Date(),
       administeredByStaffId: input.administeredByStaffId,
       witnessStaffId: input.witnessStaffId,
       safetyChecksConfirmed: input.safetyChecksConfirmed ?? false,
@@ -558,7 +582,27 @@ export async function administerMedication(input: {
       }
     }
     return updated;
+  }
+}
+
+/**
+ * Flagship 2, step 5: a dose given offline on a ward device for a scheduled
+ * dose that is no longer due (given online meanwhile, or cancelled when its
+ * order stopped). It happened, so it is recorded: a second GIVEN row linked to
+ * the scheduled one, with MedicationAdministered. The sync flags it.
+ */
+export async function recordOfflineGivenTx(tx: Tx, input: { forAdministrationId: string; administeredByStaffId: string; administeredAt: Date; byUserId: string }) {
+  const admin = await tx.medicationAdministration.findUniqueOrThrow({ where: { id: input.forAdministrationId } });
+  const row = await tx.medicationAdministration.create({
+    data: {
+      medicationOrderId: admin.medicationOrderId, scheduledAt: admin.scheduledAt, status: "GIVEN", administeredAt: input.administeredAt,
+      administeredByStaffId: input.administeredByStaffId, offlineGivenForAdministrationId: admin.id, reasonCode: "offline-recorded",
+    },
   });
+  await tx.auditEvent.create({ data: { type: "hospital.medication.administered", userId: input.byUserId, detail: { orderId: admin.medicationOrderId, administrationId: row.id, status: "GIVEN", offlineGivenForAdministrationId: admin.id } } });
+  const { ids, ...ctx } = await orderEvent(tx, admin.medicationOrderId, input.byUserId);
+  await emitFacilityEvent(tx, { type: "MedicationAdministered", aggregateId: row.id, ...ctx, payload: { ...ids, administrationId: row.id } });
+  return row;
 }
 
 export async function acknowledgeSafetyWarning(warningId: string, staffId: string, byUserId: string, overrideReason?: string) {

@@ -118,6 +118,8 @@ const ORDER = [
   "verify-postgres-time-zones",
   // Flagship 2d: the chart and the timeline in exact pages
   "verify-postgres-pagination",
+  // Flagship 2, step 5: offline nursing, phase 1 (devices, dose leases, sync)
+  "verify-postgres-offline-sync",
   "verify-postgres-schema-constraints",
   // Week 3: workflow spine
   "verify-postgres-runner",

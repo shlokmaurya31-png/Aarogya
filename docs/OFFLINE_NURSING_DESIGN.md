@@ -1,6 +1,6 @@
 # Offline nursing: the ward keeps working on bad Wi-Fi
 
-- **Status:** Designed (Flagship 1d, 2026-10-28); the open questions decided (2026-10-29, §12); phase 1 (the server side) to be built next. The clinical advisor's sign-off on §6 is still needed before any MAR use on a ward.
+- **Status:** Designed (Flagship 1d, 2026-10-28); the open questions decided (2026-10-29, §12); **phase 1, the server side, built in Flagship 2** (§13). The clinical advisor's sign-off on §6 is still needed before any MAR use on a ward.
 - **Scope:** the four nursing screens a ward can't stop for a dropped connection: the **MAR** (the medication round), **vitals**, **intake and output**, and **nursing tasks**.
 - **Not in scope:** ordering, pharmacy verification, admission, transfer and discharge, the doctor's and the front desk's screens, billing. They stay online-only. When the network is down, those follow the hospital's paper downtime procedure, as now.
 - **Builds on:** `administerMedication` (`src/lib/hospital/medicationLifecycle.ts`: a dose moves from DUE only once, by a guarded update), the MAR sweep (`marSweep.ts`: overdue doses become MISSED, and a late dose is recorded against the missed one), `NursingAssignment` (at most one open assignment per patient), `Vital`, `IntakeOutputRecord`, `Task`, the event spine (`docs/ARCHITECTURE.md` §4), and PRODUCT_SPEC principle 6 (weak networks, low-end Android).
@@ -148,3 +148,41 @@ Every conflict is a row (`OfflineConflict`: kind, severity, the command, the fac
 6. **The browser app is enough for now. Decided.** No iOS app; the installable browser app covers iPad wards.
 7. **A possible double dose: the charge nurse resolves it within 15 minutes, and the pharmacist is told. Decided.** The conflict is CRITICAL, a task with a 15-minute due time goes to the ward's charge nurse, and the facility's pharmacists are notified.
 8. **A downtime sheet as PDF every shift. Decided.** Generated from the pack at each shift start and kept on the ward (phase 2 of the client; the data is the pack).
+
+## 13. As built (Flagship 2, phase 1: the server side)
+
+- **Models** (facility-scoped, migration `20261029120000_offline_nursing`): `WardDevice`, `WardPack`, `DoseLease` (one ACTIVE lease per dose, by a partial unique index), `OfflineCommand` (a unique client operation id per facility), `OfflineConflict`; plus `Ward.chargeNurseStaffId`, `Facility.offlinePackHours` (1–12, default 4, checked in the database) and `MedicationAdministration.offlineGivenForAdministrationId` (a GIVEN recorded offline for a dose no longer due: the second fact beside the first, never discarded; the scheduled-dose unique index skips it).
+- **Service** (`src/lib/hospital/offline/service.ts`):
+  - devices: register and revoke (revoking ends the device's leases);
+  - the ward's charge nurse: named by the hospital admin;
+  - the pack: the nurse's assigned patients with their allergies and due doses (from 2 hours ago to the pack's expiry), a read-only summary of the rest of the ward, the formulary barcodes of the patients' drugs, the measured clock offset, and a lease on each due dose no other device holds;
+  - leases: renew (online), expire (a runner sweep), charge-nurse takeover with a reason (kept on the lease and in the audit log; the holder is told at its next sync);
+  - sync: each command in its own transaction with its events; a replay answers what it answered before and changes nothing.
+- **The online MAR refuses a dose a device holds** (`DoseLeasedError`, 409) until the holder's sync or a takeover.
+- **Conflict rules as built:**
+  - controlled and high-alert medicines (the order's flag, or the facility's formulary by name or by the dispensed item) are never leased; a command for one is refused as ONLINE_ONLY;
+  - a dose recorded after its lease expired is refused (LEASE_EXPIRED);
+  - a dose recorded with no lease is refused (NOT_LEASED);
+  - a dose given offline after a takeover, or after its order changed, is recorded and flagged;
+  - a dose given offline that was given online meanwhile is recorded as a second GIVEN and flagged as a possible double dose, CRITICAL;
+  - every refused GIVEN is still kept (the command row, and a conflict for a person to review).
+  Each conflict is a task for the ward's charge nurse (for a possible double dose: STAT, due within 15 minutes, and a task for the pharmacists; for a changed order, also for the prescriber).
+- **Routes:**
+  - `POST /api/hospital/offline/devices` and `…/devices/{id}/revoke` (hospital admin, `nursing:offline:manage`);
+  - `POST /api/hospital/wards/{id}/charge-nurse` (hospital admin);
+  - `POST /api/hospital/offline/pack`, `…/pack/renew`, `…/sync` and `…/leases/override` (nurses, `medication:administer`; the takeover only by the ward's charge nurse).
+- **Events:** `WardDeviceRegistered`, `WardDeviceRevoked`, `WardChargeNurseDesignated`, `WardPackIssued`, `DoseLeaseGranted`, `DoseLeasesRenewed`, `DoseLeaseEnded`, `DoseLeaseOverridden`, `OfflineCommandRecorded`, `OfflineConflictRecorded`, `OfflineBatchApplied`. Applied doses emit the usual `MedicationAdministered` / `MedicationDoseNotGiven`. The new `origin: OFFLINE` version of those contracts (§9) is not added yet: the link is the command row.
+- **Gate:** `verify-postgres-offline-sync`. It checks:
+  - two devices, one lease;
+  - a replayed sync is a no-op;
+  - a possible double dose is flagged and the charge nurse told within 15 minutes;
+  - an expired lease is refused;
+  - an override is logged with its reason;
+  - another facility gets a 404.
+- **Not yet:**
+  - the device app (encrypted store, outbox, downtime PDF);
+  - vitals, I/O and task commands;
+  - PRN offline;
+  - resolving a conflict from a screen;
+  - the advisor's sign-off on §6.
+

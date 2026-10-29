@@ -24,6 +24,7 @@ import { PERSON_SOURCES, PERSON_LINK_METHODS } from "@/lib/person/vocab";
 const id = z.string().min(1);
 const optId = z.string().min(1).optional();
 const minor = z.number().int();
+const count = z.number().int().nonnegative();
 const currency = z.string().length(3);
 const iso = z.string().min(1); // ISO-8601 timestamp string
 // Closed sets mirrored from the Prisma enums they describe.
@@ -1760,6 +1761,70 @@ export const EVENT_CONTRACTS: EventContract[] = [
       orderId: id, invoiceId: id, patientId: id, from: z.enum(["NONE", "CREATED"]), to: z.enum(["CREATED", "PAID", "FAILED"]),
       amountMinor: minor, currency, mode: z.enum(["TEST", "LIVE"]), paymentId: optId,
     }).strict(),
+  }),
+  // ── Flagship 2, step 5 — offline nursing, phase 1 (docs/OFFLINE_NURSING_DESIGN.md §13) ──
+  contract({
+    type: "WardDeviceRegistered", version: 1, aggregateType: "WARD_DEVICE", scope: "FACILITY",
+    sensitivity: "LOW", producer: "offline nursing (registerWardDevice: a shared ward tablet)",
+    payload: z.object({ deviceId: id, wardId: id }).strict(),
+  }),
+  contract({
+    type: "WardDeviceRevoked", version: 1, aggregateType: "WARD_DEVICE", scope: "FACILITY",
+    sensitivity: "LOW", producer: "offline nursing (revokeWardDevice; its leases end)",
+    payload: z.object({ deviceId: id, leasesEnded: count }).strict(),
+  }),
+  contract({
+    type: "WardChargeNurseDesignated", version: 1, aggregateType: "WARD", scope: "FACILITY",
+    sensitivity: "LOW", producer: "offline nursing (designateChargeNurse; absent chargeNurseStaffId clears it)",
+    payload: z.object({ wardId: id, chargeNurseStaffId: optId }).strict(),
+  }),
+  contract({
+    type: "WardPackIssued", version: 1, aggregateType: "WARD_PACK", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "offline nursing (issuePack: the nurse's assigned patients for one shift)",
+    payload: z.object({ packId: id, deviceId: id, nurseStaffId: id, patients: count, leases: count, expiresAt: iso }).strict(),
+  }),
+  contract({
+    type: "DoseLeaseGranted", version: 1, aggregateType: "DOSE_LEASE", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "offline nursing (issuePack: one device may give this dose offline)",
+    payload: z.object({ leaseId: id, administrationId: id, deviceId: id, packId: id, expiresAt: iso }).strict(),
+  }),
+  contract({
+    type: "DoseLeasesRenewed", version: 1, aggregateType: "WARD_PACK", scope: "FACILITY",
+    sensitivity: "LOW", producer: "offline nursing (renewLeases, while online)",
+    payload: z.object({ packId: id, deviceId: id, leases: count, expiresAt: iso }).strict(),
+  }),
+  contract({
+    type: "DoseLeaseEnded", version: 1, aggregateType: "DOSE_LEASE", scope: "FACILITY",
+    sensitivity: "LOW", producer: "offline nursing (expiry sweep, device revocation)",
+    payload: z.object({ leaseId: id, administrationId: id, deviceId: id, to: z.enum(["RELEASED", "EXPIRED"]) }).strict(),
+  }),
+  contract({
+    type: "DoseLeaseOverridden", version: 1, aggregateType: "DOSE_LEASE", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "offline nursing (overrideLease: the ward's charge nurse, with a reason kept on the lease, never in the event)",
+    payload: z.object({ leaseId: id, administrationId: id, deviceId: id, overriddenByStaffId: id }).strict(),
+  }),
+  contract({
+    type: "OfflineCommandRecorded", version: 1, aggregateType: "OFFLINE_COMMAND", scope: "FACILITY",
+    sensitivity: "SENSITIVE", producer: "offline nursing (syncCommands: one command, applied or refused)",
+    payload: z.object({
+      commandId: id, deviceId: id, administrationId: id, kind: z.enum(["DOSE_GIVEN", "DOSE_HELD", "DOSE_REFUSED"]),
+      outcome: z.enum(["APPLIED", "APPLIED_WITH_CONFLICT", "REFUSED"]),
+      refusalReason: z.enum(["ONLINE_ONLY", "LEASE_EXPIRED", "NOT_LEASED", "NOT_DUE", "UNKNOWN_DOSE"]).optional(), resultAdministrationId: optId,
+    }).strict(),
+  }),
+  contract({
+    type: "OfflineConflictRecorded", version: 1, aggregateType: "OFFLINE_CONFLICT", scope: "FACILITY",
+    sensitivity: "SENSITIVE", producer: "offline nursing (syncCommands: a fact the server couldn't apply cleanly; never discarded)",
+    payload: z.object({
+      conflictId: id, commandId: id, administrationId: id,
+      kind: z.enum(["POSSIBLE_DOUBLE_DOSE", "ORDER_CHANGED", "LEASE_OVERRIDDEN", "LEASE_EXPIRED", "NOT_LEASED", "ONLINE_ONLY", "CLOCK_SUSPECT"]),
+      severity: z.enum(["WARNING", "CRITICAL"]), taskId: id,
+    }).strict(),
+  }),
+  contract({
+    type: "OfflineBatchApplied", version: 1, aggregateType: "WARD_DEVICE", scope: "FACILITY",
+    sensitivity: "LOW", producer: "offline nursing (syncCommands: the counts of one sync)",
+    payload: z.object({ deviceId: id, applied: count, conflicted: count, refused: count, replayed: count }).strict(),
   }),
 ];
 

@@ -376,6 +376,9 @@ const SEGMENT_MODELS: Record<string, string> = {
   "doctor-links/[id]": "DoctorStaffLink",
   // Week 5b: a dependent adult's legal document under a staff member's review (person-scoped).
   "legal-documents/[consentId]": "DependentConsent",
+  // Flagship 2, step 5: offline nursing.
+  "offline/devices/[id]": "WardDevice",
+  "wards/[id]": "Ward",
 };
 
 type SegmentTarget = { kind: "record"; model: string } | { kind: "static"; values: string[] } | { kind: "unmapped" };
