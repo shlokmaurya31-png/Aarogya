@@ -75,6 +75,55 @@ export async function listFactsFor(userId: string, memberPersonId: string | unde
   return facts.map(view).sort((a, b) => BAND_ORDER[a.confidenceBand] - BAND_ORDER[b.confidenceBand]);
 }
 
+// ── Flagship 3c — facts to confirm, in pages (LOW first, then oldest first) ──
+
+type FactStatus = "PENDING" | "CONFIRMED" | "CORRECTED" | "REJECTED";
+/** The order facts are reviewed in: least confident first. */
+const BANDS = ["LOW", "MEDIUM", "HIGH"] as const;
+export const FACTS_FIRST_PAGE = 20;
+export const FACTS_PAGE_SIZE = 50;
+interface FactCursor { b: (typeof BANDS)[number]; t: string; id: string }
+
+function encodeFactCursor(f: ExtractedFact): string {
+  return Buffer.from(JSON.stringify({ b: f.confidenceBand, t: f.createdAt.toISOString(), id: f.id })).toString("base64url");
+}
+function decodeFactCursor(raw: string): FactCursor {
+  try {
+    const c = JSON.parse(Buffer.from(raw, "base64url").toString("utf8")) as FactCursor;
+    if ((BANDS as readonly string[]).includes(c.b) && typeof c.t === "string" && !Number.isNaN(Date.parse(c.t)) && typeof c.id === "string") return c;
+  } catch { /* refused below */ }
+  throw new BadRequestError("Invalid cursor.");
+}
+
+/**
+ * One page of the person's facts (or a proxy's member's), in review order:
+ * LOW, MEDIUM, then HIGH confidence, each oldest first, by an exact keyset
+ * cursor (band, createdAt, id), so a fact is never shown twice or skipped as
+ * others are decided. The first page also carries the counts by band, so the
+ * screen can say how many are left without loading them all.
+ */
+export async function factsPage(userId: string, memberPersonId: string | undefined, opts: { status?: FactStatus; processingId?: string; cursor?: string | null; limit?: number } = {}) {
+  const { personId } = await reviewer(userId, memberPersonId);
+  const base: Prisma.ExtractedFactWhereInput = { personId, reviewStatus: opts.status ?? "PENDING", ...(opts.processingId ? { processingId: opts.processingId } : {}), processing: { status: { notIn: ["CANCELLED"] } } };
+  const c = opts.cursor ? decodeFactCursor(opts.cursor) : null;
+  const limit = Math.min(Math.max(opts.limit ?? (c ? FACTS_PAGE_SIZE : FACTS_FIRST_PAGE), 1), FACTS_PAGE_SIZE);
+  const after: Prisma.ExtractedFactWhereInput = c
+    ? { OR: [
+      { confidenceBand: { in: BANDS.slice(BANDS.indexOf(c.b) + 1) } },
+      { confidenceBand: c.b, createdAt: { gt: new Date(c.t) } },
+      { confidenceBand: c.b, createdAt: new Date(c.t), id: { gt: c.id } },
+    ] }
+    : {};
+  // The enum is declared HIGH, MEDIUM, LOW: descending is LOW first.
+  const rows = await prisma.extractedFact.findMany({ where: { AND: [base, after] }, orderBy: [{ confidenceBand: "desc" }, { createdAt: "asc" }, { id: "asc" }], take: limit + 1 });
+  const page = rows.slice(0, limit);
+  const nextCursor = rows.length > limit ? encodeFactCursor(page[page.length - 1]) : null;
+  if (c) return { facts: page.map(view), nextCursor };
+  const counts = await prisma.extractedFact.groupBy({ by: ["confidenceBand"], where: base, _count: { _all: true } });
+  const byBand = Object.fromEntries(BANDS.map((b) => [b, counts.find((x) => x.confidenceBand === b)?._count._all ?? 0])) as Record<(typeof BANDS)[number], number>;
+  return { facts: page.map(view), nextCursor, total: byBand.LOW + byBand.MEDIUM + byBand.HIGH, byBand };
+}
+
 async function ownFact(tx: Tx, personId: string, factId: string) {
   const f = await tx.extractedFact.findUnique({ where: { id: factId }, include: { processing: { select: { status: true, documentId: true } } } });
   if (!f || f.personId !== personId) throw new NotFoundError();

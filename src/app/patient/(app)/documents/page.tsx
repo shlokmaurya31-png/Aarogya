@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Upload, FileText, CheckCircle2 } from "lucide-react";
 import { Card, SectionTitle, Empty, Unavailable, StatusPill, formatDate, usePatientData } from "@/components/patient-portal/ui";
+import { LoadMore } from "@/components/hospital-os/shared/LoadMore";
 
 /**
  * Week 4c — your uploads (docs/DOCUMENT_PIPELINE_DESIGN.md §6): add a report,
@@ -17,6 +18,7 @@ interface Fact {
   id: string; factType: string; value: Record<string, unknown>; sourceText: string | null; confidenceBand: "LOW" | "MEDIUM" | "HIGH";
   handwritten: boolean; version: number; confirmable: boolean; bulkConfirmable: boolean;
 }
+interface FactPage { facts: Fact[]; nextCursor: string | null; total?: number }
 
 const RUN_LABEL: Record<string, [string, "neutral" | "good" | "warn" | "info"]> = {
   NOT_PROCESSED: ["Saved", "neutral"], QUEUED: ["Waiting to be read", "info"], RUNNING: ["Reading…", "info"],
@@ -41,11 +43,22 @@ function factLine(f: Fact): string {
 
 function Review({ processingId, onDone }: { processingId: string; onDone: () => void }) {
   const [facts, setFacts] = useState<Fact[] | null>(null);
+  // Flagship 3c: the facts come in pages (least confident first); the first says how many there are.
+  const [more, setMore] = useState<{ cursor: string | null; total: number }>({ cursor: null, total: 0 });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const url = `/api/patient/person/facts?processingId=${encodeURIComponent(processingId)}`;
   const load = useCallback(() => {
-    fetch(`/api/patient/person/facts?processingId=${encodeURIComponent(processingId)}`).then((r) => (r.ok ? r.json() : Promise.reject())).then(setFacts).catch(() => setError("Your review is unavailable right now."));
-  }, [processingId]);
+    fetch(url).then((r) => (r.ok ? r.json() : Promise.reject())).then((p: FactPage) => { setFacts(p.facts); setMore({ cursor: p.nextCursor, total: p.total ?? p.facts.length }); })
+      .catch(() => setError("Your review is unavailable right now."));
+  }, [url]);
+  const loadMore = useCallback(async () => {
+    if (!more.cursor) return;
+    const p: FactPage | null = await fetch(`${url}&cursor=${encodeURIComponent(more.cursor)}`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    if (!p) { setError("The rest didn't load. Try again."); return; }
+    setFacts((xs) => [...(xs ?? []), ...p.facts]);
+    setMore((m) => ({ ...m, cursor: p.nextCursor }));
+  }, [url, more.cursor]);
   useEffect(load, [load]);
   async function post(url: string, body: unknown) {
     setBusy(true); setError(null);
@@ -60,7 +73,7 @@ function Review({ processingId, onDone }: { processingId: string; onDone: () => 
   const bulk = facts.filter((f) => f.bulkConfirmable);
   return (
     <div className="mt-2 space-y-2" aria-label="Review what we found">
-      <p className="text-[12px] text-text-secondary">Check each line against your report. Only what you confirm is added to your record, marked as from your upload.</p>
+      <p className="text-[12px] text-text-secondary">Check each line against your report. Only what you confirm is added to your record, marked as from your upload.{more.total > facts.length && ` Showing ${facts.length} of ${more.total}, least certain first.`}</p>
       {bulk.length > 1 && (
         <button disabled={busy} onClick={() => post("/api/patient/person/facts/bulk", { decisions: bulk.map((f) => ({ factId: f.id, version: f.version, decision: "CONFIRM" })) })}
           className="rounded-md bg-cyan px-3 py-1.5 text-[12px] font-medium text-ink disabled:opacity-50">
@@ -78,6 +91,7 @@ function Review({ processingId, onDone }: { processingId: string; onDone: () => 
           </li>
         ))}
       </ul>
+      {more.cursor && <LoadMore onLoad={loadMore} label="Show more of what we found" />}
       {error && <p className="text-[12px] text-amber">{error}</p>}
     </div>
   );
