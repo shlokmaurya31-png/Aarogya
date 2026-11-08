@@ -57,6 +57,9 @@ export const PERMISSIONS = [
   "nursing:offline:manage",
   // Flagship 2, step 6 — importing a hospital's old HIMS records (dry run and confirmed run).
   "legacy-import:run",
+  // Flagship 3b — a facility's time zone: the hospital admin requests in writing; only platform staff decide.
+  "facility:time-zone:request",
+  "platform:facility:time-zone",
   "medication:verify",
   "lab:result:enter",
   "lab:result:release",
@@ -851,6 +854,8 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "nursing:offline:manage",
     // Flagship 2, step 6 — the legacy import, behind the hospital admin role.
     "legacy-import:run",
+    // Flagship 3b — asking platform staff, in writing, to change the facility's time zone.
+    "facility:time-zone:request",
     // Phase C1 — the facility interoperability administrator: registry
     // mappings, consent lifecycle, exchange authorisation, import review,
     // terminology and connection configuration.
@@ -1188,6 +1193,8 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     // entitlement definitions, subscriptions, lifecycle and overrides.
     "commercial:platform:manage",
     "commercial:read",
+    // Flagship 3b — only platform staff change a facility's time zone (at the hospital admin's written request).
+    "platform:facility:time-zone",
     // Phase D6 — the platform operates the domain-event stream: inspect metrics,
     // dead letters, and perform controlled replay / dead-letter retry.
     "platform:events:operate",

@@ -1708,7 +1708,7 @@ export const EVENT_CONTRACTS: EventContract[] = [
   contract({
     type: "PersonNotificationQueued", version: 3, aggregateType: "PERSON_NOTIFICATION", scope: "PERSON",
     sensitivity: "SENSITIVE", producer: "person notifications (the access-summary, coming-of-age and check-in sweeps; the person-notifier; patient-insurance-notify)",
-    payload: z.object({ notificationId: id, personId: id, kind: z.enum(["ACCESS_SUMMARY", "BREAK_GLASS_ACCESS", "ACCESS_REQUESTED", "COMING_OF_AGE", "CHECKIN_OPEN", "INSURANCE_UPDATE", "DOCUMENTS_REQUESTED", "BILL_READY"]) }).strict(),
+    payload: z.object({ notificationId: id, personId: id, kind: z.enum(["ACCESS_SUMMARY", "BREAK_GLASS_ACCESS", "ACCESS_REQUESTED", "COMING_OF_AGE", "CHECKIN_OPEN", "INSURANCE_UPDATE", "DOCUMENTS_REQUESTED", "BILL_READY", "APPOINTMENT_TIME_ZONE_CHANGED"]) }).strict(),
   }),
   contract({
     type: "InsuranceCardChanged", version: 1, aggregateType: "INSURANCE_CARD", scope: "PERSON",
@@ -1836,6 +1836,43 @@ export const EVENT_CONTRACTS: EventContract[] = [
     type: "WardChargeShiftCancelled", version: 1, aggregateType: "WARD_CHARGE_SHIFT", scope: "FACILITY",
     sensitivity: "LOW", producer: "offline nursing (cancelChargeShift: the ward's named charge nurse covers that time)",
     payload: z.object({ shiftId: id, wardId: id }).strict(),
+  }),
+  // ── Flagship 3b — changing a facility's time zone (platform staff, at the hospital admin's written request) ──
+  contract({
+    type: "FacilityTimeZoneChangeRequested", version: 1, aggregateType: "FACILITY_TIME_ZONE_CHANGE", scope: "FACILITY",
+    sensitivity: "LOW", producer: "facility time zone (requestTimeZoneChange: the hospital admin's written request, kept on the row and in the audit log, never in the event)",
+    payload: z.object({ requestId: id, facilityId: id, fromTimeZone: z.string().min(1), toTimeZone: z.string().min(1) }).strict(),
+  }),
+  contract({
+    type: "FacilityTimeZoneChangeApproved", version: 1, aggregateType: "FACILITY_TIME_ZONE_CHANGE", scope: "FACILITY",
+    sensitivity: "LOW", producer: "facility time zone (decideTimeZoneChange: platform staff; future bookings only when confirmed)",
+    payload: z.object({ requestId: id, facilityId: id, futureAppointments: count, confirmedFutureAppointments: z.boolean() }).strict(),
+  }),
+  contract({
+    type: "FacilityTimeZoneChangeRejected", version: 1, aggregateType: "FACILITY_TIME_ZONE_CHANGE", scope: "FACILITY",
+    sensitivity: "LOW", producer: "facility time zone (decideTimeZoneChange: platform staff, with a note kept on the row)",
+    payload: z.object({ requestId: id, facilityId: id }).strict(),
+  }),
+  contract({
+    type: "FacilityTimeZoneChanged", version: 1, aggregateType: "FACILITY", scope: "FACILITY",
+    sensitivity: "LOW", producer: "facility time zone (decideTimeZoneChange on approval: every booking keeps its instant)",
+    payload: z.object({ facilityId: id, requestId: id, fromTimeZone: z.string().min(1), toTimeZone: z.string().min(1) }).strict(),
+  }),
+  // ── Flagship 2, step 6 — legacy import, phase 1 (docs/LEGACY_IMPORT_DESIGN.md §11): own types, so no live consumer reacts ──
+  contract({
+    type: "LegacyPatientImported", version: 1, aggregateType: "PATIENT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "legacy import (confirmImport: a patient from the old system, never linked to a Person)",
+    payload: z.object({ patientId: id, batchId: id }).strict(),
+  }),
+  contract({
+    type: "LegacyEncounterImported", version: 1, aggregateType: "ENCOUNTER", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "legacy import (confirmImport: a CLOSED visit from the old system)",
+    payload: z.object({ encounterId: id, patientId: id, batchId: id, encounterType: z.enum(["OPD", "ED", "IPD", "DAYCARE", "TELEMEDICINE"]) }).strict(),
+  }),
+  contract({
+    type: "LegacyImportBatchCommitted", version: 1, aggregateType: "LEGACY_IMPORT_BATCH", scope: "FACILITY",
+    sensitivity: "LOW", producer: "legacy import (confirmImport: the counts of one file)",
+    payload: z.object({ batchId: id, patients: count, encounters: count, refused: count }).strict(),
   }),
 ];
 

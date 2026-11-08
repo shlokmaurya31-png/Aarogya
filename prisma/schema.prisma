@@ -11497,6 +11497,8 @@ enum PersonNotificationKind {
   DOCUMENTS_REQUESTED
   /// Week 5c: a bill is ready (the itemised bill and the patient's share).
   BILL_READY
+  /// Flagship 3b: the facility's time zone changed under a booked visit (check its time in the app).
+  APPOINTMENT_TIME_ZONE_CHANGED
 }
 
 enum PersonNotificationStatus {
@@ -12387,6 +12389,40 @@ model WardChargeShift {
 
   @@index([wardId, startAt])
   @@index([facilityId, staffId])
+}
+
+// ── Flagship 3b — changing a facility's time zone ──────────────────────────────
+// Only platform staff change it, and only at the hospital admin's written
+// request: the request and the decision are each audited, with their own
+// events. Approval is refused while future bookings exist unless explicitly
+// confirmed; then every affected booking is notified. A booking keeps its
+// instant: what changes is how the facility's clock reads it.
+
+enum FacilityTimeZoneChangeStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+}
+
+model FacilityTimeZoneChange {
+  id                          String                       @id @default(cuid())
+  facilityId                  String
+  fromTimeZone                String
+  toTimeZone                  String
+  /// The hospital admin's written request (why, and who asked).
+  writtenRequest              String
+  requestedByUserId           String
+  requestedAt                 DateTime                     @default(now())
+  status                      FacilityTimeZoneChangeStatus @default(REQUESTED)
+  decidedByUserId             String?
+  decidedAt                   DateTime?
+  decisionNote                String?
+  /// APPROVED: the future bookings at the decision, and whether the approver confirmed them.
+  futureAppointments          Int?
+  confirmedFutureAppointments Boolean                      @default(false)
+
+  @@index([facilityId, status])
+  @@index([status, requestedAt])
 }
 
 // ── Flagship 2, step 6 — legacy import, phase 1 (docs/LEGACY_IMPORT_DESIGN.md §11) ──

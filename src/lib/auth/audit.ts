@@ -44,6 +44,10 @@ export type AuditEventType =
   | "hospital.offline.lease.overridden"
   // Flagship 2, step 6 — legacy import.
   | "hospital.legacy-import.committed"
+  // Flagship 3b — a facility's time zone: the hospital admin's written request, and platform staff's decision.
+  | "hospital.facility.time-zone.requested"
+  | "platform.facility.time-zone.approved"
+  | "platform.facility.time-zone.rejected"
   // Phase 6.8 — EMPI identity mutations.
   | "hospital.patient.unmerged"
   | "hospital.patient.identifierAdded"

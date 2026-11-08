@@ -116,6 +116,8 @@ const ORDER = [
   "verify-postgres-walk-ins",
   // Flagship 2a: a facility's day is its own under any server zone (HTTP; builds the app)
   "verify-postgres-time-zones",
+  // Flagship 3b: changing a facility's time zone (request, platform decision, bookings told)
+  "verify-postgres-time-zone-change",
   // Flagship 2d: the chart and the timeline in exact pages
   "verify-postgres-pagination",
   // Flagship 2, step 5: offline nursing, phase 1 (devices, dose leases, sync)

@@ -383,6 +383,8 @@ const SEGMENT_MODELS: Record<string, string> = {
   "legacy-import/[batchId]": "LegacyImportBatch",
   // Flagship 3a: a ward's charge-nurse shift.
   "charge-shifts/[shiftId]": "WardChargeShift",
+  // Flagship 3b: a facility's time-zone change request (decided by platform staff).
+  "time-zone-requests/[requestId]": "FacilityTimeZoneChange",
 };
 
 type SegmentTarget = { kind: "record"; model: string } | { kind: "static"; values: string[] } | { kind: "unmapped" };

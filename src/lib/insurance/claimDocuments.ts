@@ -114,7 +114,7 @@ export async function cancelClaimDocumentRequest(staff: { userId: string; facili
 }
 
 /** The person, and every member-side proxy who holds INSURANCE for them, is told (no amounts or detail in the text). */
-export async function notifyPersonAndProxiesTx(tx: Tx, personId: string, kind: "INSURANCE_UPDATE" | "DOCUMENTS_REQUESTED" | "BILL_READY" | "CHECKIN_OPEN", dedupeKey: string, permission: "INSURANCE" | "BOOK" = "INSURANCE") {
+export async function notifyPersonAndProxiesTx(tx: Tx, personId: string, kind: "INSURANCE_UPDATE" | "DOCUMENTS_REQUESTED" | "BILL_READY" | "CHECKIN_OPEN" | "APPOINTMENT_TIME_ZONE_CHANGED", dedupeKey: string, permission: "INSURANCE" | "BOOK" = "INSURANCE") {
   await queuePersonNotificationTx(tx, { personId, kind, dedupeKey: `${dedupeKey}:${personId}` });
   const proxies = await tx.proxyGrant.findMany({ where: { memberPersonId: personId, status: "ACTIVE", permissions: { has: permission }, OR: [{ validUntil: null }, { validUntil: { gt: new Date() } }] }, select: { proxyPersonId: true } });
   for (const p of proxies) await queuePersonNotificationTx(tx, { personId: p.proxyPersonId, kind, dedupeKey: `${dedupeKey}:${p.proxyPersonId}` });
