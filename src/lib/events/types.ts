@@ -152,6 +152,8 @@ export const AGGREGATE_TYPES = [
   "DOSE_LEASE",
   "OFFLINE_COMMAND",
   "OFFLINE_CONFLICT",
+  // Flagship 3a — the charge nurse per shift.
+  "WARD_CHARGE_SHIFT",
   // Flagship 2, step 6 — legacy import.
   "LEGACY_IMPORT_BATCH",
 ] as const;

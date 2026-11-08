@@ -1826,21 +1826,16 @@ export const EVENT_CONTRACTS: EventContract[] = [
     sensitivity: "LOW", producer: "offline nursing (syncCommands: the counts of one sync)",
     payload: z.object({ deviceId: id, applied: count, conflicted: count, refused: count, replayed: count }).strict(),
   }),
-  // ── Flagship 2, step 6 — legacy import, phase 1 (docs/LEGACY_IMPORT_DESIGN.md §11): own types, so no live consumer reacts ──
+  // ── Flagship 3a — the charge nurse per shift (docs/OFFLINE_NURSING_DESIGN.md §12.9) ──
   contract({
-    type: "LegacyPatientImported", version: 1, aggregateType: "PATIENT", scope: "FACILITY",
-    sensitivity: "INTERNAL", producer: "legacy import (confirmImport: a patient from the old system, never linked to a Person)",
-    payload: z.object({ patientId: id, batchId: id }).strict(),
+    type: "WardChargeShiftAssigned", version: 1, aggregateType: "WARD_CHARGE_SHIFT", scope: "FACILITY",
+    sensitivity: "LOW", producer: "offline nursing (assignChargeShift: the ward's charge nurse for one shift; never two at once)",
+    payload: z.object({ shiftId: id, wardId: id, chargeNurseStaffId: id, startAt: iso, endAt: iso }).strict(),
   }),
   contract({
-    type: "LegacyEncounterImported", version: 1, aggregateType: "ENCOUNTER", scope: "FACILITY",
-    sensitivity: "INTERNAL", producer: "legacy import (confirmImport: a CLOSED visit from the old system)",
-    payload: z.object({ encounterId: id, patientId: id, batchId: id, encounterType: z.enum(["OPD", "ED", "IPD", "DAYCARE", "TELEMEDICINE"]) }).strict(),
-  }),
-  contract({
-    type: "LegacyImportBatchCommitted", version: 1, aggregateType: "LEGACY_IMPORT_BATCH", scope: "FACILITY",
-    sensitivity: "LOW", producer: "legacy import (confirmImport: the counts of one file)",
-    payload: z.object({ batchId: id, patients: count, encounters: count, refused: count }).strict(),
+    type: "WardChargeShiftCancelled", version: 1, aggregateType: "WARD_CHARGE_SHIFT", scope: "FACILITY",
+    sensitivity: "LOW", producer: "offline nursing (cancelChargeShift: the ward's named charge nurse covers that time)",
+    payload: z.object({ shiftId: id, wardId: id }).strict(),
   }),
 ];
 

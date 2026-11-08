@@ -1,11 +1,11 @@
 import type { DoseLease, MedicationAdministration, MedicationOrder, OfflineCommand, OfflineConflictKind, OfflineConflictSeverity, OfflineRefusalReason, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { BadRequestError, ConflictError, NotFoundError } from "@/lib/auth/rbac";
-import { isStaffInFacility } from "@/lib/auth/staffFacility";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 import { createTask } from "@/lib/hospital/task";
 import { administerMedicationTx, recordOfflineGivenTx } from "@/lib/hospital/medicationLifecycle";
+import { assertFacilityNurse, currentChargeNurse } from "./chargeShift";
 
 /**
  * Flagship 2, step 5 — offline nursing, phase 1: the server side
@@ -20,7 +20,9 @@ import { administerMedicationTx, recordOfflineGivenTx } from "@/lib/hospital/med
  *              lease per dose, by a partial unique index), for the
  *              facility's offline limit (4 hours by default, up to 12).
  *   Leases     renewed while online, expire on their own, or are taken over
- *              by the ward's charge nurse with a reason (the holder is told).
+ *              by the ward's charge nurse with a reason (the holder is told):
+ *              the current shift's (Flagship 3a, chargeShift.ts), or else the
+ *              ward's named one.
  *   Sync       commands applied in order, each in its own transaction with
  *              its events; a replayed client operation id answers what it
  *              answered before and changes nothing. A dose recorded as given
@@ -69,16 +71,13 @@ export async function revokeWardDevice(admin: AdminActor, deviceId: string) {
   });
 }
 
-/** The ward's charge nurse (a NURSE at the facility), or none. */
+/** The ward's named charge nurse (a NURSE at the facility), or none: the fallback when no shift is rostered. */
 export async function designateChargeNurse(admin: AdminActor, wardId: string, body: { staffId?: unknown }) {
   const ward = await prisma.ward.findUnique({ where: { id: wardId }, select: { id: true, facilityId: true } });
   if (!ward || ward.facilityId !== admin.facilityId) throw new NotFoundError("Ward not found.");
   const staffId = body.staffId === null ? null : typeof body.staffId === "string" ? body.staffId : undefined;
   if (staffId === undefined) throw new BadRequestError("staffId (or null to clear) is required.");
-  if (staffId) {
-    const s = await prisma.hospitalStaffProfile.findUnique({ where: { id: staffId }, select: { id: true, user: { select: { role: true } } } });
-    if (!s || s.user.role !== "NURSE" || !(await isStaffInFacility(prisma, s.id, admin.facilityId))) throw new NotFoundError("Nurse not found at this facility.");
-  }
+  if (staffId) await assertFacilityNurse(admin.facilityId, staffId);
   return prisma.$transaction(async (tx) => {
     await tx.ward.update({ where: { id: ward.id }, data: { chargeNurseStaffId: staffId } });
     await emitFacilityEvent(tx, { type: "WardChargeNurseDesignated", aggregateId: ward.id, facilityId: admin.facilityId, actorUserId: admin.userId, payload: { wardId: ward.id, ...(staffId ? { chargeNurseStaffId: staffId } : {}) } });
@@ -241,25 +240,28 @@ export async function renewLeases(nurse: NurseActor, body: { deviceId?: unknown;
 /**
  * The ward's charge nurse takes over a lease another device holds (decided
  * §12.2): online, with a reason, logged; the holder is told on its next sync.
+ * The charge nurse is the one on now (decided §12.9): the rostered shift's,
+ * else the ward's named one.
  * The dose can then be given online. If the holder gave it offline first, its
  * sync records a possible double dose.
  */
-export async function overrideLease(nurse: NurseActor, body: { administrationId?: unknown; reason?: unknown }) {
+export async function overrideLease(nurse: NurseActor, body: { administrationId?: unknown; reason?: unknown }, opts: { now?: Date } = {}) {
+  const now = opts.now ?? new Date();
   const lease = typeof body.administrationId === "string"
     ? await prisma.doseLease.findFirst({ where: { administrationId: body.administrationId, status: "ACTIVE" }, include: { device: { select: { wardId: true } } } })
     : null;
   if (!lease || lease.facilityId !== nurse.facilityId) throw new NotFoundError("No device holds this dose.");
-  const ward = await prisma.ward.findUniqueOrThrow({ where: { id: lease.device.wardId }, select: { chargeNurseStaffId: true } });
-  if (!ward.chargeNurseStaffId || ward.chargeNurseStaffId !== nurse.staffId) throw new NotChargeNurseError();
+  const charge = await currentChargeNurse(prisma, lease.device.wardId, now);
+  if (!charge.staffId || charge.staffId !== nurse.staffId) throw new NotChargeNurseError();
   const reason = typeof body.reason === "string" ? body.reason.trim().slice(0, 280) : "";
   if (!reason) throw new BadRequestError("A reason is required to take over a dose from a device.");
   const done = await prisma.$transaction(async (tx) => {
-    const r = await tx.doseLease.updateMany({ where: { id: lease.id, status: "ACTIVE" }, data: { status: "OVERRIDDEN", endedAt: new Date(), endedByUserId: nurse.userId, overrideReason: reason } });
+    const r = await tx.doseLease.updateMany({ where: { id: lease.id, status: "ACTIVE" }, data: { status: "OVERRIDDEN", endedAt: now, endedByUserId: nurse.userId, overrideReason: reason } });
     if (r.count !== 1) throw new ConflictError("The lease changed in the meantime.");
     await emitFacilityEvent(tx, { type: "DoseLeaseOverridden", aggregateId: lease.id, facilityId: lease.facilityId, actorUserId: nurse.userId, payload: { leaseId: lease.id, administrationId: lease.administrationId, deviceId: lease.deviceId, overriddenByStaffId: nurse.staffId } });
     return tx.doseLease.findUniqueOrThrow({ where: { id: lease.id } });
   });
-  await recordAuditEvent("hospital.offline.lease.overridden", nurse.userId, { leaseId: lease.id, administrationId: lease.administrationId, deviceId: lease.deviceId, reason }, { facilityId: lease.facilityId });
+  await recordAuditEvent("hospital.offline.lease.overridden", nurse.userId, { leaseId: lease.id, administrationId: lease.administrationId, deviceId: lease.deviceId, reason, chargeNurseSource: charge.source, ...(charge.shiftId ? { shiftId: charge.shiftId } : {}) }, { facilityId: lease.facilityId });
   return { leaseId: done.id, status: done.status, overrideReason: done.overrideReason };
 }
 
@@ -398,8 +400,9 @@ async function applyCommand(nurse: NurseActor, device: { id: string; wardId: str
 }
 
 /**
- * A conflict row, its task and their events. The ward's charge nurse is told
- * (a task owned by them, or for the CHARGE_NURSE role when none is named); a
+ * A conflict row, its task and their events. The ward's charge nurse on now
+ * is told (the shift's, else the ward's named one: a task owned by them, or
+ * for the CHARGE_NURSE role when there is none); a
  * possible double dose is CRITICAL, due within 15 minutes, and the facility's
  * pharmacists are told too (decided §12.7); an order changed under an offline
  * dose also goes to the prescriber.
@@ -409,12 +412,12 @@ async function raiseConflictTx(
   admin: (MedicationAdministration & { medicationOrder: { patientId: string; encounterId: string; orderedByStaffId: string } }) | null,
   kind: OfflineConflictKind, severity: OfflineConflictSeverity, now: Date,
 ) {
-  const ward = await tx.ward.findUnique({ where: { id: device.wardId }, select: { chargeNurseStaffId: true } });
+  const charge = await currentChargeNurse(tx, device.wardId, now);
   const critical = severity === "CRITICAL";
   const task = await createTask(tx, {
     facilityId: nurse.facilityId, title: critical ? "Possible double dose: check the patient now" : "Offline dose to review", type: "OFFLINE_DOSE_CONFLICT",
     priority: critical ? "STAT" : "URGENT", source: "EVENT", dueAt: new Date(now.getTime() + (critical ? DOUBLE_DOSE_RESPONSE_MS : 4 * 3_600_000)),
-    assignedRole: "CHARGE_NURSE", ownerStaffId: ward?.chargeNurseStaffId ?? undefined, patientId: admin?.medicationOrder.patientId, encounterId: admin?.medicationOrder.encounterId,
+    assignedRole: "CHARGE_NURSE", ownerStaffId: charge.staffId ?? undefined, patientId: admin?.medicationOrder.patientId, encounterId: admin?.medicationOrder.encounterId,
     idempotencyKey: `offline-conflict:${c.id}:${kind}`,
   }, nurse.userId);
   if (critical && admin) {

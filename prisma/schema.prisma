@@ -2006,8 +2006,9 @@ model Ward {
   chargeNurseStaffId String?
   createdAt          DateTime    @default(now())
 
-  beds    Bed[]
-  devices WardDevice[]
+  beds         Bed[]
+  devices      WardDevice[]
+  chargeShifts WardChargeShift[]
 
   @@unique([facilityId, name])
 }
@@ -12355,6 +12356,37 @@ model OfflineConflict {
   resolvedByUserId String?
 
   @@index([facilityId, status])
+}
+
+// ── Flagship 3a — the charge nurse per shift (docs/OFFLINE_NURSING_DESIGN.md §12.9) ──
+// The ward's shift roster names its charge nurse per shift. The current shift's
+// charge nurse takes dose leases over and is told of offline conflicts; with no
+// shift on now, the ward's named charge nurse (Ward.chargeNurseStaffId) is the
+// fallback. Two ACTIVE shifts on one ward never overlap (an exclusion
+// constraint in the migration, half-open [startAt, endAt)).
+
+enum WardChargeShiftStatus {
+  ACTIVE
+  CANCELLED
+}
+
+model WardChargeShift {
+  id                String                @id @default(cuid())
+  facilityId        String
+  ward              Ward                  @relation(fields: [wardId], references: [id])
+  wardId            String
+  /// The charge nurse for this shift (a NURSE at the facility).
+  staffId           String
+  startAt           DateTime
+  endAt             DateTime
+  status            WardChargeShiftStatus @default(ACTIVE)
+  assignedByUserId  String
+  createdAt         DateTime              @default(now())
+  cancelledAt       DateTime?
+  cancelledByUserId String?
+
+  @@index([wardId, startAt])
+  @@index([facilityId, staffId])
 }
 
 // ── Flagship 2, step 6 — legacy import, phase 1 (docs/LEGACY_IMPORT_DESIGN.md §11) ──

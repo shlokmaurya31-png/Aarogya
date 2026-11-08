@@ -148,6 +148,7 @@ Every conflict is a row (`OfflineConflict`: kind, severity, the command, the fac
 6. **The browser app is enough for now. Decided.** No iOS app; the installable browser app covers iPad wards.
 7. **A possible double dose: the charge nurse resolves it within 15 minutes, and the pharmacist is told. Decided.** The conflict is CRITICAL, a task with a 15-minute due time goes to the ward's charge nurse, and the facility's pharmacists are notified.
 8. **A downtime sheet as PDF every shift. Decided.** Generated from the pack at each shift start and kept on the ward (phase 2 of the client; the data is the pack).
+9. **The charge nurse is per shift. Decided (2026-11-08; was Flagship 2's open question 1).** A shift roster names the charge nurse per ward per shift; the ward's named charge nurse is the fallback when a shift has none. Lease takeovers and conflict tasks go to the charge nurse of the shift that is on at that moment. As built in Flagship 3a (§13.1).
 
 ## 13. As built (Flagship 2, phase 1: the server side)
 
@@ -179,6 +180,23 @@ Every conflict is a row (`OfflineConflict`: kind, severity, the command, the fac
   - an expired lease is refused;
   - an override is logged with its reason;
   - another facility gets a 404.
+### 13.1 The charge nurse per shift (Flagship 3a, decided §12.9)
+
+- **Roster:** `WardChargeShift` (migration `20261108090000_ward_charge_shifts`): ward, nurse, `[startAt, endAt)`, ACTIVE or CANCELLED. The hospital admin keeps it (`nursing:offline:manage`):
+  - `GET` / `POST /api/hospital/wards/{id}/charge-shifts`;
+  - `POST /api/hospital/offline/charge-shifts/{shiftId}/cancel`.
+  A shift is at most 24 hours and can't already be over. Two ACTIVE shifts on one ward never overlap: the service refuses first (409), and an exclusion constraint is the guarantee under a race. Back-to-back shifts (one ends as the next starts) are fine.
+- **Who is on:** `currentChargeNurse(ward, at)` (`src/lib/hospital/offline/chargeShift.ts`): the shift covering that moment, else `Ward.chargeNurseStaffId`, else none (the task then goes to the CHARGE_NURSE role).
+- **Uses:**
+  - a takeover is allowed only for the charge nurse on at that moment, and its audit row names the shift;
+  - a conflict's task goes to the charge nurse on when the sync found it, so a lease that spans a handover is overridden by the incoming charge nurse, not the outgoing one.
+- **Events:** `WardChargeShiftAssigned`, `WardChargeShiftCancelled`.
+- **Gate:** `verify-postgres-charge-shifts`:
+  - the roster (overlap refused, also under a race; another facility 404);
+  - who is on at, before and after the handover, and with no shift on;
+  - a handover mid-lease, for both the takeover and the conflict task;
+  - a cancelled shift falls back to the named charge nurse.
+
 - **Not yet:**
   - the device app (encrypted store, outbox, downtime PDF);
   - vitals, I/O and task commands;
