@@ -170,10 +170,13 @@ export async function issuePack(nurse: NurseActor, body: { deviceId?: unknown; d
     orderBy: [{ scheduledAt: "asc" }, { id: "asc" }],
   });
   const onlineOnly = await onlineOnlyOrders(nurse.facilityId, [...new Map(doses.map((d) => [d.medicationOrder.id, d.medicationOrder])).values()]);
-  const held = new Set((await prisma.doseLease.findMany({ where: { administrationId: { in: doses.map((d) => d.id) }, status: "ACTIVE", expiresAt: { gt: now } }, select: { administrationId: true } })).map((l) => l.administrationId));
+  // Held by another device: read-only here. This device's own leases are re-granted on the new pack (a fresh list after a sync keeps its doses).
+  const held = new Set((await prisma.doseLease.findMany({ where: { administrationId: { in: doses.map((d) => d.id) }, status: "ACTIVE", expiresAt: { gt: now }, deviceId: { not: device.id } }, select: { administrationId: true } })).map((l) => l.administrationId));
   const leasable = doses.filter((d) => !onlineOnly.has(d.medicationOrderId) && !held.has(d.id));
 
   const { pack, leases } = await prisma.$transaction(async (tx) => {
+    // The device's earlier leases end here and are granted again on this pack, in one transaction: the dose is never free in between.
+    await endLeasesTx(tx, { deviceId: device.id, status: "ACTIVE" }, "RELEASED", null, now);
     const pack = await tx.wardPack.create({ data: { facilityId: nurse.facilityId, deviceId: device.id, nurseStaffId: nurse.staffId, issuedAt: now, expiresAt, clockOffsetMs } });
     const leases: DoseLease[] = [];
     for (const d of leasable) {
@@ -410,7 +413,11 @@ async function applyDoseCommand(nurse: NurseActor, device: { id: string; wardId:
   if (typeof raw.administrationId !== "string") throw new BadRequestError("A dose command needs an administrationId.");
   const reasonCode = typeof raw.reasonCode === "string" ? raw.reasonCode.trim().slice(0, 60) || undefined : undefined;
   const admin = await prisma.medicationAdministration.findUnique({ where: { id: raw.administrationId }, include: { medicationOrder: { select: { id: true, drugName: true, isControlled: true, status: true, patientId: true, encounterId: true, orderedByStaffId: true, encounter: { select: { facilityId: true } } } } } });
-  const lease = admin ? await prisma.doseLease.findFirst({ where: { administrationId: admin.id, deviceId: device.id }, orderBy: { grantedAt: "desc" }, include: { pack: { select: { clockOffsetMs: true } } } }) : null;
+  // The device's live lease on the dose (one re-granted on a fresh pack ends the earlier one), else its latest.
+  const lease = admin
+    ? (await prisma.doseLease.findFirst({ where: { administrationId: admin.id, deviceId: device.id, status: { not: "RELEASED" } }, orderBy: [{ grantedAt: "desc" }, { id: "desc" }], include: { pack: { select: { clockOffsetMs: true } } } }))
+      ?? (await prisma.doseLease.findFirst({ where: { administrationId: admin.id, deviceId: device.id }, orderBy: [{ grantedAt: "desc" }, { id: "desc" }], include: { pack: { select: { clockOffsetMs: true } } } }))
+    : null;
   const { clockSuspect, appliedTime } = clockOf(deviceMs, lease?.pack.clockOffsetMs ?? 0, now);
   const ours = admin && admin.medicationOrder.encounter.facilityId === nurse.facilityId;
   const base = { facilityId: nurse.facilityId, clientOperationId, deviceId: device.id, nurseStaffId: nurse.staffId, kind, administrationId: raw.administrationId, deviceTime: new Date(deviceMs), appliedTime, receivedAt: now, reasonCode, ...(ours ? { encounterId: admin.medicationOrder.encounterId, medicationOrderId: admin.medicationOrderId } : {}) };

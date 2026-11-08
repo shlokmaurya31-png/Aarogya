@@ -1504,7 +1504,7 @@ Producer: offline nursing (expiry sweep, device revocation)
 | `deviceId` | string |
 | `to` | RELEASED \| EXPIRED |
 
-Emitted from: `src/lib/hospital/offline/service.ts#endLeasesTx`, `src/lib/hospital/offline/service.ts#revokeWardDevice`, `src/lib/hospital/offline/service.ts#sweepExpiredLeases`
+Emitted from: `src/lib/hospital/offline/service.ts#endLeasesTx`, `src/lib/hospital/offline/service.ts#issuePack`, `src/lib/hospital/offline/service.ts#revokeWardDevice`, `src/lib/hospital/offline/service.ts#sweepExpiredLeases`
 
 Consumers: none beyond the `*` consumers
 

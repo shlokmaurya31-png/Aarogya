@@ -166,6 +166,18 @@ async function main() {
     r2.results[0].refusalReason === "PRN_NOT_OFFLINE" && r2.results[1].refusalReason === "ONLINE_ONLY" && r2.results[2].refusalReason === "LEASE_EXPIRED" && r2.results.every((r) => r.conflicts.length === 1)
     && (await prisma.medicationAdministration.count({ where: { medicationOrderId: { in: [notOffline.id, tramadol.id] } } })) === 0, r2.results.map((r) => r.refusalReason).join(","));
 
+  // Flagship 4c: a fresh list on the same tablet (after a sync) keeps its doses.
+  const p3 = await patient(true);
+  const reg = await prisma.medicationOrder.create({ data: { encounterId: p3.encounterId, patientId: p3.patientId, drugName: "Cefuroxime", dose: "500 mg", route: "ORAL", frequency: "BD", orderedByStaffId: doctor.staffId, status: "ACTIVE" } });
+  const due = await prisma.medicationAdministration.create({ data: { medicationOrderId: reg.id, scheduledAt: at(45), status: "DUE" } });
+  const devC = await registerWardDevice(admin, { wardId: ward.id, label: `P2 tablet C ${tag}` });
+  const c1 = await issuePack(N, { deviceId: devC.id }, { now });
+  const c2 = await issuePack(N, { deviceId: devC.id }, { now: at(5) });
+  const givable = (pk: typeof c1) => pk.patients.find((x) => x.patientId === p3.patientId)?.doses.find((d) => d.administrationId === due.id)?.givableOffline;
+  report("A fresh list on the same tablet keeps its doses (one live lease, re-granted)", givable(c1) === true && givable(c2) === true && (await prisma.doseLease.count({ where: { administrationId: due.id, status: "ACTIVE" } })) === 1);
+  const cs = await syncCommands(N, { deviceId: devC.id, commands: [{ clientOperationId: op(), kind: "DOSE_GIVEN", administrationId: due.id, deviceTime: at(40).toISOString() }] }, { now: at(50) });
+  report("…and its dose is given against the live lease", cs.results[0].outcome === "APPLIED", cs.results[0].outcome);
+
   // 5. The limits themselves.
   const bad = (x: { min?: number; max?: number; offline?: boolean }) => prnOrder(`Bad ${tag}`, x).then(() => false, (e) => (e as Error).constructor.name === "BadPrnOrderError");
   report("PRN limits come together, and \"offline allowed\" only with them", (await bad({ min: 60 })) && (await bad({ offline: true })) && (await bad({ min: 0, max: 2 })));
