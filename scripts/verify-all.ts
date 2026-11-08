@@ -128,6 +128,8 @@ const ORDER = [
   "verify-postgres-charge-shifts",
   // Flagship 2, step 6: legacy import, phase 1 (CSV patients and encounters)
   "verify-postgres-legacy-import",
+  // Flagship 3d: 50,000 rows in chunks, a forced failure and the resume, the review queue
+  "verify-postgres-legacy-import-scale",
   "verify-postgres-schema-constraints",
   // Week 3: workflow spine
   "verify-postgres-runner",

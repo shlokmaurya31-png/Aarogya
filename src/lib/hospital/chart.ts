@@ -1,4 +1,5 @@
 import type { MedicationOrderStatus } from "@prisma/client";
+import { importedRecordedBy } from "@/lib/hospital/legacyImport/display";
 import { prisma } from "@/lib/db";
 import { BadRequestError } from "@/lib/auth/rbac";
 
@@ -54,14 +55,19 @@ function sectionQuery(section: ChartSection, patientId: string) {
   const enc = { encounter: { patientId } };
   const at = (r: Range) => r ?? {};
   switch (section) {
-    case "encounters": return { time: "registeredAt" as const, fetch: (r: Range, take?: number) => prisma.encounter.findMany({
-      where: { patientId, registeredAt: at(r) }, orderBy: [{ registeredAt: "desc" }, { id: "asc" }], take,
-      select: {
-        id: true, type: true, status: true, chiefComplaint: true, registeredAt: true, closedAt: true,
-        department: { select: { name: true } }, attendingStaff: NAME,
-        admission: { select: { id: true, admittedAt: true, bed: { select: { label: true, ward: { select: { name: true } } } }, discharge: { select: { dischargedAt: true } } } },
-      },
-    }) };
+    case "encounters": return { time: "registeredAt" as const, fetch: async (r: Range, take?: number) => {
+      const rows = await prisma.encounter.findMany({
+        where: { patientId, registeredAt: at(r) }, orderBy: [{ registeredAt: "desc" }, { id: "asc" }], take,
+        select: {
+          id: true, type: true, status: true, chiefComplaint: true, registeredAt: true, closedAt: true, importBatchId: true,
+          department: { select: { name: true } }, attendingStaff: NAME,
+          admission: { select: { id: true, admittedAt: true, bed: { select: { label: true, ward: { select: { name: true } } } }, discharge: { select: { dischargedAt: true } } } },
+        },
+      });
+      // Flagship 3d: an imported visit says so, and names the old system's clinician as text.
+      const recordedBy = await importedRecordedBy(rows.filter((e) => e.importBatchId).map((e) => e.id));
+      return rows.map(({ importBatchId, ...e }) => ({ ...e, imported: Boolean(importBatchId), recordedBy: recordedBy.get(e.id) ?? null }));
+    } };
     case "notes": return { time: "createdAt" as const, fetch: (r: Range, take?: number) => prisma.clinicalNote.findMany({
       where: { ...enc, createdAt: at(r) }, orderBy: [{ createdAt: "desc" }, { id: "asc" }], take,
       select: { id: true, encounterId: true, type: true, status: true, content: true, createdAt: true, author: NAME },

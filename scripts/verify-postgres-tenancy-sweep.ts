@@ -381,6 +381,8 @@ const SEGMENT_MODELS: Record<string, string> = {
   "wards/[id]": "Ward",
   // Flagship 2, step 6: legacy import.
   "legacy-import/[batchId]": "LegacyImportBatch",
+  // Flagship 3d: a re-imported patient's review.
+  "reviews/[reviewId]": "LegacyPatientReview",
   // Flagship 3a: a ward's charge-nurse shift.
   "charge-shifts/[shiftId]": "WardChargeShift",
   // Flagship 3b: a facility's time-zone change request (decided by platform staff).

@@ -1,13 +1,15 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { EncounterType, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { BadRequestError, ConflictError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
-import { emitFacilityEvent } from "@/lib/events/facilityEvent";
-import { generateCandidateUhid } from "@/lib/hospital/uhid";
+import { emitDomainEvent } from "@/lib/events/emit";
+import { facilityOrganizationId } from "@/lib/events/tenant";
 import { facilityTimeZone, zonedInstant } from "@/lib/time/zone";
 import { CsvFormatError, parseCsv } from "./csv";
+
+type Tx = Prisma.TransactionClient;
 
 /**
  * Flagship 2, step 6 — legacy import, phase 1 (docs/LEGACY_IMPORT_DESIGN.md
@@ -20,8 +22,16 @@ import { CsvFormatError, parseCsv } from "./csv";
  *              never imported). It writes nothing at all.
  *   confirm    the hospital admin's run of a file whose dry run they saw: the
  *              same file and mapping (by the dry run's hash) or nothing.
- *              Patients (new UHIDs) and CLOSED encounters, one transaction per
- *              row, each with its own import event; no live consumer listens.
+ *              Patients (new UHIDs), review items and CLOSED encounters, in
+ *              chunks of ~500 rows (Flagship 3d), each chunk one transaction
+ *              with each row's own import event; no live consumer listens. A
+ *              chunk that fails rolls back alone: the batch is FAILED, the
+ *              chunks before it stay, and the same file resumes with no
+ *              duplicates (each row's source key is unique per facility).
+ *   review     (Flagship 3d) a re-imported patient whose details differ from
+ *              the patient's now is never ignored or updated silently: it waits
+ *              in the hospital admin's review queue (review.ts), accepted or
+ *              kept, each audited with a reason.
  *
  * Matching is by exact key only: a legacy MRN already imported at this
  * facility is that patient; nothing else ever matches (not a name, a date of
@@ -31,7 +41,11 @@ import { CsvFormatError, parseCsv } from "./csv";
  */
 
 export const IMPORT_WINDOW_YEARS = 3;
-export const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
+export const MAX_IMPORT_BYTES = 8 * 1024 * 1024;
+/** Flagship 3d: rows per chunk; each chunk is one transaction. */
+export const IMPORT_CHUNK_ROWS = 500;
+/** Lookups by key, in slices well under Postgres's bind-parameter limit. */
+const LOOKUP_SLICE = 5_000;
 const DATE_FORMATS = ["DD/MM/YYYY", "DD-MM-YYYY", "YYYY-MM-DD", "MM/DD/YYYY"] as const;
 /** Identity numbers are never imported: such a column is dropped at parse, and the report says so. */
 const IDENTITY_COLUMN = /aadhaa?r|\bpan\b|pan[\s_-]?(no|number)|\buid(ai)?\b|voter|passport/i;
@@ -56,6 +70,10 @@ export type RefusalReason = "MISSING_FIELD" | "BAD_DATE" | "DATE_OUT_OF_RANGE" |
 export interface Refusal { file: "patients" | "encounters"; line: number; sourceKey: string | null; reason: RefusalReason; detail: string }
 
 interface PatientPlan { mrn: string; fullName: string; sex: "M" | "F" | "O"; dob: Date | null; phone: string | null }
+/** The details a re-import compares, in a stable shape (dates as YYYY-MM-DD instants in ISO). */
+type PatientDetails = { fullName: string; sex: string; dob: string | null; phone: string | null };
+const DETAIL_FIELDS = ["fullName", "sex", "dob", "phone"] as const;
+interface ReviewPlan { mrn: string; patientId: string; incoming: PatientDetails; existing: PatientDetails; differences: string[]; incomingHash: string }
 interface EncounterPlan { visitNumber: string; mrn: string; type: EncounterType; registeredAt: Date; closedAt: Date | null; departmentId: string | null; clinician: string | null }
 
 export interface ImportInput { profile?: unknown; patientsCsv?: unknown; encountersCsv?: unknown }
@@ -92,6 +110,19 @@ export function parseLegacyDate(raw: string, format: ImportProfile["dateFormat"]
   const hh = m[4] !== undefined ? +m[4] : 0, mm = m[5] !== undefined ? +m[5] : 0;
   if (hh > 23 || mm > 59) return null;
   return zonedInstant(key, hh * 60 + mm, timeZone);
+}
+
+const details = (p: { fullName: string; sex: string; dob: Date | null; phone: string | null }): PatientDetails =>
+  ({ fullName: p.fullName, sex: p.sex, dob: p.dob ? p.dob.toISOString() : null, phone: p.phone });
+const hashOf = (x: unknown) => createHash("sha256").update(JSON.stringify(x)).digest("hex");
+
+/** Rows of `kind` already imported at the facility from the source, by source key (sliced lookups). */
+async function knownKeys(facilityId: string, sourceSystem: string, kind: "PATIENT" | "ENCOUNTER", keys: string[]) {
+  const out = new Map<string, string>();
+  for (let i = 0; i < keys.length; i += LOOKUP_SLICE) {
+    for (const k of await prisma.legacyRecordKey.findMany({ where: { facilityId, sourceSystem, kind, sourceKey: { in: keys.slice(i, i + LOOKUP_SLICE) } }, select: { sourceKey: true, targetId: true } })) out.set(k.sourceKey, k.targetId);
+  }
+  return out;
 }
 
 function normalizedPhone(raw: string): string | null {
@@ -152,8 +183,29 @@ async function evaluate(facilityId: string, body: ImportInput, now = new Date())
     }
     patients.push(rows[0].plan);
   }
-  const known = new Set((await prisma.legacyRecordKey.findMany({ where: { facilityId, sourceSystem: profile.sourceSystem, kind: "PATIENT", sourceKey: { in: [...byMrn.keys()] } }, select: { sourceKey: true } })).map((k) => k.sourceKey));
+  const known = await knownKeys(facilityId, profile.sourceSystem, "PATIENT", [...byMrn.keys()]);
   const newPatients = patients.filter((p) => !known.has(p.mrn));
+  // A re-imported MRN: the same details are a no-op; different ones wait for review (once per difference).
+  const reviews: ReviewPlan[] = [];
+  const again = patients.filter((p) => known.has(p.mrn));
+  for (let i = 0; i < again.length; i += LOOKUP_SLICE) {
+    const slice = again.slice(i, i + LOOKUP_SLICE);
+    const rows = new Map((await prisma.patient.findMany({ where: { id: { in: slice.map((p) => known.get(p.mrn)!) } }, select: { id: true, fullName: true, sex: true, dob: true, phone: true } })).map((r) => [r.id, r]));
+    const queued = new Set((await prisma.legacyPatientReview.findMany({ where: { facilityId, sourceSystem: profile.sourceSystem, sourceKey: { in: slice.map((p) => p.mrn) } }, select: { sourceKey: true, incomingHash: true } })).map((r) => `${r.sourceKey}:${r.incomingHash}`));
+    for (const p of slice) {
+      const patientId = known.get(p.mrn)!;
+      const now = rows.get(patientId);
+      if (!now) continue;
+      const incoming = details(p);
+      const existing = details({ ...now, sex: String(now.sex) });
+      // Only what the file gives: a date of birth or phone it doesn't carry is not a difference (nor ever a clearing).
+      const differences = DETAIL_FIELDS.filter((f) => incoming[f] !== null && incoming[f] !== existing[f]);
+      if (!differences.length) continue;
+      const incomingHash = hashOf(incoming);
+      if (queued.has(`${p.mrn}:${incomingHash}`)) continue;
+      reviews.push({ mrn: p.mrn, patientId, incoming, existing, differences, incomingHash });
+    }
+  }
 
   // Encounters.
   const encounters: EncounterPlan[] = [];
@@ -168,7 +220,7 @@ async function evaluate(facilityId: string, body: ImportInput, now = new Date())
     const windowStart = new Date(now.getTime() - IMPORT_WINDOW_YEARS * 365.25 * 86_400_000);
     const acceptedMrns = new Set(patients.map((p) => p.mrn));
     const encMrns = [...new Set(E.rows.map((r) => r.get(ec.mrn)).filter(Boolean))];
-    const knownPatientKeys = new Set((await prisma.legacyRecordKey.findMany({ where: { facilityId, sourceSystem: profile.sourceSystem, kind: "PATIENT", sourceKey: { in: encMrns } }, select: { sourceKey: true } })).map((k) => k.sourceKey));
+    const knownPatientKeys = await knownKeys(facilityId, profile.sourceSystem, "PATIENT", encMrns);
     const byVisit = new Map<string, { plan: EncounterPlan; line: number; raw: string }[]>();
     for (const r of E.rows) {
       const visit = r.get(ec.visitNumber);
@@ -196,7 +248,8 @@ async function evaluate(facilityId: string, body: ImportInput, now = new Date())
         if (!dept) { refuse("UNKNOWN_DEPARTMENT", `"${name}" is not a department of this hospital.`); continue; }
         departmentId = dept.id;
       }
-      const clinician = ec.clinician && r.get(ec.clinician) ? `${r.get(ec.clinician).slice(0, 120)} (legacy)` : null;
+      // Kept as the old system wrote it; shown as "Recorded by: <name> (imported)" (decided §10.3, §10.10).
+      const clinician = ec.clinician && r.get(ec.clinician) ? r.get(ec.clinician).slice(0, 120) : null;
       const plan: EncounterPlan = { visitNumber: visit, mrn, type, registeredAt, closedAt, departmentId, clinician };
       byVisit.set(visit, [...(byVisit.get(visit) ?? []), { plan, line: r.line, raw: JSON.stringify(plan) }]);
     }
@@ -207,18 +260,18 @@ async function evaluate(facilityId: string, body: ImportInput, now = new Date())
       }
       encounters.push(rows[0].plan);
     }
-    const knownVisits = new Set((await prisma.legacyRecordKey.findMany({ where: { facilityId, sourceSystem: profile.sourceSystem, kind: "ENCOUNTER", sourceKey: { in: [...byVisit.keys()] } }, select: { sourceKey: true } })).map((k) => k.sourceKey));
+    const knownVisits = await knownKeys(facilityId, profile.sourceSystem, "ENCOUNTER", [...byVisit.keys()]);
     knownEncounters = encounters.filter((e) => knownVisits.has(e.visitNumber)).length;
     encounters.splice(0, encounters.length, ...encounters.filter((e) => !knownVisits.has(e.visitNumber)));
   }
 
   refused.sort((a, b) => (a.file === b.file ? a.line - b.line : a.file < b.file ? 1 : -1));
   const counts = {
-    patients: { rows: P.rows.length, toCreate: newPatients.length, alreadyImported: patients.length - newPatients.length, refused: refused.filter((r) => r.file === "patients").length },
+    patients: { rows: P.rows.length, toCreate: newPatients.length, alreadyImported: patients.length - newPatients.length - reviews.length, toReview: reviews.length, refused: refused.filter((r) => r.file === "patients").length },
     encounters: { rows: encounterRows, toCreate: encounters.length, alreadyImported: knownEncounters, refused: refused.filter((r) => r.file === "encounters").length },
   };
   const dryRunHash = createHash("sha256").update(JSON.stringify({ fileHash, facilityId, counts, refused })).digest("hex");
-  return { profile, fileHash, timeZone, report: { sourceSystem: profile.sourceSystem, fileHash, dryRunHash, counts, refused, droppedColumns: [...new Set(droppedColumns)] }, plan: { patients: newPatients, encounters } };
+  return { profile, fileHash, timeZone, report: { sourceSystem: profile.sourceSystem, fileHash, dryRunHash, counts, refused, droppedColumns: [...new Set(droppedColumns)] }, plan: { patients: newPatients, reviews, encounters } };
 }
 
 /** The dry run: the full report, and nothing written. */
@@ -228,88 +281,139 @@ export async function dryRunImport(facilityId: string, body: ImportInput) {
   return { ...report, alreadyImported: existing ? { batchId: existing.id, status: existing.status } : null };
 }
 
+/** Test seam (the gates' forced failure): runs inside each chunk's transaction, before it commits. */
+export interface ConfirmOptions { beforeChunkCommit?: (chunk: number) => Promise<void> | void; chunkRows?: number }
+
+const newId = () => `c${randomBytes(12).toString("hex")}`;
+function randomUhid(facilityId: string): string {
+  const code = facilityId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 4).toUpperCase();
+  return `UHID-${code}-${randomBytes(5).toString("hex").slice(0, 8).toUpperCase()}`;
+}
+const chunksOf = <T>(xs: T[], n: number) => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
+
 /**
  * The confirmed run, for the file and mapping the admin's dry run showed
- * (`dryRunHash`). The batch is recorded first (COMMITTING), each row then
- * commits on its own with its key and event, and the batch closes with
- * LegacyImportBatchCommitted. A run interrupted part-way resumes where it
- * stopped; a finished file runs again as a no-op.
+ * (`dryRunHash`). The batch is recorded first (COMMITTING); then patients,
+ * review items and encounters in chunks of ~500 rows, each chunk one
+ * transaction (its rows, their keys, each row's event, the chunk's event and
+ * the batch's progress). A chunk that fails rolls back alone and the batch is
+ * FAILED (LegacyImportBatchFailed); the same file then resumes after the
+ * chunks already in (LegacyImportBatchResumed), with no duplicates: every row
+ * is skipped whose source key exists. The batch closes with
+ * LegacyImportBatchCommitted; a finished file runs again as a no-op.
  */
-export async function confirmImport(admin: { userId: string; facilityId: string }, body: ImportInput & { dryRunHash?: unknown }) {
+export async function confirmImport(admin: { userId: string; facilityId: string }, body: ImportInput & { dryRunHash?: unknown }, opts: ConfirmOptions = {}) {
   const { profile, fileHash, report, plan } = await evaluate(admin.facilityId, body);
   const done = await prisma.legacyImportBatch.findUnique({ where: { facilityId_fileHash: { facilityId: admin.facilityId, fileHash } } });
   if (done?.status === "COMMITTED") return { status: "ALREADY_IMPORTED" as const, batchId: done.id, counts: done.counts };
   // A new run needs the dry run's hash; a run interrupted part-way (same file, by its hash) resumes.
   if (!done && body.dryRunHash !== report.dryRunHash) throw new ConflictError("This isn't the import the dry run showed (the file, the mapping or the hospital's data changed). Run the dry run again.");
+  const organizationId = await facilityOrganizationId(prisma, admin.facilityId);
+  // Each row's event in its chunk's transaction; the tenant resolved once for the run.
+  const tenant = { organizationId, facilityId: admin.facilityId, actorUserId: admin.userId };
 
-  const batch = done ?? await prisma.legacyImportBatch.create({ data: { facilityId: admin.facilityId, sourceSystem: profile.sourceSystem, fileHash, status: "COMMITTING", counts: report.counts as unknown as Prisma.InputJsonValue, startedByUserId: admin.userId } })
-    .catch(async (e) => {
-      if (!isUnique(e)) throw e;
-      throw new ConflictError("This file is being imported right now.");
-    });
-  if (batch.status === "COMMITTED") return { status: "ALREADY_IMPORTED" as const, batchId: batch.id, counts: batch.counts };
-  const patientIdByMrn = new Map<string, string>();
-  let createdPatients = 0;
-  let createdEncounters = 0;
-  for (const p of plan.patients) {
-    const id = await importPatient(admin, batch.id, profile.sourceSystem, p);
-    if (id.created) createdPatients += 1;
-    patientIdByMrn.set(p.mrn, id.patientId);
-  }
-  const missing = [...new Set(plan.encounters.map((e) => e.mrn).filter((m) => !patientIdByMrn.has(m)))];
-  for (const k of await prisma.legacyRecordKey.findMany({ where: { facilityId: admin.facilityId, sourceSystem: profile.sourceSystem, kind: "PATIENT", sourceKey: { in: missing } }, select: { sourceKey: true, targetId: true } })) patientIdByMrn.set(k.sourceKey, k.targetId);
-  for (const e of plan.encounters) {
-    const patientId = patientIdByMrn.get(e.mrn);
-    if (patientId && (await importEncounter(admin, batch.id, profile.sourceSystem, patientId, e))) createdEncounters += 1;
-  }
-  const committed = await prisma.$transaction(async (tx) => {
-    const b = await tx.legacyImportBatch.update({ where: { id: batch.id }, data: { status: "COMMITTED", committedAt: new Date(), committedByUserId: admin.userId } });
-    await emitFacilityEvent(tx, {
-      type: "LegacyImportBatchCommitted", aggregateId: b.id, facilityId: admin.facilityId, actorUserId: admin.userId,
-      payload: { batchId: b.id, patients: createdPatients, encounters: createdEncounters, refused: report.refused.length },
-    });
+  let batch = done ?? await prisma.$transaction(async (tx) => {
+    const b = await tx.legacyImportBatch.create({ data: { facilityId: admin.facilityId, sourceSystem: profile.sourceSystem, fileHash, status: "COMMITTING", counts: report.counts as unknown as Prisma.InputJsonValue, startedByUserId: admin.userId } });
+    await emitDomainEvent(tx, { ...tenant, type: "LegacyImportBatchStarted", aggregateId: b.id, payload: { batchId: b.id, patients: plan.patients.length, reviews: plan.reviews.length, encounters: plan.encounters.length } });
     return b;
+  }).catch((e) => {
+    if (!isUnique(e)) throw e;
+    throw new ConflictError("This file is being imported right now.");
   });
-  await recordAuditEvent("hospital.legacy-import.committed", admin.userId, { batchId: committed.id, sourceSystem: profile.sourceSystem, patients: createdPatients, encounters: createdEncounters, refused: report.refused.length }, { facilityId: admin.facilityId });
-  return { status: "COMMITTED" as const, batchId: committed.id, counts: report.counts, created: { patients: createdPatients, encounters: createdEncounters }, refused: report.refused };
+  if (batch.status === "FAILED") {
+    batch = await prisma.$transaction(async (tx) => {
+      const u = await tx.legacyImportBatch.updateMany({ where: { id: batch.id, status: "FAILED" }, data: { status: "COMMITTING" } });
+      if (u.count !== 1) throw new ConflictError("This file is being imported right now.");
+      await emitDomainEvent(tx, { ...tenant, type: "LegacyImportBatchResumed", aggregateId: batch.id, payload: { batchId: batch.id, chunksCommitted: batch.chunksCommitted } });
+      return tx.legacyImportBatch.findUniqueOrThrow({ where: { id: batch.id } });
+    });
+  }
+  const batchId = batch.id;
+  const size = Math.max(1, Math.min(opts.chunkRows ?? IMPORT_CHUNK_ROWS, 2_000));
+  let chunk = batch.chunksCommitted;
+  const created = { patients: 0, reviews: 0, encounters: 0 };
+
+  /** One chunk: its writes, the chunk's event and the batch's progress, in one transaction (retried once on a key race). */
+  const commitChunk = async (part: "PATIENTS" | "REVIEWS" | "ENCOUNTERS", write: (tx: Tx) => Promise<number>) => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const n = await prisma.$transaction(async (tx) => {
+          const rows = await write(tx);
+          await opts.beforeChunkCommit?.(chunk);
+          await tx.legacyImportBatch.update({ where: { id: batchId }, data: { chunksCommitted: { increment: 1 } } });
+          await emitDomainEvent(tx, { ...tenant, type: "LegacyImportChunkCommitted", aggregateId: batchId, payload: { batchId, chunk, part, rows } });
+          return rows;
+        }, { timeout: 120_000, maxWait: 20_000 });
+        chunk += 1;
+        return n;
+      } catch (e) {
+        if (isUnique(e) && attempt < 2) continue; // a UHID or key taken meanwhile: the chunk again, skipping what exists
+        await prisma.$transaction(async (tx) => {
+          await tx.legacyImportBatch.update({ where: { id: batchId }, data: { status: "FAILED", failedAt: new Date(), lastError: String((e as Error)?.message ?? e).split("\n")[0].slice(0, 200) } });
+          await emitDomainEvent(tx, { ...tenant, type: "LegacyImportBatchFailed", aggregateId: batchId, payload: { batchId, chunk, part } });
+        });
+        throw e;
+      }
+    }
+  };
+
+  // Patients: new UHIDs; an MRN whose key exists by now (an earlier chunk, a resumed run) is skipped.
+  for (const part of chunksOf(plan.patients, size)) {
+    created.patients += await commitChunk("PATIENTS", async (tx) => {
+      const have = new Set((await tx.legacyRecordKey.findMany({ where: { facilityId: admin.facilityId, sourceSystem: profile.sourceSystem, kind: "PATIENT", sourceKey: { in: part.map((p) => p.mrn) } }, select: { sourceKey: true } })).map((k) => k.sourceKey));
+      const todo = part.filter((p) => !have.has(p.mrn));
+      if (!todo.length) return 0;
+      const rows = todo.map((p) => ({ p, id: newId(), uhid: randomUhid(admin.facilityId) }));
+      const taken = new Set((await tx.patient.findMany({ where: { uhid: { in: rows.map((r) => r.uhid) } }, select: { uhid: true } })).map((x) => x.uhid));
+      for (const r of rows) while (taken.has(r.uhid)) r.uhid = randomUhid(admin.facilityId);
+      await tx.patient.createMany({ data: rows.map(({ p, id, uhid }) => ({ id, facilityId: admin.facilityId, uhid, fullName: p.fullName, sex: p.sex, dob: p.dob, phone: p.phone, importBatchId: batchId })) });
+      await tx.legacyRecordKey.createMany({ data: rows.map(({ p, id }) => ({ facilityId: admin.facilityId, sourceSystem: profile.sourceSystem, kind: "PATIENT" as const, sourceKey: p.mrn, targetId: id, batchId })) });
+      for (const r of rows) await emitDomainEvent(tx, { ...tenant, type: "LegacyPatientImported", aggregateId: r.id, payload: { patientId: r.id, batchId } });
+      return rows.length;
+    });
+  }
+  // Re-imported patients whose details differ: into the hospital admin's review queue, never applied here.
+  for (const part of chunksOf(plan.reviews, size)) {
+    created.reviews += await commitChunk("REVIEWS", async (tx) => {
+      const have = new Set((await tx.legacyPatientReview.findMany({ where: { facilityId: admin.facilityId, sourceSystem: profile.sourceSystem, sourceKey: { in: part.map((r) => r.mrn) } }, select: { sourceKey: true, incomingHash: true } })).map((r) => `${r.sourceKey}:${r.incomingHash}`));
+      const todo = part.filter((r) => !have.has(`${r.mrn}:${r.incomingHash}`)).map((r) => ({ r, id: newId() }));
+      if (!todo.length) return 0;
+      await tx.legacyPatientReview.createMany({
+        data: todo.map(({ r, id }) => ({ id, facilityId: admin.facilityId, batchId, sourceSystem: profile.sourceSystem, sourceKey: r.mrn, patientId: r.patientId, incoming: r.incoming, existing: r.existing, differences: r.differences, incomingHash: r.incomingHash })),
+      });
+      for (const { r, id } of todo) await emitDomainEvent(tx, { ...tenant, type: "LegacyPatientReviewQueued", aggregateId: id, payload: { reviewId: id, patientId: r.patientId, batchId, differences: r.differences } });
+      return todo.length;
+    });
+  }
+  // Encounters, CLOSED, for patients imported in this file or before (by exact key).
+  for (const part of chunksOf(plan.encounters, size)) {
+    created.encounters += await commitChunk("ENCOUNTERS", async (tx) => {
+      const have = new Set((await tx.legacyRecordKey.findMany({ where: { facilityId: admin.facilityId, sourceSystem: profile.sourceSystem, kind: "ENCOUNTER", sourceKey: { in: part.map((e) => e.visitNumber) } }, select: { sourceKey: true } })).map((k) => k.sourceKey));
+      const patientOf = new Map((await tx.legacyRecordKey.findMany({ where: { facilityId: admin.facilityId, sourceSystem: profile.sourceSystem, kind: "PATIENT", sourceKey: { in: [...new Set(part.map((e) => e.mrn))] } }, select: { sourceKey: true, targetId: true } })).map((k) => [k.sourceKey, k.targetId]));
+      const rows = part.filter((e) => !have.has(e.visitNumber) && patientOf.has(e.mrn)).map((e) => ({ e, id: newId(), patientId: patientOf.get(e.mrn)! }));
+      if (!rows.length) return 0;
+      await tx.encounter.createMany({ data: rows.map(({ e, id, patientId }) => ({ id, facilityId: admin.facilityId, patientId, type: e.type, status: "CLOSED" as const, registeredAt: e.registeredAt, closedAt: e.closedAt ?? e.registeredAt, departmentId: e.departmentId, importBatchId: batchId })) });
+      await tx.legacyRecordKey.createMany({ data: rows.map(({ e, id }) => ({ facilityId: admin.facilityId, sourceSystem: profile.sourceSystem, kind: "ENCOUNTER" as const, sourceKey: e.visitNumber, targetId: id, batchId, clinicianName: e.clinician })) });
+      for (const r of rows) await emitDomainEvent(tx, { ...tenant, type: "LegacyEncounterImported", aggregateId: r.id, payload: { encounterId: r.id, patientId: r.patientId, batchId, encounterType: r.e.type }, correlationId: r.id });
+      return rows.length;
+    });
+  }
+
+  const totals = await prisma.$transaction(async (tx) => {
+    // Totals over the whole batch, so a resumed run counts the chunks committed before it too.
+    const [patients, encounters, reviews] = await Promise.all([
+      tx.legacyRecordKey.count({ where: { batchId, kind: "PATIENT" } }), tx.legacyRecordKey.count({ where: { batchId, kind: "ENCOUNTER" } }), tx.legacyPatientReview.count({ where: { batchId } }),
+    ]);
+    const b = await tx.legacyImportBatch.updateMany({ where: { id: batchId, status: "COMMITTING" }, data: { status: "COMMITTED", committedAt: new Date(), committedByUserId: admin.userId } });
+    if (b.count !== 1) throw new ConflictError("This file is being imported right now.");
+    await emitDomainEvent(tx, { ...tenant, type: "LegacyImportBatchCommitted", aggregateId: batchId, payload: { batchId, patients, encounters, refused: report.refused.length } });
+    return { patients, encounters, reviews };
+  });
+  await recordAuditEvent("hospital.legacy-import.committed", admin.userId, { batchId, sourceSystem: profile.sourceSystem, ...totals, refused: report.refused.length, chunks: chunk }, { facilityId: admin.facilityId });
+  return { status: "COMMITTED" as const, batchId, counts: report.counts, created: { patients: totals.patients, encounters: totals.encounters }, queuedForReview: totals.reviews, thisRun: created, chunks: chunk, refused: report.refused };
 }
 
 function isUnique(e: unknown) { return (e as { code?: string })?.code === "P2002"; }
-
-async function importPatient(admin: { userId: string; facilityId: string }, batchId: string, sourceSystem: string, p: PatientPlan): Promise<{ patientId: string; created: boolean }> {
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const uhid = await generateCandidateUhid(admin.facilityId);
-    try {
-      return await prisma.$transaction(async (tx) => {
-        const patient = await tx.patient.create({ data: { facilityId: admin.facilityId, uhid, fullName: p.fullName, sex: p.sex, dob: p.dob, phone: p.phone, importBatchId: batchId } });
-        await tx.legacyRecordKey.create({ data: { facilityId: admin.facilityId, sourceSystem, kind: "PATIENT", sourceKey: p.mrn, targetId: patient.id, batchId } });
-        await emitFacilityEvent(tx, { type: "LegacyPatientImported", aggregateId: patient.id, facilityId: admin.facilityId, actorUserId: admin.userId, payload: { patientId: patient.id, batchId } });
-        return { patientId: patient.id, created: true };
-      });
-    } catch (e) {
-      if (!isUnique(e)) throw e;
-      // The MRN was imported meanwhile (a resumed run): that patient, by its exact key.
-      const k = await prisma.legacyRecordKey.findUnique({ where: { facilityId_sourceSystem_kind_sourceKey: { facilityId: admin.facilityId, sourceSystem, kind: "PATIENT", sourceKey: p.mrn } } });
-      if (k) return { patientId: k.targetId, created: false };
-      // Otherwise a UHID collision: try another.
-    }
-  }
-  throw new Error("Could not generate a unique UHID.");
-}
-
-async function importEncounter(admin: { userId: string; facilityId: string }, batchId: string, sourceSystem: string, patientId: string, e: EncounterPlan): Promise<boolean> {
-  try {
-    return await prisma.$transaction(async (tx) => {
-      const enc = await tx.encounter.create({ data: { facilityId: admin.facilityId, patientId, type: e.type, status: "CLOSED", registeredAt: e.registeredAt, closedAt: e.closedAt ?? e.registeredAt, departmentId: e.departmentId, importBatchId: batchId } });
-      await tx.legacyRecordKey.create({ data: { facilityId: admin.facilityId, sourceSystem, kind: "ENCOUNTER", sourceKey: e.visitNumber, targetId: enc.id, batchId, clinicianName: e.clinician } });
-      await emitFacilityEvent(tx, { type: "LegacyEncounterImported", aggregateId: enc.id, facilityId: admin.facilityId, actorUserId: admin.userId, encounterId: enc.id, payload: { encounterId: enc.id, patientId, batchId, encounterType: e.type } });
-      return true;
-    });
-  } catch (err) {
-    if (isUnique(err)) return false; // imported meanwhile (a resumed run)
-    throw err;
-  }
-}
 
 /** One batch, this facility's only (another facility's id is a 404). */
 export async function getImportBatch(facilityId: string, batchId: string) {

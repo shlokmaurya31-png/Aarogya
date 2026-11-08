@@ -159,6 +159,8 @@ export const AGGREGATE_TYPES = [
   "FACILITY_TIME_ZONE_CHANGE",
   // Flagship 2, step 6 — legacy import.
   "LEGACY_IMPORT_BATCH",
+  // Flagship 3d — a re-imported patient's differing details, for review.
+  "LEGACY_PATIENT_REVIEW",
 ] as const;
 export type AggregateType = (typeof AGGREGATE_TYPES)[number];
 

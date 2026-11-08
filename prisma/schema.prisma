@@ -12435,6 +12435,8 @@ model FacilityTimeZoneChange {
 enum LegacyImportBatchStatus {
   COMMITTING
   COMMITTED
+  /// Flagship 3d: a chunk failed; the chunks before it stay committed, and the same file resumes.
+  FAILED
 }
 
 enum LegacyRecordKind {
@@ -12455,6 +12457,11 @@ model LegacyImportBatch {
   startedAt         DateTime                @default(now())
   committedByUserId String?
   committedAt       DateTime?
+  /// Flagship 3d: chunks of ~500 rows, each its own transaction.
+  chunksCommitted   Int                     @default(0)
+  failedAt          DateTime?
+  /// The failed chunk's error, short and without row content.
+  lastError         String?
 
   @@unique([facilityId, fileHash])
 }
@@ -12474,4 +12481,39 @@ model LegacyRecordKey {
 
   @@unique([facilityId, sourceSystem, kind, sourceKey])
   @@index([batchId])
+}
+
+// ── Flagship 3d — a re-imported patient whose details differ (docs/LEGACY_IMPORT_DESIGN.md §10.9) ──
+// Never silently ignored, never auto-updated: the difference waits here for the
+// hospital admin, who accepts the incoming details or keeps the existing ones
+// (both audited, with a reason). One row per MRN and incoming details.
+
+enum LegacyPatientReviewStatus {
+  OPEN
+  ACCEPTED
+  KEPT
+}
+
+model LegacyPatientReview {
+  id              String                    @id @default(cuid())
+  facilityId      String
+  batchId         String
+  sourceSystem    String
+  /// The legacy MRN.
+  sourceKey       String
+  patientId       String
+  /// The incoming details (fullName, sex, dob, phone) and the patient's at the time, with the fields that differ.
+  incoming        Json
+  existing        Json
+  differences     String[]
+  /// sha256 of the incoming details: the same difference is queued once.
+  incomingHash    String
+  status          LegacyPatientReviewStatus @default(OPEN)
+  createdAt       DateTime                  @default(now())
+  decidedByUserId String?
+  decidedAt       DateTime?
+  decisionReason  String?
+
+  @@unique([facilityId, sourceSystem, sourceKey, incomingHash])
+  @@index([facilityId, status])
 }

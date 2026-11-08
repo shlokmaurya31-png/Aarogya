@@ -44,6 +44,9 @@ export type AuditEventType =
   | "hospital.offline.lease.overridden"
   // Flagship 2, step 6 — legacy import.
   | "hospital.legacy-import.committed"
+  // Flagship 3d — a re-imported patient's differing details: accepted or kept, with a reason.
+  | "hospital.legacy-import.review.accepted"
+  | "hospital.legacy-import.review.kept"
   // Flagship 3b — a facility's time zone: the hospital admin's written request, and platform staff's decision.
   | "hospital.facility.time-zone.requested"
   | "platform.facility.time-zone.approved"

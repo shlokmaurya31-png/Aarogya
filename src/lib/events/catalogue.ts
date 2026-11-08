@@ -1874,6 +1874,37 @@ export const EVENT_CONTRACTS: EventContract[] = [
     sensitivity: "LOW", producer: "legacy import (confirmImport: the counts of one file)",
     payload: z.object({ batchId: id, patients: count, encounters: count, refused: count }).strict(),
   }),
+  // ── Flagship 3d — legacy import in chunks, resumable, and the review queue ──
+  contract({
+    type: "LegacyImportBatchStarted", version: 1, aggregateType: "LEGACY_IMPORT_BATCH", scope: "FACILITY",
+    sensitivity: "LOW", producer: "legacy import (confirmImport: a confirmed run begins; the rows it plans)",
+    payload: z.object({ batchId: id, patients: count, reviews: count, encounters: count }).strict(),
+  }),
+  contract({
+    type: "LegacyImportChunkCommitted", version: 1, aggregateType: "LEGACY_IMPORT_BATCH", scope: "FACILITY",
+    sensitivity: "LOW", producer: "legacy import (confirmImport: one chunk of ~500 rows, its own transaction)",
+    payload: z.object({ batchId: id, chunk: count, part: z.enum(["PATIENTS", "REVIEWS", "ENCOUNTERS"]), rows: count }).strict(),
+  }),
+  contract({
+    type: "LegacyImportBatchFailed", version: 1, aggregateType: "LEGACY_IMPORT_BATCH", scope: "FACILITY",
+    sensitivity: "LOW", producer: "legacy import (confirmImport: a chunk failed and rolled back alone; the chunks before it stay)",
+    payload: z.object({ batchId: id, chunk: count, part: z.enum(["PATIENTS", "REVIEWS", "ENCOUNTERS"]) }).strict(),
+  }),
+  contract({
+    type: "LegacyImportBatchResumed", version: 1, aggregateType: "LEGACY_IMPORT_BATCH", scope: "FACILITY",
+    sensitivity: "LOW", producer: "legacy import (confirmImport: the same file again after a failure, after the chunks already in)",
+    payload: z.object({ batchId: id, chunksCommitted: count }).strict(),
+  }),
+  contract({
+    type: "LegacyPatientReviewQueued", version: 1, aggregateType: "LEGACY_PATIENT_REVIEW", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "legacy import (confirmImport: a re-imported patient whose details differ; the names of the fields only)",
+    payload: z.object({ reviewId: id, patientId: id, batchId: id, differences: z.array(z.enum(["fullName", "sex", "dob", "phone"])) }).strict(),
+  }),
+  contract({
+    type: "LegacyPatientReviewDecided", version: 1, aggregateType: "LEGACY_PATIENT_REVIEW", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "legacy import (decidePatientReview: the hospital admin accepts the incoming details or keeps the existing ones; the reason is audited, never in the event)",
+    payload: z.object({ reviewId: id, patientId: id, decision: z.enum(["ACCEPTED", "KEPT"]), fields: z.array(z.enum(["fullName", "sex", "dob", "phone"])) }).strict(),
+  }),
 ];
 
 const KEY = (type: string, version: number) => `${type}@${version}`;
