@@ -24,6 +24,7 @@ import { administerMedication } from "../src/lib/hospital/medicationLifecycle";
 import { designateChargeNurse, issuePack, NotChargeNurseError, overrideLease, registerWardDevice, syncCommands } from "../src/lib/hospital/offline/service";
 import { assignChargeShift, cancelChargeShift, currentChargeNurse, listChargeShifts } from "../src/lib/hospital/offline/chargeShift";
 import { tag } from "./lib/shareFixture";
+import { enableOfflineForGate } from "./lib/offlineFixture";
 
 const PUNE = "fac-amc-pune";
 const NOIDA = "fac-amc-noida";
@@ -100,6 +101,8 @@ async function main() {
   const d1 = await dose(para.id, 2);
   const d2 = await dose(para.id, 3);
   const dc = await dose(morphine.id, 0.5);
+  // Flagship 4e: the ward's offline mode on (with the sign-off) before any pack.
+  await enableOfflineForGate(admin, ward.id);
   const dev = await registerWardDevice(admin, { wardId: ward.id, label: `Shift tablet ${tag}` });
   const A = { userId: nurseA.userId, staffId: nurseA.staffId, facilityId: PUNE };
   const pack = await issuePack(A, { deviceId: dev.id }, { now });

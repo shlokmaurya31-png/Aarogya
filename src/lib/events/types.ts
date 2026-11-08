@@ -157,6 +157,8 @@ export const AGGREGATE_TYPES = [
   // Flagship 3b — a facility's time zone, and the requests to change it.
   "FACILITY",
   "FACILITY_TIME_ZONE_CHANGE",
+  // Flagship 4e — the clinical advisor's sign-off of the offline rules.
+  "CLINICAL_SIGN_OFF",
   // Flagship 2, step 6 — legacy import.
   "LEGACY_IMPORT_BATCH",
   // Flagship 3d — a re-imported patient's differing details, for review.

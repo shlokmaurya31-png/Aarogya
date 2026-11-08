@@ -381,6 +381,8 @@ const SEGMENT_MODELS: Record<string, string> = {
   // Flagship 4b: the charge nurse's queue.
   "conflicts/[conflictId]": "OfflineConflict",
   "leases/[leaseId]": "DoseLease",
+  // Flagship 4e: the clinical sign-off (platform-wide).
+  "clinical-sign-offs/[signOffId]": "ClinicalSignOff",
   "wards/[id]": "Ward",
   // Flagship 2, step 6: legacy import.
   "legacy-import/[batchId]": "LegacyImportBatch",

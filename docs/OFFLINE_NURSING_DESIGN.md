@@ -1,6 +1,6 @@
 # Offline nursing: the ward keeps working on bad Wi-Fi
 
-- **Status:** Designed (Flagship 1d, 2026-10-28); the open questions decided (2026-10-29, §12); **phase 1, the server side, built in Flagship 2** (§13). The clinical advisor's sign-off on §6 is still needed before any MAR use on a ward.
+- **Status:** Designed (Flagship 1d, 2026-10-28); the open questions decided (2026-10-29, §12); **phase 1, the server side, built in Flagship 2** (§13). The clinical advisor's sign-off on §6 is still needed before any MAR use on a ward: until it is recorded, offline mode can't be turned on for any ward (§13.5).
 - **Scope:** the four nursing screens a ward can't stop for a dropped connection: the **MAR** (the medication round), **vitals**, **intake and output**, and **nursing tasks**.
 - **Not in scope:** ordering, pharmacy verification, admission, transfer and discharge, the doctor's and the front desk's screens, billing. They stay online-only. When the network is down, those follow the hospital's paper downtime procedure, as now.
 - **Builds on:** `administerMedication` (`src/lib/hospital/medicationLifecycle.ts`: a dose moves from DUE only once, by a guarded update), the MAR sweep (`marSweep.ts`: overdue doses become MISSED, and a late dose is recorded against the missed one), `NursingAssignment` (at most one open assignment per patient), `Vital`, `IntakeOutputRecord`, `Task`, the event spine (`docs/ARCHITECTURE.md` §4), and PRODUCT_SPEC principle 6 (weak networks, low-end Android).
@@ -232,6 +232,13 @@ Every conflict is a row (`OfflineConflict`: kind, severity, the command, the fac
   A database CHECK holds every resolved conflict to naming who, when, how and why.
 - **Escalation (§12.7):** a CRITICAL conflict still open 15 minutes after the sync that raised it is escalated once by the runner (`escalateOfflineConflicts`, `OfflineConflictEscalated`). The facility's pharmacists get a STAT task and a CRITICAL notification each. This comes on top of the pharmacists' task at the time the conflict is raised.
 - **Gate:** `verify-postgres-offline-queue`.
+
+### 13.5 Offline mode per ward, behind the sign-off (Flagship 4e)
+
+- **The flag stays:** the clinical advisor's sign-off of §6 is still pending. Offline mode is **off on every ward** (`Ward.offlineEnabled`, default off for every existing ward) until a hospital admin turns it on (`POST /api/hospital/wards/{id}/offline-mode`, with a reason, audited, `WardOfflineModeChanged`). Turning it on is refused while no sign-off is active.
+- **The sign-off:** only platform staff (`platform:clinical-sign-off:record`) record it, with the advisor's name, the signed document's reference and the date (`POST /api/hospital/enterprise/clinical-sign-offs`, audited, `ClinicalSignOffRecorded`). One is active at a time. Revoking it (with a reason, `ClinicalSignOffRevoked`) turns offline mode off on every ward.
+- **While a ward is off:** no pack is issued and no lease renewed (409). What a device already recorded still syncs, because a recorded fact is never refused for this.
+- **Gate:** `verify-postgres-offline-switch`. The other offline gates turn their ward on through a synthetic sign-off in the verify database only (`scripts/lib/offlineFixture.ts`).
 
 - **Not yet:**
   - the device app (encrypted store, outbox, downtime PDF);

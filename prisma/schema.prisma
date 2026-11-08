@@ -1995,16 +1995,20 @@ enum WardType {
 }
 
 model Ward {
-  id                 String      @id @default(cuid())
-  name               String
-  wardType           WardType
-  facility           Facility    @relation(fields: [facilityId], references: [id])
-  facilityId         String
-  department         Department? @relation(fields: [departmentId], references: [id])
-  departmentId       String?
+  id                     String      @id @default(cuid())
+  name                   String
+  wardType               WardType
+  facility               Facility    @relation(fields: [facilityId], references: [id])
+  facilityId             String
+  department             Department? @relation(fields: [departmentId], references: [id])
+  departmentId           String?
   /// Flagship 2, step 5: the ward's charge nurse (may take over a device's dose lease; told of offline conflicts).
-  chargeNurseStaffId String?
-  createdAt          DateTime    @default(now())
+  chargeNurseStaffId     String?
+  /// Flagship 4e: offline mode is off per ward until the hospital admin turns it on, which needs the clinical advisor's sign-off (§6).
+  offlineEnabled         Boolean     @default(false)
+  offlineEnabledAt       DateTime?
+  offlineEnabledByUserId String?
+  createdAt              DateTime    @default(now())
 
   beds         Bed[]
   devices      WardDevice[]
@@ -12420,6 +12424,28 @@ model OfflineConflict {
 
   @@index([facilityId, status])
   @@index([status, severity, createdAt])
+}
+
+// ── Flagship 4e — the clinical advisor's sign-off (docs/OFFLINE_NURSING_DESIGN.md §6, §13.5) ──
+// Platform-wide: the advisor signs off a set of clinical rules (scope), and
+// platform staff record it with the advisor's name and the document. While no
+// sign-off is active, no ward can turn offline mode on. One active per scope.
+
+model ClinicalSignOff {
+  id               String    @id @default(cuid())
+  /// e.g. "OFFLINE_NURSING_S6": the offline nursing design's §6 clinical rules.
+  scope            String
+  advisorName      String
+  /// Where the signed document is kept (a reference, not the document).
+  reference        String
+  signedOffAt      DateTime
+  recordedByUserId String
+  recordedAt       DateTime  @default(now())
+  revokedAt        DateTime?
+  revokedByUserId  String?
+  revokeReason     String?
+
+  @@index([scope])
 }
 
 // ── Flagship 3a — the charge nurse per shift (docs/OFFLINE_NURSING_DESIGN.md §12.9) ──

@@ -24,6 +24,7 @@ import { ensurePrimaryMembership } from "../prisma/seedData/staffMembership";
 import { administerMedication, DoseLeasedError } from "../src/lib/hospital/medicationLifecycle";
 import { designateChargeNurse, issuePack, overrideLease, registerWardDevice, syncCommands } from "../src/lib/hospital/offline/service";
 import { tag } from "./lib/shareFixture";
+import { enableOfflineForGate } from "./lib/offlineFixture";
 
 const PUNE = "fac-amc-pune";
 const NOIDA = "fac-amc-noida";
@@ -71,6 +72,8 @@ async function main() {
   const d3 = await dose(para.id, 150);
   const dc = await dose(morphine.id, 30);
 
+  // Flagship 4e: the ward's offline mode on (with the sign-off) before any pack.
+  await enableOfflineForGate(admin, ward.id);
   const devA = await registerWardDevice(admin, { wardId: ward.id, label: `Tablet A ${tag}` });
   const devB = await registerWardDevice(admin, { wardId: ward.id, label: `Tablet B ${tag}` });
   const A = { userId: nurseA.userId, staffId: nurseA.staffId, facilityId: PUNE };

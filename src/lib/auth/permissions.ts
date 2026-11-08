@@ -60,6 +60,8 @@ export const PERMISSIONS = [
   // Flagship 3b — a facility's time zone: the hospital admin requests in writing; only platform staff decide.
   "facility:time-zone:request",
   "platform:facility:time-zone",
+  // Flagship 4e — recording (or revoking) the clinical advisor's sign-off of the offline rules: platform staff only.
+  "platform:clinical-sign-off:record",
   "medication:verify",
   "lab:result:enter",
   "lab:result:release",
@@ -1195,6 +1197,8 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "commercial:read",
     // Flagship 3b — only platform staff change a facility's time zone (at the hospital admin's written request).
     "platform:facility:time-zone",
+    // Flagship 4e — the clinical advisor's sign-off of the offline rules is recorded by platform staff.
+    "platform:clinical-sign-off:record",
     // Phase D6 — the platform operates the domain-event stream: inspect metrics,
     // dead letters, and perform controlled replay / dead-letter retry.
     "platform:events:operate",

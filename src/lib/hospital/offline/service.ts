@@ -8,6 +8,7 @@ import { administerMedicationTx, givePrnDoseTx, prnStanding, recordOfflineGivenT
 import { abnormalOf, recordIntakeOutputTx, recordVitalsTx, type VitalsInput } from "@/lib/hospital/clinicalRecords";
 import { closeTask } from "@/lib/hospital/task";
 import { assertFacilityNurse, currentChargeNurse } from "./chargeShift";
+import { assertWardOffline } from "./switch";
 
 /**
  * Flagship 2, step 5 — offline nursing, phase 1: the server side
@@ -154,6 +155,8 @@ async function packHours(facilityId: string): Promise<number> {
 export async function issuePack(nurse: NurseActor, body: { deviceId?: unknown; deviceClock?: unknown }, opts: { now?: Date } = {}) {
   const now = opts.now ?? new Date();
   const device = await activeDevice(nurse.facilityId, body.deviceId);
+  // Flagship 4e: no pack while the ward's offline mode is off (the sign-off of §6 first).
+  await assertWardOffline(device.wardId);
   const deviceClock = typeof body.deviceClock === "string" ? Date.parse(body.deviceClock) : NaN;
   const clockOffsetMs = Number.isFinite(deviceClock) ? Math.max(-86_400_000, Math.min(86_400_000, now.getTime() - deviceClock)) : 0;
   const expiresAt = new Date(now.getTime() + (await packHours(nurse.facilityId)) * 3_600_000);
@@ -251,6 +254,7 @@ export async function issuePack(nurse: NurseActor, body: { deviceId?: unknown; d
 export async function renewLeases(nurse: NurseActor, body: { deviceId?: unknown; packId?: unknown }, opts: { now?: Date } = {}) {
   const now = opts.now ?? new Date();
   const device = await activeDevice(nurse.facilityId, body.deviceId);
+  await assertWardOffline(device.wardId);
   const pack = typeof body.packId === "string" ? await prisma.wardPack.findUnique({ where: { id: body.packId } }) : null;
   if (!pack || pack.deviceId !== device.id) throw new NotFoundError("Pack not found.");
   const expiresAt = new Date(now.getTime() + (await packHours(nurse.facilityId)) * 3_600_000);

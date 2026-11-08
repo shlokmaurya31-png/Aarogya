@@ -29,6 +29,7 @@ import { ensurePrimaryMembership } from "../prisma/seedData/staffMembership";
 import { createMedicationOrder, givePrnDose, PrnLimitError } from "../src/lib/hospital/medicationLifecycle";
 import { designateChargeNurse, issuePack, registerWardDevice, syncCommands } from "../src/lib/hospital/offline/service";
 import { tag } from "./lib/shareFixture";
+import { enableOfflineForGate } from "./lib/offlineFixture";
 
 const PUNE = "fac-amc-pune";
 const NOIDA = "fac-amc-noida";
@@ -89,6 +90,8 @@ async function main() {
   const taskB = await prisma.task.create({ data: { facilityId: PUNE, title: "Check the drain", type: "GENERAL", source: "MANUAL", patientId: mine.patientId, encounterId: mine.encounterId } });
   await prisma.vital.create({ data: { encounterId: mine.encounterId, recordedByStaffId: nurse.staffId, hr: 80, recordedAt: at(-120) } });
 
+  // Flagship 4e: the ward's offline mode on (with the sign-off) before any pack.
+  await enableOfflineForGate(admin, ward.id);
   const devA = await registerWardDevice(admin, { wardId: ward.id, label: `P2 tablet A ${tag}` });
   const devB = await registerWardDevice(admin, { wardId: ward.id, label: `P2 tablet B ${tag}` });
   const N = { userId: nurse.userId, staffId: nurse.staffId, facilityId: PUNE };

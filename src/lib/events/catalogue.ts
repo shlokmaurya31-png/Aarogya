@@ -1844,6 +1844,22 @@ export const EVENT_CONTRACTS: EventContract[] = [
       severity: z.enum(["WARNING", "CRITICAL"]), taskId: id,
     }).strict(),
   }),
+  // Flagship 4e — offline mode per ward, behind the clinical advisor's sign-off (§6).
+  contract({
+    type: "ClinicalSignOffRecorded", version: 1, aggregateType: "CLINICAL_SIGN_OFF", scope: "PLATFORM",
+    sensitivity: "LOW", producer: "offline nursing (recordClinicalSignOff: platform staff record the advisor's sign-off; the name and reference are audited)",
+    payload: z.object({ signOffId: id, scope: z.string().min(1) }).strict(),
+  }),
+  contract({
+    type: "ClinicalSignOffRevoked", version: 1, aggregateType: "CLINICAL_SIGN_OFF", scope: "PLATFORM",
+    sensitivity: "LOW", producer: "offline nursing (revokeClinicalSignOff: every ward's offline mode turns off)",
+    payload: z.object({ signOffId: id, scope: z.string().min(1), wardsTurnedOff: count }).strict(),
+  }),
+  contract({
+    type: "WardOfflineModeChanged", version: 1, aggregateType: "WARD", scope: "FACILITY",
+    sensitivity: "LOW", producer: "offline nursing (setWardOfflineMode: the hospital admin, on only with the sign-off; or off when the sign-off is revoked)",
+    payload: z.object({ wardId: id, enabled: z.boolean(), cause: z.enum(["HOSPITAL_ADMIN", "SIGN_OFF_REVOKED"]), signOffId: optId }).strict(),
+  }),
   // Flagship 4b — the charge nurse's queue and the 15-minute escalation.
   contract({
     type: "OfflineConflictResolved", version: 1, aggregateType: "OFFLINE_CONFLICT", scope: "FACILITY",

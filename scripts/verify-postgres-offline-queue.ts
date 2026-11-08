@@ -22,6 +22,7 @@ import { issuePack, overrideLease, registerWardDevice, syncCommands } from "../s
 import { assignChargeShift } from "../src/lib/hospital/offline/chargeShift";
 import { confirmOverride, conflictQueue, escalateOfflineConflicts, resolveConflict } from "../src/lib/hospital/offline/queue";
 import { tag } from "./lib/shareFixture";
+import { enableOfflineForGate } from "./lib/offlineFixture";
 
 const PUNE = "fac-amc-pune";
 const NOIDA = "fac-amc-noida";
@@ -65,6 +66,8 @@ async function main() {
   const enc2 = await prisma.encounter.create({ data: { patientId: other2.id, facilityId: PUNE, type: "IPD", status: "ADMITTED" } });
   const order = await prisma.medicationOrder.create({ data: { encounterId: enc.id, patientId: p.id, drugName: "Paracetamol", dose: "1 g", route: "ORAL", frequency: "QDS", orderedByStaffId: doctor.staffId, status: "ACTIVE" } });
   const dose = await prisma.medicationAdministration.create({ data: { medicationOrderId: order.id, scheduledAt: at(30), status: "DUE" } });
+  // Flagship 4e: the ward's offline mode on (with the sign-off) before any pack.
+  await enableOfflineForGate(admin, ward.id);
   const dev = await registerWardDevice(admin, { wardId: ward.id, label: `Queue tablet ${tag}` });
   const N = { userId: nurse.userId, staffId: nurse.staffId, facilityId: PUNE };
   const C = { userId: charge.userId, staffId: charge.staffId, facilityId: PUNE };

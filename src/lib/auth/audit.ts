@@ -42,6 +42,10 @@ export type AuditEventType =
   // Flagship 2, step 5 — offline nursing (a pack is a read of each patient's record; a takeover keeps its reason).
   | "hospital.offline.pack.issued"
   | "hospital.offline.lease.overridden"
+  // Flagship 4e — the clinical sign-off (platform staff) and each ward's offline mode (hospital admin).
+  | "platform.clinical-sign-off.recorded"
+  | "platform.clinical-sign-off.revoked"
+  | "hospital.offline.ward-mode.changed"
   // Flagship 4b — the charge nurse's queue: each resolution and confirmation with its reason.
   | "hospital.offline.conflict.resolved"
   | "hospital.offline.lease.override.confirmed"
