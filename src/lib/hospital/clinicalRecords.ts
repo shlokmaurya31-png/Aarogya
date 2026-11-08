@@ -33,37 +33,47 @@ export interface VitalsInput {
 
 /** Records a vitals set. `abnormal` (facility-configured thresholds only) is a flag on the event, never the values. */
 export async function recordVitals(input: { encounterId: string; facilityId: string; staffId: string; vitals: VitalsInput; byUserId: string }): Promise<{ vital: Prisma.VitalGetPayload<object>; abnormal: AbnormalVital[] }> {
-  const v = input.vitals;
-  const abnormal = await findAbnormalVitals(input.facilityId, { hr: v.hr ?? null, sbp: v.sbp ?? null, dbp: v.dbp ?? null, rr: v.rr ?? null, spo2: v.spo2 ?? null, tempC: v.tempC ?? null });
-  const vital = await prisma.$transaction(async (tx) => {
-    const enc = await encounterIn(tx, input.encounterId, input.facilityId);
-    const created = await tx.vital.create({
-      data: {
-        encounterId: enc.id, recordedByStaffId: input.staffId, hr: v.hr, sbp: v.sbp, dbp: v.dbp, rr: v.rr, spo2: v.spo2, tempC: v.tempC,
-        painScore: v.painScore, consciousness: v.consciousness, o2DeliveryMethod: v.o2DeliveryMethod, o2FlowRate: v.o2FlowRate,
-      },
-    });
-    await emitFacilityEvent(tx, {
-      type: "ObservationRecorded", aggregateId: created.id, facilityId: enc.facilityId, encounterId: enc.id, actorUserId: input.byUserId,
-      payload: { observationId: created.id, encounterId: enc.id, patientId: enc.patientId, observationKind: "VITALS", abnormal: abnormal.length > 0 },
-    });
-    return created;
-  });
+  const abnormal = await abnormalOf(input.facilityId, input.vitals);
+  const vital = await prisma.$transaction((tx) => recordVitalsTx(tx, input, abnormal));
   return { vital, abnormal };
 }
 
-export async function recordIntakeOutput(input: { encounterId: string; facilityId: string; staffId: string; ioType: "INPUT" | "OUTPUT"; category: string; quantityMl: number; notes?: string; byUserId: string }) {
-  return prisma.$transaction(async (tx) => {
-    const enc = await encounterIn(tx, input.encounterId, input.facilityId);
-    const record = await tx.intakeOutputRecord.create({
-      data: { encounterId: enc.id, facilityId: input.facilityId, ioType: input.ioType, category: input.category, quantityMl: input.quantityMl, recordedByStaffId: input.staffId, notes: input.notes },
-    });
-    await emitFacilityEvent(tx, {
-      type: "ObservationRecorded", aggregateId: record.id, facilityId: enc.facilityId, encounterId: enc.id, actorUserId: input.byUserId,
-      payload: { observationId: record.id, encounterId: enc.id, patientId: enc.patientId, observationKind: input.ioType === "INPUT" ? "INTAKE" : "OUTPUT" },
-    });
-    return record;
+export function abnormalOf(facilityId: string, v: VitalsInput) {
+  return findAbnormalVitals(facilityId, { hr: v.hr ?? null, sbp: v.sbp ?? null, dbp: v.dbp ?? null, rr: v.rr ?? null, spo2: v.spo2 ?? null, tempC: v.tempC ?? null });
+}
+
+/** The vitals set inside the caller's transaction (Flagship 4a: an offline set keeps the time it was measured). */
+export async function recordVitalsTx(tx: Tx, input: { encounterId: string; facilityId: string; staffId: string; vitals: VitalsInput; byUserId: string; recordedAt?: Date }, abnormal: AbnormalVital[]) {
+  const v = input.vitals;
+  const enc = await encounterIn(tx, input.encounterId, input.facilityId);
+  const created = await tx.vital.create({
+    data: {
+      encounterId: enc.id, recordedByStaffId: input.staffId, hr: v.hr, sbp: v.sbp, dbp: v.dbp, rr: v.rr, spo2: v.spo2, tempC: v.tempC,
+      painScore: v.painScore, consciousness: v.consciousness, o2DeliveryMethod: v.o2DeliveryMethod, o2FlowRate: v.o2FlowRate, ...(input.recordedAt ? { recordedAt: input.recordedAt } : {}),
+    },
   });
+  await emitFacilityEvent(tx, {
+    type: "ObservationRecorded", aggregateId: created.id, facilityId: enc.facilityId, encounterId: enc.id, actorUserId: input.byUserId,
+    payload: { observationId: created.id, encounterId: enc.id, patientId: enc.patientId, observationKind: "VITALS", abnormal: abnormal.length > 0 },
+  });
+  return created;
+}
+
+export async function recordIntakeOutput(input: { encounterId: string; facilityId: string; staffId: string; ioType: "INPUT" | "OUTPUT"; category: string; quantityMl: number; notes?: string; byUserId: string }) {
+  return prisma.$transaction((tx) => recordIntakeOutputTx(tx, input));
+}
+
+/** One intake or output entry inside the caller's transaction (Flagship 4a: an offline one keeps its time). */
+export async function recordIntakeOutputTx(tx: Tx, input: { encounterId: string; facilityId: string; staffId: string; ioType: "INPUT" | "OUTPUT"; category: string; quantityMl: number; notes?: string; byUserId: string; recordedAt?: Date }) {
+  const enc = await encounterIn(tx, input.encounterId, input.facilityId);
+  const record = await tx.intakeOutputRecord.create({
+    data: { encounterId: enc.id, facilityId: input.facilityId, ioType: input.ioType, category: input.category, quantityMl: input.quantityMl, recordedByStaffId: input.staffId, notes: input.notes, ...(input.recordedAt ? { recordedAt: input.recordedAt } : {}) },
+  });
+  await emitFacilityEvent(tx, {
+    type: "ObservationRecorded", aggregateId: record.id, facilityId: enc.facilityId, encounterId: enc.id, actorUserId: input.byUserId,
+    payload: { observationId: record.id, encounterId: enc.id, patientId: enc.patientId, observationKind: input.ioType === "INPUT" ? "INTAKE" : "OUTPUT" },
+  });
+  return record;
 }
 
 // ── Diagnoses ───────────────────────────────────────────────────────────────

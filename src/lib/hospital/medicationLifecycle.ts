@@ -143,12 +143,20 @@ export async function createMedicationOrder(input: {
   timing?: string;
   prn?: boolean;
   prnReason?: string;
+  /** Flagship 4a: a PRN order's limits (both or neither) and the prescriber's "PRN offline allowed". */
+  prnMinIntervalMinutes?: number;
+  prnMaxDosesPer24h?: number;
+  prnOfflineAllowed?: boolean;
   specialInstructions?: string;
   indication?: string;
   isControlled?: boolean;
   overrideReason?: string;
   byUserId: string;
 }): Promise<{ blocked: true; flags: SafetyFlag[] } | { blocked: false; order: NonNullable<Awaited<ReturnType<typeof prisma.medicationOrder.findFirst>>>; flags: SafetyFlag[] }> {
+  const prnLimits = [input.prnMinIntervalMinutes, input.prnMaxDosesPer24h].filter((x) => x !== undefined && x !== null);
+  if (prnLimits.length === 1 || prnLimits.some((x) => !Number.isInteger(x) || (x as number) <= 0)) throw new BadPrnOrderError("A PRN order's minimum interval and maximum doses in 24 hours come together, as whole numbers above zero.");
+  if (prnLimits.length && !input.prn) throw new BadPrnOrderError("Only an as-needed (PRN) order has PRN limits.");
+  if (input.prnOfflineAllowed && prnLimits.length !== 2) throw new BadPrnOrderError("\"PRN offline allowed\" needs the minimum interval and the maximum doses in 24 hours.");
   const flags = await checkMedicationSafety(input.patientId, input.drugName, input.genericName, input.route, input.frequency);
   const hasDanger = flags.some((f) => f.severity === "danger");
   if (hasDanger && !input.overrideReason) {
@@ -185,6 +193,9 @@ export async function createMedicationOrder(input: {
         timing: input.timing,
         prn: input.prn ?? false,
         prnReason: input.prnReason,
+        prnMinIntervalMinutes: input.prnMinIntervalMinutes,
+        prnMaxDosesPer24h: input.prnMaxDosesPer24h,
+        prnOfflineAllowed: input.prnOfflineAllowed ?? false,
         specialInstructions: input.specialInstructions,
         indication: input.indication,
         isControlled: input.isControlled ?? false,
@@ -604,6 +615,75 @@ export async function recordOfflineGivenTx(tx: Tx, input: { forAdministrationId:
   await emitFacilityEvent(tx, { type: "MedicationAdministered", aggregateId: row.id, ...ctx, payload: { ...ids, administrationId: row.id } });
   return row;
 }
+
+// ── Flagship 4a — PRN (as-needed) doses, online and offline ─────────────────
+
+const DAY_MS = 86_400_000;
+export type PrnBreach = "MIN_INTERVAL" | "DAILY_MAX";
+
+/** A PRN dose would breach its order's limits (409 online; offline it is recorded and flagged). */
+export class PrnLimitError extends Error {
+  constructor(readonly breach: PrnBreach) {
+    super(breach === "MIN_INTERVAL" ? "Too soon after the last dose of this as-needed medicine (its minimum interval)." : "This as-needed medicine has reached its maximum doses in 24 hours.");
+  }
+}
+
+/**
+ * Where a PRN dose at `at` stands against its order's limits, by every GIVEN
+ * dose of the order (online or offline, before or after `at`): no other dose
+ * within the minimum interval either side, and at most the daily maximum in
+ * any 24 hours ending at `at` (this dose included). No limits: no breach.
+ */
+export async function prnStanding(db: Tx | typeof prisma, orderId: string, at: Date, opts: { excludeAdministrationId?: string } = {}) {
+  const order = await db.medicationOrder.findUniqueOrThrow({ where: { id: orderId }, select: { prnMinIntervalMinutes: true, prnMaxDosesPer24h: true } });
+  const given = await db.medicationAdministration.findMany({
+    where: { medicationOrderId: orderId, status: "GIVEN", administeredAt: { gt: new Date(at.getTime() - DAY_MS), lt: new Date(at.getTime() + DAY_MS) }, ...(opts.excludeAdministrationId ? { id: { not: opts.excludeAdministrationId } } : {}) },
+    select: { administeredAt: true },
+  });
+  const times = given.map((g) => g.administeredAt!.getTime());
+  const in24h = times.filter((t) => t > at.getTime() - DAY_MS && t <= at.getTime()).length;
+  let breach: PrnBreach | null = null;
+  if (order.prnMinIntervalMinutes && times.some((t) => Math.abs(t - at.getTime()) < order.prnMinIntervalMinutes! * 60_000)) breach = "MIN_INTERVAL";
+  else if (order.prnMaxDosesPer24h && in24h + 1 > order.prnMaxDosesPer24h) breach = "DAILY_MAX";
+  return { breach, givenIn24h: in24h, lastGivenAt: times.filter((t) => t <= at.getTime()).sort((a, b) => b - a)[0] ?? null };
+}
+
+/**
+ * One PRN dose as GIVEN at `administeredAt` (its own MAR row, the time it was
+ * given as its scheduled time), with MedicationAdministered. The caller has
+ * checked the order and the limits.
+ */
+export async function givePrnDoseTx(tx: Tx, input: { orderId: string; administeredByStaffId: string; administeredAt: Date; byUserId: string; witnessStaffId?: string; notes?: string; offline?: boolean }) {
+  const row = await tx.medicationAdministration.create({
+    data: {
+      medicationOrderId: input.orderId, scheduledAt: input.administeredAt, administeredAt: input.administeredAt, status: "GIVEN", administeredByStaffId: input.administeredByStaffId,
+      witnessStaffId: input.witnessStaffId, safetyChecksConfirmed: true, notes: input.notes, reasonCode: input.offline ? "prn-offline" : "prn",
+    },
+  });
+  await tx.auditEvent.create({ data: { type: "hospital.medication.administered", userId: input.byUserId, detail: { orderId: input.orderId, administrationId: row.id, status: "GIVEN", prn: true, ...(input.offline ? { offline: true } : {}) } } });
+  const { ids, ...ctx } = await orderEvent(tx, input.orderId, input.byUserId);
+  await emitFacilityEvent(tx, { type: "MedicationAdministered", aggregateId: row.id, ...ctx, payload: { ...ids, administrationId: row.id } });
+  return row;
+}
+
+/** Online: one PRN dose now, refused (PrnLimitError) when it would breach the order's limits. */
+export async function givePrnDose(input: { orderId: string; facilityId: string; administeredByStaffId: string; byUserId: string; witnessStaffId?: string; notes?: string }) {
+  return prisma.$transaction(async (tx) => {
+    // Serialise PRN doses of one order, so two nurses can't both pass the limit check.
+    await tx.$queryRaw`SELECT id FROM "MedicationOrder" WHERE id = ${input.orderId} FOR UPDATE`;
+    const order = await tx.medicationOrder.findUniqueOrThrow({ where: { id: input.orderId }, include: { encounter: { select: { facilityId: true } } } });
+    if (order.encounter.facilityId !== input.facilityId) throw new Error("Medication order not found.");
+    if (!order.prn) throw new BadPrnOrderError("This is not an as-needed (PRN) order.");
+    if (!(["ACTIVE", "DISPENSED"] as MedicationOrderStatus[]).includes(order.status)) throw new MedicationOrderNotActiveError(order.status);
+    if (order.isControlled && !input.witnessStaffId) throw new BadPrnOrderError("Controlled medication administration requires a witness co-sign.");
+    const now = new Date();
+    const standing = await prnStanding(tx, order.id, now);
+    if (standing.breach) throw new PrnLimitError(standing.breach);
+    return givePrnDoseTx(tx, { ...input, administeredAt: now });
+  });
+}
+
+export class BadPrnOrderError extends Error {}
 
 export async function acknowledgeSafetyWarning(warningId: string, staffId: string, byUserId: string, overrideReason?: string) {
   return prisma.$transaction(async (tx) => {

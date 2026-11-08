@@ -2719,6 +2719,11 @@ model MedicationOrder {
   stopAt                DateTime?
   prn                   Boolean   @default(false)
   prnReason             String?
+  /// Flagship 4a: a PRN order's limits (both, or neither), held online and offline.
+  prnMinIntervalMinutes Int?
+  prnMaxDosesPer24h     Int?
+  /// The prescriber's "PRN offline allowed" (design §6.2): only with both limits.
+  prnOfflineAllowed     Boolean   @default(false)
   specialInstructions   String?
   indication            String?
   isControlled          Boolean   @default(false)
@@ -12217,6 +12222,13 @@ enum OfflineCommandKind {
   DOSE_GIVEN
   DOSE_HELD
   DOSE_REFUSED
+  // Flagship 4a, phase 2.
+  VITALS
+  INTAKE_OUTPUT
+  TASK_COMPLETED
+  PRN_GIVEN
+  /// The device refused a PRN dose offline (minimum interval or daily maximum): a flag, no dose.
+  PRN_BREACH_REFUSED
 }
 
 enum OfflineCommandOutcome {
@@ -12235,6 +12247,15 @@ enum OfflineRefusalReason {
   /// The dose was no longer due (held or refused, recorded elsewhere).
   NOT_DUE
   UNKNOWN_DOSE
+  // Flagship 4a, phase 2.
+  /// The patient isn't assigned to this nurse (vitals, I/O, tasks, PRN).
+  NOT_ASSIGNED
+  /// The order isn't PRN, isn't marked "PRN offline allowed", has no limits, or isn't active.
+  PRN_NOT_OFFLINE
+  /// Values outside what a measurement can be (kept for review).
+  INVALID_VALUES
+  UNKNOWN_TASK
+  UNKNOWN_ENCOUNTER
 }
 
 enum OfflineConflictKind {
@@ -12245,6 +12266,13 @@ enum OfflineConflictKind {
   NOT_LEASED
   ONLINE_ONLY
   CLOCK_SUSPECT
+  // Flagship 4a, phase 2.
+  /// A PRN dose given offline breached the minimum interval or daily maximum by the server's record: CRITICAL.
+  PRN_LIMIT_BREACHED
+  /// The device refused a PRN dose offline for its limits (the charge nurse is told).
+  PRN_BREACH_ATTEMPT
+  /// A refused vitals, I/O, task or PRN command, kept for review.
+  REFUSED_RECORD
 }
 
 enum OfflineConflictSeverity {
@@ -12324,7 +12352,15 @@ model OfflineCommand {
   deviceId               String
   nurseStaffId           String
   kind                   OfflineCommandKind
-  administrationId       String
+  /// DOSE_*: the scheduled dose. Flagship 4a: null for the other kinds, which name their own target.
+  administrationId       String?
+  encounterId            String?
+  taskId                 String?
+  medicationOrderId      String?
+  /// VITALS / INTAKE_OUTPUT / PRN: what the device recorded, kept as sent (a refused one is reviewed from it).
+  payload                Json?
+  /// TASK_COMPLETED: "also done by …", or done after it was cancelled.
+  note                   String?
   /// The time on the device, and that time corrected by the pack's clock offset (or the receipt time when suspect).
   deviceTime             DateTime
   appliedTime            DateTime
@@ -12347,7 +12383,9 @@ model OfflineConflict {
   facilityId       String
   command          OfflineCommand          @relation(fields: [commandId], references: [id])
   commandId        String
-  administrationId String
+  /// Flagship 4a: null for a conflict that isn't about a scheduled dose.
+  administrationId String?
+  patientId        String?
   kind             OfflineConflictKind
   severity         OfflineConflictSeverity
   status           OfflineConflictStatus   @default(OPEN)

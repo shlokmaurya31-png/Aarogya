@@ -1,10 +1,12 @@
-import type { DoseLease, MedicationAdministration, MedicationOrder, OfflineCommand, OfflineConflictKind, OfflineConflictSeverity, OfflineRefusalReason, Prisma } from "@prisma/client";
+import type { DoseLease, MedicationOrder, OfflineCommand, OfflineConflictKind, OfflineConflictSeverity, OfflineRefusalReason, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { BadRequestError, ConflictError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 import { createTask } from "@/lib/hospital/task";
-import { administerMedicationTx, recordOfflineGivenTx } from "@/lib/hospital/medicationLifecycle";
+import { administerMedicationTx, givePrnDoseTx, prnStanding, recordOfflineGivenTx } from "@/lib/hospital/medicationLifecycle";
+import { abnormalOf, recordIntakeOutputTx, recordVitalsTx, type VitalsInput } from "@/lib/hospital/clinicalRecords";
+import { closeTask } from "@/lib/hospital/task";
 import { assertFacilityNurse, currentChargeNurse } from "./chargeShift";
 
 /**
@@ -195,6 +197,20 @@ export async function issuePack(nurse: NurseActor, body: { deviceId?: unknown; d
     select: { patientId: true, bed: { select: { label: true } }, patient: { select: { fullName: true, uhid: true, _count: { select: { allergies: true } } } } },
     take: 200,
   });
+  // Flagship 4a: PRN orders (with their limits and the doses given in the last 24 hours, so the device can hold them), open tasks, and the last 24 hours of vitals and I/O.
+  const prnOrders = await prisma.medicationOrder.findMany({
+    where: { patientId: { in: patientIds }, prn: true, status: { in: ["ACTIVE", "DISPENSED"] }, encounter: { facilityId: nurse.facilityId } },
+    select: { id: true, patientId: true, drugName: true, dose: true, route: true, isControlled: true, prnReason: true, prnOfflineAllowed: true, prnMinIntervalMinutes: true, prnMaxDosesPer24h: true,
+      administrations: { where: { status: "GIVEN", administeredAt: { gt: new Date(now.getTime() - 86_400_000) } }, select: { administeredAt: true }, orderBy: { administeredAt: "asc" } } },
+  });
+  const prnOnlineOnly = await onlineOnlyOrders(nurse.facilityId, prnOrders);
+  const encounterIds = assignments.map((a) => a.encounterId).filter((x): x is string => !!x);
+  const since = new Date(now.getTime() - 86_400_000);
+  const [tasks, vitals, io] = await Promise.all([
+    prisma.task.findMany({ where: { facilityId: nurse.facilityId, patientId: { in: patientIds }, status: { in: ["OPEN", "ASSIGNED", "IN_PROGRESS"] } }, select: { id: true, patientId: true, title: true, priority: true, dueAt: true }, orderBy: [{ dueAt: "asc" }, { id: "asc" }], take: 400 }),
+    prisma.vital.findMany({ where: { encounterId: { in: encounterIds }, recordedAt: { gt: since } }, select: { encounterId: true, recordedAt: true, hr: true, sbp: true, dbp: true, rr: true, spo2: true, tempC: true }, orderBy: { recordedAt: "desc" }, take: 12 * Math.max(1, encounterIds.length) }),
+    prisma.intakeOutputRecord.findMany({ where: { encounterId: { in: encounterIds }, recordedAt: { gt: since } }, select: { encounterId: true, recordedAt: true, ioType: true, category: true, quantityMl: true }, orderBy: { recordedAt: "desc" }, take: 24 * Math.max(1, encounterIds.length) }),
+  ]);
   const drugNames = [...new Set(doses.map((d) => d.medicationOrder.drugName))];
   const formulary = await prisma.item.findMany({
     where: { OR: [{ facilityId: nurse.facilityId }, { facilityId: null }], barcode: { not: null }, AND: [{ OR: [{ name: { in: drugNames, mode: "insensitive" } }, { genericName: { in: drugNames, mode: "insensitive" } }] }] },
@@ -205,13 +221,23 @@ export async function issuePack(nurse: NurseActor, body: { deviceId?: unknown; d
     patients: patients.map((p) => {
       const a = assignments.find((x) => x.patientId === p.id);
       return {
-        patientId: p.id, name: p.fullName, uhid: p.uhid, bed: a?.bed?.label ?? null, allergies: p.allergies,
+        patientId: p.id, name: p.fullName, uhid: p.uhid, bed: a?.bed?.label ?? null, allergies: p.allergies, encounterId: a?.encounterId ?? null,
         doses: doses.filter((d) => d.medicationOrder.patientId === p.id).map((d) => ({
           administrationId: d.id, orderId: d.medicationOrderId, drugName: d.medicationOrder.drugName, dose: d.medicationOrder.dose, route: d.medicationOrder.route,
           scheduledAt: d.scheduledAt.toISOString(), onlineOnly: onlineOnly.has(d.medicationOrderId), leaseId: leaseByDose.get(d.id) ?? null,
           /** Givable offline on this device only when it holds the lease. */
           givableOffline: leaseByDose.has(d.id),
         })),
+        /** PRN offline only when the prescriber allowed it, with both limits, and not online-only (design §6.2). */
+        prn: prnOrders.filter((o) => o.patientId === p.id).map((o) => ({
+          orderId: o.id, drugName: o.drugName, dose: o.dose, route: o.route, reason: o.prnReason, minIntervalMinutes: o.prnMinIntervalMinutes, maxPer24h: o.prnMaxDosesPer24h,
+          onlineOnly: prnOnlineOnly.has(o.id),
+          givableOffline: o.prnOfflineAllowed && o.prnMinIntervalMinutes !== null && o.prnMaxDosesPer24h !== null && !prnOnlineOnly.has(o.id),
+          givenAt: o.administrations.map((x) => x.administeredAt!.toISOString()),
+        })),
+        tasks: tasks.filter((t) => t.patientId === p.id).map((t) => ({ taskId: t.id, title: t.title, priority: t.priority, dueAt: t.dueAt?.toISOString() ?? null })),
+        vitals: vitals.filter((v) => v.encounterId === a?.encounterId).slice(0, 12).map(({ encounterId: _e, recordedAt, ...v }) => ({ recordedAt: recordedAt.toISOString(), ...v })),
+        io: io.filter((x) => x.encounterId === a?.encounterId).slice(0, 24).map((x) => ({ recordedAt: x.recordedAt.toISOString(), ioType: x.ioType, category: x.category, quantityMl: x.quantityMl })),
       };
     }),
     /** The rest of the ward, read-only: never givable here (decided §12.3). */
@@ -267,10 +293,21 @@ export async function overrideLease(nurse: NurseActor, body: { administrationId?
 
 // ── Sync ─────────────────────────────────────────────────────────────────────
 
-export interface SyncCommandInput { clientOperationId?: unknown; kind?: unknown; administrationId?: unknown; deviceTime?: unknown; reasonCode?: unknown }
-export interface SyncResult { clientOperationId: string; outcome: OfflineCommand["outcome"]; refusalReason: OfflineRefusalReason | null; conflicts: { kind: OfflineConflictKind; severity: OfflineConflictSeverity }[]; replayed: boolean }
+export interface SyncCommandInput {
+  clientOperationId?: unknown; kind?: unknown; deviceTime?: unknown; reasonCode?: unknown;
+  /** DOSE_*: the scheduled dose. */
+  administrationId?: unknown;
+  /** VITALS, INTAKE_OUTPUT: the encounter, and the values. */
+  encounterId?: unknown; vitals?: unknown; ioType?: unknown; category?: unknown; quantityMl?: unknown; notes?: unknown;
+  /** TASK_COMPLETED. */
+  taskId?: unknown;
+  /** PRN_GIVEN, PRN_BREACH_REFUSED (with the breach the device refused). */
+  medicationOrderId?: unknown; breach?: unknown;
+}
+export interface SyncResult { clientOperationId: string; outcome: OfflineCommand["outcome"]; refusalReason: OfflineRefusalReason | null; conflicts: { kind: OfflineConflictKind; severity: OfflineConflictSeverity }[]; replayed: boolean; note?: string | null }
 
-const KINDS = ["DOSE_GIVEN", "DOSE_HELD", "DOSE_REFUSED"] as const;
+const DOSE_KINDS = ["DOSE_GIVEN", "DOSE_HELD", "DOSE_REFUSED"] as const;
+const RECORD_KINDS = ["VITALS", "INTAKE_OUTPUT", "TASK_COMPLETED", "PRN_GIVEN", "PRN_BREACH_REFUSED"] as const;
 
 /**
  * Applies the device's commands in the order sent. Each is one transaction:
@@ -302,93 +339,25 @@ export async function syncCommands(nurse: NurseActor, body: { deviceId?: unknown
 
 async function stored(facilityId: string, clientOperationId: string): Promise<SyncResult | null> {
   const c = await prisma.offlineCommand.findUnique({ where: { facilityId_clientOperationId: { facilityId, clientOperationId } }, include: { conflicts: { select: { kind: true, severity: true } } } });
-  return c ? { clientOperationId, outcome: c.outcome, refusalReason: c.refusalReason, conflicts: c.conflicts, replayed: true } : null;
+  return c ? { clientOperationId, outcome: c.outcome, refusalReason: c.refusalReason, conflicts: c.conflicts, replayed: true, note: c.note } : null;
 }
+
+/** Who must look at a conflict, and about whom. */
+interface ConflictSubject { patientId: string | null; encounterId: string | null; prescriberStaffId: string | null; administrationId: string | null }
 
 async function applyCommand(nurse: NurseActor, device: { id: string; wardId: string }, raw: SyncCommandInput, now: Date): Promise<SyncResult> {
   const clientOperationId = typeof raw.clientOperationId === "string" ? raw.clientOperationId.trim() : "";
   if (!/^[A-Za-z0-9-]{8,100}$/.test(clientOperationId)) throw new BadRequestError("Each command needs a clientOperationId (8–100 letters, digits or dashes).");
   const again = await stored(nurse.facilityId, clientOperationId);
   if (again) return again;
-  const kind = KINDS.find((k) => k === raw.kind);
   const deviceMs = typeof raw.deviceTime === "string" ? Date.parse(raw.deviceTime) : NaN;
-  if (!kind || typeof raw.administrationId !== "string" || !Number.isFinite(deviceMs)) throw new BadRequestError("Each command needs a kind, an administrationId and a deviceTime.");
-  const reasonCode = typeof raw.reasonCode === "string" ? raw.reasonCode.trim().slice(0, 60) || undefined : undefined;
-
-  const admin = await prisma.medicationAdministration.findUnique({ where: { id: raw.administrationId }, include: { medicationOrder: { select: { id: true, drugName: true, isControlled: true, status: true, patientId: true, encounterId: true, orderedByStaffId: true, encounter: { select: { facilityId: true } } } } } });
-  const lease = admin ? await prisma.doseLease.findFirst({ where: { administrationId: admin.id, deviceId: device.id }, orderBy: { grantedAt: "desc" }, include: { pack: { select: { clockOffsetMs: true } } } }) : null;
-  const corrected = deviceMs + (lease?.pack.clockOffsetMs ?? 0);
-  const clockSuspect = corrected > now.getTime() + CLOCK_FUTURE_SLACK_MS || corrected < now.getTime() - CLOCK_PAST_LIMIT_MS;
-  const appliedTime = new Date(clockSuspect ? now.getTime() : corrected);
-  const base = { facilityId: nurse.facilityId, clientOperationId, deviceId: device.id, nurseStaffId: nurse.staffId, kind, administrationId: raw.administrationId, deviceTime: new Date(deviceMs), appliedTime, receivedAt: now, reasonCode };
-
+  if (!Number.isFinite(deviceMs)) throw new BadRequestError("Each command needs a deviceTime.");
   try {
-    return await prisma.$transaction(async (tx) => {
-      const conflicts: { kind: OfflineConflictKind; severity: OfflineConflictSeverity }[] = [];
-      const record = async (outcome: OfflineCommand["outcome"], refusalReason: OfflineRefusalReason | null, resultAdministrationId: string | null) => {
-        const c = await tx.offlineCommand.create({ data: { ...base, outcome, refusalReason, resultAdministrationId } });
-        await emitFacilityEvent(tx, {
-          type: "OfflineCommandRecorded", aggregateId: c.id, facilityId: nurse.facilityId, actorUserId: nurse.userId, encounterId: admin?.medicationOrder.encounterId,
-          payload: { commandId: c.id, deviceId: device.id, administrationId: c.administrationId, kind, outcome, ...(refusalReason ? { refusalReason } : {}), ...(resultAdministrationId ? { resultAdministrationId } : {}) },
-        });
-        return c;
-      };
-      const conflict = async (c: OfflineCommand, k: OfflineConflictKind, severity: OfflineConflictSeverity) => {
-        conflicts.push({ kind: k, severity });
-        await raiseConflictTx(tx, nurse, device, c, admin, k, severity, now);
-      };
-      const finish = (c: OfflineCommand): SyncResult => ({ clientOperationId, outcome: c.outcome, refusalReason: c.refusalReason, conflicts, replayed: false });
-
-      // Unknown, or another facility's dose: refused (and nothing about it is revealed).
-      if (!admin || admin.medicationOrder.encounter.facilityId !== nurse.facilityId) return finish(await record("REFUSED", "UNKNOWN_DOSE", null));
-      const given = kind === "DOSE_GIVEN";
-      const status = kind === "DOSE_GIVEN" ? "GIVEN" : kind === "DOSE_HELD" ? "HELD" : "REFUSED";
-
-      // Controlled and high-alert medicines are never given offline.
-      if ((await onlineOnlyOrders(nurse.facilityId, [admin.medicationOrder])).has(admin.medicationOrderId)) {
-        const c = await record("REFUSED", "ONLINE_ONLY", null);
-        if (given) await conflict(c, "ONLINE_ONLY", "WARNING");
-        return finish(c);
-      }
-      // A lease the device held when it recorded the dose, or none at all.
-      if (!lease) {
-        const c = await record("REFUSED", "NOT_LEASED", null);
-        if (given) await conflict(c, "NOT_LEASED", "WARNING");
-        return finish(c);
-      }
-      const leaseEndMs = Math.min(lease.expiresAt.getTime(), lease.status === "EXPIRED" && lease.endedAt ? lease.endedAt.getTime() : Infinity);
-      const overridden = lease.status === "OVERRIDDEN";
-      if (!overridden && (lease.status === "EXPIRED" || appliedTime.getTime() > leaseEndMs)) {
-        const c = await record("REFUSED", "LEASE_EXPIRED", null);
-        if (given) await conflict(c, "LEASE_EXPIRED", "WARNING");
-        return finish(c);
-      }
-
-      const swept = admin.status === "MISSED" && admin.reasonCode === "not-recorded";
-      if (admin.status === "DUE" || swept) {
-        const orderActive = ["ACTIVE", "DISPENSED"].includes(admin.medicationOrder.status);
-        const result = await administerMedicationTx(tx, {
-          administrationId: admin.id, status, administeredByStaffId: nurse.staffId, safetyChecksConfirmed: true, reasonCode, byUserId: nurse.userId,
-          administeredAt: appliedTime, offline: { leaseId: lease.id, allowInactiveOrder: given },
-        });
-        if (lease.status === "ACTIVE") await tx.doseLease.updateMany({ where: { id: lease.id, status: "ACTIVE" }, data: { status: "RELEASED", endedAt: now } });
-        const hasConflict = overridden || (given && !orderActive) || clockSuspect;
-        const c = await record(hasConflict ? "APPLIED_WITH_CONFLICT" : "APPLIED", null, result.id);
-        if (overridden) await conflict(c, "LEASE_OVERRIDDEN", "WARNING");
-        if (given && !orderActive) await conflict(c, "ORDER_CHANGED", "WARNING");
-        if (clockSuspect) await conflict(c, "CLOCK_SUSPECT", "WARNING");
-        return finish(c);
-      }
-      // The dose is no longer due. Held or refused: nothing to apply.
-      if (!given) return finish(await record("REFUSED", "NOT_DUE", null));
-      // Given offline, but given, held or cancelled meanwhile: the dose was given, so it is recorded, and flagged.
-      const second = await recordOfflineGivenTx(tx, { forAdministrationId: admin.id, administeredByStaffId: nurse.staffId, administeredAt: appliedTime, byUserId: nurse.userId });
-      const c = await record("APPLIED_WITH_CONFLICT", null, second.id);
-      if (admin.status === "GIVEN") await conflict(c, "POSSIBLE_DOUBLE_DOSE", "CRITICAL");
-      else await conflict(c, "ORDER_CHANGED", "WARNING");
-      if (clockSuspect) await conflict(c, "CLOCK_SUSPECT", "WARNING");
-      return finish(c);
-    });
+    const dose = DOSE_KINDS.find((k) => k === raw.kind);
+    if (dose) return await applyDoseCommand(nurse, device, raw, clientOperationId, dose, deviceMs, now);
+    const record = RECORD_KINDS.find((k) => k === raw.kind);
+    if (record) return await applyRecordCommand(nurse, device, raw, clientOperationId, record, deviceMs, now);
+    throw new BadRequestError(`Unknown command kind. One of: ${[...DOSE_KINDS, ...RECORD_KINDS].join(", ")}.`);
   } catch (e) {
     // The same operation id sent twice at once: the other one won; answer what it recorded.
     if ((e as { code?: string }).code === "P2002") {
@@ -399,45 +368,278 @@ async function applyCommand(nurse: NurseActor, device: { id: string; wardId: str
   }
 }
 
+function clockOf(deviceMs: number, offsetMs: number, now: Date) {
+  const corrected = deviceMs + offsetMs;
+  const clockSuspect = corrected > now.getTime() + CLOCK_FUTURE_SLACK_MS || corrected < now.getTime() - CLOCK_PAST_LIMIT_MS;
+  return { clockSuspect, appliedTime: new Date(clockSuspect ? now.getTime() : corrected) };
+}
+
+type CommandBase = Omit<Prisma.OfflineCommandUncheckedCreateInput, "outcome" | "refusalReason" | "resultAdministrationId" | "note">;
+
+/** The command row with its event, and each conflict with its task: the shared tail of every command's transaction. */
+function recorder(tx: Tx, nurse: NurseActor, device: { id: string; wardId: string }, base: CommandBase, subject: ConflictSubject, now: Date) {
+  const conflicts: { kind: OfflineConflictKind; severity: OfflineConflictSeverity }[] = [];
+  return {
+    conflicts,
+    record: async (outcome: OfflineCommand["outcome"], refusalReason: OfflineRefusalReason | null, resultAdministrationId: string | null, extra: { note?: string } = {}) => {
+      const c = await tx.offlineCommand.create({ data: { ...base, outcome, refusalReason, resultAdministrationId, note: extra.note } });
+      await emitFacilityEvent(tx, {
+        type: "OfflineCommandRecorded", aggregateId: c.id, facilityId: nurse.facilityId, actorUserId: nurse.userId, encounterId: subject.encounterId,
+        payload: {
+          commandId: c.id, deviceId: device.id, kind: c.kind, outcome,
+          ...(c.administrationId ? { administrationId: c.administrationId } : {}), ...(c.encounterId ? { encounterId: c.encounterId } : {}),
+          ...(c.taskId ? { taskId: c.taskId } : {}), ...(c.medicationOrderId ? { medicationOrderId: c.medicationOrderId } : {}),
+          ...(refusalReason ? { refusalReason } : {}), ...(resultAdministrationId ? { resultAdministrationId } : {}),
+        },
+      });
+      return c;
+    },
+    conflict: async (c: OfflineCommand, kind: OfflineConflictKind, severity: OfflineConflictSeverity) => {
+      conflicts.push({ kind, severity });
+      await raiseConflictTx(tx, nurse, device, c, subject, kind, severity, now);
+    },
+    finish: (c: OfflineCommand): SyncResult => ({ clientOperationId: c.clientOperationId, outcome: c.outcome, refusalReason: c.refusalReason, conflicts, replayed: false, note: c.note }),
+  };
+}
+
+async function applyDoseCommand(nurse: NurseActor, device: { id: string; wardId: string }, raw: SyncCommandInput, clientOperationId: string, kind: (typeof DOSE_KINDS)[number], deviceMs: number, now: Date): Promise<SyncResult> {
+  if (typeof raw.administrationId !== "string") throw new BadRequestError("A dose command needs an administrationId.");
+  const reasonCode = typeof raw.reasonCode === "string" ? raw.reasonCode.trim().slice(0, 60) || undefined : undefined;
+  const admin = await prisma.medicationAdministration.findUnique({ where: { id: raw.administrationId }, include: { medicationOrder: { select: { id: true, drugName: true, isControlled: true, status: true, patientId: true, encounterId: true, orderedByStaffId: true, encounter: { select: { facilityId: true } } } } } });
+  const lease = admin ? await prisma.doseLease.findFirst({ where: { administrationId: admin.id, deviceId: device.id }, orderBy: { grantedAt: "desc" }, include: { pack: { select: { clockOffsetMs: true } } } }) : null;
+  const { clockSuspect, appliedTime } = clockOf(deviceMs, lease?.pack.clockOffsetMs ?? 0, now);
+  const ours = admin && admin.medicationOrder.encounter.facilityId === nurse.facilityId;
+  const base = { facilityId: nurse.facilityId, clientOperationId, deviceId: device.id, nurseStaffId: nurse.staffId, kind, administrationId: raw.administrationId, deviceTime: new Date(deviceMs), appliedTime, receivedAt: now, reasonCode, ...(ours ? { encounterId: admin.medicationOrder.encounterId, medicationOrderId: admin.medicationOrderId } : {}) };
+  const subject: ConflictSubject = ours ? { patientId: admin.medicationOrder.patientId, encounterId: admin.medicationOrder.encounterId, prescriberStaffId: admin.medicationOrder.orderedByStaffId, administrationId: admin.id } : { patientId: null, encounterId: null, prescriberStaffId: null, administrationId: raw.administrationId };
+
+  return prisma.$transaction(async (tx) => {
+    const { record, conflict, finish } = recorder(tx, nurse, device, base, subject, now);
+    // Unknown, or another facility's dose: refused (and nothing about it is revealed).
+    if (!admin || !ours) return finish(await record("REFUSED", "UNKNOWN_DOSE", null));
+    const given = kind === "DOSE_GIVEN";
+    const status = kind === "DOSE_GIVEN" ? "GIVEN" : kind === "DOSE_HELD" ? "HELD" : "REFUSED";
+
+    // Controlled and high-alert medicines are never given offline.
+    if ((await onlineOnlyOrders(nurse.facilityId, [admin.medicationOrder])).has(admin.medicationOrderId)) {
+      const c = await record("REFUSED", "ONLINE_ONLY", null);
+      if (given) await conflict(c, "ONLINE_ONLY", "WARNING");
+      return finish(c);
+    }
+    // A lease the device held when it recorded the dose, or none at all.
+    if (!lease) {
+      const c = await record("REFUSED", "NOT_LEASED", null);
+      if (given) await conflict(c, "NOT_LEASED", "WARNING");
+      return finish(c);
+    }
+    const leaseEndMs = Math.min(lease.expiresAt.getTime(), lease.status === "EXPIRED" && lease.endedAt ? lease.endedAt.getTime() : Infinity);
+    const overridden = lease.status === "OVERRIDDEN";
+    if (!overridden && (lease.status === "EXPIRED" || appliedTime.getTime() > leaseEndMs)) {
+      const c = await record("REFUSED", "LEASE_EXPIRED", null);
+      if (given) await conflict(c, "LEASE_EXPIRED", "WARNING");
+      return finish(c);
+    }
+
+    const swept = admin.status === "MISSED" && admin.reasonCode === "not-recorded";
+    if (admin.status === "DUE" || swept) {
+      const orderActive = ["ACTIVE", "DISPENSED"].includes(admin.medicationOrder.status);
+      const result = await administerMedicationTx(tx, {
+        administrationId: admin.id, status, administeredByStaffId: nurse.staffId, safetyChecksConfirmed: true, reasonCode, byUserId: nurse.userId,
+        administeredAt: appliedTime, offline: { leaseId: lease.id, allowInactiveOrder: given },
+      });
+      if (lease.status === "ACTIVE") await tx.doseLease.updateMany({ where: { id: lease.id, status: "ACTIVE" }, data: { status: "RELEASED", endedAt: now } });
+      const hasConflict = overridden || (given && !orderActive) || clockSuspect;
+      const c = await record(hasConflict ? "APPLIED_WITH_CONFLICT" : "APPLIED", null, result.id);
+      if (overridden) await conflict(c, "LEASE_OVERRIDDEN", "WARNING");
+      if (given && !orderActive) await conflict(c, "ORDER_CHANGED", "WARNING");
+      if (clockSuspect) await conflict(c, "CLOCK_SUSPECT", "WARNING");
+      return finish(c);
+    }
+    // The dose is no longer due. Held or refused: nothing to apply.
+    if (!given) return finish(await record("REFUSED", "NOT_DUE", null));
+    // Given offline, but given, held or cancelled meanwhile: the dose was given, so it is recorded, and flagged.
+    const second = await recordOfflineGivenTx(tx, { forAdministrationId: admin.id, administeredByStaffId: nurse.staffId, administeredAt: appliedTime, byUserId: nurse.userId });
+    const c = await record("APPLIED_WITH_CONFLICT", null, second.id);
+    if (admin.status === "GIVEN") await conflict(c, "POSSIBLE_DOUBLE_DOSE", "CRITICAL");
+    else await conflict(c, "ORDER_CHANGED", "WARNING");
+    if (clockSuspect) await conflict(c, "CLOCK_SUSPECT", "WARNING");
+    return finish(c);
+  });
+}
+
+// ── Flagship 4a — vitals, intake/output, tasks and PRN doses offline ─────────
+
+/** Plausible ranges: a value outside one is kept for review, never applied (design §5). */
+const VITAL_RANGES: Record<keyof Pick<VitalsInput, "hr" | "sbp" | "dbp" | "rr" | "spo2" | "tempC" | "painScore">, [number, number]> = {
+  hr: [20, 300], sbp: [40, 300], dbp: [20, 200], rr: [4, 80], spo2: [50, 100], tempC: [30, 45], painScore: [0, 10],
+};
+const IO_CATEGORIES = { INPUT: ["ORAL", "IV", "ENTERAL", "OTHER"], OUTPUT: ["URINE", "DRAIN", "EMESIS", "STOOL", "OTHER"] } as const;
+export const IO_MAX_ML = 10_000;
+
+function parseVitals(raw: unknown): VitalsInput | null {
+  if (!raw || typeof raw !== "object") return null;
+  const v = raw as Record<string, unknown>;
+  const out: VitalsInput = {};
+  let any = false;
+  for (const [k, [lo, hi]] of Object.entries(VITAL_RANGES) as [keyof typeof VITAL_RANGES, [number, number]][]) {
+    if (v[k] === undefined || v[k] === null) continue;
+    if (typeof v[k] !== "number" || !Number.isFinite(v[k]) || (v[k] as number) < lo || (v[k] as number) > hi) return null;
+    out[k] = v[k] as number;
+    any = true;
+  }
+  if (typeof v.consciousness === "string" && /^[A-Z_]{1,20}$/.test(v.consciousness)) out.consciousness = v.consciousness;
+  return any ? out : null;
+}
+
+/** The nurse's open assignment of the patient: the patients whose records a device may write (design §8, least data). */
+async function assigned(db: Tx | typeof prisma, nurse: NurseActor, patientId: string, at: Date) {
+  return Boolean(await db.nursingAssignment.findFirst({ where: { facilityId: nurse.facilityId, nurseStaffId: nurse.staffId, patientId, startAt: { lte: new Date(Math.max(at.getTime(), Date.now())) }, OR: [{ endAt: null }, { endAt: { gte: at } }] }, select: { id: true } }));
+}
+
+async function applyRecordCommand(nurse: NurseActor, device: { id: string; wardId: string }, raw: SyncCommandInput, clientOperationId: string, kind: (typeof RECORD_KINDS)[number], deviceMs: number, now: Date): Promise<SyncResult> {
+  // The device's latest pack before the command: its clock offset, and how long it was valid.
+  const pack = await prisma.wardPack.findFirst({ where: { deviceId: device.id, issuedAt: { lte: now } }, orderBy: { issuedAt: "desc" }, select: { clockOffsetMs: true, expiresAt: true } });
+  const { clockSuspect, appliedTime } = clockOf(deviceMs, pack?.clockOffsetMs ?? 0, now);
+  const str = (x: unknown, n = 100) => (typeof x === "string" && x.trim() ? x.trim().slice(0, n) : null);
+
+  // What the command is about, inside this facility (another facility's id reads as unknown).
+  let encounter: { id: string; patientId: string } | null = null;
+  let task: { id: string; status: string; patientId: string | null; encounterId: string | null; ownerStaffId: string | null; completedAt: Date | null } | null = null;
+  let order: { id: string; patientId: string; encounterId: string; drugName: string; isControlled: boolean; status: string; prn: boolean; prnOfflineAllowed: boolean; prnMinIntervalMinutes: number | null; prnMaxDosesPer24h: number | null; orderedByStaffId: string } | null = null;
+  if (kind === "VITALS" || kind === "INTAKE_OUTPUT") {
+    const e = str(raw.encounterId) ? await prisma.encounter.findUnique({ where: { id: str(raw.encounterId)! }, select: { id: true, patientId: true, facilityId: true } }) : null;
+    encounter = e && e.facilityId === nurse.facilityId ? e : null;
+  } else if (kind === "TASK_COMPLETED") {
+    const t = str(raw.taskId) ? await prisma.task.findUnique({ where: { id: str(raw.taskId)! }, select: { id: true, status: true, patientId: true, encounterId: true, ownerStaffId: true, completedAt: true, facilityId: true } }) : null;
+    task = t && t.facilityId === nurse.facilityId ? t : null;
+  } else {
+    const o = str(raw.medicationOrderId) ? await prisma.medicationOrder.findUnique({ where: { id: str(raw.medicationOrderId)! }, select: { id: true, patientId: true, encounterId: true, drugName: true, isControlled: true, status: true, prn: true, prnOfflineAllowed: true, prnMinIntervalMinutes: true, prnMaxDosesPer24h: true, orderedByStaffId: true, encounter: { select: { facilityId: true } } } }) : null;
+    order = o && o.encounter.facilityId === nurse.facilityId ? o : null;
+  }
+  const patientId = encounter?.patientId ?? task?.patientId ?? order?.patientId ?? null;
+  const encounterId = encounter?.id ?? task?.encounterId ?? order?.encounterId ?? null;
+  const payload: Record<string, unknown> =
+    kind === "VITALS" ? { vitals: raw.vitals ?? null }
+    : kind === "INTAKE_OUTPUT" ? { ioType: raw.ioType ?? null, category: raw.category ?? null, quantityMl: raw.quantityMl ?? null, notes: str(raw.notes, 280) }
+    : kind === "PRN_BREACH_REFUSED" ? { breach: raw.breach ?? null }
+    : {};
+  const base: CommandBase = {
+    facilityId: nurse.facilityId, clientOperationId, deviceId: device.id, nurseStaffId: nurse.staffId, kind, deviceTime: new Date(deviceMs), appliedTime, receivedAt: now,
+    encounterId: encounter?.id ?? (kind === "VITALS" || kind === "INTAKE_OUTPUT" ? null : encounterId), taskId: task?.id ?? null, medicationOrderId: order?.id ?? null,
+    payload: payload as Prisma.InputJsonValue,
+  };
+  const subject: ConflictSubject = { patientId, encounterId, prescriberStaffId: order?.orderedByStaffId ?? null, administrationId: null };
+
+  return prisma.$transaction(async (tx) => {
+    const { record, conflict, finish } = recorder(tx, nurse, device, base, subject, now);
+    const refuse = async (reason: OfflineRefusalReason, keepAs: OfflineConflictKind = "REFUSED_RECORD") => {
+      const c = await record("REFUSED", reason, null);
+      await conflict(c, keepAs, "WARNING");
+      return finish(c);
+    };
+    if (kind === "VITALS" || kind === "INTAKE_OUTPUT") {
+      if (!encounter) return refuse("UNKNOWN_ENCOUNTER");
+      if (!(await assigned(tx, nurse, encounter.patientId, appliedTime))) return refuse("NOT_ASSIGNED");
+      if (kind === "VITALS") {
+        const vitals = parseVitals(raw.vitals);
+        if (!vitals) return refuse("INVALID_VALUES");
+        await recordVitalsTx(tx, { encounterId: encounter.id, facilityId: nurse.facilityId, staffId: nurse.staffId, vitals, byUserId: nurse.userId, recordedAt: appliedTime }, await abnormalOf(nurse.facilityId, vitals));
+      } else {
+        const ioType = raw.ioType === "INPUT" || raw.ioType === "OUTPUT" ? raw.ioType : null;
+        const category = ioType && (IO_CATEGORIES[ioType] as readonly string[]).includes(String(raw.category)) ? String(raw.category) : null;
+        const ml = typeof raw.quantityMl === "number" && Number.isFinite(raw.quantityMl) && raw.quantityMl > 0 && raw.quantityMl <= IO_MAX_ML ? raw.quantityMl : null;
+        if (!ioType || !category || ml === null) return refuse("INVALID_VALUES");
+        await recordIntakeOutputTx(tx, { encounterId: encounter.id, facilityId: nurse.facilityId, staffId: nurse.staffId, ioType, category, quantityMl: ml, notes: str(raw.notes, 280) ?? undefined, byUserId: nurse.userId, recordedAt: appliedTime });
+      }
+      const c = await record(clockSuspect ? "APPLIED_WITH_CONFLICT" : "APPLIED", null, null);
+      if (clockSuspect) await conflict(c, "CLOCK_SUSPECT", "WARNING");
+      return finish(c);
+    }
+
+    if (kind === "TASK_COMPLETED") {
+      if (!task) return refuse("UNKNOWN_TASK");
+      const mine = task.ownerStaffId === nurse.staffId || (task.patientId ? await assigned(tx, nurse, task.patientId, appliedTime) : false);
+      if (!mine) return refuse("NOT_ASSIGNED");
+      const closed = await closeTask(tx, task.id, "COMPLETED", { completedByStaffId: nurse.staffId, completedByUserId: nurse.userId, completedAt: appliedTime }, nurse.userId);
+      const at = appliedTime.toISOString();
+      // Done elsewhere first, or cancelled: the work was done, so the record says so; not an error (design §5).
+      const note = closed ? undefined
+        : task.status === "COMPLETED" ? `Also done offline by this nurse at ${at}; it was completed first elsewhere.`
+        : `Done offline at ${at}, after the task was ${task.status.toLowerCase()}; it stays ${task.status.toLowerCase()}.`;
+      await tx.auditEvent.create({ data: { type: "hospital.task.completed", userId: nurse.userId, detail: { taskId: task.id, offline: true, ...(note ? { note } : {}) }, facilityId: nurse.facilityId, patientId: task.patientId ?? undefined, encounterId: task.encounterId ?? undefined } });
+      const c = await record(clockSuspect ? "APPLIED_WITH_CONFLICT" : "APPLIED", null, null, { note });
+      if (clockSuspect) await conflict(c, "CLOCK_SUSPECT", "WARNING");
+      return finish(c);
+    }
+
+    // PRN_GIVEN, PRN_BREACH_REFUSED.
+    if (!order) return refuse("PRN_NOT_OFFLINE");
+    if (!(await assigned(tx, nurse, order.patientId, appliedTime))) return refuse("NOT_ASSIGNED");
+    if (kind === "PRN_BREACH_REFUSED") {
+      // The device refused a dose for its limits: no dose; the charge nurse is told someone needed one.
+      const c = await record("APPLIED_WITH_CONFLICT", null, null);
+      await conflict(c, "PRN_BREACH_ATTEMPT", "WARNING");
+      return finish(c);
+    }
+    const offlineOk = order.prn && order.prnOfflineAllowed && order.prnMinIntervalMinutes !== null && order.prnMaxDosesPer24h !== null && ["ACTIVE", "DISPENSED"].includes(order.status);
+    if (!offlineOk) return refuse("PRN_NOT_OFFLINE");
+    if ((await onlineOnlyOrders(nurse.facilityId, [order])).has(order.id)) return refuse("ONLINE_ONLY", "ONLINE_ONLY");
+    if (!pack || appliedTime > pack.expiresAt) return refuse("LEASE_EXPIRED", "LEASE_EXPIRED");
+    // One PRN dose of an order at a time (online and offline both lock the order).
+    await tx.$queryRaw`SELECT id FROM "MedicationOrder" WHERE id = ${order.id} FOR UPDATE`;
+    const standing = await prnStanding(tx, order.id, appliedTime);
+    // The dose was given, so it is recorded; a breach by the server's record is flagged CRITICAL.
+    const row = await givePrnDoseTx(tx, { orderId: order.id, administeredByStaffId: nurse.staffId, administeredAt: appliedTime, byUserId: nurse.userId, offline: true });
+    const hasConflict = Boolean(standing.breach) || clockSuspect;
+    const c = await record(hasConflict ? "APPLIED_WITH_CONFLICT" : "APPLIED", null, row.id);
+    if (standing.breach) await conflict(c, "PRN_LIMIT_BREACHED", "CRITICAL");
+    if (clockSuspect) await conflict(c, "CLOCK_SUSPECT", "WARNING");
+    return finish(c);
+  });
+}
+
 /**
  * A conflict row, its task and their events. The ward's charge nurse on now
  * is told (the shift's, else the ward's named one: a task owned by them, or
- * for the CHARGE_NURSE role when there is none); a
- * possible double dose is CRITICAL, due within 15 minutes, and the facility's
+ * for the CHARGE_NURSE role when there is none); a possible double dose or a
+ * PRN limit breached is CRITICAL, due within 15 minutes, and the facility's
  * pharmacists are told too (decided §12.7); an order changed under an offline
- * dose also goes to the prescriber.
+ * dose, or a PRN limit breached, also goes to the prescriber.
  */
 async function raiseConflictTx(
-  tx: Tx, nurse: NurseActor, device: { id: string; wardId: string }, c: OfflineCommand,
-  admin: (MedicationAdministration & { medicationOrder: { patientId: string; encounterId: string; orderedByStaffId: string } }) | null,
+  tx: Tx, nurse: NurseActor, device: { id: string; wardId: string }, c: OfflineCommand, subject: ConflictSubject,
   kind: OfflineConflictKind, severity: OfflineConflictSeverity, now: Date,
 ) {
   const charge = await currentChargeNurse(tx, device.wardId, now);
   const critical = severity === "CRITICAL";
+  const patient = subject.patientId ? { patientId: subject.patientId, encounterId: subject.encounterId ?? undefined } : {};
+  const title = kind === "POSSIBLE_DOUBLE_DOSE" ? "Possible double dose: check the patient now"
+    : kind === "PRN_LIMIT_BREACHED" ? "As-needed dose over its limit: check the patient now"
+    : kind === "PRN_BREACH_ATTEMPT" ? "An as-needed dose was refused offline for its limits"
+    : kind === "REFUSED_RECORD" ? "An offline record to review" : "Offline dose to review";
   const task = await createTask(tx, {
-    facilityId: nurse.facilityId, title: critical ? "Possible double dose: check the patient now" : "Offline dose to review", type: "OFFLINE_DOSE_CONFLICT",
+    facilityId: nurse.facilityId, title, type: "OFFLINE_DOSE_CONFLICT",
     priority: critical ? "STAT" : "URGENT", source: "EVENT", dueAt: new Date(now.getTime() + (critical ? DOUBLE_DOSE_RESPONSE_MS : 4 * 3_600_000)),
-    assignedRole: "CHARGE_NURSE", ownerStaffId: charge.staffId ?? undefined, patientId: admin?.medicationOrder.patientId, encounterId: admin?.medicationOrder.encounterId,
+    assignedRole: "CHARGE_NURSE", ownerStaffId: charge.staffId ?? undefined, ...patient,
     idempotencyKey: `offline-conflict:${c.id}:${kind}`,
   }, nurse.userId);
-  if (critical && admin) {
+  if (critical && subject.patientId) {
     await createTask(tx, {
-      facilityId: nurse.facilityId, title: "Possible double dose recorded on a ward", type: "OFFLINE_DOSE_CONFLICT", priority: "STAT", source: "EVENT",
-      dueAt: new Date(now.getTime() + DOUBLE_DOSE_RESPONSE_MS), assignedRole: "PHARMACIST", patientId: admin.medicationOrder.patientId, encounterId: admin.medicationOrder.encounterId,
+      facilityId: nurse.facilityId, title: kind === "PRN_LIMIT_BREACHED" ? "As-needed dose over its limit recorded on a ward" : "Possible double dose recorded on a ward", type: "OFFLINE_DOSE_CONFLICT", priority: "STAT", source: "EVENT",
+      dueAt: new Date(now.getTime() + DOUBLE_DOSE_RESPONSE_MS), assignedRole: "PHARMACIST", ...patient,
       idempotencyKey: `offline-conflict:${c.id}:${kind}:pharmacist`,
     }, nurse.userId);
   }
-  if (kind === "ORDER_CHANGED" && admin) {
+  if ((kind === "ORDER_CHANGED" || kind === "PRN_LIMIT_BREACHED") && subject.prescriberStaffId && subject.patientId) {
     await createTask(tx, {
-      facilityId: nurse.facilityId, title: "A dose was given offline after the order changed", type: "OFFLINE_DOSE_CONFLICT", priority: "URGENT", source: "EVENT",
-      ownerStaffId: admin.medicationOrder.orderedByStaffId, patientId: admin.medicationOrder.patientId, encounterId: admin.medicationOrder.encounterId,
+      facilityId: nurse.facilityId, title: kind === "PRN_LIMIT_BREACHED" ? "An as-needed dose over its limit was given offline" : "A dose was given offline after the order changed", type: "OFFLINE_DOSE_CONFLICT", priority: "URGENT", source: "EVENT",
+      ownerStaffId: subject.prescriberStaffId, ...patient,
       idempotencyKey: `offline-conflict:${c.id}:${kind}:prescriber`,
     }, nurse.userId);
   }
-  const row = await tx.offlineConflict.create({ data: { facilityId: nurse.facilityId, commandId: c.id, administrationId: c.administrationId, kind, severity, taskId: task.id } });
+  const row = await tx.offlineConflict.create({ data: { facilityId: nurse.facilityId, commandId: c.id, administrationId: subject.administrationId, patientId: subject.patientId, kind, severity, taskId: task.id } });
   await emitFacilityEvent(tx, {
-    type: "OfflineConflictRecorded", aggregateId: row.id, facilityId: nurse.facilityId, actorUserId: nurse.userId, encounterId: admin?.medicationOrder.encounterId,
-    payload: { conflictId: row.id, commandId: c.id, administrationId: c.administrationId, kind, severity, taskId: task.id },
+    type: "OfflineConflictRecorded", aggregateId: row.id, facilityId: nurse.facilityId, actorUserId: nurse.userId, encounterId: subject.encounterId,
+    payload: { conflictId: row.id, commandId: c.id, kind, severity, taskId: task.id, ...(subject.administrationId ? { administrationId: subject.administrationId } : {}), ...(subject.patientId ? { patientId: subject.patientId } : {}) },
   });
   return row;
 }

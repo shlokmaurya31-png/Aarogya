@@ -1821,6 +1821,29 @@ export const EVENT_CONTRACTS: EventContract[] = [
       severity: z.enum(["WARNING", "CRITICAL"]), taskId: id,
     }).strict(),
   }),
+  // Flagship 4a, offline phase 2: the commands and conflicts beyond scheduled doses
+  // (vitals, intake/output, tasks, PRN). v1 stays for the rows already written.
+  contract({
+    type: "OfflineCommandRecorded", version: 2, aggregateType: "OFFLINE_COMMAND", scope: "FACILITY",
+    sensitivity: "SENSITIVE", producer: "offline nursing (syncCommands: one command of any kind, applied or refused; ids only, never the values)",
+    payload: z.object({
+      commandId: id, deviceId: id,
+      kind: z.enum(["DOSE_GIVEN", "DOSE_HELD", "DOSE_REFUSED", "VITALS", "INTAKE_OUTPUT", "TASK_COMPLETED", "PRN_GIVEN", "PRN_BREACH_REFUSED"]),
+      outcome: z.enum(["APPLIED", "APPLIED_WITH_CONFLICT", "REFUSED"]),
+      administrationId: optId, encounterId: optId, taskId: optId, medicationOrderId: optId,
+      refusalReason: z.enum(["ONLINE_ONLY", "LEASE_EXPIRED", "NOT_LEASED", "NOT_DUE", "UNKNOWN_DOSE", "NOT_ASSIGNED", "PRN_NOT_OFFLINE", "INVALID_VALUES", "UNKNOWN_TASK", "UNKNOWN_ENCOUNTER"]).optional(),
+      resultAdministrationId: optId,
+    }).strict(),
+  }),
+  contract({
+    type: "OfflineConflictRecorded", version: 2, aggregateType: "OFFLINE_CONFLICT", scope: "FACILITY",
+    sensitivity: "SENSITIVE", producer: "offline nursing (syncCommands: a fact the server couldn't apply cleanly, of any command; never discarded)",
+    payload: z.object({
+      conflictId: id, commandId: id, administrationId: optId, patientId: optId,
+      kind: z.enum(["POSSIBLE_DOUBLE_DOSE", "ORDER_CHANGED", "LEASE_OVERRIDDEN", "LEASE_EXPIRED", "NOT_LEASED", "ONLINE_ONLY", "CLOCK_SUSPECT", "PRN_LIMIT_BREACHED", "PRN_BREACH_ATTEMPT", "REFUSED_RECORD"]),
+      severity: z.enum(["WARNING", "CRITICAL"]), taskId: id,
+    }).strict(),
+  }),
   contract({
     type: "OfflineBatchApplied", version: 1, aggregateType: "WARD_DEVICE", scope: "FACILITY",
     sensitivity: "LOW", producer: "offline nursing (syncCommands: the counts of one sync)",

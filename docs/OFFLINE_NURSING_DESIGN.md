@@ -197,6 +197,26 @@ Every conflict is a row (`OfflineConflict`: kind, severity, the command, the fac
   - a handover mid-lease, for both the takeover and the conflict task;
   - a cancelled shift falls back to the named charge nurse.
 
+### 13.2 Phase 2 on the server: vitals, I/O, tasks and PRN (Flagship 4a)
+
+- **Commands:** `VITALS`, `INTAKE_OUTPUT`, `TASK_COMPLETED`, `PRN_GIVEN` and `PRN_BREACH_REFUSED`, through the same `POST /api/hospital/offline/sync`. They follow the same rules:
+  - one transaction per command, with its catalogued events;
+  - a replay is a no-op;
+  - the device's time is corrected by its pack's measured offset, and a suspect clock is flagged;
+  - nothing a nurse recorded is dropped: a refused command keeps what was sent (`OfflineCommand.payload`) and a `REFUSED_RECORD` conflict for review.
+- **Whose records:** only patients with an open assignment to the nurse (else `NOT_ASSIGNED`), and only encounters, tasks and orders of this facility (else unknown).
+- **Vitals and I/O:** written by the same services as online (`recordVitalsTx`, `recordIntakeOutputTx`), at the time measured. The server recomputes the early-warning flags (`ObservationRecorded.abnormal`). A value no measurement can have is refused and kept (`INVALID_VALUES`, ranges in `VITAL_RANGES`). Recording is allowed after the pack expires (§5).
+- **Tasks:** completed with the time it was done. If the task was completed elsewhere first, the second completion is a note on the command ("also done by …"), not an error. If the task was cancelled, the completion is kept with a note and the task stays cancelled.
+- **PRN (§6.2):**
+  - **Order fields:** a PRN order now carries its minimum interval and maximum doses in 24 hours (both or neither, CHECK `MedicationOrder_prn_limits`), and the prescriber's `prnOfflineAllowed`, which is only possible with both limits. The pack lists each PRN order with its limits and the doses of the last 24 hours, so the device can hold them, and `givableOffline` only when allowed and not online-only.
+  - **Online:** `POST /api/hospital/orders/medication/{id}/prn` refuses a breach (409).
+  - **Offline, refused:** a PRN dose is refused (and kept) when the order isn't allowed offline (`PRN_NOT_OFFLINE`), is online-only (`ONLINE_ONLY`), or is recorded after the pack expired (`LEASE_EXPIRED`).
+  - **Offline, a breach the device didn't know of** (doses given elsewhere meanwhile): the dose is recorded, because it was given, and flagged `PRN_LIMIT_BREACHED`, CRITICAL. The charge nurse's task is due within 15 minutes, and the pharmacists and the prescriber are told.
+  - **Offline, a dose the device refused for its limits:** sent as `PRN_BREACH_REFUSED`, a flag for the charge nurse (`PRN_BREACH_ATTEMPT`) with no dose.
+  - **Serialised:** PRN doses of one order are serialised online and offline (a row lock on the order).
+- **Events:** `OfflineCommandRecorded` and `OfflineConflictRecorded` version 2 (any kind; ids only, never the values). The applied records emit their usual events (`ObservationRecorded`, `TaskCompleted`, `MedicationAdministered`).
+- **Gate:** `verify-postgres-offline-phase2`.
+
 - **Not yet:**
   - the device app (encrypted store, outbox, downtime PDF);
   - vitals, I/O and task commands;
