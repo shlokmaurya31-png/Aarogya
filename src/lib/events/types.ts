@@ -145,6 +145,15 @@ export const AGGREGATE_TYPES = [
   "CLAIM_DOCUMENT_REQUEST",
   "FACILITY_PAYMENT_GATEWAY",
   "PATIENT_PAYMENT_ORDER",
+  // Flagship 2, step 5 — offline nursing.
+  "WARD_DEVICE",
+  "WARD",
+  "WARD_PACK",
+  "DOSE_LEASE",
+  "OFFLINE_COMMAND",
+  "OFFLINE_CONFLICT",
+  // Flagship 2, step 6 — legacy import.
+  "LEGACY_IMPORT_BATCH",
 ] as const;
 export type AggregateType = (typeof AGGREGATE_TYPES)[number];
 

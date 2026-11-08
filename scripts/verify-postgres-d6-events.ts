@@ -15,6 +15,7 @@ import { prisma } from "../src/lib/db";
 import { emitDomainEvent } from "../src/lib/events/emit";
 import { dispatchPendingDomainEvents } from "../src/lib/events/dispatcher";
 import { registerConsumer, unregisterConsumer, type DomainEventConsumer } from "../src/lib/events/consumers";
+import { registerAllConsumers } from "../src/lib/runner/consumers";
 import { replayEvent, retryDeadLetter } from "../src/lib/events/replay";
 import { getEventMetrics, listEvents, getEvent, listDeadLetters, listOrganizationEvents } from "../src/lib/events/ops";
 import { PermanentEventError, RetryableEventError } from "../src/lib/events/types";
@@ -88,6 +89,8 @@ async function run() {
   console.log(`\n=== PHASE D6 EVENT GATE (PostgreSQL) ===\n`);
   await cleanup();
   await seed();
+  // Flagship 2b: the dispatcher runs only with the whole registry; the gate's probe rides along.
+  registerAllConsumers();
   registerConsumer(testConsumer);
   const mPlatform = await loadActorMemberships(ID.uPlatform, "AAROGYA_ADMIN");
   const mAdminA = await loadActorMemberships(ID.uAdminA, "HOSPITAL_ADMIN");

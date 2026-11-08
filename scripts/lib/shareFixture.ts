@@ -10,6 +10,7 @@ import { emitDomainEvent } from "../../src/lib/events/emit";
 import { prisma } from "../../src/lib/db";
 import { registerPatientAccount } from "../../src/lib/patient/selfRegistration";
 import { dispatchPendingDomainEvents } from "../../src/lib/events/dispatcher";
+import { registerAllConsumers } from "../../src/lib/runner/consumers";
 import { emitFacilityEvent } from "../../src/lib/events/facilityEvent";
 import { ensurePrimaryMembership } from "../../prisma/seedData/staffMembership";
 import { linkAccountForGate } from "./personFixture";
@@ -35,6 +36,7 @@ export function reporter() {
 }
 
 export async function drain() {
+  registerAllConsumers();
   for (let i = 0; i < 40; i++) {
     const r = await dispatchPendingDomainEvents({ now: new Date(), batchSize: 500, maxDurationMs: 60_000 });
     if (r.claimed === 0) return;

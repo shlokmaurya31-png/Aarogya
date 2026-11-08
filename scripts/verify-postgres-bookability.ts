@@ -72,12 +72,12 @@ async function main() {
 
   // 1. Normal.
   report("A slot inside a session books", (await book(at(3, 9, 0))) === "booked");
-  report("The slot list shows the session's slots", (await getAvailableSlots(doctor.id, at(3))).length === 15, `${(await getAvailableSlots(doctor.id, at(3))).length} slots`);
+  report("The slot list shows the session's slots", (await getAvailableSlots(doctor.id, at(3), { facilityId })).length === 15, `${(await getAvailableSlots(doctor.id, at(3), { facilityId })).length} slots`);
 
   // 2. Whole-day leave.
   await prisma.staffAbsence.create({ data: { facilityId, staffId: doctor.id, kind: "LEAVE", startAt: at(4), endAt: at(5), reason: "Annual leave" } });
   const before = await apptCount();
-  report("On leave: the slot list is empty", (await getAvailableSlots(doctor.id, at(4))).length === 0);
+  report("On leave: the slot list is empty", (await getAvailableSlots(doctor.id, at(4), { facilityId })).length === 0);
   const hospitalOnLeave = await book(at(4, 10, 0));
   report("On leave: Hospital OS booking is refused", hospitalOnLeave === "ABSENT", hospitalOnLeave);
   const portalOnLeave = await portal(at(4, 10, 0));
@@ -86,7 +86,7 @@ async function main() {
 
   // 3. Partial-day leave 10:00–11:00.
   await prisma.staffAbsence.create({ data: { facilityId, staffId: doctor.id, kind: "BLOCKED", startAt: at(5, 10), endAt: at(5, 11), reason: "Meeting" } });
-  const partial = (await getAvailableSlots(doctor.id, at(5))).map((s) => hhmm(s.start));
+  const partial = (await getAvailableSlots(doctor.id, at(5), { facilityId })).map((s) => hhmm(s.start));
   report("Partial leave removes only its slots", !partial.some((t) => t >= "10:00" && t < "11:00") && partial.includes("09:45") && partial.includes("11:00"), partial.join(" "));
   report("…booking inside it is refused", (await book(at(5, 10, 15))) === "ABSENT");
   report("…a slot that straddles its start is refused", (await book(at(5, 9, 45), 30)) === "ABSENT");
@@ -100,9 +100,9 @@ async function main() {
   await prisma.staffShift.create({ data: { facilityId, staffId: doctor.id, startAt: at(6, 9), endAt: at(6, 11), assignedByStaffId: admin.id } });
   report("Rostered day: inside the shift books", (await book(at(6, 9, 30))) === "booked");
   report("Rostered day: off shift is refused", (await book(at(6, 11, 30))) === "OFF_SHIFT");
-  report("…and the slot list stops at the shift's end", (await getAvailableSlots(doctor.id, at(6))).every((s) => hhmm(s.start) < "11:00"));
+  report("…and the slot list stops at the shift's end", (await getAvailableSlots(doctor.id, at(6), { facilityId })).every((s) => hhmm(s.start) < "11:00"));
   await prisma.staffShift.create({ data: { facilityId, staffId: doctor.id, startAt: at(7, 8), endAt: at(7, 14), assignedByStaffId: admin.id, status: "CANCELLED", cancelledAt: new Date() } });
-  report("A day whose only shift was cancelled has no slots", (await getAvailableSlots(doctor.id, at(7))).length === 0);
+  report("A day whose only shift was cancelled has no slots", (await getAvailableSlots(doctor.id, at(7), { facilityId })).length === 0);
   report("…and can't be booked", (await book(at(7, 9, 0))) === "OFF_SHIFT");
 
   // 6. Other ways leave is entered.

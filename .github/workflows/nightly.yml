@@ -1,0 +1,70 @@
+# Nightly: every integrity gate alone, each on a fresh database
+# (npm run verify:isolated, Flagship 2c). It proves no gate depends on
+# another gate's leftovers; too slow for every push, so it runs once a day
+# on main and on demand. Same throwaway CI values as ci.yml; no secret.
+
+name: Nightly isolation
+
+on:
+  schedule:
+    - cron: "30 20 * * *" # 02:00 India time
+  workflow_dispatch:
+
+jobs:
+  isolated-gates:
+    name: Gates, each alone
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: aarogya
+          POSTGRES_PASSWORD: aarogya
+          POSTGRES_DB: aarogya
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya"
+      DIRECT_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya"
+      SHADOW_DATABASE_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya_shadow"
+      VERIFY_DATABASE_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya_verify"
+      AUTH_SECRET: "ci-dummy-secret-not-used-for-anything-real-000000"
+      CLINICAL_DATA_MODE: synthetic
+      AI_PROVIDER: mock
+      ABDM_ENVIRONMENT: DISABLED
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create shadow and verify databases
+        run: |
+          PGPASSWORD=aarogya psql -h localhost -U aarogya -d aarogya -c "CREATE DATABASE aarogya_shadow"
+          PGPASSWORD=aarogya psql -h localhost -U aarogya -d aarogya -c "CREATE DATABASE aarogya_verify"
+
+      # Resets, migrates and seeds aarogya_verify once, keeps it as a template,
+      # and re-creates aarogya_verify from it before every gate.
+      - name: verify:isolated
+        run: npm run verify:isolated
+
+      - name: Upload gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: isolated-report
+          path: |
+            .verify-report/isolated.md
+            .verify-report/gates/
+          include-hidden-files: true

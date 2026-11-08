@@ -1,12 +1,7 @@
 import { prisma } from "@/lib/db";
 import { computeAlerts } from "./alertEngine";
 import { getDiagnosticsOperationalCounts } from "./diagnosticsSnapshot";
-
-function startOfToday(): Date {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
+import { facilityTimeZone, startOfZonedDay } from "@/lib/time/zone";
 
 /**
  * Every number here is a live Prisma aggregate, not a placeholder (brief
@@ -15,7 +10,8 @@ function startOfToday(): Date {
  * invented.
  */
 export async function getCommandCenterSnapshot(facilityId: string) {
-  const today = startOfToday();
+  // The facility's day, in its time zone (Flagship 2a).
+  const today = startOfZonedDay(new Date(), await facilityTimeZone(prisma, facilityId));
   const sevenDaysAgo = new Date(today.getTime() - 7 * 86_400_000);
 
   const [

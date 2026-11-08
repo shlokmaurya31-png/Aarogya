@@ -4,6 +4,9 @@
  * Sleeps 2 s after a tick with no work, loops immediately when a batch limit
  * was hit, and stops cleanly on SIGINT/SIGTERM after the current tick.
  * Staging and production use POST /api/cron/tick instead (docs/STAGING_SUPABASE.md).
+ *   npm run worker -- --once   one tick, then print the registered consumers
+ *                              as JSON and stop (the consumer-registry gate)
+ * Every tick registers the whole consumer registry (src/lib/runner/consumers.ts).
  */
 import { prisma } from "../src/lib/db";
 import { runTick } from "../src/lib/runner/tick";
@@ -18,6 +21,12 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
 }
 
 async function main() {
+  if (process.argv.includes("--once")) {
+    const r = await runTick({ budgetMs: 10_000 });
+    console.log(JSON.stringify({ consumers: r.consumers }));
+    await prisma.$disconnect();
+    return;
+  }
   console.log("worker: started");
   while (!stopping) {
     try {

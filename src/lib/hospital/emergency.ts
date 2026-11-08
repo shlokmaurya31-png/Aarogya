@@ -5,6 +5,7 @@ import { isEncounterTransitionAllowed } from "@/lib/hospital/encounterStateMachi
 import { EncounterStatus, BedStatus, type Prisma, type EdResuscitationStatus, type EdDispositionType, type AccessSource } from "@prisma/client";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 import { emitIcuAdmittedIfEntering } from "./admission";
+import { facilityTimeZone, startOfZonedDay } from "@/lib/time/zone";
 
 /**
  * Emergency Department service (Phase B5). An ORCHESTRATION layer over the
@@ -300,7 +301,8 @@ export async function dispositionEncounter(input: {
 
 // ── Composition: command center, board, workspace, timeline ─────────────────
 export async function buildEdCommandCenter(facilityId: string) {
-  const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+  // The facility's day, in its time zone (Flagship 2a).
+  const startOfToday = startOfZonedDay(new Date(), await facilityTimeZone(prisma, facilityId));
   const activeWhere = { facilityId, type: "ED" as const, status: { notIn: [EncounterStatus.DISCHARGED, EncounterStatus.CLOSED, EncounterStatus.CANCELLED] } };
   const active = await prisma.encounter.findMany({
     where: activeWhere,

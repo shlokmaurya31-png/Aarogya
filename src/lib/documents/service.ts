@@ -1,3 +1,4 @@
+import { dayKey, DEFAULT_TIME_ZONE } from "@/lib/time/zone";
 /**
  * Phase 1.2 — document generation service.
  *
@@ -59,7 +60,8 @@ export function clinicalDocumentFieldsFor(type: DocumentInput["type"], isDraft: 
 }
 
 export function defaultDocumentNumber(type: DocumentInput["type"], at = new Date()): string {
-  const ymd = `${at.getFullYear()}${String(at.getMonth() + 1).padStart(2, "0")}${String(at.getDate()).padStart(2, "0")}`;
+  // India's date, whatever zone the server runs in (Flagship 2a); a label only.
+  const ymd = dayKey(at, DEFAULT_TIME_ZONE).replace(/-/g, "");
   return `${DOC_PREFIX[type]}-${ymd}-${randomBytes(3).toString("hex").toUpperCase()}`;
 }
 

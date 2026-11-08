@@ -1,3 +1,4 @@
+import { dayKey, DEFAULT_TIME_ZONE } from "@/lib/time/zone";
 /**
  * Shared accession-number generator (brief §11 lab / §7 radiology) — a
  * simple date+random scheme, explicitly a placeholder ("design for future
@@ -7,8 +8,8 @@
  * transaction rather than silently duplicating a number.
  */
 export function generateAccessionNumber(prefix: string): string {
-  const now = new Date();
-  const datePart = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+  // India's date, whatever zone the server runs in (Flagship 2a); a label only.
+  const datePart = dayKey(new Date(), DEFAULT_TIME_ZONE).replace(/-/g, "");
   const rand = Math.random().toString(36).slice(2, 8).toUpperCase();
   return `${prefix}-${datePart}-${rand}`;
 }

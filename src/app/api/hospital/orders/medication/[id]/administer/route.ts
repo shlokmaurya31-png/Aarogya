@@ -1,8 +1,8 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
-import { withApiErrors, NotFoundError, BadRequestError } from "@/lib/auth/rbac";
-import { administerMedication, AdministrationNotDueError, MedicationOrderNotActiveError } from "@/lib/hospital/medicationLifecycle";
+import { withApiErrors, NotFoundError, BadRequestError, ConflictError } from "@/lib/auth/rbac";
+import { administerMedication, AdministrationNotDueError, DoseLeasedError, MedicationOrderNotActiveError } from "@/lib/hospital/medicationLifecycle";
 
 const VALID_STATUSES = ["GIVEN", "HELD", "REFUSED", "MISSED", "CANCELLED"];
 
@@ -42,6 +42,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return { administration };
     } catch (err) {
       if (err instanceof AdministrationNotDueError || err instanceof MedicationOrderNotActiveError) throw new BadRequestError(err.message);
+      if (err instanceof DoseLeasedError) throw new ConflictError(err.message);
       if (err instanceof Error && err.message.includes("witness")) throw new BadRequestError(err.message);
       throw err;
     }

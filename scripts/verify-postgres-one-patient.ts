@@ -139,6 +139,7 @@ async function main() {
     report("Hospital OS chart: an age given at registration is a dob with precision ESTIMATED_FROM_AGE, and age is calculated from it",
       chartPatient?.dobPrecision === "ESTIMATED_FROM_AGE" && ageInYears(chartPatient?.dob as string) === person.ageYears, `${chartPatient?.dob}`);
     report("Hospital OS chart: same patient ID", chartPatient?.id === P, `HTTP ${chart.status}`);
+    report("Hospital OS chart: no staff credential material (passwordHash) anywhere in it", !JSON.stringify(chart.json).includes("passwordHash"));
     report("Hospital OS chart: same demographics", same(chartPatient));
     report("Hospital OS chart: the encounter", ((chart.json.encounters as { id: string }[]) ?? []).some((e) => e.id === E));
     // Phase 0: the upload belongs to the person. The hospital treating them

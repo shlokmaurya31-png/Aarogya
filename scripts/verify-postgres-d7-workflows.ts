@@ -16,13 +16,14 @@ import { prisma } from "../src/lib/db";
 import { emitDomainEvent } from "../src/lib/events/emit";
 import { dispatchPendingDomainEvents } from "../src/lib/events/dispatcher";
 import type { DomainEventEnvelope } from "../src/lib/events/types";
-import "../src/lib/workflows/register"; // register the workflow-engine consumer
+import { registerAllConsumers } from "../src/lib/runner/consumers";
 import { createDefinition, publishVersion, getDefinition, createVersion, retireDefinition } from "../src/lib/workflows/definitions";
 import { startWorkflowsForEvent, runInstance, tickWorkflows } from "../src/lib/workflows/engine";
 import { getInstance, listInstances, cancelInstance, retryInstance } from "../src/lib/workflows/instances";
 import { completeWorkflowTask } from "../src/lib/workflows/tasks";
 import { validateWorkflowConfig } from "../src/lib/workflows/validator";
 import { loadActorMemberships, type ActorMemberships } from "../src/lib/auth/tenantContext";
+registerAllConsumers(); // the whole registry (Flagship 2b), the workflow engine among it
 
 let pass = 0, fail = 0; const failures: string[] = [];
 const ok = (l: string) => { pass++; console.log(`  ✓ ${l}`); };

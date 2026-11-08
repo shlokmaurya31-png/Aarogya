@@ -71,7 +71,7 @@ import { selfPatientIds } from "../src/lib/person/self";
 import { careRelationship, personAccess } from "../src/lib/person/access";
 import { resolveKeySpec } from "../src/lib/config/registry";
 import { clearConfigCache } from "../src/lib/config/cache";
-import { staffAtFacilityWhere } from "../src/lib/auth/staffFacility";
+import { ensurePrimaryMembership } from "../prisma/seedData/staffMembership";
 
 let pass = 0;
 let fail = 0;
@@ -85,8 +85,19 @@ const run = Date.now().toString(36);
 const PUNE = "fac-amc-pune";
 const NOIDA = "fac-amc-noida";
 
+/**
+ * The gate's own staff member with `role` at `facilityId` (Flagship 2c: every
+ * gate creates its own fixtures; this one used to borrow a Noida front-desk
+ * login that only earlier gates created, so it failed when run alone).
+ */
+let staffSeq = 0;
 async function staffWithRole(facilityId: string, role: "FRONT_DESK" | "HOSPITAL_ADMIN") {
-  return prisma.hospitalStaffProfile.findFirstOrThrow({ where: { AND: [staffAtFacilityWhere(facilityId), { user: { role } }] }, orderBy: { id: "asc" }, select: { id: true, userId: true } });
+  staffSeq += 1;
+  const dept = await prisma.department.findFirstOrThrow({ where: { facilityId }, select: { id: true } });
+  const user = await prisma.user.create({ data: { email: `pid-${role.toLowerCase()}-${run}-${staffSeq}@verify.aarogya`, passwordHash: "x", role, displayName: `PID ${role} ${staffSeq}` } });
+  const staff = await prisma.hospitalStaffProfile.create({ data: { userId: user.id, departmentId: dept.id, displayRole: role === "FRONT_DESK" ? "Front desk" : "Admin" }, select: { id: true, userId: true } });
+  await ensurePrimaryMembership(prisma, user.id, facilityId, { isAdmin: role === "HOSPITAL_ADMIN" });
+  return staff;
 }
 
 async function main() {

@@ -95,14 +95,15 @@ export async function recordIsClaimed(patientId: string, exceptPersonId?: string
   return live > 0 || legacy > 0;
 }
 
-/** Tells the person, without naming the facility or anything clinical. */
+/** Tells the person, in their language, without naming the facility or anything clinical. */
 async function notifyPerson(personId: string, what: "LINKED" | "UNLINKED") {
   const acct = await prisma.personAccount.findFirst({ where: { personId, role: "OWNER", endedAt: null }, select: { user: { select: { email: true } } } });
   if (!acct?.user.email) return;
+  const lang = await personLanguage(personId);
   await sendEmail({
     to: acct.user.email,
-    subject: what === "LINKED" ? "A hospital record was connected to your Aarogya account" : "A hospital record was disconnected from your Aarogya account",
-    text: `${what === "LINKED" ? "A hospital record was connected to" : "A hospital record was disconnected from"} your Aarogya account. Open the app to see which one and when. If this wasn't you, contact the hospital.`,
+    subject: messageText(`account.${what}.subject`, lang).text,
+    text: messageText(`account.${what}.body`, lang).text,
   }).catch(() => undefined);
 }
 
@@ -456,7 +457,10 @@ export async function approveFacilityUnlink(input: { facilityId: string; linkId:
  */
 export async function notifyPreviousPhone(input: { patientId: string; facilityId: string; previousPhone: string | null; changedBy: "STAFF" | "PATIENT"; byUserId: string }) {
   if (!input.previousPhone) return;
-  const sent = await sendSms(input.previousPhone, "The phone number on your hospital record with Aarogya was changed. If you didn't ask for this, contact the hospital.").catch(() => ({ delivered: false as const }));
+  // In the language of the person the record is linked to; English when it is linked to none.
+  const link = await prisma.personPatientLink.findFirst({ where: { patientId: input.patientId, status: "ACTIVE" }, select: { personId: true } });
+  const text = messageText("account.PHONE_CHANGED", await personLanguage(link?.personId)).text;
+  const sent = await sendSms(input.previousPhone, text).catch(() => ({ delivered: false as const }));
   await recordAuditEvent("patient.contact.changeNotified", input.byUserId, { patientId: input.patientId, changedBy: input.changedBy, to: maskPhone(input.previousPhone), delivered: sent.delivered }, { facilityId: input.facilityId, patientId: input.patientId });
 }
 

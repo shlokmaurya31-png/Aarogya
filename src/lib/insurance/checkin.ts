@@ -11,7 +11,7 @@ import { parseShareChoice, DEFAULT_SHARE_CATEGORIES } from "@/lib/sharing/catego
 import { activeLinkedPatients, createShareTx, endShareTx } from "@/lib/sharing/shares";
 import { checkInAppointment } from "@/lib/hospital/appointment";
 import { enterQueue } from "@/lib/hospital/queue";
-import { istDay } from "@/lib/person/notifications";
+import { addDays, dayKey, DEFAULT_TIME_ZONE, facilityTimeZone, isValidTimeZone, parseDayKey } from "@/lib/time/zone";
 import { createCardShareTx, endCardSharesTx } from "./cardShares";
 import { cardView } from "./cards";
 import { CARD_SHARE_DAYS_AFTER, CHECKIN_CLOSES_HOURS, CHECKIN_OPENS_HOURS, CHECKIN_SHARE_DAYS_AFTER, ELIGIBILITY_TEXT, NEEDS_DESK_REASONS, NEEDS_DESK_TEXT } from "./vocab";
@@ -147,7 +147,8 @@ export async function submitPreArrival(a: CheckInActorRef, body: Record<string, 
   }
   const choice = wantsShare ? parseShareChoice(typeof body.share === "object" ? (body.share as Record<string, unknown>) : {}, { categories: DEFAULT_SHARE_CATEGORIES }) : null;
   const booking = v.kind === "APPOINTMENT" ? await prisma.directoryBooking.findUnique({ where: { appointmentId: v.id }, select: { shareId: true } }) : null;
-  const tokenDay = istDay(v.start).day;
+  // The token is per facility day, in the facility's time zone (Flagship 2a).
+  const tokenDay = dayKey(v.start, await facilityTimeZone(prisma, v.facilityId));
   for (let attempt = 0; ; attempt++) {
     try {
       const ci = await prisma.$transaction(async (tx) => {
@@ -228,9 +229,9 @@ export async function cancelPreArrival(a: CheckInActorRef, checkInId: string) {
 
 // ── The desk ─────────────────────────────────────────────────────────────
 
-/** Pre-registered patients for a day (default: today, India time): the token, who, when, and what is left to do. */
+/** Pre-registered patients for a day (default: the facility's today, in its time zone): the token, who, when, and what is left to do. */
 export async function preRegistered(facilityId: string, day?: string) {
-  const d = day && /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : istDay(new Date()).day;
+  const d = parseDayKey(day) ?? dayKey(new Date(), await facilityTimeZone(prisma, facilityId));
   const rows = await prisma.preArrivalCheckIn.findMany({ where: { facilityId, tokenDay: d }, orderBy: { token: "asc" }, take: 300 });
   const patients = await prisma.patient.findMany({ where: { id: { in: rows.map((r) => r.patientId) } }, select: { id: true, fullName: true, uhid: true } });
   const appts = await prisma.appointment.findMany({ where: { id: { in: rows.map((r) => r.appointmentId).filter((x): x is string => !!x) } }, select: { id: true, scheduledStart: true, doctor: { select: { user: { select: { displayName: true } } } } } });
@@ -308,8 +309,18 @@ export const checkInLifecycle: DomainEventConsumer = {
   },
 };
 
-/** Runner sweep: a check-in still open 12 hours after its visit's day began lapses (nobody arrived). */
+/**
+ * Runner sweep: a check-in still open on a day after its token day lapses
+ * (nobody arrived). "Yesterday" is each facility's own, in its time zone.
+ */
 export async function sweepStaleCheckIns(now = new Date()) {
-  const yesterday = istDay(new Date(now.getTime() - 24 * HOUR)).day;
-  return { lapsed: await lapseFor({ tokenDay: { lte: yesterday } }, null) };
+  const facilities = await prisma.facility.findMany({ select: { id: true, timeZone: true } });
+  const byZone = new Map<string, string[]>();
+  for (const f of facilities) byZone.set(f.timeZone, [...(byZone.get(f.timeZone) ?? []), f.id]);
+  let lapsed = 0;
+  for (const [timeZone, facilityIds] of byZone) {
+    const yesterday = addDays(dayKey(now, isValidTimeZone(timeZone) ? timeZone : DEFAULT_TIME_ZONE), -1);
+    lapsed += await lapseFor({ tokenDay: { lte: yesterday }, facilityId: { in: facilityIds } }, null);
+  }
+  return { lapsed };
 }

@@ -2,11 +2,21 @@ import { PrismaClient } from "@prisma/client";
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
-export const prisma =
-  globalForPrisma.prisma ??
-  new PrismaClient({
+/**
+ * A User's passwordHash is never read unless a query asks for it by name
+ * (`select: { passwordHash: true }`, or `omit: { passwordHash: false }` in
+ * the login route). Flagship 2 found the chart returning staff hashes through
+ * `include: { user: true }`; this closes that whole class (and withApiErrors
+ * refuses any response that still carries one).
+ */
+function makeClient() {
+  return new PrismaClient({
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
-  });
+    omit: { user: { passwordHash: true } },
+  }) as unknown as PrismaClient;
+}
+
+export const prisma = globalForPrisma.prisma ?? makeClient();
 
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 

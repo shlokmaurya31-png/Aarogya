@@ -2,9 +2,8 @@ import { NextRequest } from "next/server";
 import { withApiErrors } from "@/lib/auth/rbac";
 import { requireActorMemberships } from "@/lib/auth/tenantContext";
 import { dispatchPendingDomainEvents } from "@/lib/events";
-// Phase D7 — ensure the workflow-engine consumer is registered before dispatch so
-// committed events drive workflows. Side-effect import (workflows → events only).
-import "@/lib/workflows/register";
+// Flagship 2b: the whole consumer registry before dispatch, never a part of it.
+import { registerAllConsumers } from "@/lib/runner/consumers";
 
 /**
  * POST: platform-only operational trigger to dispatch pending events. Bounded by
@@ -17,6 +16,7 @@ export async function POST(req: NextRequest) {
     await requireActorMemberships("platform:events:operate");
     const body = await req.json().catch(() => ({}));
     const batchSize = Number.isFinite(body?.batchSize) ? Number(body.batchSize) : undefined;
-    return dispatchPendingDomainEvents({ batchSize, maxDurationMs: 15_000 });
+    const consumers = registerAllConsumers();
+    return { ...(await dispatchPendingDomainEvents({ batchSize, maxDurationMs: 15_000 })), consumers };
   });
 }

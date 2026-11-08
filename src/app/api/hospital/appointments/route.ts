@@ -6,6 +6,7 @@ import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { withApiErrors, BadRequestError } from "@/lib/auth/rbac";
 import { bookAppointment, SlotConflictError } from "@/lib/hospital/appointment";
 import { parseOptionalEnum } from "@/lib/enumValue";
+import { facilityTimeZone, parseDayKey, zonedDay } from "@/lib/time/zone";
 
 export async function GET(req: NextRequest) {
   return withApiErrors(async () => {
@@ -18,8 +19,11 @@ export async function GET(req: NextRequest) {
 
     let dateFilter: { gte: Date; lt: Date } | undefined;
     if (date) {
-      const start = new Date(`${date}T00:00:00`);
-      dateFilter = { gte: start, lt: new Date(start.getTime() + 24 * 3_600_000) };
+      // The facility's day in its time zone (Flagship 2a), not the server's.
+      const day = parseDayKey(date);
+      if (!day) throw new BadRequestError("date must be YYYY-MM-DD.");
+      const { start, end } = zonedDay(day, await facilityTimeZone(prisma, facilityId));
+      dateFilter = { gte: start, lt: end };
     }
 
     const appointments = await prisma.appointment.findMany({

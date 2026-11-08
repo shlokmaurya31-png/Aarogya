@@ -2,6 +2,8 @@ import { prisma } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { BadRequestError, ConflictError, NotFoundError } from "@/lib/auth/rbac";
 import { sendEmail } from "@/lib/email/send";
+import { messageText } from "@/lib/notifications/texts";
+import { personLanguage } from "./notifications";
 import { getStorageAdapter } from "@/lib/storage";
 import { emitDomainEvent } from "@/lib/events/emit";
 import { endShareTx } from "@/lib/sharing/shares";
@@ -57,7 +59,9 @@ export async function closePersonAccount(userId: string, confirm: string) {
     await emitDomainEvent(tx, { type: "PersonAccountClosed", aggregateId: personId, personId, actorUserId: userId, payload: { personId, purgeAfter: purgeAfter.toISOString() } });
   });
   await recordAuditEvent("person.account.closed", userId, { personId, purgeAfter: purgeAfter.toISOString() });
-  await tell(personId, "Your Aarogya account is closed", `Your Aarogya account is closed. The documents and details you added will be deleted on ${purgeAfter.toISOString().slice(0, 10)}. Until then you can reopen it by signing in. Hospital records stay with the hospitals that made them.`);
+  // Flagship 2e: in the person's language; "in 30 days" rather than a date (these texts carry no dates).
+  const lang = await personLanguage(personId);
+  await tell(personId, messageText("account.CLOSED.subject", lang).text, messageText("account.CLOSED.body", lang, { days: CLOSURE_GRACE_DAYS }).text);
   return { status: "CLOSED" as const, purgeAfter: purgeAfter.toISOString() };
 }
 

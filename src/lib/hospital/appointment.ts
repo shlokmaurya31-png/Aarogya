@@ -3,6 +3,7 @@ import type { AppointmentType, AccessSource, RequestPriority, Prisma } from "@pr
 import { emitDomainEvent } from "@/lib/events/emit";
 import { facilityOrganizationId } from "@/lib/events/tenant";
 import { assertBookable, DoctorNotBookableError } from "./bookability";
+import { facilityTimeZone } from "@/lib/time/zone";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 
 export class SlotConflictError extends Error {
@@ -105,8 +106,10 @@ export async function bookAppointmentTx(tx: Prisma.TransactionClient, input: Boo
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${input.doctorStaffId}))`;
 
     // D7: inside a clinic session, not on leave/absent, not off shift — the
-    // same rule the slot listing uses. Checked under the doctor's lock.
-    const block = await assertBookable(tx, input.doctorStaffId, input.scheduledStart, input.scheduledEnd);
+    // same rule the slot listing uses. Checked under the doctor's lock, on the
+    // booking facility's day in its time zone (Flagship 2a).
+    const timeZone = await facilityTimeZone(tx, input.requireFacilityId ?? input.facilityId);
+    const block = await assertBookable(tx, input.doctorStaffId, input.scheduledStart, input.scheduledEnd, timeZone);
     if (input.requireFacilityId && block.facilityId !== input.requireFacilityId) throw new DoctorNotBookableError("NO_SESSION");
     const maxConcurrent = block.maxConcurrentAppointments;
 

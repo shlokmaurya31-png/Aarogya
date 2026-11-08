@@ -7,6 +7,7 @@
 import { prisma } from "../../src/lib/db";
 import { registerPatientAccount } from "../../src/lib/patient/selfRegistration";
 import { dispatchPendingDomainEvents } from "../../src/lib/events/dispatcher";
+import { registerAllConsumers } from "../../src/lib/runner/consumers";
 import { emitFacilityEvent } from "../../src/lib/events/facilityEvent";
 import { createNote } from "../../src/lib/hospital/clinicalNote";
 import { recordAllergy, recordDiagnosis, recordVitals, updateDiagnosis } from "../../src/lib/hospital/clinicalRecords";
@@ -29,6 +30,7 @@ export interface EvalFixture {
 
 let clock = Date.now();
 export async function drainEvents() {
+  registerAllConsumers();
   for (let i = 0; i < 40; i++) {
     clock += 2 * 3_600_000;
     const r = await dispatchPendingDomainEvents({ now: new Date(clock), batchSize: 500, maxDurationMs: 60_000 });

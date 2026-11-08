@@ -27,6 +27,7 @@ import { prisma } from "../src/lib/db";
 import { emitDomainEvent } from "../src/lib/events/emit";
 import { dispatchPendingDomainEvents, STALE_CLAIM_MS } from "../src/lib/events/dispatcher";
 import { registerConsumer, unregisterConsumer } from "../src/lib/events/consumers";
+import { registerAllConsumers } from "../src/lib/runner/consumers";
 import { PermanentEventError, RetryableEventError, type DomainEventEnvelope } from "../src/lib/events/types";
 import { runTick } from "../src/lib/runner/tick";
 import { EXPECTED_CONSUMERS } from "../src/lib/runner/consumers";
@@ -67,6 +68,8 @@ async function main() {
   const run = Date.now().toString(36);
   const facility = await prisma.facility.findUniqueOrThrow({ where: { id: "fac-amc-pune" } });
   const tenant = { organizationId: facility.organizationId, facilityId: facility.id };
+  // Flagship 2b: the dispatcher runs only with the whole registry; the probe rides along.
+  registerAllConsumers();
   registerConsumer(probe);
   const emitMany = (aggregateId: string, n: number, occurredAt?: Date) =>
     prisma.$transaction(async (tx) => {

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
-import { loadDayContext, evaluateBookability } from "./bookability";
+import { loadDayContext, evaluateBookability, sessionInstant } from "./bookability";
+import { facilityTimeZone } from "@/lib/time/zone";
 
 /**
  * Doctor scheduling foundation (brief §7) — clinic sessions
@@ -18,15 +19,16 @@ export interface AvailableSlot {
 /**
  * Computes bookable slots for one doctor on one date: each slot of each clinic
  * session that passes the D7 bookability rule (no absence, not off shift) and
- * has capacity left. Optionally only one facility's sessions.
+ * has capacity left, at one facility's sessions. The date is that facility's
+ * day (a YYYY-MM-DD key, or the day containing a moment) in its time zone
+ * (Flagship 2a), whatever zone the server runs in.
  */
-export async function getAvailableSlots(staffId: string, date: Date, opts: { facilityId?: string } = {}): Promise<AvailableSlot[]> {
-  const ctx = await loadDayContext(prisma, staffId, date);
+export async function getAvailableSlots(staffId: string, date: Date | string, opts: { facilityId: string }): Promise<AvailableSlot[]> {
+  const ctx = await loadDayContext(prisma, staffId, date, await facilityTimeZone(prisma, opts.facilityId));
   // Week 5a: one doctor, several places: only that facility's sessions (the lock and overlaps stay per doctor).
-  if (opts.facilityId) ctx.sessions = ctx.sessions.filter((s) => s.facilityId === opts.facilityId);
+  ctx.sessions = ctx.sessions.filter((s) => s.facilityId === opts.facilityId);
   if (ctx.sessions.length === 0) return [];
-  const dayStart = ctx.dayStart;
-  const dayEnd = new Date(dayStart.getTime() + 24 * 3_600_000);
+  const { dayStart, dayEnd } = ctx;
 
   const existing = await prisma.appointment.findMany({
     where: { doctorStaffId: staffId, scheduledStart: { gte: dayStart, lt: dayEnd }, status: { notIn: ["CANCELLED", "NO_SHOW"] } },
@@ -43,7 +45,7 @@ export async function getAvailableSlots(staffId: string, date: Date, opts: { fac
     const duration = session.slotDurationMinutes ?? 15;
     const maxConcurrent = session.maxConcurrentAppointments;
     for (let minute = session.startMinute; minute + duration <= session.endMinute; minute += duration) {
-      const start = new Date(dayStart.getTime() + minute * 60_000);
+      const start = sessionInstant(ctx, minute);
       const end = new Date(start.getTime() + duration * 60_000);
       if (!evaluateBookability(ctx, start, end).bookable) continue;
       const booked = bookedCount.get(start.getTime()) ?? 0;

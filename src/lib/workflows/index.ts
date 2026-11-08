@@ -2,7 +2,7 @@
  * Phase D7 — workflow engine public surface.
  *
  * Producers of events need do nothing: the `workflow-engine` D6 consumer
- * (registered via `@/lib/workflows/register`) reacts to committed events. Routes
+ * (registered with every other consumer by `registerAllConsumers`, src/lib/runner/consumers.ts) reacts to committed events. Routes
  * and the gate import the management/operations/engine functions below. See
  * docs/platform/workflows/ for the architecture, guarantees, and non-guarantees.
  */

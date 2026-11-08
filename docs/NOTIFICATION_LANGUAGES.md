@@ -34,7 +34,11 @@ Medicine names and dates never appear in these texts: they carry no clinical det
 
 For each language, a reviewer fluent in it (and familiar with health-care wording) reads the entries in `review.json`, fixes the text in `texts.ts` where needed, runs `npm run docs:notification-review`, then sets each entry they approve to `"status": "REVIEWED"` with their name in `reviewer`. The Hindi notification texts predate this work (Weeks 4c and 5c) but were never reviewed either, so they are pending too.
 
+## Flagship 2e: the account messages
+
+The four account messages that were English only are templates now, in all eleven languages and pending review like the rest: record connected or disconnected (`account.LINKED`, `account.UNLINKED`, email), the phone-changed SMS to the previous number (`account.PHONE_CHANGED`, in the language of the person the record is linked to, English when it is linked to none), account closure (`account.CLOSED`, which now says "in 30 days" rather than a date, as these texts carry no dates) and the household invitation (`account.INVITED`, in the invitee's own language).
+
 ## Not covered yet
 
-- The account emails sent in English only: record linked or unlinked (`src/lib/person/linking.ts`), the phone-changed SMS to the old number, account closure (`src/lib/person/closure.ts`) and the household invitation (whose recipient may have no Aarogya language yet).
+- Native-speaker review of all 350 entries (`review.json`), Hindi included.
 - The staff work-login code is sent in English until staff logins carry a language.

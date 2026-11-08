@@ -152,8 +152,8 @@ export async function publicProfile(doctorId: string) {
   return hit;
 }
 
-/** Live slots for one location on one day: the engine's own computation, this location's facility only. */
-export async function locationSlots(locationId: string, day: Date) {
+/** Live slots for one location on one day (the facility's day: a YYYY-MM-DD key or the day containing a moment): the engine's own computation, this location's facility only. */
+export async function locationSlots(locationId: string, day: Date | string) {
   const loc = await prisma.practiceLocation.findUnique({ where: { id: locationId }, include: { doctor: { select: { verificationStatus: true, listed: true } } } });
   if (!loc || !loc.active || loc.doctor.verificationStatus !== "VERIFIED" || !loc.doctor.listed) throw new NotFoundError();
   const now = Date.now();

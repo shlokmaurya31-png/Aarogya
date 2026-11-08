@@ -74,6 +74,12 @@ describe("notification texts in every app language (pre-launch item 23)", () => 
     expect(notificationText("ACCESS_SUMMARY", "en", { opens: 3, people: 2 }).body).toMatch(/^Your record was opened 3 times by 2 people yesterday\./);
     expect(notificationText("COMING_OF_AGE", "en", { days: 30 }).body).toMatch(/in 30 days\./);
     expect(messageText("code.CLAIM", "en", { code: "123456", minutes: 30 }).text).toBe('Aarogya: your health record is ready for you to take over. Your code is 123456 (expires in 30 minutes). Use it in the app with "Claim my profile".');
+    // Flagship 2e: the account messages, as they were sent in English before.
+    expect(messageText("account.LINKED.body", "en").text).toBe("A hospital record was connected to your Aarogya account. Open the app to see which one and when. If this wasn't you, contact the hospital.");
+    expect(messageText("account.UNLINKED.subject", "en").text).toBe("A hospital record was disconnected from your Aarogya account");
+    expect(messageText("account.PHONE_CHANGED", "en").text).toBe("The phone number on your hospital record with Aarogya was changed. If you didn't ask for this, contact the hospital.");
+    expect(messageText("account.INVITED.body", "en").text).toBe("Someone invited you to their family on Aarogya. Open the app to accept or decline. Nobody sees your record unless you choose what they may see.");
+    expect(messageText("account.CLOSED.body", "en", { days: 30 }).text).toMatch(/will be deleted in 30 days\. Until then/);
   });
 
   it("writes in the person's language, English for one the app doesn't have", () => {

@@ -22,11 +22,13 @@ function freePort(): Promise<number> {
 }
 
 /**
- * Builds (unless --no-build and a build exists) and starts the app. `env` is
- * added to the server's environment (e.g. SMS_PROVIDER=outbox).
+ * Builds (unless --no-build, or `opts.build` is false, and a build exists) and
+ * starts the app. `env` is added to the server's environment (e.g.
+ * SMS_PROVIDER=outbox, or TZ for the time-zone gate).
  */
-export async function startServer(env: Record<string, string> = {}): Promise<{ base: string; child: ChildProcess; serverLog: () => string }> {
-  if (!process.argv.includes("--no-build") || !existsSync(path.join(ROOT, ".next", "BUILD_ID"))) {
+export async function startServer(env: Record<string, string> = {}, opts: { build?: boolean } = {}): Promise<{ base: string; child: ChildProcess; serverLog: () => string }> {
+  const build = opts.build ?? !process.argv.includes("--no-build");
+  if (build || !existsSync(path.join(ROOT, ".next", "BUILD_ID"))) {
     console.log("Building the app (next build)…");
     const b = spawnSync(NEXT, ["build"], { cwd: ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" });
     if (b.status !== 0) throw new Error(`next build failed:\n${(b.stdout + b.stderr).slice(-3000)}`);

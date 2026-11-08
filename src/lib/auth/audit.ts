@@ -39,6 +39,11 @@ export type AuditEventType =
   | "hospital.patient.updated"
   | "hospital.patient.merged"
   | "hospital.patient.viewed"
+  // Flagship 2, step 5 — offline nursing (a pack is a read of each patient's record; a takeover keeps its reason).
+  | "hospital.offline.pack.issued"
+  | "hospital.offline.lease.overridden"
+  // Flagship 2, step 6 — legacy import.
+  | "hospital.legacy-import.committed"
   // Phase 6.8 — EMPI identity mutations.
   | "hospital.patient.unmerged"
   | "hospital.patient.identifierAdded"

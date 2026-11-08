@@ -29,6 +29,8 @@ interface ChartData {
   patient: { id: string; uhid: string; fullName: string; sex: string; dob: string | null; dobPrecision?: string };
   notes: { id: string; type: string; status: string; content: { assessment?: string; [k: string]: unknown }; author: { user: { displayName: string } }; createdAt: string }[];
   medicationOrders: { id: string; drugName: string; dose: string; route: string; status: string }[];
+  /** Flagship 2d: every current order, whatever page it would fall on. */
+  summary: { currentMedicationOrders: { id: string; drugName: string; dose: string; route: string; status: string }[] };
 }
 interface Assessment { id: string; status: string; version: number; findings: Findings; createdAt: string; completedAt: string | null; signedAt: string | null }
 interface FlowsheetEntry { type: string; timestamp: string; summary: string; refId: string }
@@ -296,13 +298,13 @@ export function NursingWorkspace({ patientId }: { patientId: string }) {
       <Card className="rounded-[20px]">
         <div className="flex items-center gap-2"><Pill size={14} className="text-cyan" /><CardLabel>Medications (MAR — administer from My Shift)</CardLabel></div>
         <div className="mt-2.5 space-y-1.5">
-          {chart.medicationOrders.map((m) => (
+          {chart.summary.currentMedicationOrders.map((m) => (
             <div key={m.id} className="flex items-center justify-between text-[11.5px]">
               <span>{m.drugName} {m.dose} · {m.route}</span>
               <StatusPill label={m.status.replace("_", " ")} tone={m.status === "ACTIVE" ? "emerald" : "neutral"} className="rounded-md" />
             </div>
           ))}
-          {chart.medicationOrders.length === 0 && <p className="text-[11.5px] text-text-tertiary">No medication orders.</p>}
+          {chart.summary.currentMedicationOrders.length === 0 && <p className="text-[11.5px] text-text-tertiary">No current medication orders.</p>}
         </div>
       </Card>
 

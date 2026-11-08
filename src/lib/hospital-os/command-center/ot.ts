@@ -12,7 +12,7 @@ import type { CommandSection } from "./types";
  */
 export async function getOt(ctx: CommandContext): Promise<CommandSection> {
   const f = ctx.facilityId;
-  const today = startOfToday(ctx.now);
+  const today = startOfToday(ctx.now, ctx.timeZone);
   const [scheduled, inProgress, completedToday, cancelledToday, theatres, delayed] = await Promise.all([
     prisma.surgery.count({ where: { facilityId: f, status: "SCHEDULED" } }),
     prisma.surgery.count({ where: { facilityId: f, status: "IN_PROGRESS" } }),

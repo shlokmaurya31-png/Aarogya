@@ -59,6 +59,46 @@ export const observabilityProjection: DomainEventConsumer = {
   },
 };
 
+/**
+ * Flagship 2b — the declared registry. src/lib/runner/consumers.ts (the one
+ * list of every consumer) declares itself here when it loads. The dispatcher
+ * refuses to run without the declaration, or while any declared consumer is
+ * not registered in this process, so no entry point can mark an event
+ * processed for only the consumers it happened to load. (The events layer
+ * never imports the domains; the registry module, which does, declares into
+ * it.)
+ */
+export interface DeclaredConsumer { name: string; handles: readonly string[] | "*" }
+let declared: readonly DeclaredConsumer[] | null = null;
+
+export function declareConsumerRegistry(consumers: readonly DeclaredConsumer[]): void {
+  declared = consumers.map((c) => ({ name: c.name, handles: c.handles }));
+}
+export function declaredConsumerRegistry(): readonly DeclaredConsumer[] | null {
+  return declared;
+}
+
+export class ConsumerRegistryIncompleteError extends Error {
+  constructor(public missing: string[]) {
+    super(missing.length === 0 && declared === null
+      ? "The consumer registry (src/lib/runner/consumers.ts) is not loaded in this process: refusing to dispatch."
+      : `Consumers of the registry are not registered in this process (${missing.join(", ")}): refusing to dispatch.`);
+  }
+}
+
+/** The declared registry, after checking every declared consumer is registered here. Throws otherwise. */
+export function assertRegistryComplete(): readonly DeclaredConsumer[] {
+  if (!declared) throw new ConsumerRegistryIncompleteError([]);
+  const missing = declared.filter((c) => !registry.has(c.name)).map((c) => c.name);
+  if (missing.length > 0) throw new ConsumerRegistryIncompleteError(missing);
+  return declared;
+}
+
+/** The registry's consumers for an event type: every one must handle it before the event is PROCESSED. */
+export function requiredConsumersFor(eventType: string, reg: readonly DeclaredConsumer[]): string[] {
+  return reg.filter((c) => c.handles === "*" || c.handles.includes(eventType)).map((c) => c.name);
+}
+
 /** (Re)install the built-in consumers. Called at load and by tests after resets. */
 export function registerBuiltInConsumers(): void {
   registerConsumer(observabilityProjection);
