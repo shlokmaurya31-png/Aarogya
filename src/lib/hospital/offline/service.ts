@@ -636,7 +636,8 @@ async function raiseConflictTx(
       idempotencyKey: `offline-conflict:${c.id}:${kind}:prescriber`,
     }, nurse.userId);
   }
-  const row = await tx.offlineConflict.create({ data: { facilityId: nurse.facilityId, commandId: c.id, administrationId: subject.administrationId, patientId: subject.patientId, kind, severity, taskId: task.id } });
+  // Raised at the sync that found it: the 15-minute response (and its escalation) counts from then.
+  const row = await tx.offlineConflict.create({ data: { facilityId: nurse.facilityId, commandId: c.id, administrationId: subject.administrationId, patientId: subject.patientId, kind, severity, taskId: task.id, createdAt: now } });
   await emitFacilityEvent(tx, {
     type: "OfflineConflictRecorded", aggregateId: row.id, facilityId: nurse.facilityId, actorUserId: nurse.userId, encounterId: subject.encounterId,
     payload: { conflictId: row.id, commandId: c.id, kind, severity, taskId: task.id, ...(subject.administrationId ? { administrationId: subject.administrationId } : {}), ...(subject.patientId ? { patientId: subject.patientId } : {}) },

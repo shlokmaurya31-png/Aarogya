@@ -19,6 +19,7 @@ import { sweepStaleCheckIns } from "@/lib/insurance/checkin";
 import { sweepCheckInOpen } from "@/lib/insurance/notify";
 import { registerAllConsumers } from "./consumers";
 import { sweepExpiredLeases } from "@/lib/hospital/offline/service";
+import { escalateOfflineConflicts } from "@/lib/hospital/offline/queue";
 
 /**
  * Workflow spine §3.1 — one bounded unit of background work, used by the local
@@ -72,8 +73,8 @@ export interface RunTickResult {
   /** Week 5b: managers told 30 days before a child turns 18; guardian grants lapsed on the day. */
   households: { noticed: number; cameOfAge: number };
   insurance: { cardSharesEnded: number; checkInsLapsed: number; checkInNotices: number };
-  /** Flagship 2, step 5: ward devices' dose leases past their expiry. */
-  offline: { leasesExpired: number };
+  /** Flagship 2, step 5: ward devices' dose leases past their expiry. Flagship 4b: CRITICAL conflicts open 15 minutes, escalated to the pharmacists. */
+  offline: { leasesExpired: number; conflictsEscalated: number };
   durationMs: number;
   /** True when a batch limit was hit, i.e. there may be more work now. */
   moreWork: boolean;
@@ -121,7 +122,9 @@ export async function runTick(opts: RunTickOptions = {}): Promise<RunTickResult>
   const insurance = Date.now() - started < budgetMs
     ? { cardSharesEnded: (await sweepExpiredCardShares(opts.now)).ended, checkInsLapsed: (await sweepStaleCheckIns(opts.now)).lapsed, checkInNotices: (await sweepCheckInOpen(opts.now)).queued }
     : { cardSharesEnded: 0, checkInsLapsed: 0, checkInNotices: 0 };
-  const offline = Date.now() - started < budgetMs ? { leasesExpired: (await sweepExpiredLeases({ now: opts.now })).expired } : { leasesExpired: 0 };
+  const offline = Date.now() - started < budgetMs
+    ? { leasesExpired: (await sweepExpiredLeases({ now: opts.now })).expired, conflictsEscalated: (await escalateOfflineConflicts({ now: opts.now })).escalated }
+    : { leasesExpired: 0, conflictsEscalated: 0 };
 
   return {
     consumers,

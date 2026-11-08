@@ -42,6 +42,9 @@ export type AuditEventType =
   // Flagship 2, step 5 — offline nursing (a pack is a read of each patient's record; a takeover keeps its reason).
   | "hospital.offline.pack.issued"
   | "hospital.offline.lease.overridden"
+  // Flagship 4b — the charge nurse's queue: each resolution and confirmation with its reason.
+  | "hospital.offline.conflict.resolved"
+  | "hospital.offline.lease.override.confirmed"
   // Flagship 2, step 6 — legacy import.
   | "hospital.legacy-import.committed"
   // Flagship 3d — a re-imported patient's differing details: accepted or kept, with a reason.

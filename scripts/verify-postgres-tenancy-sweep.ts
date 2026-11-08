@@ -378,6 +378,9 @@ const SEGMENT_MODELS: Record<string, string> = {
   "legal-documents/[consentId]": "DependentConsent",
   // Flagship 2, step 5: offline nursing.
   "offline/devices/[id]": "WardDevice",
+  // Flagship 4b: the charge nurse's queue.
+  "conflicts/[conflictId]": "OfflineConflict",
+  "leases/[leaseId]": "DoseLease",
   "wards/[id]": "Ward",
   // Flagship 2, step 6: legacy import.
   "legacy-import/[batchId]": "LegacyImportBatch",

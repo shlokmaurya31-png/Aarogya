@@ -217,6 +217,22 @@ Every conflict is a row (`OfflineConflict`: kind, severity, the command, the fac
 - **Events:** `OfflineCommandRecorded` and `OfflineConflictRecorded` version 2 (any kind; ids only, never the values). The applied records emit their usual events (`ObservationRecorded`, `TaskCompleted`, `MedicationAdministered`).
 - **Gate:** `verify-postgres-offline-phase2`.
 
+### 13.3 The charge nurse's queue and the 15-minute escalation (Flagship 4b)
+
+- **Screen:** *Offline queue* (`/hospital-os/nurse/offline-queue`, for nurses). The charge nurse on now (§13.1) sees their wards' items:
+  - open conflicts, CRITICAL first: a possible double dose or a PRN dose over its limit, then refused claims and records, changed orders and the rest;
+  - each with the patient, the drug, the device, the nurse, when it was recorded and the response time;
+  - the doses taken over from a device until they are confirmed in person (§4), saying whether the device has synced since.
+
+  Another nurse sees an empty queue.
+- **Actions** (only the charge nurse on now, each with a reason, audited, with its event):
+  - **resolve** a conflict as *patient checked: no harm*, *incident raised*, *one dose, recorded twice*, *the record stands* or *recorded online by me* (`POST /api/hospital/offline/conflicts/{id}/resolve`, `OfflineConflictResolved`). Its task is completed;
+  - **confirm in person** a takeover (`POST /api/hospital/offline/leases/{id}/confirm`, `DoseLeaseOverrideConfirmed`).
+
+  A database CHECK holds every resolved conflict to naming who, when, how and why.
+- **Escalation (§12.7):** a CRITICAL conflict still open 15 minutes after the sync that raised it is escalated once by the runner (`escalateOfflineConflicts`, `OfflineConflictEscalated`). The facility's pharmacists get a STAT task and a CRITICAL notification each. This comes on top of the pharmacists' task at the time the conflict is raised.
+- **Gate:** `verify-postgres-offline-queue`.
+
 - **Not yet:**
   - the device app (encrypted store, outbox, downtime PDF);
   - vitals, I/O and task commands;

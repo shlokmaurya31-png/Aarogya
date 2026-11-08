@@ -128,6 +128,8 @@ const ORDER = [
   "verify-postgres-charge-shifts",
   // Flagship 4a: offline vitals, I/O, tasks and PRN
   "verify-postgres-offline-phase2",
+  // Flagship 4b: the charge nurse's queue and the 15-minute escalation
+  "verify-postgres-offline-queue",
   // Flagship 2, step 6: legacy import, phase 1 (CSV patients and encounters)
   "verify-postgres-legacy-import",
   // Flagship 3d: 50,000 rows in chunks, a forced failure and the resume, the review queue

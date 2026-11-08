@@ -12285,6 +12285,20 @@ enum OfflineConflictStatus {
   RESOLVED
 }
 
+/// Flagship 4b: how the charge nurse resolved a conflict (always with a reason).
+enum OfflineConflictResolution {
+  /// The patient was checked and no harm found.
+  NO_HARM_FOUND
+  /// An incident was raised (a double dose given, a limit breached).
+  INCIDENT_RAISED
+  /// One dose was given and recorded twice.
+  DUPLICATE_RECORD
+  /// The offline record stands as it is.
+  RECORD_STANDS
+  /// What was refused offline was recorded online by a person.
+  RECORDED_ONLINE
+}
+
 model WardDevice {
   id                 String           @id @default(cuid())
   facility           Facility         @relation(fields: [facilityId], references: [id])
@@ -12321,24 +12335,28 @@ model WardPack {
 }
 
 model DoseLease {
-  id               String                   @id @default(cuid())
-  facilityId       String
-  administration   MedicationAdministration @relation(fields: [administrationId], references: [id])
-  administrationId String
-  device           WardDevice               @relation(fields: [deviceId], references: [id])
-  deviceId         String
-  pack             WardPack                 @relation(fields: [packId], references: [id])
-  packId           String
-  nurseStaffId     String
-  status           DoseLeaseStatus          @default(ACTIVE)
-  grantedAt        DateTime                 @default(now())
-  expiresAt        DateTime
-  endedAt          DateTime?
-  endedByUserId    String?
+  id                        String                   @id @default(cuid())
+  facilityId                String
+  administration            MedicationAdministration @relation(fields: [administrationId], references: [id])
+  administrationId          String
+  device                    WardDevice               @relation(fields: [deviceId], references: [id])
+  deviceId                  String
+  pack                      WardPack                 @relation(fields: [packId], references: [id])
+  packId                    String
+  nurseStaffId              String
+  status                    DoseLeaseStatus          @default(ACTIVE)
+  grantedAt                 DateTime                 @default(now())
+  expiresAt                 DateTime
+  endedAt                   DateTime?
+  endedByUserId             String?
   /// The charge nurse's reason, required for an override.
-  overrideReason   String?
+  overrideReason            String?
   /// When the holding device was told its lease ended (override, expiry, revocation).
-  holderToldAt     DateTime?
+  holderToldAt              DateTime?
+  /// Flagship 4b: an override confirmed in person by the charge nurse (design §4), with a reason.
+  overrideConfirmedAt       DateTime?
+  overrideConfirmedByUserId String?
+  overrideConfirmReason     String?
 
   @@index([deviceId, status])
   @@index([administrationId])
@@ -12379,23 +12397,29 @@ model OfflineCommand {
 }
 
 model OfflineConflict {
-  id               String                  @id @default(cuid())
+  id               String                     @id @default(cuid())
   facilityId       String
-  command          OfflineCommand          @relation(fields: [commandId], references: [id])
+  command          OfflineCommand             @relation(fields: [commandId], references: [id])
   commandId        String
   /// Flagship 4a: null for a conflict that isn't about a scheduled dose.
   administrationId String?
   patientId        String?
   kind             OfflineConflictKind
   severity         OfflineConflictSeverity
-  status           OfflineConflictStatus   @default(OPEN)
+  status           OfflineConflictStatus      @default(OPEN)
   /// The task for whoever must look (the charge nurse; for a possible double dose, within 15 minutes).
   taskId           String?
-  createdAt        DateTime                @default(now())
+  createdAt        DateTime                   @default(now())
   resolvedAt       DateTime?
   resolvedByUserId String?
+  /// Flagship 4b: the charge nurse's resolution and reason.
+  resolution       OfflineConflictResolution?
+  resolutionReason String?
+  /// A CRITICAL conflict still open after 15 minutes: the pharmacists were told.
+  escalatedAt      DateTime?
 
   @@index([facilityId, status])
+  @@index([status, severity, createdAt])
 }
 
 // ── Flagship 3a — the charge nurse per shift (docs/OFFLINE_NURSING_DESIGN.md §12.9) ──

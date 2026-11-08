@@ -136,6 +136,7 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
   ],
   NURSE: [
     { href: "/hospital-os/nurse", label: "My Shift", icon: ClipboardCheck },
+    { href: "/hospital-os/nurse/offline-queue", label: "Offline queue", icon: ShieldAlert },
     { href: "/hospital-os/ed", label: "ED Board", icon: Siren },
     { href: "/hospital-os/beds", label: "Beds", icon: BedDouble },
     { href: "/hospital-os/transfers", label: "Transfers", icon: ArrowRightLeft },
