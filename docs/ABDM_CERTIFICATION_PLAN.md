@@ -1,6 +1,6 @@
 # ABDM certification plan (M1–M3, v3 APIs)
 
-- **Status:** Plan (Flagship 1d, 2026-10-28); the open questions decided (2026-10-29, §7). No ABDM call has been made with a valid credential yet. Pre-launch items 5 (certification) and 20 (consent mapping) depend on this plan.
+- **Status:** Plan (Flagship 1d, 2026-10-28); the open questions decided (2026-10-29, §7; billing data 2026-11-08). No ABDM call has been made with a valid credential yet. Pre-launch items 5 (certification) and 20 (consent mapping) depend on this plan.
 - **Source of truth for what exists:** `docs/interoperability/abdm-contract-matrix.md` (verified against ABDM Milestone 3 v2.5, 2025-03-03, and the NRCeS FHIR IG 6.5.0), `abdm-architecture.md`, `abdm-sandbox-verification.md`, `abdm-production-checklist.md`. Code: `src/lib/hospital/interoperability/abdm/` and `.../fhir/`.
 - **Rule carried over from Phase C:** no code is written against a guessed contract. Where this plan says *to verify*, the M1 or M2 document (or the current NHA process) hasn't been obtained, and the step starts by obtaining it.
 
@@ -107,4 +107,4 @@ Getting to production (the usual NHA path; *to verify* the current steps and ord
 5. **Care contexts: OPD visits, discharge summaries, lab reports and prescriptions.** Display names carry no sensitive detail. Decided.
 6. **Sensitive records are withheld from ABDM pushes unless the person opted in** locally for that category. Decided.
 7. **One combined security assessment** for WASA and pre-launch item 6, if the auditor agrees; otherwise WASA first. Decided.
-8. **Billing data:** unchanged; revisit when the IG is re-verified (still open, not one of the decided questions).
+8. **Billing data is not shared through ABDM in M1–M3. Decided (2026-11-08).** No BILLING hiType is offered, and none is mapped from a local share (`abdm/mapping.ts` keeps BILLING unsupported). Revisit when the FHIR implementation guide is re-checked (§3.1).
