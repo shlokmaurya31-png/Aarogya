@@ -1,7 +1,6 @@
 "use client";
 
 import { createContext, useContext, useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
 import { Sparkles, X, Mic, ArrowUp, Loader2, TriangleAlert, Command } from "lucide-react";
 import { StreamingText } from "./StreamingText";
 import { cn } from "@/lib/utils";
@@ -334,12 +333,7 @@ function Panel({
   onClose: () => void;
 }) {
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-      className="rounded-[20px] border border-hairline bg-card p-5 shadow-lg"
-    >
+    <div className="rounded-[20px] border border-hairline bg-card p-5 shadow-lg">
       <div className="mb-3 flex items-center justify-between gap-2.5">
         <div className="flex items-center gap-2.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-full border border-cyan/25 bg-cyan/10">
@@ -359,7 +353,7 @@ function Panel({
         </button>
       </div>
       <AiConversation config={config} pageLabel={pageLabel} />
-    </motion.div>
+    </div>
   );
 }
 
@@ -412,33 +406,23 @@ export function AiAssistantProvider({
     <AiAssistantContext.Provider value={controls}>
       {children}
 
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, y: 16, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 12, scale: 0.97 }}
-            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed bottom-24 right-5 z-[60] w-[calc(100vw-2.5rem)] max-w-[380px] sm:right-6"
-          >
-            <Panel config={config} pageLabel={pageLabel} onClose={() => setOpen(false)} />
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Flagship 5 (6a): CSS entrances (globals.css, off under reduced motion) instead of framer-motion, which every portal page used to load for this alone. */}
+      {open && (
+        <div role="dialog" aria-label={config.title} className="aarogya-pop fixed bottom-24 right-5 z-[60] w-[calc(100vw-2.5rem)] max-w-[380px] sm:right-6">
+          <Panel config={config} pageLabel={pageLabel} onClose={() => setOpen(false)} />
+        </div>
+      )}
 
-      <motion.button
-        initial={{ opacity: 0, scale: 0.8 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.3 }}
+      <button
         onClick={() => setOpen((o) => !o)}
-        className="fixed bottom-5 right-5 z-[60] flex h-[52px] w-[52px] items-center justify-center rounded-full bg-cyan text-ink shadow-lg transition hover:brightness-110 active:scale-95 sm:right-6"
+        className="aarogya-pop fixed bottom-5 right-5 z-[60] flex h-[52px] w-[52px] items-center justify-center rounded-full bg-cyan text-ink shadow-lg transition hover:brightness-110 active:scale-95 sm:right-6"
         aria-label={open ? "Close Aarogya AI" : "Open Aarogya AI"}
       >
-        {open ? <X size={20} /> : <Sparkles size={20} />}
+        {open ? <X size={20} aria-hidden /> : <Sparkles size={20} aria-hidden />}
         {!open && (
-          <span className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full border-2 border-ink bg-emerald" />
+          <span aria-hidden className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full border-2 border-ink bg-emerald" />
         )}
-      </motion.button>
+      </button>
     </AiAssistantContext.Provider>
   );
 }

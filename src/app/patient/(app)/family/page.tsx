@@ -41,12 +41,12 @@ export default function FamilyPage() {
         <SectionTitle>Invite someone</SectionTitle>
         <form onSubmit={invite} className="space-y-3">
           <div className="flex gap-2">
-            <select value={relationship} onChange={(e) => setRelationship(e.target.value)} className="rounded-md border border-hairline bg-surface px-3 py-2 text-[13px]">
+            <select aria-label="Relationship" value={relationship} onChange={(e) => setRelationship(e.target.value)} className="rounded-md border border-hairline bg-surface px-3 py-2 text-[13px]">
               {RELATIONSHIPS.map((r) => <option key={r} value={r}>{r.charAt(0) + r.slice(1).toLowerCase()}</option>)}
             </select>
-            <input required value={invitedContact} onChange={(e) => setInvitedContact(e.target.value)} placeholder="Their email or phone" className="flex-1 rounded-md border border-hairline bg-surface px-3 py-2 text-[13px]" />
+            <input required value={invitedContact} onChange={(e) => setInvitedContact(e.target.value)} placeholder="Their email or phone" aria-label="Their email or phone" className="flex-1 rounded-md border border-hairline bg-surface px-3 py-2 text-[13px]" />
           </div>
-          <input value={invitedName} onChange={(e) => setInvitedName(e.target.value)} placeholder="Their name (optional)" className="w-full rounded-md border border-hairline bg-surface px-3 py-2 text-[13px]" />
+          <input value={invitedName} onChange={(e) => setInvitedName(e.target.value)} placeholder="Their name (optional)" aria-label="Their name (optional)" className="w-full rounded-md border border-hairline bg-surface px-3 py-2 text-[13px]" />
           <div className="flex flex-wrap gap-2">
             {SCOPES.map((s) => (
               <button type="button" key={s} onClick={() => toggleScope(s)} className={`rounded-full border px-2.5 py-1 text-[11px] ${scopes.includes(s) ? "border-cyan/40 bg-cyan/10 text-cyan" : "border-hairline text-text-secondary"}`}>

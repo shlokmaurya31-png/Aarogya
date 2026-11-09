@@ -2,7 +2,7 @@
 
 import { Moon, Sun } from "lucide-react";
 import { useThemeStore } from "@/store/useThemeStore";
-import { useTranslation } from "@/hooks/useTranslation";
+import { useShellTranslation } from "@/hooks/useShellTranslation";
 
 /**
  * Light/dark theme toggle.
@@ -26,7 +26,7 @@ export function ThemeToggle({
   const theme = useThemeStore((s) => s.theme);
   const setTheme = useThemeStore((s) => s.setTheme);
   const isDark = theme === "dark";
-  const { t } = useTranslation();
+  const { t } = useShellTranslation();
 
   const label = isDark ? t("theme.switchToLight") : t("theme.switchToDark");
   const Icon = isDark ? Sun : Moon;
