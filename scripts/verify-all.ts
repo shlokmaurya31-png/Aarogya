@@ -134,6 +134,8 @@ const ORDER = [
   "verify-postgres-offline-switch",
   // Flagship 2, step 6: legacy import, phase 1 (CSV patients and encounters)
   "verify-postgres-legacy-import",
+  // Flagship 5: HL7 v2 ADT and ORU (synthetic messages)
+  "verify-postgres-legacy-import-hl7",
   "verify-postgres-schema-constraints",
   // Week 3: workflow spine
   "verify-postgres-runner",

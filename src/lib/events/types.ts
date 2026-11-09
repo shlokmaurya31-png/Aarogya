@@ -163,6 +163,8 @@ export const AGGREGATE_TYPES = [
   "LEGACY_IMPORT_BATCH",
   // Flagship 3d — a re-imported patient's differing details, for review.
   "LEGACY_PATIENT_REVIEW",
+  // Flagship 5 — an imported (HL7 ORU) result.
+  "LEGACY_LAB_RESULT",
 ] as const;
 export type AggregateType = (typeof AGGREGATE_TYPES)[number];
 

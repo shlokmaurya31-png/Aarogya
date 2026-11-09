@@ -66,17 +66,23 @@ const ProfileSchema = z.object({
 }).strict();
 export type ImportProfile = z.infer<typeof ProfileSchema>;
 
-export type RefusalReason = "MISSING_FIELD" | "BAD_DATE" | "DATE_OUT_OF_RANGE" | "OLDER_THAN_WINDOW" | "UNMAPPED_VALUE" | "DUPLICATE_KEY_CONFLICT" | "UNKNOWN_PATIENT" | "INVALID_PHONE" | "CLOSED_BEFORE_REGISTERED" | "UNKNOWN_DEPARTMENT";
-export interface Refusal { file: "patients" | "encounters"; line: number; sourceKey: string | null; reason: RefusalReason; detail: string }
+export type RefusalReason = "MISSING_FIELD" | "BAD_DATE" | "DATE_OUT_OF_RANGE" | "OLDER_THAN_WINDOW" | "UNMAPPED_VALUE" | "DUPLICATE_KEY_CONFLICT" | "UNKNOWN_PATIENT" | "INVALID_PHONE" | "CLOSED_BEFORE_REGISTERED" | "UNKNOWN_DEPARTMENT"
+  // Flagship 5 (HL7): an admission still open at cut-over (the manual checklist, §10.7), a message type this import doesn't read, an unmapped test or unit, a result not final.
+  | "OPEN_ADMISSION" | "UNSUPPORTED_MESSAGE" | "UNMAPPED_TEST" | "UNIT_UNMAPPED" | "NOT_FINAL" | "NOT_NUMERIC";
+/** `line`: the CSV line, or (HL7) the message's number in the file. */
+export interface Refusal { file: "patients" | "encounters" | "results" | "messages"; line: number; sourceKey: string | null; reason: RefusalReason; detail: string }
 
-interface PatientPlan { mrn: string; fullName: string; sex: "M" | "F" | "O"; dob: Date | null; phone: string | null }
+export interface PatientPlan { mrn: string; fullName: string; sex: "M" | "F" | "O"; dob: Date | null; phone: string | null }
 /** The details a re-import compares, in a stable shape (dates as YYYY-MM-DD instants in ISO). */
 type PatientDetails = { fullName: string; sex: string; dob: string | null; phone: string | null };
 const DETAIL_FIELDS = ["fullName", "sex", "dob", "phone"] as const;
-interface ReviewPlan { mrn: string; patientId: string; incoming: PatientDetails; existing: PatientDetails; differences: string[]; incomingHash: string }
-interface EncounterPlan { visitNumber: string; mrn: string; type: EncounterType; registeredAt: Date; closedAt: Date | null; departmentId: string | null; clinician: string | null }
+export interface ReviewPlan { mrn: string; patientId: string; incoming: PatientDetails; existing: PatientDetails; differences: string[]; incomingHash: string }
+export interface EncounterPlan { visitNumber: string; mrn: string; type: EncounterType; registeredAt: Date; closedAt: Date | null; departmentId: string | null; clinician: string | null }
 
-export interface ImportInput { profile?: unknown; patientsCsv?: unknown; encountersCsv?: unknown }
+export interface ResultPlan { sourceKey: string; mrn: string; visitNumber: string | null; testCode: string; testName: string; value: string; numericValue: number | null; unit: string | null; originalValue: string | null; originalUnit: string | null; referenceRange: string | null; abnormalFlag: string | null; observedAt: Date }
+export interface ImportPlan { patients: PatientPlan[]; reviews: ReviewPlan[]; encounters: EncounterPlan[]; results: ResultPlan[] }
+
+export interface ImportInput { profile?: unknown; patientsCsv?: unknown; encountersCsv?: unknown; /** Flagship 5: an HL7 v2 file (ADT and ORU messages). */ hl7?: unknown }
 
 function parseInput(body: ImportInput) {
   const parsed = ProfileSchema.safeParse(body.profile);
@@ -117,7 +123,7 @@ const details = (p: { fullName: string; sex: string; dob: Date | null; phone: st
 const hashOf = (x: unknown) => createHash("sha256").update(JSON.stringify(x)).digest("hex");
 
 /** Rows of `kind` already imported at the facility from the source, by source key (sliced lookups). */
-async function knownKeys(facilityId: string, sourceSystem: string, kind: "PATIENT" | "ENCOUNTER", keys: string[]) {
+export async function knownKeys(facilityId: string, sourceSystem: string, kind: "PATIENT" | "ENCOUNTER" | "RESULT", keys: string[]) {
   const out = new Map<string, string>();
   for (let i = 0; i < keys.length; i += LOOKUP_SLICE) {
     for (const k of await prisma.legacyRecordKey.findMany({ where: { facilityId, sourceSystem, kind, sourceKey: { in: keys.slice(i, i + LOOKUP_SLICE) } }, select: { sourceKey: true, targetId: true } })) out.set(k.sourceKey, k.targetId);
@@ -125,14 +131,54 @@ async function knownKeys(facilityId: string, sourceSystem: string, kind: "PATIEN
   return out;
 }
 
-function normalizedPhone(raw: string): string | null {
+export function normalizedPhone(raw: string): string | null {
   const digits = raw.replace(/[\s()-]/g, "");
   const m = /^(?:\+?91)?([6-9]\d{9})$/.exec(digits);
   return m ? `+91${m[1]}` : null;
 }
 
-/** Maps and validates both files; reads the facility (departments, earlier imports), writes nothing. */
+/**
+ * Patients against what this facility already imported from the source, by
+ * exact MRN: new ones to create; a known MRN with the same details is a no-op;
+ * one whose details differ (only the fields given) waits for review, once per
+ * difference (Flagship 3d).
+ */
+export async function planPatients(facilityId: string, sourceSystem: string, patients: PatientPlan[]) {
+  const known = await knownKeys(facilityId, sourceSystem, "PATIENT", patients.map((p) => p.mrn));
+  const newPatients = patients.filter((p) => !known.has(p.mrn));
+  // A re-imported MRN: the same details are a no-op; different ones wait for review (once per difference).
+  const reviews: ReviewPlan[] = [];
+  const again = patients.filter((p) => known.has(p.mrn));
+  for (let i = 0; i < again.length; i += LOOKUP_SLICE) {
+    const slice = again.slice(i, i + LOOKUP_SLICE);
+    const rows = new Map((await prisma.patient.findMany({ where: { id: { in: slice.map((p) => known.get(p.mrn)!) } }, select: { id: true, fullName: true, sex: true, dob: true, phone: true } })).map((r) => [r.id, r]));
+    const queued = new Set((await prisma.legacyPatientReview.findMany({ where: { facilityId, sourceSystem: sourceSystem, sourceKey: { in: slice.map((p) => p.mrn) } }, select: { sourceKey: true, incomingHash: true } })).map((r) => `${r.sourceKey}:${r.incomingHash}`));
+    for (const p of slice) {
+      const patientId = known.get(p.mrn)!;
+      const now = rows.get(patientId);
+      if (!now) continue;
+      const incoming = details(p);
+      const existing = details({ ...now, sex: String(now.sex) });
+      // Only what the file gives: a date of birth or phone it doesn't carry is not a difference (nor ever a clearing).
+      const differences = DETAIL_FIELDS.filter((f) => incoming[f] !== null && incoming[f] !== existing[f]);
+      if (!differences.length) continue;
+      const incomingHash = hashOf(incoming);
+      if (queued.has(`${p.mrn}:${incomingHash}`)) continue;
+      reviews.push({ mrn: p.mrn, patientId, incoming, existing, differences, incomingHash });
+    }
+  }
+
+  return { newPatients, reviews, alreadyImported: patients.length - newPatients.length - reviews.length };
+}
+
+/** The CSV or the HL7 file (Flagship 5), evaluated: the report and the plan; writes nothing. */
 async function evaluate(facilityId: string, body: ImportInput, now = new Date()) {
+  if (body.hl7 !== undefined) return (await import("./hl7Import")).evaluateHl7(facilityId, body, now);
+  return evaluateCsv(facilityId, body, now);
+}
+
+/** Maps and validates both files; reads the facility (departments, earlier imports), writes nothing. */
+async function evaluateCsv(facilityId: string, body: ImportInput, now = new Date()) {
   const { profile, patientsCsv, encountersCsv, fileHash } = parseInput(body);
   const timeZone = await facilityTimeZone(prisma, facilityId);
   const refused: Refusal[] = [];
@@ -183,29 +229,7 @@ async function evaluate(facilityId: string, body: ImportInput, now = new Date())
     }
     patients.push(rows[0].plan);
   }
-  const known = await knownKeys(facilityId, profile.sourceSystem, "PATIENT", [...byMrn.keys()]);
-  const newPatients = patients.filter((p) => !known.has(p.mrn));
-  // A re-imported MRN: the same details are a no-op; different ones wait for review (once per difference).
-  const reviews: ReviewPlan[] = [];
-  const again = patients.filter((p) => known.has(p.mrn));
-  for (let i = 0; i < again.length; i += LOOKUP_SLICE) {
-    const slice = again.slice(i, i + LOOKUP_SLICE);
-    const rows = new Map((await prisma.patient.findMany({ where: { id: { in: slice.map((p) => known.get(p.mrn)!) } }, select: { id: true, fullName: true, sex: true, dob: true, phone: true } })).map((r) => [r.id, r]));
-    const queued = new Set((await prisma.legacyPatientReview.findMany({ where: { facilityId, sourceSystem: profile.sourceSystem, sourceKey: { in: slice.map((p) => p.mrn) } }, select: { sourceKey: true, incomingHash: true } })).map((r) => `${r.sourceKey}:${r.incomingHash}`));
-    for (const p of slice) {
-      const patientId = known.get(p.mrn)!;
-      const now = rows.get(patientId);
-      if (!now) continue;
-      const incoming = details(p);
-      const existing = details({ ...now, sex: String(now.sex) });
-      // Only what the file gives: a date of birth or phone it doesn't carry is not a difference (nor ever a clearing).
-      const differences = DETAIL_FIELDS.filter((f) => incoming[f] !== null && incoming[f] !== existing[f]);
-      if (!differences.length) continue;
-      const incomingHash = hashOf(incoming);
-      if (queued.has(`${p.mrn}:${incomingHash}`)) continue;
-      reviews.push({ mrn: p.mrn, patientId, incoming, existing, differences, incomingHash });
-    }
-  }
+  const { newPatients, reviews, alreadyImported } = await planPatients(facilityId, profile.sourceSystem, patients);
 
   // Encounters.
   const encounters: EncounterPlan[] = [];
@@ -267,11 +291,11 @@ async function evaluate(facilityId: string, body: ImportInput, now = new Date())
 
   refused.sort((a, b) => (a.file === b.file ? a.line - b.line : a.file < b.file ? 1 : -1));
   const counts = {
-    patients: { rows: P.rows.length, toCreate: newPatients.length, alreadyImported: patients.length - newPatients.length - reviews.length, toReview: reviews.length, refused: refused.filter((r) => r.file === "patients").length },
+    patients: { rows: P.rows.length, toCreate: newPatients.length, alreadyImported, toReview: reviews.length, refused: refused.filter((r) => r.file === "patients").length },
     encounters: { rows: encounterRows, toCreate: encounters.length, alreadyImported: knownEncounters, refused: refused.filter((r) => r.file === "encounters").length },
   };
   const dryRunHash = createHash("sha256").update(JSON.stringify({ fileHash, facilityId, counts, refused })).digest("hex");
-  return { profile, fileHash, timeZone, report: { sourceSystem: profile.sourceSystem, fileHash, dryRunHash, counts, refused, droppedColumns: [...new Set(droppedColumns)] }, plan: { patients: newPatients, reviews, encounters } };
+  return { profile, fileHash, timeZone, report: { sourceSystem: profile.sourceSystem, fileHash, dryRunHash, counts, refused, droppedColumns: [...new Set(droppedColumns)] }, plan: { patients: newPatients, reviews, encounters, results: [] } as ImportPlan };
 }
 
 /** The dry run: the full report, and nothing written. */
@@ -314,7 +338,7 @@ export async function confirmImport(admin: { userId: string; facilityId: string 
 
   let batch = done ?? await prisma.$transaction(async (tx) => {
     const b = await tx.legacyImportBatch.create({ data: { facilityId: admin.facilityId, sourceSystem: profile.sourceSystem, fileHash, status: "COMMITTING", counts: report.counts as unknown as Prisma.InputJsonValue, startedByUserId: admin.userId } });
-    await emitDomainEvent(tx, { ...tenant, type: "LegacyImportBatchStarted", aggregateId: b.id, payload: { batchId: b.id, patients: plan.patients.length, reviews: plan.reviews.length, encounters: plan.encounters.length } });
+    await emitDomainEvent(tx, { ...tenant, type: "LegacyImportBatchStarted", aggregateId: b.id, payload: { batchId: b.id, patients: plan.patients.length, reviews: plan.reviews.length, encounters: plan.encounters.length, ...(plan.results.length ? { results: plan.results.length } : {}) } });
     return b;
   }).catch((e) => {
     if (!isUnique(e)) throw e;
@@ -331,10 +355,10 @@ export async function confirmImport(admin: { userId: string; facilityId: string 
   const batchId = batch.id;
   const size = Math.max(1, Math.min(opts.chunkRows ?? IMPORT_CHUNK_ROWS, 2_000));
   let chunk = batch.chunksCommitted;
-  const created = { patients: 0, reviews: 0, encounters: 0 };
+  const created = { patients: 0, reviews: 0, encounters: 0, results: 0 };
 
   /** One chunk: its writes, the chunk's event and the batch's progress, in one transaction (retried once on a key race). */
-  const commitChunk = async (part: "PATIENTS" | "REVIEWS" | "ENCOUNTERS", write: (tx: Tx) => Promise<number>) => {
+  const commitChunk = async (part: "PATIENTS" | "REVIEWS" | "ENCOUNTERS" | "RESULTS", write: (tx: Tx) => Promise<number>) => {
     for (let attempt = 0; ; attempt++) {
       try {
         const n = await prisma.$transaction(async (tx) => {
@@ -395,6 +419,22 @@ export async function confirmImport(admin: { userId: string; facilityId: string 
       await tx.encounter.createMany({ data: rows.map(({ e, id, patientId }) => ({ id, facilityId: admin.facilityId, patientId, type: e.type, status: "CLOSED" as const, registeredAt: e.registeredAt, closedAt: e.closedAt ?? e.registeredAt, departmentId: e.departmentId, importBatchId: batchId })) });
       await tx.legacyRecordKey.createMany({ data: rows.map(({ e, id }) => ({ facilityId: admin.facilityId, sourceSystem: profile.sourceSystem, kind: "ENCOUNTER" as const, sourceKey: e.visitNumber, targetId: id, batchId, clinicianName: e.clinician })) });
       for (const r of rows) await emitDomainEvent(tx, { ...tenant, type: "LegacyEncounterImported", aggregateId: r.id, payload: { encounterId: r.id, patientId: r.patientId, batchId, encounterType: r.e.type }, correlationId: r.id });
+      return rows.length;
+    });
+  }
+
+  // Flagship 5: results (HL7 ORU), for patients imported in this file or before, never into the live LabResult.
+  for (const part of chunksOf(plan.results, size)) {
+    created.results += await commitChunk("RESULTS", async (tx) => {
+      const have = new Set((await tx.legacyRecordKey.findMany({ where: { facilityId: admin.facilityId, sourceSystem: profile.sourceSystem, kind: "RESULT", sourceKey: { in: part.map((r) => r.sourceKey) } }, select: { sourceKey: true } })).map((k) => k.sourceKey));
+      const keyOf = async (kind: "PATIENT" | "ENCOUNTER", keys: string[]) => new Map((await tx.legacyRecordKey.findMany({ where: { facilityId: admin.facilityId, sourceSystem: profile.sourceSystem, kind, sourceKey: { in: [...new Set(keys)] } }, select: { sourceKey: true, targetId: true } })).map((k) => [k.sourceKey, k.targetId]));
+      const patientOf = await keyOf("PATIENT", part.map((r) => r.mrn));
+      const encounterOf = await keyOf("ENCOUNTER", part.map((r) => r.visitNumber).filter((x): x is string => !!x));
+      const rows = part.filter((r) => !have.has(r.sourceKey) && patientOf.has(r.mrn)).map((r) => ({ r, id: newId(), patientId: patientOf.get(r.mrn)!, encounterId: r.visitNumber ? encounterOf.get(r.visitNumber) ?? null : null }));
+      if (!rows.length) return 0;
+      await tx.legacyLabResult.createMany({ data: rows.map(({ r, id, patientId, encounterId }) => ({ id, facilityId: admin.facilityId, patientId, encounterId, batchId, sourceSystem: profile.sourceSystem, testCode: r.testCode, testName: r.testName, value: r.value, numericValue: r.numericValue, unit: r.unit, originalValue: r.originalValue, originalUnit: r.originalUnit, referenceRange: r.referenceRange, abnormalFlag: r.abnormalFlag, observedAt: r.observedAt })) });
+      await tx.legacyRecordKey.createMany({ data: rows.map(({ r, id }) => ({ facilityId: admin.facilityId, sourceSystem: profile.sourceSystem, kind: "RESULT" as const, sourceKey: r.sourceKey, targetId: id, batchId })) });
+      for (const x of rows) await emitDomainEvent(tx, { ...tenant, type: "LegacyResultImported", aggregateId: x.id, payload: { resultId: x.id, patientId: x.patientId, batchId, converted: x.r.originalUnit !== null } });
       return rows.length;
     });
   }

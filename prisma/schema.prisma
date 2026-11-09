@@ -12533,6 +12533,8 @@ enum LegacyImportBatchStatus {
 enum LegacyRecordKind {
   PATIENT
   ENCOUNTER
+  /// Flagship 5: an HL7 ORU observation.
+  RESULT
 }
 
 model LegacyImportBatch {
@@ -12572,6 +12574,40 @@ model LegacyRecordKey {
 
   @@unique([facilityId, sourceSystem, kind, sourceKey])
   @@index([batchId])
+}
+
+// ── Flagship 5 — imported results (HL7 v2 ORU; docs/LEGACY_IMPORT_DESIGN.md §11.2) ──
+// Kept apart from the live LabResult: an imported result never enters the
+// verification queue, a critical-result alert or the patient's released
+// reports. It shows in the chart's trends, labelled "imported". A value is in
+// the mapped unit: as sent, or converted on an exact (test, unit) mapping.
+
+model LegacyLabResult {
+  id             String   @id @default(cuid())
+  facilityId     String
+  patientId      String
+  /// The imported visit it belongs to, when the message named one this import knows.
+  encounterId    String?
+  batchId        String
+  sourceSystem   String
+  /// The old system's test code (OBX-3) and this hospital's name for it (the mapping).
+  testCode       String
+  testName       String
+  value          String
+  numericValue   Float?
+  unit           String?
+  /// As sent, when the value was converted to the mapped unit.
+  originalValue  String?
+  originalUnit   String?
+  referenceRange String?
+  /// OBX-8 as sent (H, L, HH, LL, A, N…).
+  abnormalFlag   String?
+  observedAt     DateTime
+  createdAt      DateTime @default(now())
+
+  @@index([patientId, testName, observedAt])
+  @@index([batchId])
+  @@index([facilityId])
 }
 
 // ── Flagship 3d — a re-imported patient whose details differ (docs/LEGACY_IMPORT_DESIGN.md §10.9) ──

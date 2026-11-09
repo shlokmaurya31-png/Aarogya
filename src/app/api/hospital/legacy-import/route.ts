@@ -4,9 +4,10 @@ import { withApiErrors } from "@/lib/auth/rbac";
 import { dryRunImport } from "@/lib/hospital/legacyImport/service";
 
 /**
- * POST { profile, patientsCsv, encountersCsv }: the DRY RUN of a legacy import
- * (Flagship 2, step 6): the report (counts, every refused row with its reason,
- * dropped identity columns) and its dryRunHash. Writes nothing. Hospital admin.
+ * POST { profile, patientsCsv, encountersCsv } or (Flagship 5) { profile, hl7 }:
+ * the DRY RUN of a legacy import (Flagship 2, step 6): the report (counts, every
+ * refused row or message with its reason, dropped identity columns or fields)
+ * and its dryRunHash. Writes nothing. Hospital admin.
  */
 export async function POST(req: NextRequest) {
   return withApiErrors(async () => {

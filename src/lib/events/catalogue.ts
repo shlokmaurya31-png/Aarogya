@@ -1938,22 +1938,27 @@ export const EVENT_CONTRACTS: EventContract[] = [
   contract({
     type: "LegacyImportBatchStarted", version: 1, aggregateType: "LEGACY_IMPORT_BATCH", scope: "FACILITY",
     sensitivity: "LOW", producer: "legacy import (confirmImport: a confirmed run begins; the rows it plans)",
-    payload: z.object({ batchId: id, patients: count, reviews: count, encounters: count }).strict(),
+    payload: z.object({ batchId: id, patients: count, reviews: count, encounters: count, results: count.optional() }).strict(),
   }),
   contract({
     type: "LegacyImportChunkCommitted", version: 1, bulk: true, aggregateType: "LEGACY_IMPORT_BATCH", scope: "FACILITY",
     sensitivity: "LOW", producer: "legacy import (confirmImport: one chunk of ~500 rows, its own transaction)",
-    payload: z.object({ batchId: id, chunk: count, part: z.enum(["PATIENTS", "REVIEWS", "ENCOUNTERS"]), rows: count }).strict(),
+    payload: z.object({ batchId: id, chunk: count, part: z.enum(["PATIENTS", "REVIEWS", "ENCOUNTERS", "RESULTS"]), rows: count }).strict(),
   }),
   contract({
     type: "LegacyImportBatchFailed", version: 1, aggregateType: "LEGACY_IMPORT_BATCH", scope: "FACILITY",
     sensitivity: "LOW", producer: "legacy import (confirmImport: a chunk failed and rolled back alone; the chunks before it stay)",
-    payload: z.object({ batchId: id, chunk: count, part: z.enum(["PATIENTS", "REVIEWS", "ENCOUNTERS"]) }).strict(),
+    payload: z.object({ batchId: id, chunk: count, part: z.enum(["PATIENTS", "REVIEWS", "ENCOUNTERS", "RESULTS"]) }).strict(),
   }),
   contract({
     type: "LegacyImportBatchResumed", version: 1, aggregateType: "LEGACY_IMPORT_BATCH", scope: "FACILITY",
     sensitivity: "LOW", producer: "legacy import (confirmImport: the same file again after a failure, after the chunks already in)",
     payload: z.object({ batchId: id, chunksCommitted: count }).strict(),
+  }),
+  contract({
+    type: "LegacyResultImported", version: 1, bulk: true, aggregateType: "LEGACY_LAB_RESULT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "legacy import (confirmImport: one HL7 ORU result, kept apart from the live results; no live consumer listens)",
+    payload: z.object({ resultId: id, patientId: id, batchId: id, converted: z.boolean() }).strict(),
   }),
   contract({
     type: "LegacyPatientReviewQueued", version: 1, bulk: true, aggregateType: "LEGACY_PATIENT_REVIEW", scope: "FACILITY",
