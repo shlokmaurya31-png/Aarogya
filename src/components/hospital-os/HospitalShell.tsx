@@ -8,7 +8,7 @@ import {
   ClipboardCheck, FlaskConical, ScanLine, Receipt, DoorOpen,
   UserPlus, Siren, ArrowRightLeft, Pill, Microscope,
   ShieldCheck, BarChart3, Settings2, Boxes, Truck, HeartPulse, Scissors, Droplet, Wrench, Network, ShieldAlert, Plug,
-  Menu, X, Sparkles, CalendarCheck} from "lucide-react";
+  Menu, X, Sparkles, CalendarCheck, FileInput } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/navigation/ThemeToggle";
 import { StatusPill } from "@/components/ui/StatusPill";
@@ -104,6 +104,8 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     // Phase D1 — the enterprise control plane (organizations, facilities,
     // memberships, hierarchical configuration).
     { href: "/hospital-os/enterprise", label: "Enterprise", icon: Building2 },
+    // Flagship 4a — re-imported patients whose details differ.
+    { href: "/hospital-os/enterprise/import-reviews", label: "Import review", icon: FileInput },
     // Phase D2 — the SaaS commercial control plane (plans/subscription/
     // entitlements/usage). Distinct from BILLING_GROUP_ADMIN, which is the
     // hospital patient revenue cycle.

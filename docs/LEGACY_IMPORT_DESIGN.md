@@ -1,6 +1,6 @@
 # Importing a hospital's old HIMS
 
-- **Status:** Designed (Flagship 1d, 2026-10-28); the open questions decided (2026-10-29, §10; three more 2026-11-08); **phase 1 built in Flagship 2** (CSV patients and encounters, dry run and confirmed run, §11); the review queue, "Recorded by" and chunked runs in Flagship 3d (§11.1); **phase 2, HL7 v2 ADT and ORU, in Flagship 5** (§11.2).
+- **Status:** Designed (Flagship 1d, 2026-10-28); the open questions decided (2026-10-29, §10; three more 2026-11-08); **phase 1 built in Flagship 2** (CSV patients and encounters, dry run and confirmed run, §11); the review queue, "Recorded by" and chunked runs in Flagship 3d (§11.1), with its screen in Flagship 4a (§11.3); **phase 2, HL7 v2 ADT and ORU, in Flagship 5** (§11.2).
 - **What:** bringing a hospital's history from its previous system into Aarogya when it switches over: **patients, encounters, results and bills**, from **CSV exports, HL7 v2 messages or FHIR R4 bundles**.
 - **The rule:** *refuse, don't guess.* A row that can't be mapped exactly is refused with a reason; it never becomes a best guess in a patient's record. Wrong-patient data is worse than missing data.
 - **Builds on:** the staged FHIR import (`src/lib/hospital/interoperability/fhir/import.ts`: an external payload never reaches a clinical table; it is staged as MAPPED / CONFLICT / REJECTED and promoted only by a deliberate review), provenance (`interoperability/provenance.ts`), external identifiers (`externalIdentity.ts`), the patient duplicate and merge tools (`/api/hospital/patients/duplicates`, `merge`), the event spine, and the facility/Person split (`docs/ARCHITECTURE.md` §2).
@@ -202,4 +202,16 @@ Refused rows stay in staging with their reason. The hospital can fix them at the
   - the resume: exactly 50,000, no key twice, one event per row;
   - the review queue: queued once, nothing applied, keep and accept audited, accept refused after a change;
   - "Recorded by".
-- **Not yet:** a screen for the review queue (the API only, like the import itself).
+- **Not yet:** a screen for the review queue (the API only, like the import itself). Built in Flagship 4a (§11.3).
+
+### 11.3 The review queue's screen (Flagship 4a, decided 2026-11-09)
+
+- **Where.** The hospital admin's nav: Import review (`/hospital-os/enterprise/import-reviews`). It needs `legacy-import:run`, like the API, so only the hospital admin sees a queue; anyone else gets the API's refusal.
+- **What it shows.** One row per review, oldest first:
+  - the patient's current name and UHID, and the source system and MRN;
+  - a table of only the fields that differ: what is here now, and what the import holds.
+
+  Tabs show the decided reviews (Accepted, Kept), the latest first, with when, who and the reason.
+- **Deciding.** "Accept the import" or "Keep existing", each with a reason (required, up to 500 characters). Both go through the existing `decide` endpoint, so both are audited (`hospital.legacy-import.review.accepted` / `.kept`) and emit `LegacyPatientReviewDecided` in the same transaction. A 409 (the patient changed since, or someone else decided first) is shown as it is, and the queue reloads.
+- **Decided for you:** the list shows the patient's current details next to the import's, never a diff against the old system's other rows. No bulk "accept all": each patient is decided by a person, one at a time.
+- **Journey:** `e2e/import-review.spec.ts`. The fixture runs a real CSV import, then a re-import that renames one patient and changes another's phone. The journey refuses a decision with no reason, keeps one, accepts the other, and finds both on their tabs with their reasons.
