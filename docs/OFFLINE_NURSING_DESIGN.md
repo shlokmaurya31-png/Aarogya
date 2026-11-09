@@ -307,3 +307,13 @@ Every conflict is a row (`OfflineConflict`: kind, severity, the command, the fac
 - **No alerting:** no task, flag, notification or event is raised for the score, and the `ObservationRecorded` contract is unchanged (its `abnormal` still comes from the facility's thresholds, `abnormalOf`). The early-warning rule has no sign-off of its own yet; server alerting on NEWS2 would need the advisor's sign-off of §6.4 and a design of who is told, and is not built. The offline sign-off that turns offline mode on (§13.5) does not turn it on.
 - **Gate:** `verify-postgres-offline-phase2`: the stored score equals the shared module's for the synced set (NEWS2 8, 5 of 7), with its status; nothing alerts (no task, no other event for the patient, and no server code other than the writer reads the stored score); an online set has no score.
 
+
+### 13.8 No names in the cached ward shell (Flagship 5, step 3b)
+
+Flagship 4 asked whether the cached ward shell should keep the signed-in nurse's name after logout. Decided with the task: it holds no personal names.
+
+- **The page:** `/ward` renders without the nurse's name (`src/app/ward/page.tsx`). The tablet's service worker keeps a copy of this page for offline use (`public/ward-sw.js`, unchanged), so that copy now holds no staff or patient name.
+- **The name loads after sign-in:** the app fetches it (`/api/scholar-auth/me`, no-store) and holds it in memory only, never in the cache or the store. Reloaded with the network cut, the header reads "Signed in" instead of the name.
+- **Patient names** are only in the sealed store (the pack, AES-GCM under the tablet's non-exportable key), never in Cache Storage.
+- **Hand back the tablet** (the ward app's sign-out) clears the name and the list from the screen, then deletes the store, the key and the ward cache (`wipe`), then signs out.
+- **Journey:** `e2e/cache-privacy.spec.ts`, "the ward shell holds no names": with the list downloaded and the page reloaded from the worker, the cached shell holds neither the nurse's nor the patient's name, and the store holds them only sealed; after "Hand back the tablet", no name is anywhere in Cache Storage or IndexedDB, and the ward cache and store are gone.

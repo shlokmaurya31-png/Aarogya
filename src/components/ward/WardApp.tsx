@@ -41,7 +41,9 @@ function earlyWarning(form: Record<string, string>) {
   });
 }
 
-export function WardApp({ nurseName }: { nurseName: string }) {
+export function WardApp() {
+  // Flagship 5b: the nurse's name is never in the cached shell; it loads after sign-in, in memory only, gone on hand-back.
+  const [nurseName, setNurseName] = useState<string | null>(null);
   const [deviceId, setDevice] = useState<string | null>(null);
   const [deviceInput, setDeviceInput] = useState("");
   const [pack, setPack] = useState<Pack | null>(null);
@@ -67,6 +69,10 @@ export function WardApp({ nurseName }: { nurseName: string }) {
       await refreshOutbox();
     })();
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/ward-sw.js", { scope: "/ward" }).catch(() => undefined);
+    fetch("/api/scholar-auth/me", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b: { user: { displayName: string | null } | null } | null) => setNurseName(b?.user?.displayName ?? null))
+      .catch(() => undefined);
     const t = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(t);
   }, [refreshOutbox]);
@@ -155,12 +161,12 @@ export function WardApp({ nurseName }: { nurseName: string }) {
       <header className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-[18px] font-semibold">Ward round</h1>
-          <p className="text-[12px] text-text-secondary">{nurseName}{pack ? ` · list until ${hhmm(pack.expiresAt)}` : ""}</p>
+          <p className="text-[12px] text-text-secondary" aria-label="Signed in">{nurseName ?? "Signed in"}{pack ? ` · list until ${hhmm(pack.expiresAt)}` : ""}</p>
         </div>
         <div className="flex gap-2">
           <button disabled={!online || busy} onClick={() => void sync()} className="rounded-md border border-hairline px-3 py-1.5 text-[12px] disabled:opacity-50">{pack ? "Sync now" : "Download my list"}</button>
           <button disabled={pending.length > 0} title={pending.length ? "Sync first: records are waiting" : undefined}
-            onClick={async () => { await wipe(); await fetch("/api/scholar-auth/logout", { method: "POST" }).catch(() => undefined); location.href = "/hospital-os/login"; }}
+            onClick={async () => { setNurseName(null); setPack(null); await wipe(); await fetch("/api/scholar-auth/logout", { method: "POST" }).catch(() => undefined); location.href = "/hospital-os/login"; }}
             className="rounded-md border border-hairline px-3 py-1.5 text-[12px] disabled:opacity-50">Hand back the tablet</button>
         </div>
       </header>
