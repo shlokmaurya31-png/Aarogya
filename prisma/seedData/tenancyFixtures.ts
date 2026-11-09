@@ -52,6 +52,8 @@ const INERT: Record<string, Record<string, unknown>> = {
   RecordShare: { categories: ["LABS"], status: "ENDED" },
   AccessRequest: { categories: ["LABS"], status: "CANCELLED" },
   // Flagship 3a: a shift ends after it starts (CHECK); cancelled, so it names no charge nurse.
+  // Flagship 4b: the dose fixture is shared across tenants (no tenant column); a released lease takes no one-active-lease slot.
+  DoseLease: { status: "RELEASED" },
   // Flagship 4a: a dose command names its dose (CHECK); a refused vitals command names none.
   OfflineCommand: { kind: "VITALS", outcome: "REFUSED", refusalReason: "UNKNOWN_ENCOUNTER" },
   // Flagship 4e: a revoked sign-off, so a fixture never turns offline mode on anywhere.

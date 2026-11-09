@@ -10,10 +10,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   return withApiErrors(async () => {
     const q = req.nextUrl.searchParams;
     const { session, facilityId } = await requireFacilityStaff("clinical:chart:read", q.get("facilityId") ?? undefined);
-    const test = (q.get("test") ?? "").trim();
-    if (!test || test.length > 120) throw new BadRequestError("test (the test's name) is required.");
+    // The patient first: another facility's or an unknown one is the same 404, whatever the query says.
     const patient = await prisma.patient.findUnique({ where: { id: (await params).id }, select: { id: true, facilityId: true } });
     if (!patient || patient.facilityId !== facilityId) throw new NotFoundError("Patient not found.");
+    const test = (q.get("test") ?? "").trim();
+    if (!test || test.length > 120) throw new BadRequestError("test (the test's name) is required.");
     await noteStaffChartRead({ userId: session.userId, facilityId }, patient.id, "CHART");
     return labTrend(patient.id, test);
   });
