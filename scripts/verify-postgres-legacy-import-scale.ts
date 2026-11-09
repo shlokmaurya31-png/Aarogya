@@ -147,15 +147,18 @@ async function main() {
   await designateChargeNurse(admin, liveWard.id, { staffId: null });
   const live = await prisma.domainEventOutbox.findFirstOrThrow({ where: { eventType: "WardChargeNurseDesignated", aggregateId: liveWard.id } });
   const bulkBefore = await prisma.domainEventOutbox.count({ where: { facilityId: fac.id, bulk: true, status: { in: ["PENDING", "RETRY"] } } });
-  // Dispatch in small rounds until the live event is handled (older live events, e.g. the seed's, go first).
+  // Dispatch until the live event is handled (older live events, e.g. the seed's, go first). The invariant:
+  // after any call that left it still waiting, not one of the import's bulk events was touched.
+  const bulkWaiting = () => prisma.domainEventOutbox.count({ where: { facilityId: fac.id, bulk: true, status: { in: ["PENDING", "RETRY"] } } });
   let liveAfter = await prisma.domainEventOutbox.findUniqueOrThrow({ where: { id: live.id } });
+  let touchedWhileWaiting = 0;
   for (let i = 0; i < 200 && liveAfter.status !== "PROCESSED"; i++) {
     await dispatchPendingDomainEvents({ batchSize: 50, maxDurationMs: 1_000 });
     liveAfter = await prisma.domainEventOutbox.findUniqueOrThrow({ where: { id: live.id } });
+    if (liveAfter.status !== "PROCESSED") touchedWhileWaiting += bulkBefore - (await bulkWaiting());
   }
-  // Live events are claimed before any bulk one: at most the last round's spare places went to the import's events.
-  const bulkAfter = await prisma.domainEventOutbox.count({ where: { facilityId: fac.id, bulk: true, status: { in: ["PENDING", "RETRY"] } } });
-  report("A live event after the import is dispatched before the import's bulk events", liveAfter.status === "PROCESSED" && live.bulk === false && bulkBefore > 40_000 && bulkAfter >= bulkBefore - 50, `${liveAfter.status}; ${bulkBefore} bulk waiting before, ${bulkAfter} after`);
+  const bulkAfter = await bulkWaiting();
+  report("A live event after the import is dispatched before the import's bulk events", liveAfter.status === "PROCESSED" && live.bulk === false && bulkBefore > 40_000 && touchedWhileWaiting === 0 && bulkAfter > 40_000, `${liveAfter.status}; ${bulkBefore} bulk waiting before, ${touchedWhileWaiting} touched while the live event waited, ${bulkAfter} after`);
 
   console.log(`\n${pass} passed, ${fail} failed (${Math.round((Date.now() - t0) / 1000)} s)`);
   await prisma.$disconnect();
