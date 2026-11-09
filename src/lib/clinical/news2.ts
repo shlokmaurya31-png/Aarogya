@@ -7,6 +7,11 @@
  * respiratory failure, needs a clinician to choose it per patient: not
  * offered). A parameter not recorded scores nothing, and the result says how
  * many were scored.
+ *
+ * Flagship 5a: the one NEWS2 module. The tablet scores its form with it, and
+ * the server scores a vitals set synced from the tablet with the same code
+ * (`news2OfSyncedVitals`), stored with the set and shown with the same label.
+ * Nothing on the server alerts on it while the clinical sign-off is pending.
  */
 export const NEWS2_STATUS = "pending clinical sign-off";
 
@@ -45,4 +50,20 @@ export function news2(v: News2Input): News2Result {
   const red = values.some((p) => p === 3);
   const response: News2Response = score >= 7 ? "EMERGENCY" : score >= 5 ? "URGENT" : red ? "URGENT" : score >= 1 ? "WARD" : "ROUTINE";
   return { score, parts, red, scored: values.length, response, callDoctor: score >= 5 || red };
+}
+
+export const CONSCIOUSNESS_LEVELS: readonly Consciousness[] = ["ALERT", "NEW_CONFUSION", "VOICE", "PAIN", "UNRESPONSIVE"];
+
+/**
+ * A vitals set as the tablet sends it (Flagship 4d): consciousness as one of
+ * the five levels, oxygen as exactly "room air" or "supplemental oxygen".
+ * Anything else for those two is not scored (never guessed).
+ */
+export function news2OfSyncedVitals(v: { rr?: number | null; spo2?: number | null; sbp?: number | null; hr?: number | null; tempC?: number | null; consciousness?: string | null; o2DeliveryMethod?: string | null }): News2Result {
+  const n = (x: number | null | undefined) => (x === null || x === undefined ? undefined : x);
+  return news2({
+    rr: n(v.rr), spo2: n(v.spo2), sbp: n(v.sbp), hr: n(v.hr), tempC: n(v.tempC),
+    onOxygen: v.o2DeliveryMethod === "supplemental oxygen" ? true : v.o2DeliveryMethod === "room air" ? false : undefined,
+    consciousness: (CONSCIOUSNESS_LEVELS as readonly string[]).includes(v.consciousness ?? "") ? (v.consciousness as Consciousness) : undefined,
+  });
 }

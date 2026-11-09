@@ -305,7 +305,7 @@ covers the seed and every gate's rows.
 | `Procedure` | facility | no | — |
 | `Referral` | facility · patient (via Patient) | PHI | §1.1 D9, §1.3 |
 | `Task` | facility · patient | PHI | §1.1 D6, §1.3 |
-| `Vital` | facility · patient (via Encounter) | PHI | — |
+| `Vital` | facility · patient (via Encounter) | PHI | Flagship 5a: `news2*` columns, the NEWS2 placeholder for sets synced from the ward tablet (display only) |
 
 ### clinical config (src/lib/hospital)
 

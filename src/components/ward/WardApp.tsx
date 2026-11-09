@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { news2, NEWS2_STATUS, type Consciousness } from "@/lib/ward/news2";
+import { news2, NEWS2_STATUS, type Consciousness } from "@/lib/clinical/news2";
 import { dropFromOutbox, getDeviceId, loadPack, outbox, queue, savePack, setDeviceId, wipe, type OutboxCommand } from "@/lib/ward/store";
 
 /**

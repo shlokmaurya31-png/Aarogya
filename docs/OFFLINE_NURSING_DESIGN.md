@@ -293,6 +293,17 @@ Every conflict is a row (`OfflineConflict`: kind, severity, the command, the fac
   - SpO2 Scale 1 only. Scale 2, for hypercapnic respiratory failure, needs a clinician to choose it per patient, and the tablet can't know that.
   - A parameter not recorded scores nothing; the line says "n of 7 recorded" rather than guessing.
   - The tablet now asks "Room air / On oxygen" and the consciousness level (Alert, New confusion, Voice, Pain, Unresponsive). Both are sent with the vitals set and kept: `consciousness`, and `o2DeliveryMethod` as exactly "room air" or "supplemental oxygen".
-- **For the advisor to decide:** whether to keep NEWS2 or change its thresholds, Scale 2, the wording, and whether the server should score sets synced from the tablet (it does not today).
-- **Code:** `src/lib/ward/news2.ts`, with every band edge unit-tested in `news2.test.ts`; `src/components/ward/WardApp.tsx`.
+- **For the advisor to decide:** whether to keep NEWS2 or change its thresholds, Scale 2, and the wording. (Whether the server scores synced sets was decided in Flagship 5a, §13.7.)
+- **Code:** `src/lib/clinical/news2.ts` (was `src/lib/ward/news2.ts`; moved in Flagship 5a), with every band edge unit-tested in `news2.test.ts`; `src/components/ward/WardApp.tsx`.
 - **Journey:** `e2e/offline-ward.spec.ts` checks the line and its "pending clinical sign-off" label, and that a red score alone calls the doctor. The `verify-postgres-offline-phase2` gate checks that the two new answers are kept.
+
+### 13.7 The server scores synced sets with the same NEWS2 code (Flagship 5, step 3a; pending clinical sign-off)
+
+**Status: placeholder, pending clinical sign-off (§6.4).** Decided with the task: the server scores every vitals set synced from the tablet with the tablet's own code, stores the score with the set and shows it with the same label. It alerts on nothing.
+
+- **One module:** `src/lib/clinical/news2.ts` (moved from `src/lib/ward/`). The tablet scores its form with `news2`. The server's `VITALS` command scores the parsed set with `news2OfSyncedVitals`, which maps the tablet's two answers exactly: consciousness as one of the five levels, oxygen as "room air" or "supplemental oxygen". Any other value of those two is not scored (never guessed).
+- **Stored with the set:** `Vital.news2Score`, `news2Parameters` (how many of the seven were recorded), `news2Red` (one parameter scored 3) and `news2Status` (`PENDING_CLINICAL_SIGN_OFF`, the rule's standing when it was scored; migration `20261110100000_vital_news2`, additive). A set recorded any other way (online forms, the ICU flowsheet) has no score: those screens don't ask the two NEWS2 questions.
+- **Shown:** the chart's vitals list reads "NEWS2 n (k of 7 recorded) · placeholder, pending clinical sign-off".
+- **No alerting:** no task, flag, notification or event is raised for the score, and the `ObservationRecorded` contract is unchanged (its `abnormal` still comes from the facility's thresholds, `abnormalOf`). The early-warning rule has no sign-off of its own yet; server alerting on NEWS2 would need the advisor's sign-off of §6.4 and a design of who is told, and is not built. The offline sign-off that turns offline mode on (§13.5) does not turn it on.
+- **Gate:** `verify-postgres-offline-phase2`: the stored score equals the shared module's for the synced set (NEWS2 8, 5 of 7), with its status; nothing alerts (no task, no other event for the patient, and no server code other than the writer reads the stored score); an online set has no score.
+

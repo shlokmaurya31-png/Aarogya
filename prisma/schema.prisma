@@ -2687,8 +2687,23 @@ model Vital {
   o2DeliveryMethod  String? // "room air" | "nasal cannula" | "face mask" | ...
   o2FlowRate        Float?
   recordedAt        DateTime  @default(now())
+  /// Flagship 5a: NEWS2 scored on the server for a set synced from the ward
+  /// tablet (the tablet's own module, src/lib/clinical/news2.ts). Display only:
+  /// nothing alerts on it while the clinical sign-off is pending. Null for
+  /// sets recorded any other way.
+  news2Score        Int?
+  /// How many of the seven NEWS2 parameters the set recorded.
+  news2Parameters   Int?
+  /// One parameter alone scored 3.
+  news2Red          Boolean?
+  news2Status       News2Status?
 
   @@index([encounterId])
+}
+
+/// The standing of the early-warning rule when a set was scored.
+enum News2Status {
+  PENDING_CLINICAL_SIGN_OFF
 }
 
 // ─────────────────────────────────────────────────────────────────────────
