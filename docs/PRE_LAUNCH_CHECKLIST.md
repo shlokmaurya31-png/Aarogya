@@ -44,6 +44,7 @@
   - approval is refused (409, with the count) while the facility has future bookings, unless the approver confirms them. Then every affected booking is notified: the patient (and proxies who book) in their language, and always the booking's doctor (urgently when the patient can't be reached in the app);
   - bookings keep their instants and are never moved;
   - gate: `verify-postgres-time-zone-change`. | Engineering | Done |
+| 26 | **Import lane concurrency on staging** | `EVENT_IMPORT_LANE_CONCURRENCY` stays at its default of 4 (Flagship 4c; decided again in Flagship 5, step 3e). On the Supabase staging run (item 7), measure database headroom before any change: a 50,000-row synthetic import alongside `npm run perf:load`, at 4, 8 and 16, recording peak connections against the limit, CPU, the critical-result time (budget 5 s) and the clearing time (`docs/PERFORMANCE.md`, Flagship 4c). Raise the default only if the live lane stays within budget and connections stay below 70% of the limit; record the measurements here either way. | Engineering | Not started |
 
 ## How to update this file
 

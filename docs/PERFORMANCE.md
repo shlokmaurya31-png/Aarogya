@@ -124,6 +124,7 @@ The bulk lane above (now the **import lane**) kept live events first but cleared
 
   The gate's budget for a critical result is 5 s (one idle worker sleep and one tick), with or without a backlog. During the backlog the worker is already awake and checks the live lane between slices, so it answers sooner than an idle one.
 - **Trade-off:** more concurrent database work while an import clears: four connections' worth by default. Raise the setting only with database headroom; 1 restores the old behaviour.
+- **Decided (Flagship 5, step 3e): the default stays 4.** It is not raised until it has been measured on staging, against the staging database's real connection limit and CPU, with a 50,000-row import running alongside normal traffic (`npm run perf:load`). Record there: the database's peak connections and CPU at concurrency 4, 8 and 16; the live lane's critical-result time at each; and the clearing time. Raise the default only if the live lane stays within its 5 s budget and connections stay below 70% of the limit. This is item 26 of `docs/PRE_LAUNCH_CHECKLIST.md`.
 
 ## Flagship 5d: the 50,000-row gates in their own CI job
 
