@@ -83,7 +83,8 @@ jobs:
     name: Integrity gates
     runs-on: ubuntu-latest
     # Flagship 3: 128 gates, including the 50,000-row import (~2 min), take ~20 min on a runner.
-    timeout-minutes: 35
+    # Flagship 4: 131 gates took 30 min on a runner (the import-lane gate builds and clears its own 50,000-row backlog).
+    timeout-minutes: 50
     services:
       postgres:
         image: pgvector/pgvector:pg16
