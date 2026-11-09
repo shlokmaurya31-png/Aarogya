@@ -21,6 +21,10 @@
  *   --only <pat>   run only scripts whose name contains <pat> (repeatable,
  *                  comma-separated also accepted)
  *   --timeout <s>  per-script timeout in seconds (default 300)
+ *   --group <g>    main: every gate but the 50,000-row ones; scale: only those
+ *                  (SCALE, below). Default: all of them. CI runs the two groups
+ *                  as parallel jobs, each on its own database (Flagship 5d).
+ *   --list         print the scripts that would run, in order, and stop (no reset)
  *
  * Safety: resetting wipes the verify database, so this refuses to run unless
  * VERIFY_DATABASE_URL names the database aarogya_verify on localhost /
@@ -30,7 +34,7 @@
  * also refuses when the verify database has the same name as the dev
  * database (DATABASE_URL / DIRECT_URL), so it can never reset the dev data.
  *
- * Usage: npm run verify:all -- [--fresh-each] [--only nhcx] [--timeout 600]
+ * Usage: npm run verify:all -- [--fresh-each] [--only nhcx] [--timeout 600] [--group main|scale]
  */
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
@@ -184,6 +188,10 @@ const ORDER = [
   "verify-postgres-pre-arrival",
   "verify-postgres-patient-insurance-status",
   "verify-postgres-hospital-payments",
+  // Flagship 5, step 5: cashless insurance, phase 1 (mock NHCX).
+  "verify-postgres-cashless-claims",
+  // Flagship 5, step 6c: resumable uploads.
+  "verify-postgres-resumable-upload",
   // §7: the core-journey replay test, extended at each spine step.
   "verify-postgres-core-journey",
   // Batch 4: bounded retries; runs after the tenancy sweep (checks its fixtures)
@@ -204,6 +212,10 @@ const LAST = "verify-postgres-phase-b-final";
 // Flagship 4c: the import-lane gate builds and clears its own 50,000-row
 // backlog (it leaves an empty queue), so it goes just before the scale gate.
 const LATE = ["verify-postgres-import-lane", "verify-postgres-legacy-import-scale"];
+// Flagship 5d: the 50,000-row gates, run as their own CI job (--group scale) in
+// parallel with the rest (--group main). Each needs only the seed, so either
+// group starts from its own reset database.
+const SCALE = new Set(LATE);
 // Gates that need longer than --timeout (they clear a 50,000-event backlog).
 const MIN_TIMEOUT_MS: Record<string, number> = { "verify-postgres-import-lane": 1_500_000 };
 
@@ -215,6 +227,8 @@ const EXCLUDED = new Set(["verify-abdm-sandbox"]);
 
 interface Options {
   freshEach: boolean;
+  group: "all" | "main" | "scale";
+  list: boolean;
   only: string[];
   timeoutMs: number;
 }
@@ -235,12 +249,18 @@ interface Result {
 const LOG_TAIL_LINES = 200;
 
 function parseArgs(argv: string[]): Options {
-  const opts: Options = { freshEach: false, only: [], timeoutMs: 300_000 };
+  const opts: Options = { freshEach: false, group: "all", list: false, only: [], timeoutMs: 300_000 };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--fresh-each") opts.freshEach = true;
+    else if (arg === "--list") opts.list = true;
     else if (arg === "--only") opts.only.push(...(argv[++i] ?? "").split(",").filter(Boolean));
     else if (arg.startsWith("--only=")) opts.only.push(...arg.slice(7).split(",").filter(Boolean));
+    else if (arg === "--group" || arg.startsWith("--group=")) {
+      const g = arg === "--group" ? argv[++i] : arg.slice(8);
+      if (g !== "all" && g !== "main" && g !== "scale") throw new Error("--group must be all, main or scale");
+      opts.group = g;
+    }
     else if (arg === "--timeout") opts.timeoutMs = Number(argv[++i]) * 1000;
     else if (arg.startsWith("--timeout=")) opts.timeoutMs = Number(arg.slice(10)) * 1000;
     else throw new Error(`Unknown argument: ${arg}`);
@@ -261,6 +281,7 @@ function discover(opts: Options): string[] {
   for (const n of missing) console.warn(`note: ${n} is listed in ORDER but no longer exists; skipping.`);
 
   let names = [...ORDER.filter((n) => found.includes(n)), ...unlisted, ...LATE.filter((n) => found.includes(n)), ...(found.includes(LAST) ? [LAST] : [])];
+  if (opts.group !== "all") names = names.filter((n) => SCALE.has(n) === (opts.group === "scale"));
   if (opts.only.length) names = names.filter((n) => opts.only.some((p) => n.includes(p)));
   return names;
 }
@@ -468,7 +489,8 @@ async function main() {
 
   const names = discover(opts);
   if (names.length === 0) throw new Error(`No scripts match --only ${opts.only.join(", ")}.`);
-  console.log(`verify:all — ${names.length} script(s) against ${host}${opts.freshEach ? ", fresh database each" : ""}`);
+  if (opts.list) { console.log(names.join("\n")); return; }
+  console.log(`verify:all — ${names.length} script(s) against ${host}${opts.freshEach ? ", fresh database each" : ""}${opts.group !== "all" ? `, group ${opts.group}` : ""}`);
 
   const started = Date.now();
   const results: Result[] = [];

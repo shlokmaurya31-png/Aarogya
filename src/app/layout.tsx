@@ -33,11 +33,18 @@ const finlandica = localFont({
   ],
   variable: "--font-finlandica",
   display: "swap",
+  // Flagship 5 (6a): not preloaded. Preloading put ~245 KB of fonts (both
+  // variable files) ahead of the page's scripts on a slow phone network; with
+  // swap the text shows at once, and the italic file loads only if italic text
+  // is on the page.
+  preload: false,
 });
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+  // Flagship 5 (6a): code and figures only; fetched when used, not preloaded.
+  preload: false,
 });
 
 export const metadata: Metadata = {

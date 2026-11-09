@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { news2 } from "./news2";
+import { news2, news2OfSyncedVitals } from "./news2";
 
 describe("NEWS2 placeholder (Flagship 4d)", () => {
   it("scores each parameter at its band edges", () => {
@@ -30,5 +30,12 @@ describe("NEWS2 placeholder (Flagship 4d)", () => {
 
   it("scores only what was recorded", () => {
     expect(news2({})).toMatchObject({ score: 0, scored: 0, callDoctor: false });
+  });
+
+  it("scores a synced set with the same code (Flagship 5a); unknown answers are not scored", () => {
+    const set = { rr: 26, spo2: 90, sbp: 124, hr: 72, tempC: 37, consciousness: "ALERT", o2DeliveryMethod: "supplemental oxygen" };
+    expect(news2OfSyncedVitals(set)).toEqual(news2({ rr: 26, spo2: 90, sbp: 124, hr: 72, tempC: 37, consciousness: "ALERT", onOxygen: true }));
+    expect(news2OfSyncedVitals({ hr: 72, consciousness: "drowsy", o2DeliveryMethod: "nasal cannula" })).toMatchObject({ scored: 1, score: 0 });
+    expect(news2OfSyncedVitals({ hr: null, o2DeliveryMethod: "room air" })).toMatchObject({ scored: 1, parts: { onOxygen: 0 } });
   });
 });

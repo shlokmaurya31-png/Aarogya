@@ -20,12 +20,14 @@
 
   /* Warm near-black text (deep-teal tinted) for contrast on warm-white. */
   --text-primary: rgba(16, 42, 45, 0.94);
-  --text-secondary: rgba(16, 42, 45, 0.60);
-  --text-tertiary: rgba(16, 42, 45, 0.40);
+  /* Flagship 5 (6b): secondary and tertiary text at least 4.5:1 on every light surface (WCAG 2.2 AA); were 0.60 / 0.40 (3.9:1 / 2.3:1). */
+  --text-secondary: rgba(16, 42, 45, 0.72);
+  --text-tertiary: rgba(16, 42, 45, 0.66);
 
-  --emerald: #15803d;
-  --amber: #b45309;
-  --red: #dc2626;
+  /* Flagship 5 (6b): status text at least 4.5:1 on warm-white and its tints (were #15803d, #b45309, #dc2626: 4.2–4.3:1). */
+  --emerald: #11692f;
+  --amber: #9a4308;
+  --red: #b91c1c;
   /* Legacy accent token -> deep teal so `bg-cyan text-ink` (white) and
      `text-cyan` (foreground) both keep AA contrast on warm-white. */
   --cyan: #195a5f;
@@ -111,8 +113,8 @@
     --hairline-strong: rgba(243, 237, 230, 0.18);
 
     --text-primary: rgba(243, 237, 230, 0.94);
-    --text-secondary: rgba(243, 237, 230, 0.64);
-    --text-tertiary: rgba(243, 237, 230, 0.44);
+    --text-secondary: rgba(243, 237, 230, 0.78);
+    --text-tertiary: rgba(243, 237, 230, 0.7);
 
     --emerald: #34d399;
     --amber: #fbbf24;
@@ -177,8 +179,8 @@
   --hairline-strong: rgba(243, 237, 230, 0.18);
 
   --text-primary: rgba(243, 237, 230, 0.94);
-  --text-secondary: rgba(243, 237, 230, 0.64);
-  --text-tertiary: rgba(243, 237, 230, 0.44);
+  --text-secondary: rgba(243, 237, 230, 0.78);
+  --text-tertiary: rgba(243, 237, 230, 0.7);
 
   --emerald: #34d399;
   --amber: #fbbf24;
@@ -381,8 +383,8 @@ body {
   --card-raised: #1c666b;
   --surface: var(--deep-teal);
   --text-primary: rgba(243, 237, 230, 0.95);
-  --text-secondary: rgba(243, 237, 230, 0.66);
-  --text-tertiary: rgba(243, 237, 230, 0.46);
+  --text-secondary: rgba(243, 237, 230, 0.78);
+  --text-tertiary: rgba(243, 237, 230, 0.7);
   --hairline: rgba(243, 237, 230, 0.12);
   --hairline-strong: rgba(243, 237, 230, 0.2);
   --fill-subtle: rgba(243, 237, 230, 0.05);
@@ -527,3 +529,14 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/* Flagship 5 (6a): a small entrance for the AI assistant's launcher and panel (was framer-motion). */
+@keyframes aarogya-pop {
+  from { opacity: 0; transform: translateY(12px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+.aarogya-pop { animation: aarogya-pop 0.25s cubic-bezier(0.16, 1, 0.3, 1); }
+@media (prefers-reduced-motion: reduce) {
+  .aarogya-pop { animation: none; }
+}
+

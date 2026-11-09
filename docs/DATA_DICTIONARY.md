@@ -305,7 +305,7 @@ covers the seed and every gate's rows.
 | `Procedure` | facility | no | — |
 | `Referral` | facility · patient (via Patient) | PHI | §1.1 D9, §1.3 |
 | `Task` | facility · patient | PHI | §1.1 D6, §1.3 |
-| `Vital` | facility · patient (via Encounter) | PHI | — |
+| `Vital` | facility · patient (via Encounter) | PHI | Flagship 5a: `news2*` columns, the NEWS2 placeholder for sets synced from the ward tablet (display only) |
 
 ### clinical config (src/lib/hospital)
 
@@ -723,6 +723,10 @@ Person-scoped rows carry `personId` and no facility; "facility · patient (names
 | `CardShare` | person (shared with one facility) | PHI | — |
 | `PreArrivalCheckIn` | facility · patient (names a person) | PHI | — |
 | `ClaimDocumentRequest` | facility · patient | PHI | — |
+| `CashlessRequest` | facility · patient | PHI | Flagship 5: a cashless pre-authorisation through the (mock) exchange; diagnosis, procedure and the insurer's question are desk-only text, never in an event |
+| `CashlessDocument` | facility · patient (via request) | PHI | Flagship 5: a hospital document proposed for a request; sent only when the patient (or an INSURANCE proxy) approves it |
+| `CashlessInsurerMessage` | facility | Operational | Flagship 5: each insurer response once (`facilityId, externalMessageId` unique: the replay guard) |
+| `CashlessEligibility` | facility · patient | Operational | Flagship 5: an eligibility check of a card shared at check-in |
 | `FacilityPaymentGateway` | facility | no | — |
 | `PatientPaymentOrder` | facility · patient | PHI | — |
 | `FacilityGatewayWebhook` | facility | no | — |
