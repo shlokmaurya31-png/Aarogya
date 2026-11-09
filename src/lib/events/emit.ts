@@ -99,6 +99,7 @@ export async function emitDomainEvent(client: EmitClient, input: EmitEventInput)
       payload: JSON.parse(JSON.stringify(payload)),
       occurredAt,
       status: "PENDING",
+      bulk: c.bulk ?? false,
     },
   });
 

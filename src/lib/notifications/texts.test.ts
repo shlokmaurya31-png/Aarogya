@@ -6,7 +6,7 @@ import { notificationText } from "@/lib/person/notifications";
 import { PENDING_REVIEW, type ReviewEntry } from "./review";
 import { TEMPLATE_KEYS, TEMPLATES, fillTemplate, messageText, placeholders, pluralVariables, textDirection } from "./texts";
 
-const KINDS = ["ACCESS_SUMMARY", "BREAK_GLASS_ACCESS", "ACCESS_REQUESTED", "COMING_OF_AGE", "CHECKIN_OPEN", "INSURANCE_UPDATE", "DOCUMENTS_REQUESTED", "BILL_READY"];
+const KINDS = ["ACCESS_SUMMARY", "BREAK_GLASS_ACCESS", "ACCESS_REQUESTED", "COMING_OF_AGE", "CHECKIN_OPEN", "INSURANCE_UPDATE", "DOCUMENTS_REQUESTED", "BILL_READY", "APPOINTMENT_TIME_ZONE_CHANGED"];
 const SCHEMA = readFileSync(path.join(__dirname, "..", "..", "..", "prisma", "schema.prisma"), "utf8");
 const REVIEW: ReviewEntry[] = JSON.parse(readFileSync(path.join(__dirname, "review.json"), "utf8"));
 

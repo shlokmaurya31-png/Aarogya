@@ -152,8 +152,22 @@ export const AGGREGATE_TYPES = [
   "DOSE_LEASE",
   "OFFLINE_COMMAND",
   "OFFLINE_CONFLICT",
+  // Flagship 3a — the charge nurse per shift.
+  "WARD_CHARGE_SHIFT",
+  // Flagship 3b — a facility's time zone, and the requests to change it.
+  "FACILITY",
+  "FACILITY_TIME_ZONE_CHANGE",
+  // Flagship 4e — the clinical advisor's sign-off of the offline rules.
+  "CLINICAL_SIGN_OFF",
   // Flagship 2, step 6 — legacy import.
   "LEGACY_IMPORT_BATCH",
+  // Flagship 3d — a re-imported patient's differing details, for review.
+  "LEGACY_PATIENT_REVIEW",
+  // Flagship 5 — an imported (HL7 ORU) result.
+  "LEGACY_LAB_RESULT",
+  // Flagship 6 — Scan and Share.
+  "SCAN_SHARE_COUNTER",
+  "SCAN_SHARE_CHECK_IN",
 ] as const;
 export type AggregateType = (typeof AGGREGATE_TYPES)[number];
 
@@ -198,6 +212,13 @@ export interface EventContract<P extends z.ZodTypeAny = z.ZodTypeAny> {
    * already in the outbox still dispatch and replay against this contract.
    */
   retired?: { since: string; replacedBy?: string };
+  /**
+   * Flagship 3d: an event emitted in bulk (a legacy import's rows). It is
+   * dispatched in the bulk lane: after every waiting live event, so 50,000
+   * imported rows never hold back a critical result's notification. Order
+   * within an aggregate is unchanged.
+   */
+  bulk?: boolean;
 }
 
 /** Input to emitDomainEvent — the caller supplies the business fields only. */

@@ -42,8 +42,24 @@ export type AuditEventType =
   // Flagship 2, step 5 — offline nursing (a pack is a read of each patient's record; a takeover keeps its reason).
   | "hospital.offline.pack.issued"
   | "hospital.offline.lease.overridden"
+  // Flagship 6 — Scan and Share: the desk queues a shared profile (registering it, or for an existing UHID).
+  | "hospital.scan-share.queued"
+  // Flagship 4e — the clinical sign-off (platform staff) and each ward's offline mode (hospital admin).
+  | "platform.clinical-sign-off.recorded"
+  | "platform.clinical-sign-off.revoked"
+  | "hospital.offline.ward-mode.changed"
+  // Flagship 4b — the charge nurse's queue: each resolution and confirmation with its reason.
+  | "hospital.offline.conflict.resolved"
+  | "hospital.offline.lease.override.confirmed"
   // Flagship 2, step 6 — legacy import.
   | "hospital.legacy-import.committed"
+  // Flagship 3d — a re-imported patient's differing details: accepted or kept, with a reason.
+  | "hospital.legacy-import.review.accepted"
+  | "hospital.legacy-import.review.kept"
+  // Flagship 3b — a facility's time zone: the hospital admin's written request, and platform staff's decision.
+  | "hospital.facility.time-zone.requested"
+  | "platform.facility.time-zone.approved"
+  | "platform.facility.time-zone.rejected"
   // Phase 6.8 — EMPI identity mutations.
   | "hospital.patient.unmerged"
   | "hospital.patient.identifierAdded"

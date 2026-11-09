@@ -67,7 +67,7 @@ async function claimBatch(token: string, now: Date, batchSize: number): Promise<
           SELECT 1 FROM "DomainEventOutbox" e
           WHERE e."aggregateType" = c."aggregateType" AND e."aggregateId" = c."aggregateId"
             AND e."seq" < c."seq" AND e."status" IN ('PENDING', 'RETRY', 'PROCESSING'))
-      ORDER BY c."seq"
+      ORDER BY c."bulk", c."seq"
       FOR UPDATE SKIP LOCKED
       LIMIT ${batchSize})
     RETURNING o."id", o."seq"`;

@@ -12,6 +12,12 @@
  *   invoice <encounterId>      the final bill, issued (the worker drafts the claim)
  *   med-round                  an admitted patient with a dispensed medicine: a dose due now and one five hours late
  *   mar <orderId>              the order's doses and their statuses
+ *   ward-device                Flagship 4d: an offline-enabled ward with a registered tablet, an admitted patient
+ *                              assigned to the nurse (who is the ward's charge nurse), two doses due soon, a
+ *                              controlled one, a task
+ *   take-over-give <adminId>   the charge nurse takes a dose over from the tablet and gives it online
+ *   ward-state <json>          the server's record: doses, vitals, the task, open conflicts
+ *   scan-counter               Flagship 6: a Scan and Share counter at the facility, and its QR's path
  */
 import "./e2eGuard";
 import { readFileSync } from "node:fs";
@@ -22,7 +28,7 @@ import { transferWithinIcu } from "../../src/lib/hospital/icu";
 import { createOperatingTheatre, requestSurgery, transitionSurgery, scheduleSurgery, startProcedure, completeProcedure } from "../../src/lib/hospital/surgery";
 import { addPatientCoverage } from "../../src/lib/hospital/billing/coverage";
 import { draftInvoiceForAccount, addChargeToInvoice, issueInvoice } from "../../src/lib/hospital/billing/invoices";
-import { createMedicationOrder, verifyMedicationOrder, dispenseMedication } from "../../src/lib/hospital/medicationLifecycle";
+import { administerMedication, createMedicationOrder, verifyMedicationOrder, dispenseMedication } from "../../src/lib/hospital/medicationLifecycle";
 import { generateAdministrationSchedule } from "../../src/lib/hospital/medicationSchedule";
 import { sweepMedicationSchedule } from "../../src/lib/hospital/marSweep";
 import { linkMedicationToItem, SYSTEM_ACTOR } from "../../src/lib/hospital/inventory/itemMedicationLink";
@@ -30,6 +36,9 @@ import { createAdjustment } from "../../src/lib/hospital/inventory/adjustment";
 import type { E2eFixture } from "./e2eFixture";
 import { PUNE } from "./e2eFixture";
 import { INSURER, admissionFor } from "./insuranceFixture";
+import { designateChargeNurse, overrideLease, registerWardDevice } from "../../src/lib/hospital/offline/service";
+import { enableOfflineForGate } from "./offlineFixture";
+import { countersWithQr, createCounter } from "../../src/lib/hospital/scanShare/service";
 
 const out = (v: unknown) => console.log(JSON.stringify(v));
 
@@ -123,6 +132,51 @@ async function main() {
     case "mar": {
       const rows = await prisma.medicationAdministration.findMany({ where: { medicationOrderId: arg }, orderBy: { scheduledAt: "asc" }, select: { status: true, scheduledAt: true, administeredByStaffId: true } });
       return out({ doses: rows.map((r) => ({ status: r.status, scheduledAt: r.scheduledAt.toISOString(), recorded: !!r.administeredByStaffId })) });
+    }
+    case "ward-device": {
+      const nurse = await staffOf(f.nurse.email);
+      const admin = { userId: doc.userId, facilityId: PUNE };
+      const name = `Offline Smoke ${run}`;
+      const patient = await registerPatient({ facilityId: PUNE, byUserId: doc.userId, fullName: name, sex: "F", ageYears: 64 });
+      const ward = await prisma.ward.create({ data: { facilityId: PUNE, name: `E2E offline ward ${run}`, wardType: "GENERAL" } });
+      const bed = await prisma.bed.create({ data: { facilityId: PUNE, wardId: ward.id, label: `E2E-OFF-${run}`, status: "OCCUPIED" } });
+      const enc = await prisma.encounter.create({ data: { patientId: patient.id, facilityId: PUNE, type: "IPD", status: "ADMITTED", chiefComplaint: "offline smoke" } });
+      await prisma.nursingAssignment.create({ data: { facilityId: PUNE, nurseStaffId: nurse.staffId, patientId: patient.id, encounterId: enc.id, bedId: bed.id, assignedByStaffId: doc.staffId } });
+      await designateChargeNurse(admin, ward.id, { staffId: nurse.staffId });
+      await enableOfflineForGate(admin, ward.id);
+      const drugName = `OfflineDrug${run}`;
+      const order = await prisma.medicationOrder.create({ data: { encounterId: enc.id, patientId: patient.id, drugName, dose: "1 tab", route: "PO", frequency: "TDS", orderedByStaffId: doc.staffId, status: "ACTIVE" } });
+      const morphine = await prisma.medicationOrder.create({ data: { encounterId: enc.id, patientId: patient.id, drugName: "Morphine", dose: "5 mg", route: "PO", frequency: "QDS", orderedByStaffId: doc.staffId, status: "ACTIVE", isControlled: true } });
+      const due = (orderId: string, min: number) => prisma.medicationAdministration.create({ data: { medicationOrderId: orderId, scheduledAt: new Date(Date.now() + min * 60_000), status: "DUE" } });
+      const d1 = await due(order.id, 10);
+      const d2 = await due(order.id, 25);
+      const dc = await due(morphine.id, 15);
+      const task = await prisma.task.create({ data: { facilityId: PUNE, title: `Reposition ${run}`, type: "GENERAL", source: "MANUAL", patientId: patient.id, encounterId: enc.id } });
+      const device = await registerWardDevice(admin, { wardId: ward.id, label: `E2E tablet ${run}` });
+      return out({ name, patientId: patient.id, encounterId: enc.id, deviceId: device.id, drugName, d1: d1.id, d2: d2.id, dc: dc.id, taskId: task.id, taskTitle: task.title });
+    }
+    case "take-over-give": {
+      const nurse = await staffOf(f.nurse.email);
+      const N = { userId: nurse.userId, staffId: nurse.staffId, facilityId: PUNE };
+      await overrideLease(N, { administrationId: arg, reason: "The tablet is out of range; given at the bedside" });
+      await administerMedication({ administrationId: arg, status: "GIVEN", administeredByStaffId: nurse.staffId, byUserId: nurse.userId });
+      return out({ given: arg });
+    }
+    case "ward-state": {
+      const a = JSON.parse(arg) as { patientId: string; encounterId: string; d1: string; d2: string; taskId: string };
+      const d1 = await prisma.medicationAdministration.findUniqueOrThrow({ where: { id: a.d1 }, select: { status: true, administeredAt: true } });
+      const d2Given = await prisma.medicationAdministration.count({ where: { status: "GIVEN", OR: [{ id: a.d2 }, { offlineGivenForAdministrationId: a.d2 }] } });
+      const vitals = await prisma.vital.findMany({ where: { encounterId: a.encounterId }, select: { hr: true, recordedAt: true } });
+      const task = await prisma.task.findUniqueOrThrow({ where: { id: a.taskId }, select: { status: true } });
+      const conflicts = await prisma.offlineConflict.findMany({ where: { patientId: a.patientId }, select: { kind: true, severity: true, status: true } });
+      return out({ d1: { status: d1.status, administeredAt: d1.administeredAt?.toISOString() ?? null }, d2Given, vitals: vitals.map((v) => v.hr), task: task.status, conflicts });
+    }
+    case "scan-counter": {
+      const code = `E2E-${run.toUpperCase().slice(-8)}`;
+      await createCounter({ userId: doc.userId, facilityId: PUNE }, { code, label: `E2E counter ${run}` });
+      const qr = (await countersWithQr(PUNE, "http://e2e.local")).find((c) => c.code === code)!;
+      const u = new URL(qr.url);
+      return out({ path: `${u.pathname}${u.search}`, label: `E2E counter ${run}` });
     }
     default:
       throw new Error(`unknown step ${cmd}`);

@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { enforceLicensure } from "@/lib/hospital/workforce/licensure";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
-import { createMedicationOrder } from "@/lib/hospital/medicationLifecycle";
+import { BadPrnOrderError, createMedicationOrder } from "@/lib/hospital/medicationLifecycle";
 
 export async function GET(req: NextRequest) {
   return withApiErrors(async () => {
@@ -74,11 +74,17 @@ export async function POST(req: NextRequest) {
       timing: body?.timing,
       prn: body?.prn,
       prnReason: body?.prnReason,
+      prnMinIntervalMinutes: body?.prnMinIntervalMinutes,
+      prnMaxDosesPer24h: body?.prnMaxDosesPer24h,
+      prnOfflineAllowed: body?.prnOfflineAllowed,
       specialInstructions: body?.specialInstructions,
       indication: body?.indication,
       isControlled: body?.isControlled,
       overrideReason,
       byUserId: session.userId,
+    }).catch((e) => {
+      if (e instanceof BadPrnOrderError) throw new BadRequestError(e.message);
+      throw e;
     });
 
     if (result.blocked) return { blocked: true, flags: result.flags };

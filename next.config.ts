@@ -21,7 +21,11 @@ const nextConfig: NextConfig = {
   // (sharp is already on Next's built-in list.)
   serverExternalPackages: ["@napi-rs/canvas", "pdfjs-dist"],
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    return [
+      { source: "/:path*", headers: securityHeaders },
+      // Flagship 4c: the ward tablet's service worker is always fetched fresh (node_modules/next/dist/docs/01-app/02-guides/progressive-web-apps.md §8).
+      { source: "/ward-sw.js", headers: [{ key: "Content-Type", value: "application/javascript; charset=utf-8" }, { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" }] },
+    ];
   },
   async rewrites() {
     // ABDM appends these protocol-defined paths to our registered callback

@@ -1,6 +1,6 @@
 # Offline nursing: the ward keeps working on bad Wi-Fi
 
-- **Status:** Designed (Flagship 1d, 2026-10-28); the open questions decided (2026-10-29, §12); **phase 1, the server side, built in Flagship 2** (§13). The clinical advisor's sign-off on §6 is still needed before any MAR use on a ward.
+- **Status:** Designed (Flagship 1d, 2026-10-28); the open questions decided (2026-10-29, §12); **phase 1, the server side, built in Flagship 2** (§13). The clinical advisor's sign-off on §6 is still needed before any MAR use on a ward: until it is recorded, offline mode can't be turned on for any ward (§13.5).
 - **Scope:** the four nursing screens a ward can't stop for a dropped connection: the **MAR** (the medication round), **vitals**, **intake and output**, and **nursing tasks**.
 - **Not in scope:** ordering, pharmacy verification, admission, transfer and discharge, the doctor's and the front desk's screens, billing. They stay online-only. When the network is down, those follow the hospital's paper downtime procedure, as now.
 - **Builds on:** `administerMedication` (`src/lib/hospital/medicationLifecycle.ts`: a dose moves from DUE only once, by a guarded update), the MAR sweep (`marSweep.ts`: overdue doses become MISSED, and a late dose is recorded against the missed one), `NursingAssignment` (at most one open assignment per patient), `Vital`, `IntakeOutputRecord`, `Task`, the event spine (`docs/ARCHITECTURE.md` §4), and PRODUCT_SPEC principle 6 (weak networks, low-end Android).
@@ -148,6 +148,7 @@ Every conflict is a row (`OfflineConflict`: kind, severity, the command, the fac
 6. **The browser app is enough for now. Decided.** No iOS app; the installable browser app covers iPad wards.
 7. **A possible double dose: the charge nurse resolves it within 15 minutes, and the pharmacist is told. Decided.** The conflict is CRITICAL, a task with a 15-minute due time goes to the ward's charge nurse, and the facility's pharmacists are notified.
 8. **A downtime sheet as PDF every shift. Decided.** Generated from the pack at each shift start and kept on the ward (phase 2 of the client; the data is the pack).
+9. **The charge nurse is per shift. Decided (2026-11-08; was Flagship 2's open question 1).** A shift roster names the charge nurse per ward per shift; the ward's named charge nurse is the fallback when a shift has none. Lease takeovers and conflict tasks go to the charge nurse of the shift that is on at that moment. As built in Flagship 3a (§13.1).
 
 ## 13. As built (Flagship 2, phase 1: the server side)
 
@@ -179,6 +180,93 @@ Every conflict is a row (`OfflineConflict`: kind, severity, the command, the fac
   - an expired lease is refused;
   - an override is logged with its reason;
   - another facility gets a 404.
+### 13.1 The charge nurse per shift (Flagship 3a, decided §12.9)
+
+- **Roster:** `WardChargeShift` (migration `20261108090000_ward_charge_shifts`): ward, nurse, `[startAt, endAt)`, ACTIVE or CANCELLED. The hospital admin keeps it (`nursing:offline:manage`):
+  - `GET` / `POST /api/hospital/wards/{id}/charge-shifts`;
+  - `POST /api/hospital/offline/charge-shifts/{shiftId}/cancel`.
+  A shift is at most 24 hours and can't already be over. Two ACTIVE shifts on one ward never overlap: the service refuses first (409), and an exclusion constraint is the guarantee under a race. Back-to-back shifts (one ends as the next starts) are fine.
+- **Who is on:** `currentChargeNurse(ward, at)` (`src/lib/hospital/offline/chargeShift.ts`): the shift covering that moment, else `Ward.chargeNurseStaffId`, else none (the task then goes to the CHARGE_NURSE role).
+- **Uses:**
+  - a takeover is allowed only for the charge nurse on at that moment, and its audit row names the shift;
+  - a conflict's task goes to the charge nurse on when the sync found it, so a lease that spans a handover is overridden by the incoming charge nurse, not the outgoing one.
+- **Events:** `WardChargeShiftAssigned`, `WardChargeShiftCancelled`.
+- **Gate:** `verify-postgres-charge-shifts`:
+  - the roster (overlap refused, also under a race; another facility 404);
+  - who is on at, before and after the handover, and with no shift on;
+  - a handover mid-lease, for both the takeover and the conflict task;
+  - a cancelled shift falls back to the named charge nurse.
+
+### 13.2 Phase 2 on the server: vitals, I/O, tasks and PRN (Flagship 4a)
+
+- **Commands:** `VITALS`, `INTAKE_OUTPUT`, `TASK_COMPLETED`, `PRN_GIVEN` and `PRN_BREACH_REFUSED`, through the same `POST /api/hospital/offline/sync`. They follow the same rules:
+  - one transaction per command, with its catalogued events;
+  - a replay is a no-op;
+  - the device's time is corrected by its pack's measured offset, and a suspect clock is flagged;
+  - nothing a nurse recorded is dropped: a refused command keeps what was sent (`OfflineCommand.payload`) and a `REFUSED_RECORD` conflict for review.
+- **Whose records:** only patients with an open assignment to the nurse (else `NOT_ASSIGNED`), and only encounters, tasks and orders of this facility (else unknown).
+- **Vitals and I/O:** written by the same services as online (`recordVitalsTx`, `recordIntakeOutputTx`), at the time measured. The server recomputes the early-warning flags (`ObservationRecorded.abnormal`). A value no measurement can have is refused and kept (`INVALID_VALUES`, ranges in `VITAL_RANGES`). Recording is allowed after the pack expires (§5).
+- **Tasks:** completed with the time it was done. If the task was completed elsewhere first, the second completion is a note on the command ("also done by …"), not an error. If the task was cancelled, the completion is kept with a note and the task stays cancelled.
+- **PRN (§6.2):**
+  - **Order fields:** a PRN order now carries its minimum interval and maximum doses in 24 hours (both or neither, CHECK `MedicationOrder_prn_limits`), and the prescriber's `prnOfflineAllowed`, which is only possible with both limits. The pack lists each PRN order with its limits and the doses of the last 24 hours, so the device can hold them, and `givableOffline` only when allowed and not online-only.
+  - **Online:** `POST /api/hospital/orders/medication/{id}/prn` refuses a breach (409).
+  - **Offline, refused:** a PRN dose is refused (and kept) when the order isn't allowed offline (`PRN_NOT_OFFLINE`), is online-only (`ONLINE_ONLY`), or is recorded after the pack expired (`LEASE_EXPIRED`).
+  - **Offline, a breach the device didn't know of** (doses given elsewhere meanwhile): the dose is recorded, because it was given, and flagged `PRN_LIMIT_BREACHED`, CRITICAL. The charge nurse's task is due within 15 minutes, and the pharmacists and the prescriber are told.
+  - **Offline, a dose the device refused for its limits:** sent as `PRN_BREACH_REFUSED`, a flag for the charge nurse (`PRN_BREACH_ATTEMPT`) with no dose.
+  - **Serialised:** PRN doses of one order are serialised online and offline (a row lock on the order).
+- **Events:** `OfflineCommandRecorded` and `OfflineConflictRecorded` version 2 (any kind; ids only, never the values). The applied records emit their usual events (`ObservationRecorded`, `TaskCompleted`, `MedicationAdministered`).
+- **Gate:** `verify-postgres-offline-phase2`.
+
+### 13.3 The charge nurse's queue and the 15-minute escalation (Flagship 4b)
+
+- **Screen:** *Offline queue* (`/hospital-os/nurse/offline-queue`, for nurses). The charge nurse on now (§13.1) sees their wards' items:
+  - open conflicts, CRITICAL first: a possible double dose or a PRN dose over its limit, then refused claims and records, changed orders and the rest;
+  - each with the patient, the drug, the device, the nurse, when it was recorded and the response time;
+  - the doses taken over from a device until they are confirmed in person (§4), saying whether the device has synced since.
+
+  Another nurse sees an empty queue.
+- **Actions** (only the charge nurse on now, each with a reason, audited, with its event):
+  - **resolve** a conflict as *patient checked: no harm*, *incident raised*, *one dose, recorded twice*, *the record stands* or *recorded online by me* (`POST /api/hospital/offline/conflicts/{id}/resolve`, `OfflineConflictResolved`). Its task is completed;
+  - **confirm in person** a takeover (`POST /api/hospital/offline/leases/{id}/confirm`, `DoseLeaseOverrideConfirmed`).
+
+  A database CHECK holds every resolved conflict to naming who, when, how and why.
+- **Escalation (§12.7):** a CRITICAL conflict still open 15 minutes after the sync that raised it is escalated once by the runner (`escalateOfflineConflicts`, `OfflineConflictEscalated`). The facility's pharmacists get a STAT task and a CRITICAL notification each. This comes on top of the pharmacists' task at the time the conflict is raised.
+- **Gate:** `verify-postgres-offline-queue`.
+
+### 13.4 The ward device app (Flagship 4c, 4d)
+
+- **What it is:** `/ward`, an installable web app for the shared ward tablet, for staff who give medicines. It has its own manifest (`/ward.webmanifest`, scope `/ward`) and service worker (`/ward-sw.js`). The service worker keeps only the app itself (the `/ward` page and its static files) and never caches an API response.
+- **Setup:** the tablet keeps its device code (from the hospital admin's registration). The nurse signs in and downloads her list at shift start (`POST …/offline/pack`).
+- **On the tablet** (`src/lib/ward/store.ts`):
+  - the pack and the outbox live in IndexedDB, each record encrypted with AES-GCM under a key made on the tablet, which can't be exported;
+  - "Hand back the tablet" deletes the pack, the outbox, the key and the app's cache, and it is refused while anything is waiting to sync.
+- **Screens:** the medication round, PRN doses, vitals, intake/output and tasks.
+  - **Doses:** Given, Held or Refused with a reason. A dose another tablet holds shows "Not on this device", and controlled and high-alert medicines show "Online only".
+  - **PRN:** the tablet holds the minimum interval and the daily maximum against the pack's doses and its own outbox. A dose over a limit is not given, and a `PRN_BREACH_REFUSED` flag tells the charge nurse.
+  - **Vitals:** a reading outside wide thresholds shows "Call the doctor now". The exact thresholds and the wording await the advisor (§6.4).
+- **Offline:** a clear "Offline since hh:mm" banner. Every action is a command with its own id and the tablet's time, kept in the encrypted outbox. Past the facility's offline limit no dose can be given ("use the downtime sheet"), while vitals, intake/output and tasks are still recorded (§5).
+- **Reconnect:** the tablet pushes the outbox in order, then pulls a fresh pack. A fresh pack re-grants the tablet's own leases in one transaction, so its doses stay givable. It reports what was recorded and what went to the charge nurse.
+- **Journey:** `e2e/offline-ward.spec.ts` runs the whole round in Playwright:
+  - download the list;
+  - cut the network;
+  - give a dose, record vitals, complete a task;
+  - meanwhile, the charge nurse takes the second dose over and gives it online, and the tablet records it too;
+  - reconnect.
+
+  It then checks:
+  - the dose was recorded at the time it was given;
+  - the vitals and the task are in the record;
+  - two GIVEN for the second dose;
+  - the CRITICAL possible double dose is in the charge nurse's queue.
+- **Not yet:** the downtime-sheet PDF, the Android (Capacitor) packaging, a remote wipe of a revoked tablet's store.
+
+### 13.5 Offline mode per ward, behind the sign-off (Flagship 4e)
+
+- **The flag stays:** the clinical advisor's sign-off of §6 is still pending. Offline mode is **off on every ward** (`Ward.offlineEnabled`, default off for every existing ward) until a hospital admin turns it on (`POST /api/hospital/wards/{id}/offline-mode`, with a reason, audited, `WardOfflineModeChanged`). Turning it on is refused while no sign-off is active.
+- **The sign-off:** only platform staff (`platform:clinical-sign-off:record`) record it, with the advisor's name, the signed document's reference and the date (`POST /api/hospital/enterprise/clinical-sign-offs`, audited, `ClinicalSignOffRecorded`). One is active at a time. Revoking it (with a reason, `ClinicalSignOffRevoked`) turns offline mode off on every ward.
+- **While a ward is off:** no pack is issued and no lease renewed (409). What a device already recorded still syncs, because a recorded fact is never refused for this.
+- **Gate:** `verify-postgres-offline-switch`. The other offline gates turn their ward on through a synthetic sign-off in the verify database only (`scripts/lib/offlineFixture.ts`).
+
 - **Not yet:**
   - the device app (encrypted store, outbox, downtime PDF);
   - vitals, I/O and task commands;

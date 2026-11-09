@@ -17,7 +17,12 @@ const FILE = path.join(__dirname, "..", "src", "lib", "notifications", "review.j
 const before: ReviewEntry[] = existsSync(FILE) ? JSON.parse(readFileSync(FILE, "utf8")) : [];
 const prior = new Map(before.map((e) => [`${e.key}|${e.language}`, e]));
 // The Hindi notification texts predate Flagship 1b (Weeks 4c and 5c); nobody has reviewed them either.
-const source = (key: string, lang: string) => (lang === "hi" && key.startsWith("notify.") ? "existing translation (Weeks 4c, 5c)" : key.startsWith("account.") ? "machine translation (Flagship 2e, 2026-10-29)" : "machine translation (Flagship 1b, 2026-10-28)");
+const FLAGSHIP_3 = ["notify.APPOINTMENT_TIME_ZONE_CHANGED."];
+const source = (key: string, lang: string) =>
+  FLAGSHIP_3.some((p) => key.startsWith(p)) ? "machine translation (Flagship 3, 2026-11-08)"
+  : lang === "hi" && key.startsWith("notify.") ? "existing translation (Weeks 4c, 5c)"
+  : key.startsWith("account.") ? "machine translation (Flagship 2e, 2026-10-29)"
+  : "machine translation (Flagship 1b, 2026-10-28)";
 
 const entries: ReviewEntry[] = [];
 for (const key of TEMPLATE_KEYS) {

@@ -378,9 +378,22 @@ const SEGMENT_MODELS: Record<string, string> = {
   "legal-documents/[consentId]": "DependentConsent",
   // Flagship 2, step 5: offline nursing.
   "offline/devices/[id]": "WardDevice",
+  // Flagship 4b: the charge nurse's queue.
+  "conflicts/[conflictId]": "OfflineConflict",
+  "leases/[leaseId]": "DoseLease",
+  // Flagship 4e: the clinical sign-off (platform-wide).
+  "clinical-sign-offs/[signOffId]": "ClinicalSignOff",
+  // Flagship 6: a Scan and Share check-in.
+  "scan-share/checkins/[checkInId]": "ScanShareCheckIn",
   "wards/[id]": "Ward",
   // Flagship 2, step 6: legacy import.
   "legacy-import/[batchId]": "LegacyImportBatch",
+  // Flagship 3d: a re-imported patient's review.
+  "reviews/[reviewId]": "LegacyPatientReview",
+  // Flagship 3a: a ward's charge-nurse shift.
+  "charge-shifts/[shiftId]": "WardChargeShift",
+  // Flagship 3b: a facility's time-zone change request (decided by platform staff).
+  "time-zone-requests/[requestId]": "FacilityTimeZoneChange",
 };
 
 type SegmentTarget = { kind: "record"; model: string } | { kind: "static"; values: string[] } | { kind: "unmapped" };

@@ -562,6 +562,8 @@ model DomainEventOutbox {
   /// When the row was written (processing/clock separation from occurredAt).
   recordedAt       DateTime                @default(now())
   status           DomainEventOutboxStatus @default(PENDING) // PENDING | PROCESSING | PROCESSED | RETRY | DEAD_LETTER
+  /// Flagship 3d: the bulk lane (a legacy import's rows), dispatched after every waiting live event.
+  bulk             Boolean                 @default(false)
   attemptCount     Int                     @default(0)
   maxAttempts      Int                     @default(8)
   /// Per-claim token; a dispatcher owns an event only while its token matches.
@@ -580,6 +582,7 @@ model DomainEventOutbox {
   personId String?
 
   @@index([status, nextAttemptAt])
+  @@index([status, bulk, seq])
   @@index([eventType])
   @@index([personId])
   @@index([aggregateType, aggregateId])
@@ -1995,19 +1998,24 @@ enum WardType {
 }
 
 model Ward {
-  id                 String      @id @default(cuid())
-  name               String
-  wardType           WardType
-  facility           Facility    @relation(fields: [facilityId], references: [id])
-  facilityId         String
-  department         Department? @relation(fields: [departmentId], references: [id])
-  departmentId       String?
+  id                     String      @id @default(cuid())
+  name                   String
+  wardType               WardType
+  facility               Facility    @relation(fields: [facilityId], references: [id])
+  facilityId             String
+  department             Department? @relation(fields: [departmentId], references: [id])
+  departmentId           String?
   /// Flagship 2, step 5: the ward's charge nurse (may take over a device's dose lease; told of offline conflicts).
-  chargeNurseStaffId String?
-  createdAt          DateTime    @default(now())
+  chargeNurseStaffId     String?
+  /// Flagship 4e: offline mode is off per ward until the hospital admin turns it on, which needs the clinical advisor's sign-off (§6).
+  offlineEnabled         Boolean     @default(false)
+  offlineEnabledAt       DateTime?
+  offlineEnabledByUserId String?
+  createdAt              DateTime    @default(now())
 
-  beds    Bed[]
-  devices WardDevice[]
+  beds         Bed[]
+  devices      WardDevice[]
+  chargeShifts WardChargeShift[]
 
   @@unique([facilityId, name])
 }
@@ -2718,6 +2726,11 @@ model MedicationOrder {
   stopAt                DateTime?
   prn                   Boolean   @default(false)
   prnReason             String?
+  /// Flagship 4a: a PRN order's limits (both, or neither), held online and offline.
+  prnMinIntervalMinutes Int?
+  prnMaxDosesPer24h     Int?
+  /// The prescriber's "PRN offline allowed" (design §6.2): only with both limits.
+  prnOfflineAllowed     Boolean   @default(false)
   specialInstructions   String?
   indication            String?
   isControlled          Boolean   @default(false)
@@ -11496,6 +11509,8 @@ enum PersonNotificationKind {
   DOCUMENTS_REQUESTED
   /// Week 5c: a bill is ready (the itemised bill and the patient's share).
   BILL_READY
+  /// Flagship 3b: the facility's time zone changed under a booked visit (check its time in the app).
+  APPOINTMENT_TIME_ZONE_CHANGED
 }
 
 enum PersonNotificationStatus {
@@ -12214,6 +12229,13 @@ enum OfflineCommandKind {
   DOSE_GIVEN
   DOSE_HELD
   DOSE_REFUSED
+  // Flagship 4a, phase 2.
+  VITALS
+  INTAKE_OUTPUT
+  TASK_COMPLETED
+  PRN_GIVEN
+  /// The device refused a PRN dose offline (minimum interval or daily maximum): a flag, no dose.
+  PRN_BREACH_REFUSED
 }
 
 enum OfflineCommandOutcome {
@@ -12232,6 +12254,15 @@ enum OfflineRefusalReason {
   /// The dose was no longer due (held or refused, recorded elsewhere).
   NOT_DUE
   UNKNOWN_DOSE
+  // Flagship 4a, phase 2.
+  /// The patient isn't assigned to this nurse (vitals, I/O, tasks, PRN).
+  NOT_ASSIGNED
+  /// The order isn't PRN, isn't marked "PRN offline allowed", has no limits, or isn't active.
+  PRN_NOT_OFFLINE
+  /// Values outside what a measurement can be (kept for review).
+  INVALID_VALUES
+  UNKNOWN_TASK
+  UNKNOWN_ENCOUNTER
 }
 
 enum OfflineConflictKind {
@@ -12242,6 +12273,13 @@ enum OfflineConflictKind {
   NOT_LEASED
   ONLINE_ONLY
   CLOCK_SUSPECT
+  // Flagship 4a, phase 2.
+  /// A PRN dose given offline breached the minimum interval or daily maximum by the server's record: CRITICAL.
+  PRN_LIMIT_BREACHED
+  /// The device refused a PRN dose offline for its limits (the charge nurse is told).
+  PRN_BREACH_ATTEMPT
+  /// A refused vitals, I/O, task or PRN command, kept for review.
+  REFUSED_RECORD
 }
 
 enum OfflineConflictSeverity {
@@ -12252,6 +12290,20 @@ enum OfflineConflictSeverity {
 enum OfflineConflictStatus {
   OPEN
   RESOLVED
+}
+
+/// Flagship 4b: how the charge nurse resolved a conflict (always with a reason).
+enum OfflineConflictResolution {
+  /// The patient was checked and no harm found.
+  NO_HARM_FOUND
+  /// An incident was raised (a double dose given, a limit breached).
+  INCIDENT_RAISED
+  /// One dose was given and recorded twice.
+  DUPLICATE_RECORD
+  /// The offline record stands as it is.
+  RECORD_STANDS
+  /// What was refused offline was recorded online by a person.
+  RECORDED_ONLINE
 }
 
 model WardDevice {
@@ -12290,24 +12342,28 @@ model WardPack {
 }
 
 model DoseLease {
-  id               String                   @id @default(cuid())
-  facilityId       String
-  administration   MedicationAdministration @relation(fields: [administrationId], references: [id])
-  administrationId String
-  device           WardDevice               @relation(fields: [deviceId], references: [id])
-  deviceId         String
-  pack             WardPack                 @relation(fields: [packId], references: [id])
-  packId           String
-  nurseStaffId     String
-  status           DoseLeaseStatus          @default(ACTIVE)
-  grantedAt        DateTime                 @default(now())
-  expiresAt        DateTime
-  endedAt          DateTime?
-  endedByUserId    String?
+  id                        String                   @id @default(cuid())
+  facilityId                String
+  administration            MedicationAdministration @relation(fields: [administrationId], references: [id])
+  administrationId          String
+  device                    WardDevice               @relation(fields: [deviceId], references: [id])
+  deviceId                  String
+  pack                      WardPack                 @relation(fields: [packId], references: [id])
+  packId                    String
+  nurseStaffId              String
+  status                    DoseLeaseStatus          @default(ACTIVE)
+  grantedAt                 DateTime                 @default(now())
+  expiresAt                 DateTime
+  endedAt                   DateTime?
+  endedByUserId             String?
   /// The charge nurse's reason, required for an override.
-  overrideReason   String?
+  overrideReason            String?
   /// When the holding device was told its lease ended (override, expiry, revocation).
-  holderToldAt     DateTime?
+  holderToldAt              DateTime?
+  /// Flagship 4b: an override confirmed in person by the charge nurse (design §4), with a reason.
+  overrideConfirmedAt       DateTime?
+  overrideConfirmedByUserId String?
+  overrideConfirmReason     String?
 
   @@index([deviceId, status])
   @@index([administrationId])
@@ -12321,7 +12377,15 @@ model OfflineCommand {
   deviceId               String
   nurseStaffId           String
   kind                   OfflineCommandKind
-  administrationId       String
+  /// DOSE_*: the scheduled dose. Flagship 4a: null for the other kinds, which name their own target.
+  administrationId       String?
+  encounterId            String?
+  taskId                 String?
+  medicationOrderId      String?
+  /// VITALS / INTAKE_OUTPUT / PRN: what the device recorded, kept as sent (a refused one is reviewed from it).
+  payload                Json?
+  /// TASK_COMPLETED: "also done by …", or done after it was cancelled.
+  note                   String?
   /// The time on the device, and that time corrected by the pack's clock offset (or the receipt time when suspect).
   deviceTime             DateTime
   appliedTime            DateTime
@@ -12340,21 +12404,197 @@ model OfflineCommand {
 }
 
 model OfflineConflict {
-  id               String                  @id @default(cuid())
+  id               String                     @id @default(cuid())
   facilityId       String
-  command          OfflineCommand          @relation(fields: [commandId], references: [id])
+  command          OfflineCommand             @relation(fields: [commandId], references: [id])
   commandId        String
-  administrationId String
+  /// Flagship 4a: null for a conflict that isn't about a scheduled dose.
+  administrationId String?
+  patientId        String?
   kind             OfflineConflictKind
   severity         OfflineConflictSeverity
-  status           OfflineConflictStatus   @default(OPEN)
+  status           OfflineConflictStatus      @default(OPEN)
   /// The task for whoever must look (the charge nurse; for a possible double dose, within 15 minutes).
   taskId           String?
-  createdAt        DateTime                @default(now())
+  createdAt        DateTime                   @default(now())
   resolvedAt       DateTime?
   resolvedByUserId String?
+  /// Flagship 4b: the charge nurse's resolution and reason.
+  resolution       OfflineConflictResolution?
+  resolutionReason String?
+  /// A CRITICAL conflict still open after 15 minutes: the pharmacists were told.
+  escalatedAt      DateTime?
 
   @@index([facilityId, status])
+  @@index([status, severity, createdAt])
+}
+
+// ── Flagship 4e — the clinical advisor's sign-off (docs/OFFLINE_NURSING_DESIGN.md §6, §13.5) ──
+// Platform-wide: the advisor signs off a set of clinical rules (scope), and
+// platform staff record it with the advisor's name and the document. While no
+// sign-off is active, no ward can turn offline mode on. One active per scope.
+
+model ClinicalSignOff {
+  id               String    @id @default(cuid())
+  /// e.g. "OFFLINE_NURSING_S6": the offline nursing design's §6 clinical rules.
+  scope            String
+  advisorName      String
+  /// Where the signed document is kept (a reference, not the document).
+  reference        String
+  signedOffAt      DateTime
+  recordedByUserId String
+  recordedAt       DateTime  @default(now())
+  revokedAt        DateTime?
+  revokedByUserId  String?
+  revokeReason     String?
+
+  @@index([scope])
+}
+
+// ── Flagship 6 — Scan and Share check-in (docs/ABDM_CERTIFICATION_PLAN.md §8, mock gateway) ──
+// A facility's counters each have a QR. A patient scans it and shares their
+// ABHA profile; the hospital side (the HIP) receives the profile through the
+// ABDM adapter (a mock until the sandbox), matches the facility record only
+// by an exact, verified ABHA number, and puts the patient in the check-in
+// queue with a token: straight into the registration queue when the record
+// is known, else for the desk to register from the shared profile (no form
+// for the patient). An Aadhaar number is never stored: a profile carrying
+// one is refused whole. The ABHA number is kept as a hash and its last 4.
+
+enum ScanShareStatus {
+  /**
+   * In the check-in queue, for the desk to register from the shared profile.
+   */
+  WAITING
+  /**
+   * In the registration queue (a QueueEntry), for a known or newly registered record.
+   */
+  QUEUED
+  CANCELLED
+}
+
+model ScanShareCounter {
+  id              String   @id @default(cuid())
+  facilityId      String
+  /**
+   * The counter's code in its QR (e.g. "OPD-1").
+   */
+  code            String
+  label           String
+  departmentId    String?
+  active          Boolean  @default(true)
+  createdByUserId String
+  createdAt       DateTime @default(now())
+
+  checkIns ScanShareCheckIn[]
+
+  @@unique([facilityId, code])
+}
+
+model ScanShareCheckIn {
+  id              String           @id @default(cuid())
+  facilityId      String
+  counter         ScanShareCounter @relation(fields: [counterId], references: [id])
+  counterId       String
+  /**
+   * The gateway's request id: a profile shared twice is one check-in.
+   */
+  requestId       String
+  /**
+   * MOCK until the ABDM sandbox adapter (§3.1).
+   */
+  gateway         String
+  abhaAddress     String
+  abhaNumberHash  String?
+  abhaNumberLast4 String?
+  name            String
+  sex             String
+  yearOfBirth     Int?
+  dob             DateTime?
+  phone           String?
+  status          ScanShareStatus  @default(WAITING)
+  token           String
+  /**
+   * YYYY-MM-DD in the facility's zone.
+   */
+  tokenDay        String
+  /**
+   * The facility record, when matched by the verified ABHA number or registered by the desk.
+   */
+  patientId       String?
+  queueEntryId    String?
+  queuedAt        DateTime?
+  queuedByUserId  String?
+  createdAt       DateTime         @default(now())
+
+  @@unique([facilityId, requestId])
+  @@unique([facilityId, tokenDay, token])
+  @@index([facilityId, tokenDay])
+}
+
+// ── Flagship 3a — the charge nurse per shift (docs/OFFLINE_NURSING_DESIGN.md §12.9) ──
+// The ward's shift roster names its charge nurse per shift. The current shift's
+// charge nurse takes dose leases over and is told of offline conflicts; with no
+// shift on now, the ward's named charge nurse (Ward.chargeNurseStaffId) is the
+// fallback. Two ACTIVE shifts on one ward never overlap (an exclusion
+// constraint in the migration, half-open [startAt, endAt)).
+
+enum WardChargeShiftStatus {
+  ACTIVE
+  CANCELLED
+}
+
+model WardChargeShift {
+  id                String                @id @default(cuid())
+  facilityId        String
+  ward              Ward                  @relation(fields: [wardId], references: [id])
+  wardId            String
+  /// The charge nurse for this shift (a NURSE at the facility).
+  staffId           String
+  startAt           DateTime
+  endAt             DateTime
+  status            WardChargeShiftStatus @default(ACTIVE)
+  assignedByUserId  String
+  createdAt         DateTime              @default(now())
+  cancelledAt       DateTime?
+  cancelledByUserId String?
+
+  @@index([wardId, startAt])
+  @@index([facilityId, staffId])
+}
+
+// ── Flagship 3b — changing a facility's time zone ──────────────────────────────
+// Only platform staff change it, and only at the hospital admin's written
+// request: the request and the decision are each audited, with their own
+// events. Approval is refused while future bookings exist unless explicitly
+// confirmed; then every affected booking is notified. A booking keeps its
+// instant: what changes is how the facility's clock reads it.
+
+enum FacilityTimeZoneChangeStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+}
+
+model FacilityTimeZoneChange {
+  id                          String                       @id @default(cuid())
+  facilityId                  String
+  fromTimeZone                String
+  toTimeZone                  String
+  /// The hospital admin's written request (why, and who asked).
+  writtenRequest              String
+  requestedByUserId           String
+  requestedAt                 DateTime                     @default(now())
+  status                      FacilityTimeZoneChangeStatus @default(REQUESTED)
+  decidedByUserId             String?
+  decidedAt                   DateTime?
+  decisionNote                String?
+  /// APPROVED: the future bookings at the decision, and whether the approver confirmed them.
+  futureAppointments          Int?
+  confirmedFutureAppointments Boolean                      @default(false)
+
+  @@index([facilityId, status])
+  @@index([status, requestedAt])
 }
 
 // ── Flagship 2, step 6 — legacy import, phase 1 (docs/LEGACY_IMPORT_DESIGN.md §11) ──
@@ -12367,11 +12607,15 @@ model OfflineConflict {
 enum LegacyImportBatchStatus {
   COMMITTING
   COMMITTED
+  /// Flagship 3d: a chunk failed; the chunks before it stay committed, and the same file resumes.
+  FAILED
 }
 
 enum LegacyRecordKind {
   PATIENT
   ENCOUNTER
+  /// Flagship 5: an HL7 ORU observation.
+  RESULT
 }
 
 model LegacyImportBatch {
@@ -12387,6 +12631,11 @@ model LegacyImportBatch {
   startedAt         DateTime                @default(now())
   committedByUserId String?
   committedAt       DateTime?
+  /// Flagship 3d: chunks of ~500 rows, each its own transaction.
+  chunksCommitted   Int                     @default(0)
+  failedAt          DateTime?
+  /// The failed chunk's error, short and without row content.
+  lastError         String?
 
   @@unique([facilityId, fileHash])
 }
@@ -12406,4 +12655,73 @@ model LegacyRecordKey {
 
   @@unique([facilityId, sourceSystem, kind, sourceKey])
   @@index([batchId])
+}
+
+// ── Flagship 5 — imported results (HL7 v2 ORU; docs/LEGACY_IMPORT_DESIGN.md §11.2) ──
+// Kept apart from the live LabResult: an imported result never enters the
+// verification queue, a critical-result alert or the patient's released
+// reports. It shows in the chart's trends, labelled "imported". A value is in
+// the mapped unit: as sent, or converted on an exact (test, unit) mapping.
+
+model LegacyLabResult {
+  id             String   @id @default(cuid())
+  facilityId     String
+  patientId      String
+  /// The imported visit it belongs to, when the message named one this import knows.
+  encounterId    String?
+  batchId        String
+  sourceSystem   String
+  /// The old system's test code (OBX-3) and this hospital's name for it (the mapping).
+  testCode       String
+  testName       String
+  value          String
+  numericValue   Float?
+  unit           String?
+  /// As sent, when the value was converted to the mapped unit.
+  originalValue  String?
+  originalUnit   String?
+  referenceRange String?
+  /// OBX-8 as sent (H, L, HH, LL, A, N…).
+  abnormalFlag   String?
+  observedAt     DateTime
+  createdAt      DateTime @default(now())
+
+  @@index([patientId, testName, observedAt])
+  @@index([batchId])
+  @@index([facilityId])
+}
+
+// ── Flagship 3d — a re-imported patient whose details differ (docs/LEGACY_IMPORT_DESIGN.md §10.9) ──
+// Never silently ignored, never auto-updated: the difference waits here for the
+// hospital admin, who accepts the incoming details or keeps the existing ones
+// (both audited, with a reason). One row per MRN and incoming details.
+
+enum LegacyPatientReviewStatus {
+  OPEN
+  ACCEPTED
+  KEPT
+}
+
+model LegacyPatientReview {
+  id              String                    @id @default(cuid())
+  facilityId      String
+  batchId         String
+  sourceSystem    String
+  /// The legacy MRN.
+  sourceKey       String
+  patientId       String
+  /// The incoming details (fullName, sex, dob, phone) and the patient's at the time, with the fields that differ.
+  incoming        Json
+  existing        Json
+  differences     String[]
+  /// sha256 of the incoming details: the same difference is queued once.
+  incomingHash    String
+  status          LegacyPatientReviewStatus @default(OPEN)
+  createdAt       DateTime                  @default(now())
+  decidedByUserId String?
+  decidedAt       DateTime?
+  decisionReason  String?
+
+  @@unique([facilityId, sourceSystem, sourceKey, incomingHash])
+  @@index([facilityId, status])
 }

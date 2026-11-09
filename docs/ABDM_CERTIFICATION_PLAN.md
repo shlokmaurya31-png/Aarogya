@@ -1,6 +1,6 @@
 # ABDM certification plan (M1–M3, v3 APIs)
 
-- **Status:** Plan (Flagship 1d, 2026-10-28); the open questions decided (2026-10-29, §7). No ABDM call has been made with a valid credential yet. Pre-launch items 5 (certification) and 20 (consent mapping) depend on this plan.
+- **Status:** Plan (Flagship 1d, 2026-10-28); the open questions decided (2026-10-29, §7; billing data 2026-11-08). No ABDM call has been made with a valid credential yet. Pre-launch items 5 (certification) and 20 (consent mapping) depend on this plan.
 - **Source of truth for what exists:** `docs/interoperability/abdm-contract-matrix.md` (verified against ABDM Milestone 3 v2.5, 2025-03-03, and the NRCeS FHIR IG 6.5.0), `abdm-architecture.md`, `abdm-sandbox-verification.md`, `abdm-production-checklist.md`. Code: `src/lib/hospital/interoperability/abdm/` and `.../fhir/`.
 - **Rule carried over from Phase C:** no code is written against a guessed contract. Where this plan says *to verify*, the M1 or M2 document (or the current NHA process) hasn't been obtained, and the step starts by obtaining it.
 
@@ -107,4 +107,25 @@ Getting to production (the usual NHA path; *to verify* the current steps and ord
 5. **Care contexts: OPD visits, discharge summaries, lab reports and prescriptions.** Display names carry no sensitive detail. Decided.
 6. **Sensitive records are withheld from ABDM pushes unless the person opted in** locally for that category. Decided.
 7. **One combined security assessment** for WASA and pre-launch item 6, if the auditor agrees; otherwise WASA first. Decided.
-8. **Billing data:** unchanged; revisit when the IG is re-verified (still open, not one of the decided questions).
+8. **Billing data is not shared through ABDM in M1–M3. Decided (2026-11-08).** No BILLING hiType is offered, and none is mapped from a local share (`abdm/mapping.ts` keeps BILLING unsupported). Revisit when the FHIR implementation guide is re-checked (§3.1).
+
+## 8. Scan and Share check-in, as built with a mock gateway (Flagship 6)
+
+Decided §7.4 (in scope for the first OPDs) and §7.3 (ABHA verify-only). Built behind the ABDM adapter, so the sandbox can be plugged in later without touching the hospital side.
+
+- **The adapter** (`src/lib/hospital/interoperability/abdm/scanShare.ts`): the hospital needs two things from ABDM here.
+  - `verifyAbha` is M1 verify-only: it never creates an ABHA, and there is no Aadhaar OTP flow.
+  - `acknowledgeShare` is the on-share answer carrying the token.
+
+  The profile the gateway delivers (`AbdmProfileShare`) follows this plan, and **its exact v3 field names are to be verified** before the sandbox adapter is written (§3.1). Only the **mock** adapter exists: `ABDM_SCAN_SHARE_MODE` other than `mock` is refused. It verifies `name@sbx` / `name@abdm` addresses, gives a synthetic 14-digit ABHA number derived from the address, and records its acknowledgements.
+- **Counters and QR:** the hospital admin names counters (`POST /api/hospital/scan-share/counters`). The desk shows each counter's QR, a link signed by Aarogya that names the facility (its HIP id: the facility id until HFR registration) and the counter. A QR Aarogya didn't sign is refused.
+- **The patient:** the Aarogya app stands in for the PHR app until it is certified (§7.1). They scan the QR (`/patient/scan`), confirm their ABHA address, and share. The profile is their own: name, sex, date of birth and verified phone. They get the day's token (`S-001`…) and fill in no form.
+- **The hospital side** (`receiveProfileShare`, the HIP):
+  - one check-in per gateway request, so a share sent twice is the same check-in;
+  - the ABHA must verify;
+  - the facility record is matched **only by an exact, verified ABHA number** (`ExternalIdentifier`), never by name, birth date or phone;
+  - a known record goes straight into the registration queue (`QueueEntry`, `ScanShareQueued`);
+  - an unknown one waits in the check-in queue (`ScanShareReceived`). The desk registers it from the shared profile or queues it for an exact UHID (`POST /api/hospital/scan-share/checkins/{id}/queue`, audited).
+- **Never an Aadhaar number:** a profile carrying an Aadhaar-like number anywhere is refused whole and nothing is kept. No column can hold one. The ABHA number is kept only as a hash and its last 4.
+- **Gates:** `verify-postgres-scan-share`; the browser journey `e2e/scan-share.spec.ts` (the patient scans and gets a token, then the desk registers them from the profile).
+- **Not yet:** the sandbox adapter and its callback (the v3 profile-share specification first), the HFR id per facility, the patient's ABHA address remembered on their account (it is typed each time while `PERSON_ABHA_LINKING` is off).

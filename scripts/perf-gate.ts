@@ -16,7 +16,8 @@
  *   --seed-only    with --fresh: seed and stop (`npm run perf:seed`)
  *
  * Flagship 2d: the chart and timeline pages (first and next) also have a size
- * budget, PAGE_BYTES_BUDGET (60 KB for the heavy patient).
+ * budget, PAGE_BYTES_BUDGET (60 KB for the heavy patient). Flagship 3c: so do
+ * the facts to confirm (first page under 30 KB, FACTS_FIRST_PAGE_BYTES).
  *
  * Writes .perf-report/latest.md and latest.json. The local verify database
  * only: like verify:all it points DATABASE_URL and DIRECT_URL at
@@ -40,6 +41,8 @@ const DEMO_PASSWORD = "Hospital@123";
 
 /** Flagship 2d: the chart's and the timeline's pages must also stay small (the heavy patient's first page under 60 KB). */
 export const PAGE_BYTES_BUDGET = 60 * 1024;
+/** Flagship 3c: the first page of "facts to confirm" for the heavy patient (was 130 KB unpaged). */
+export const FACTS_FIRST_PAGE_BYTES = 30 * 1024;
 interface Endpoint { name: string; as: string | string[]; method?: "GET" | "POST"; path: string; body?: Record<string, unknown>; budgetMs?: number; maxBytes?: number }
 interface Result { name: string; path: string; samples: number; p50: number; p95: number; max: number; budgetMs: number; bytes: number; maxBytes?: number; ok: boolean; error?: string }
 
@@ -105,7 +108,9 @@ async function main() {
     const firstTimeline = await (await fetch(`${base}/api/hospital/patients/${P}/timeline`, { headers: { cookie: cookies.doctor1 } })).json() as { nextCursor?: string | null };
     const labCursor = firstChart.nextCursors?.labOrders;
     const timelineCursor = firstTimeline.nextCursor;
-    if (!labCursor || !timelineCursor) throw new Error("The heavy patient's chart or timeline has no second page: is the perf seed loaded?");
+    const firstFacts = await (await fetch(`${base}/api/patient/person/facts`, { headers: { cookie: cookies.patient } })).json() as { nextCursor?: string | null };
+    const factsCursor = firstFacts.nextCursor;
+    if (!labCursor || !timelineCursor || !factsCursor) throw new Error("The heavy patient's chart, timeline or facts to confirm have no second page: is the perf seed loaded?");
     const endpoints: Endpoint[] = [
       { name: "Front desk search", as: "frontdesk", path: `/api/hospital/patients?q=Sharma` },
       { name: "Chart", as: "doctor1", path: `/api/hospital/patients/${P}/chart`, maxBytes: PAGE_BYTES_BUDGET },
@@ -122,7 +127,8 @@ async function main() {
       { name: "Directory search", as: "patient", path: `/api/doctors/search?specialty=CARDIOLOGY&lat=18.52&lng=73.85` },
       { name: "Check-in desk", as: "frontdesk", path: `/api/hospital/checkins` },
       { name: "AI ask (retrieval)", as: doctors, method: "POST", path: `/api/ai/ask`, body: { mode: "CHART_QA", patientId: P, question: "What was the last hemoglobin?" } },
-      { name: "Document review (facts to confirm)", as: "patient", path: `/api/patient/person/facts` },
+      { name: "Document review (facts to confirm)", as: "patient", path: `/api/patient/person/facts`, maxBytes: FACTS_FIRST_PAGE_BYTES },
+      { name: "Document review (next page)", as: "patient", path: `/api/patient/person/facts?cursor=${encodeURIComponent(factsCursor)}`, maxBytes: PAGE_BYTES_BUDGET },
       { name: "Household switcher", as: "patient", path: `/api/patient/household` },
     ];
 

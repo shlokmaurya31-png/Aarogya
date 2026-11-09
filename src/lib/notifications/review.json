@@ -1440,6 +1440,186 @@
     "reviewer": null
   },
   {
+    "key": "notify.APPOINTMENT_TIME_ZONE_CHANGED.title",
+    "language": "hi",
+    "en": "Please check the time of your visit",
+    "text": "कृपया अपनी विज़िट का समय जाँच लें",
+    "status": "pending native-speaker review",
+    "source": "machine translation (Flagship 3, 2026-11-08)",
+    "reviewer": null
+  },
+  {
+    "key": "notify.APPOINTMENT_TIME_ZONE_CHANGED.title",
+    "language": "mr",
+    "en": "Please check the time of your visit",
+    "text": "कृपया तुमच्या भेटीची वेळ तपासा",
+    "status": "pending native-speaker review",
+    "source": "machine translation (Flagship 3, 2026-11-08)",
+    "reviewer": null
+  },
+  {
+    "key": "notify.APPOINTMENT_TIME_ZONE_CHANGED.title",
+    "language": "ta",
+    "en": "Please check the time of your visit",
+    "text": "உங்கள் வருகையின் நேரத்தைச் சரிபார்க்கவும்",
+    "status": "pending native-speaker review",
+    "source": "machine translation (Flagship 3, 2026-11-08)",
+    "reviewer": null
+  },
+  {
+    "key": "notify.APPOINTMENT_TIME_ZONE_CHANGED.title",
+    "language": "bn",
+    "en": "Please check the time of your visit",
+    "text": "অনুগ্রহ করে আপনার ভিজিটের সময় দেখে নিন",
+    "status": "pending native-speaker review",
+    "source": "machine translation (Flagship 3, 2026-11-08)",
+    "reviewer": null
+  },
+  {
+    "key": "notify.APPOINTMENT_TIME_ZONE_CHANGED.title",
+    "language": "gu",
+    "en": "Please check the time of your visit",
+    "text": "કૃપા કરીને તમારી મુલાકાતનો સમય તપાસો",
+    "status": "pending native-speaker review",
+    "source": "machine translation (Flagship 3, 2026-11-08)",
+    "reviewer": null
+  },
+  {
+    "key": "notify.APPOINTMENT_TIME_ZONE_CHANGED.title",
+    "language": "te",
+    "en": "Please check the time of your visit",
+    "text": "దయచేసి మీ సందర్శన సమయాన్ని తనిఖీ చేయండి",
+    "status": "pending native-speaker review",
+    "source": "machine translation (Flagship 3, 2026-11-08)",
+    "reviewer": null
+  },
+  {
+    "key": "notify.APPOINTMENT_TIME_ZONE_CHANGED.title",
+    "language": "kn",
+    "en": "Please check the time of your visit",
+    "text": "ದಯವಿಟ್ಟು ನಿಮ್ಮ ಭೇಟಿಯ ಸಮಯವನ್ನು ಪರಿಶೀಲಿಸಿ",
+    "status": "pending native-speaker review",
+    "source": "machine translation (Flagship 3, 2026-11-08)",
+    "reviewer": null
+  },
+  {
+    "key": "notify.APPOINTMENT_TIME_ZONE_CHANGED.title",
+    "language": "ml",
+    "en": "Please check the time of your visit",
+    "text": "ദയവായി നിങ്ങളുടെ സന്ദർശന സമയം പരിശോധിക്കുക",
+    "status": "pending native-speaker review",
+    "source": "machine translation (Flagship 3, 2026-11-08)",
+    "reviewer": null
+  },
+  {
+    "key": "notify.APPOINTMENT_TIME_ZONE_CHANGED.title",
+    "language": "or",
+    "en": "Please check the time of your visit",
+    "text": "ଦୟାକରି ଆପଣଙ୍କ ପରିଦର୍ଶନର ସମୟ ଯାଞ୍ଚ କରନ୍ତୁ",
+    "status": "pending native-speaker review",
+    "source": "machine translation (Flagship 3, 2026-11-08)",
+    "reviewer": null
+  },
+  {
+    "key": "notify.APPOINTMENT_TIME_ZONE_CHANGED.title",
+    "language": "ur",
+    "en": "Please check the time of your visit",
+    "text": "براہِ کرم اپنی ملاقات کا وقت دیکھ لیں",
+    "status": "pending native-speaker review",
+    "source": "machine translation (Flagship 3, 2026-11-08)",
+    "reviewer": null
+  },
+  {
+    "key": "notify.APPOINTMENT_TIME_ZONE_CHANGED.body",
+    "language": "hi",
+    "en": "Your hospital has changed the time zone it uses. Your visit has not moved, but its time may now be shown differently. Open Aarogya to see the time.",
+    "text": "आपके अस्पताल ने अपना समय क्षेत्र बदल दिया है। आपकी विज़िट नहीं बदली है, लेकिन उसका समय अब अलग दिख सकता है। समय देखने के लिए Aarogya खोलें।",
+    "status": "pending native-speaker review",
+    "source": "machine translation (Flagship 3, 2026-11-08)",
+    "reviewer": null
+  },
+  {
+    "key": "notify.APPOINTMENT_TIME_ZONE_CHANGED.body",
+    "language": "mr",
+    "en": "Your hospital has changed the time zone it uses. Your visit has not moved, but its time may now be shown differently. Open Aarogya to see the time.",
+    "text": "तुमच्या रुग्णालयाने त्याचा वेळ क्षेत्र बदलला आहे. तुमची भेट बदललेली नाही, पण तिची वेळ आता वेगळी दिसू शकते. वेळ पाहण्यासाठी Aarogya उघडा.",
+    "status": "pending native-speaker review",
+    "source": "machine translation (Flagship 3, 2026-11-08)",
+    "reviewer": null
+  },
+  {
+    "key": "notify.APPOINTMENT_TIME_ZONE_CHANGED.body",
+    "language": "ta",
+    "en": "Your hospital has changed the time zone it uses. Your visit has not moved, but its time may now be shown differently. Open Aarogya to see the time.",
+    "text": "உங்கள் மருத்துவமனை அது பயன்படுத்தும் நேர மண்டலத்தை மாற்றியுள்ளது. உங்கள் வருகை மாறவில்லை, ஆனால் அதன் நேரம் இப்போது வேறுவிதமாகக் காட்டப்படலாம். நேரத்தைப் பார்க்க Aarogya-வைத் திறக்கவும்.",
+    "status": "pending native-speaker review",
+    "source": "machine translation (Flagship 3, 2026-11-08)",
+    "reviewer": null
+  },
+  {
+    "key": "notify.APPOINTMENT_TIME_ZONE_CHANGED.body",
+    "language": "bn",
+    "en": "Your hospital has changed the time zone it uses. Your visit has not moved, but its time may now be shown differently. Open Aarogya to see the time.",
+    "text": "আপনার হাসপাতাল তার সময় অঞ্চল বদলেছে। আপনার ভিজিট সরানো হয়নি, তবে এর সময় এখন অন্যভাবে দেখাতে পারে। সময় দেখতে Aarogya খুলুন।",
+    "status": "pending native-speaker review",
+    "source": "machine translation (Flagship 3, 2026-11-08)",
+    "reviewer": null
+  },
+  {
+    "key": "notify.APPOINTMENT_TIME_ZONE_CHANGED.body",
+    "language": "gu",
+    "en": "Your hospital has changed the time zone it uses. Your visit has not moved, but its time may now be shown differently. Open Aarogya to see the time.",
+    "text": "તમારી હોસ્પિટલે તેનો સમય ઝોન બદલ્યો છે. તમારી મુલાકાત બદલાઈ નથી, પણ તેનો સમય હવે જુદો દેખાઈ શકે છે. સમય જોવા માટે Aarogya ખોલો.",
+    "status": "pending native-speaker review",
+    "source": "machine translation (Flagship 3, 2026-11-08)",
+    "reviewer": null
+  },
+  {
+    "key": "notify.APPOINTMENT_TIME_ZONE_CHANGED.body",
+    "language": "te",
+    "en": "Your hospital has changed the time zone it uses. Your visit has not moved, but its time may now be shown differently. Open Aarogya to see the time.",
+    "text": "మీ ఆసుపత్రి తాను ఉపయోగించే టైమ్ జోన్‌ను మార్చింది. మీ సందర్శన మారలేదు, కానీ దాని సమయం ఇప్పుడు వేరేగా కనిపించవచ్చు. సమయం చూడటానికి Aarogya తెరవండి.",
+    "status": "pending native-speaker review",
+    "source": "machine translation (Flagship 3, 2026-11-08)",
+    "reviewer": null
+  },
+  {
+    "key": "notify.APPOINTMENT_TIME_ZONE_CHANGED.body",
+    "language": "kn",
+    "en": "Your hospital has changed the time zone it uses. Your visit has not moved, but its time may now be shown differently. Open Aarogya to see the time.",
+    "text": "ನಿಮ್ಮ ಆಸ್ಪತ್ರೆ ತಾನು ಬಳಸುವ ಸಮಯ ವಲಯವನ್ನು ಬದಲಾಯಿಸಿದೆ. ನಿಮ್ಮ ಭೇಟಿ ಬದಲಾಗಿಲ್ಲ, ಆದರೆ ಅದರ ಸಮಯ ಈಗ ಬೇರೆ ರೀತಿಯಲ್ಲಿ ಕಾಣಿಸಬಹುದು. ಸಮಯ ನೋಡಲು Aarogya ತೆರೆಯಿರಿ.",
+    "status": "pending native-speaker review",
+    "source": "machine translation (Flagship 3, 2026-11-08)",
+    "reviewer": null
+  },
+  {
+    "key": "notify.APPOINTMENT_TIME_ZONE_CHANGED.body",
+    "language": "ml",
+    "en": "Your hospital has changed the time zone it uses. Your visit has not moved, but its time may now be shown differently. Open Aarogya to see the time.",
+    "text": "നിങ്ങളുടെ ആശുപത്രി അത് ഉപയോഗിക്കുന്ന സമയമേഖല മാറ്റിയിരിക്കുന്നു. നിങ്ങളുടെ സന്ദർശനം മാറിയിട്ടില്ല, പക്ഷേ അതിന്റെ സമയം ഇപ്പോൾ വ്യത്യസ്തമായി കാണിച്ചേക്കാം. സമയം കാണാൻ Aarogya തുറക്കുക.",
+    "status": "pending native-speaker review",
+    "source": "machine translation (Flagship 3, 2026-11-08)",
+    "reviewer": null
+  },
+  {
+    "key": "notify.APPOINTMENT_TIME_ZONE_CHANGED.body",
+    "language": "or",
+    "en": "Your hospital has changed the time zone it uses. Your visit has not moved, but its time may now be shown differently. Open Aarogya to see the time.",
+    "text": "ଆପଣଙ୍କ ହସ୍ପିଟାଲ ଏହାର ସମୟ ଅଞ୍ଚଳ ବଦଳାଇଛି। ଆପଣଙ୍କ ପରିଦର୍ଶନ ବଦଳିନାହିଁ, କିନ୍ତୁ ଏହାର ସମୟ ଏବେ ଅଲଗା ଦେଖାଯାଇପାରେ। ସମୟ ଦେଖିବାକୁ Aarogya ଖୋଲନ୍ତୁ।",
+    "status": "pending native-speaker review",
+    "source": "machine translation (Flagship 3, 2026-11-08)",
+    "reviewer": null
+  },
+  {
+    "key": "notify.APPOINTMENT_TIME_ZONE_CHANGED.body",
+    "language": "ur",
+    "en": "Your hospital has changed the time zone it uses. Your visit has not moved, but its time may now be shown differently. Open Aarogya to see the time.",
+    "text": "آپ کے اسپتال نے اپنا ٹائم زون بدل دیا ہے۔ آپ کی ملاقات نہیں بدلی، لیکن اس کا وقت اب مختلف دکھائی دے سکتا ہے۔ وقت دیکھنے کے لیے Aarogya کھولیں۔",
+    "status": "pending native-speaker review",
+    "source": "machine translation (Flagship 3, 2026-11-08)",
+    "reviewer": null
+  },
+  {
     "key": "code.WORK_PHONE",
     "language": "hi",
     "en": "Aarogya: your code to verify this phone on your work login is {code}. It expires in {minutes} minutes. Don't share it.",

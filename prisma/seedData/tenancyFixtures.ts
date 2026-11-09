@@ -51,6 +51,14 @@ const INERT: Record<string, Record<string, unknown>> = {
   // Week 4c: a share and a request name at least one category (CHECK); ended, so nothing reads through them.
   RecordShare: { categories: ["LABS"], status: "ENDED" },
   AccessRequest: { categories: ["LABS"], status: "CANCELLED" },
+  // Flagship 3a: a shift ends after it starts (CHECK); cancelled, so it names no charge nurse.
+  // Flagship 4b: the dose fixture is shared across tenants (no tenant column); a released lease takes no one-active-lease slot.
+  DoseLease: { status: "RELEASED" },
+  // Flagship 4a: a dose command names its dose (CHECK); a refused vitals command names none.
+  OfflineCommand: { kind: "VITALS", outcome: "REFUSED", refusalReason: "UNKNOWN_ENCOUNTER" },
+  // Flagship 4e: a revoked sign-off, so a fixture never turns offline mode on anywhere.
+  ClinicalSignOff: { revokedAt: new Date(), revokedByUserId: "tsw-fixture", revokeReason: "tenancy fixture" },
+  WardChargeShift: { startAt: new Date(Date.UTC(2026, 0, 1, 8)), endAt: new Date(Date.UTC(2026, 0, 1, 14)), status: "CANCELLED" },
 };
 
 const FILL_OPTIONAL: Record<string, string[]> = {

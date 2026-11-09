@@ -87,3 +87,24 @@ Measured with `npm run perf:gate -- --fresh` on 2026-10-29: all 17 endpoints wit
 `npm run perf:load` (not in verify:all) runs 50 simulated users for 5 minutes against a production build on the perf seed: 10 front desk, 15 doctors, 13 nurses (one write: recording vitals), 10 patients and 2 admins, each waiting 1–3 s between actions. It reports each endpoint's p50/p95/p99 and error rate (`.perf-report/load.md`), and fails on any p95 over 500 ms or any error.
 
 Run on 2026-10-29, a single laptop (app, database and load generator on one machine): **7,280 calls (24/s), 0 errors; overall p95 115 ms, p99 159 ms; all 17 endpoints within budget.** The slowest p95s: visit brief (AI, mock provider) 198 ms, command centre 181 ms, patient search 132 ms. The first run's only failure was the test's own: it asked for visit briefs on patients without AI consent, which the app correctly answers 404; the mix now asks only for the consented heavy patient.
+
+## Flagship 3c: "facts to confirm" in pages
+
+Document review (`GET /api/patient/person/facts`, and a proxy's `/api/patient/members/{id}/facts`) loads in pages like the chart:
+- a first page of 20, least confident first, with the total and the counts by band;
+- then pages of 50, by an exact keyset cursor (band, createdAt, id), so deciding facts between pages skips nothing (`verify-postgres-facts-paging`).
+
+`perf:gate` budgets the heavy patient's first page under 30 KB and the next page under 60 KB.
+
+| Response (heavy patient) | Before | After |
+|---|---|---|
+| Facts to confirm, first page | 130 KB | 8 KB |
+| Facts to confirm, next page | n/a | 20 KB |
+
+Measured with `npm run perf:gate -- --fresh` on 2026-11-09 (branch `foundation/flagship-3`): all 18 endpoints within budget. Facts first page p95 43 ms; chart 48 ms; timeline 39 ms; the slowest are the visit brief (239 ms) and AI ask (207 ms), both mock-provider AI.
+
+## Flagship 3d: the bulk lane
+
+A legacy import emits one event per row, which is about 52,000 for a 50,000-row file. The dispatcher took them oldest first, so in `verify:all` they starved every later live event; in production, critical-result notifications and task generation would have waited minutes behind an import. Import row events are now in a **bulk lane** (`bulk: true` on their contracts, `DomainEventOutbox.bulk`): live events are always claimed first, and each aggregate's order is kept.
+
+**Cost:** the backlog still has to drain. On this laptop, about 52,000 bulk events took about 25 minutes through the two wildcard consumers. They never delay a live event, but a drain that waits for an empty outbox (a test helper, a local e2e run on the verify database after `verify:all`) waits for them.

@@ -1708,7 +1708,7 @@ export const EVENT_CONTRACTS: EventContract[] = [
   contract({
     type: "PersonNotificationQueued", version: 3, aggregateType: "PERSON_NOTIFICATION", scope: "PERSON",
     sensitivity: "SENSITIVE", producer: "person notifications (the access-summary, coming-of-age and check-in sweeps; the person-notifier; patient-insurance-notify)",
-    payload: z.object({ notificationId: id, personId: id, kind: z.enum(["ACCESS_SUMMARY", "BREAK_GLASS_ACCESS", "ACCESS_REQUESTED", "COMING_OF_AGE", "CHECKIN_OPEN", "INSURANCE_UPDATE", "DOCUMENTS_REQUESTED", "BILL_READY"]) }).strict(),
+    payload: z.object({ notificationId: id, personId: id, kind: z.enum(["ACCESS_SUMMARY", "BREAK_GLASS_ACCESS", "ACCESS_REQUESTED", "COMING_OF_AGE", "CHECKIN_OPEN", "INSURANCE_UPDATE", "DOCUMENTS_REQUESTED", "BILL_READY", "APPOINTMENT_TIME_ZONE_CHANGED"]) }).strict(),
   }),
   contract({
     type: "InsuranceCardChanged", version: 1, aggregateType: "INSURANCE_CARD", scope: "PERSON",
@@ -1821,19 +1821,127 @@ export const EVENT_CONTRACTS: EventContract[] = [
       severity: z.enum(["WARNING", "CRITICAL"]), taskId: id,
     }).strict(),
   }),
+  // Flagship 4a, offline phase 2: the commands and conflicts beyond scheduled doses
+  // (vitals, intake/output, tasks, PRN). v1 stays for the rows already written.
+  contract({
+    type: "OfflineCommandRecorded", version: 2, aggregateType: "OFFLINE_COMMAND", scope: "FACILITY",
+    sensitivity: "SENSITIVE", producer: "offline nursing (syncCommands: one command of any kind, applied or refused; ids only, never the values)",
+    payload: z.object({
+      commandId: id, deviceId: id,
+      kind: z.enum(["DOSE_GIVEN", "DOSE_HELD", "DOSE_REFUSED", "VITALS", "INTAKE_OUTPUT", "TASK_COMPLETED", "PRN_GIVEN", "PRN_BREACH_REFUSED"]),
+      outcome: z.enum(["APPLIED", "APPLIED_WITH_CONFLICT", "REFUSED"]),
+      administrationId: optId, encounterId: optId, taskId: optId, medicationOrderId: optId,
+      refusalReason: z.enum(["ONLINE_ONLY", "LEASE_EXPIRED", "NOT_LEASED", "NOT_DUE", "UNKNOWN_DOSE", "NOT_ASSIGNED", "PRN_NOT_OFFLINE", "INVALID_VALUES", "UNKNOWN_TASK", "UNKNOWN_ENCOUNTER"]).optional(),
+      resultAdministrationId: optId,
+    }).strict(),
+  }),
+  contract({
+    type: "OfflineConflictRecorded", version: 2, aggregateType: "OFFLINE_CONFLICT", scope: "FACILITY",
+    sensitivity: "SENSITIVE", producer: "offline nursing (syncCommands: a fact the server couldn't apply cleanly, of any command; never discarded)",
+    payload: z.object({
+      conflictId: id, commandId: id, administrationId: optId, patientId: optId,
+      kind: z.enum(["POSSIBLE_DOUBLE_DOSE", "ORDER_CHANGED", "LEASE_OVERRIDDEN", "LEASE_EXPIRED", "NOT_LEASED", "ONLINE_ONLY", "CLOCK_SUSPECT", "PRN_LIMIT_BREACHED", "PRN_BREACH_ATTEMPT", "REFUSED_RECORD"]),
+      severity: z.enum(["WARNING", "CRITICAL"]), taskId: id,
+    }).strict(),
+  }),
+  // Flagship 6 — Scan and Share check-in (mock ABDM gateway).
+  contract({
+    type: "ScanShareCounterCreated", version: 1, aggregateType: "SCAN_SHARE_COUNTER", scope: "FACILITY",
+    sensitivity: "LOW", producer: "scan and share (createCounter: a counter with its QR)",
+    payload: z.object({ counterId: id, code: z.string().min(1) }).strict(),
+  }),
+  contract({
+    type: "ScanShareReceived", version: 1, aggregateType: "SCAN_SHARE_CHECK_IN", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "scan and share (receiveProfileShare: a verified ABHA profile in the check-in queue; ids only, never the profile)",
+    payload: z.object({ checkInId: id, counterId: id, matched: z.boolean(), gateway: z.enum(["MOCK"]), patientId: optId }).strict(),
+  }),
+  contract({
+    type: "ScanShareQueued", version: 1, aggregateType: "SCAN_SHARE_CHECK_IN", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "scan and share (into the registration queue: a known record at once, or the desk's registration)",
+    payload: z.object({ checkInId: id, patientId: id, queueEntryId: id }).strict(),
+  }),
+  // Flagship 4e — offline mode per ward, behind the clinical advisor's sign-off (§6).
+  contract({
+    type: "ClinicalSignOffRecorded", version: 1, aggregateType: "CLINICAL_SIGN_OFF", scope: "PLATFORM",
+    sensitivity: "LOW", producer: "offline nursing (recordClinicalSignOff: platform staff record the advisor's sign-off; the name and reference are audited)",
+    payload: z.object({ signOffId: id, scope: z.string().min(1) }).strict(),
+  }),
+  contract({
+    type: "ClinicalSignOffRevoked", version: 1, aggregateType: "CLINICAL_SIGN_OFF", scope: "PLATFORM",
+    sensitivity: "LOW", producer: "offline nursing (revokeClinicalSignOff: every ward's offline mode turns off)",
+    payload: z.object({ signOffId: id, scope: z.string().min(1), wardsTurnedOff: count }).strict(),
+  }),
+  contract({
+    type: "WardOfflineModeChanged", version: 1, aggregateType: "WARD", scope: "FACILITY",
+    sensitivity: "LOW", producer: "offline nursing (setWardOfflineMode: the hospital admin, on only with the sign-off; or off when the sign-off is revoked)",
+    payload: z.object({ wardId: id, enabled: z.boolean(), cause: z.enum(["HOSPITAL_ADMIN", "SIGN_OFF_REVOKED"]), signOffId: optId }).strict(),
+  }),
+  // Flagship 4b — the charge nurse's queue and the 15-minute escalation.
+  contract({
+    type: "OfflineConflictResolved", version: 1, aggregateType: "OFFLINE_CONFLICT", scope: "FACILITY",
+    sensitivity: "SENSITIVE", producer: "offline nursing (resolveConflict: the ward's charge nurse, with a reason kept in the audit log, never in the event)",
+    payload: z.object({
+      conflictId: id, patientId: optId,
+      kind: z.enum(["POSSIBLE_DOUBLE_DOSE", "ORDER_CHANGED", "LEASE_OVERRIDDEN", "LEASE_EXPIRED", "NOT_LEASED", "ONLINE_ONLY", "CLOCK_SUSPECT", "PRN_LIMIT_BREACHED", "PRN_BREACH_ATTEMPT", "REFUSED_RECORD"]),
+      severity: z.enum(["WARNING", "CRITICAL"]),
+      resolution: z.enum(["NO_HARM_FOUND", "INCIDENT_RAISED", "DUPLICATE_RECORD", "RECORD_STANDS", "RECORDED_ONLINE"]),
+    }).strict(),
+  }),
+  contract({
+    type: "OfflineConflictEscalated", version: 1, aggregateType: "OFFLINE_CONFLICT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "offline nursing (escalateOfflineConflicts: a CRITICAL conflict open 15 minutes; the pharmacists told)",
+    payload: z.object({ conflictId: id, kind: z.enum(["POSSIBLE_DOUBLE_DOSE", "PRN_LIMIT_BREACHED", "ORDER_CHANGED", "LEASE_OVERRIDDEN", "LEASE_EXPIRED", "NOT_LEASED", "ONLINE_ONLY", "CLOCK_SUSPECT", "PRN_BREACH_ATTEMPT", "REFUSED_RECORD"]), pharmacistsTold: count }).strict(),
+  }),
+  contract({
+    type: "DoseLeaseOverrideConfirmed", version: 1, aggregateType: "DOSE_LEASE", scope: "FACILITY",
+    sensitivity: "LOW", producer: "offline nursing (confirmOverride: the charge nurse confirmed in person a dose taken over from a device; the reason is audited)",
+    payload: z.object({ leaseId: id, administrationId: id, deviceId: id }).strict(),
+  }),
   contract({
     type: "OfflineBatchApplied", version: 1, aggregateType: "WARD_DEVICE", scope: "FACILITY",
     sensitivity: "LOW", producer: "offline nursing (syncCommands: the counts of one sync)",
     payload: z.object({ deviceId: id, applied: count, conflicted: count, refused: count, replayed: count }).strict(),
   }),
+  // ── Flagship 3a — the charge nurse per shift (docs/OFFLINE_NURSING_DESIGN.md §12.9) ──
+  contract({
+    type: "WardChargeShiftAssigned", version: 1, aggregateType: "WARD_CHARGE_SHIFT", scope: "FACILITY",
+    sensitivity: "LOW", producer: "offline nursing (assignChargeShift: the ward's charge nurse for one shift; never two at once)",
+    payload: z.object({ shiftId: id, wardId: id, chargeNurseStaffId: id, startAt: iso, endAt: iso }).strict(),
+  }),
+  contract({
+    type: "WardChargeShiftCancelled", version: 1, aggregateType: "WARD_CHARGE_SHIFT", scope: "FACILITY",
+    sensitivity: "LOW", producer: "offline nursing (cancelChargeShift: the ward's named charge nurse covers that time)",
+    payload: z.object({ shiftId: id, wardId: id }).strict(),
+  }),
+  // ── Flagship 3b — changing a facility's time zone (platform staff, at the hospital admin's written request) ──
+  contract({
+    type: "FacilityTimeZoneChangeRequested", version: 1, aggregateType: "FACILITY_TIME_ZONE_CHANGE", scope: "FACILITY",
+    sensitivity: "LOW", producer: "facility time zone (requestTimeZoneChange: the hospital admin's written request, kept on the row and in the audit log, never in the event)",
+    payload: z.object({ requestId: id, facilityId: id, fromTimeZone: z.string().min(1), toTimeZone: z.string().min(1) }).strict(),
+  }),
+  contract({
+    type: "FacilityTimeZoneChangeApproved", version: 1, aggregateType: "FACILITY_TIME_ZONE_CHANGE", scope: "FACILITY",
+    sensitivity: "LOW", producer: "facility time zone (decideTimeZoneChange: platform staff; future bookings only when confirmed)",
+    payload: z.object({ requestId: id, facilityId: id, futureAppointments: count, confirmedFutureAppointments: z.boolean() }).strict(),
+  }),
+  contract({
+    type: "FacilityTimeZoneChangeRejected", version: 1, aggregateType: "FACILITY_TIME_ZONE_CHANGE", scope: "FACILITY",
+    sensitivity: "LOW", producer: "facility time zone (decideTimeZoneChange: platform staff, with a note kept on the row)",
+    payload: z.object({ requestId: id, facilityId: id }).strict(),
+  }),
+  contract({
+    type: "FacilityTimeZoneChanged", version: 1, aggregateType: "FACILITY", scope: "FACILITY",
+    sensitivity: "LOW", producer: "facility time zone (decideTimeZoneChange on approval: every booking keeps its instant)",
+    payload: z.object({ facilityId: id, requestId: id, fromTimeZone: z.string().min(1), toTimeZone: z.string().min(1) }).strict(),
+  }),
   // ── Flagship 2, step 6 — legacy import, phase 1 (docs/LEGACY_IMPORT_DESIGN.md §11): own types, so no live consumer reacts ──
   contract({
-    type: "LegacyPatientImported", version: 1, aggregateType: "PATIENT", scope: "FACILITY",
+    type: "LegacyPatientImported", version: 1, bulk: true, aggregateType: "PATIENT", scope: "FACILITY",
     sensitivity: "INTERNAL", producer: "legacy import (confirmImport: a patient from the old system, never linked to a Person)",
     payload: z.object({ patientId: id, batchId: id }).strict(),
   }),
   contract({
-    type: "LegacyEncounterImported", version: 1, aggregateType: "ENCOUNTER", scope: "FACILITY",
+    type: "LegacyEncounterImported", version: 1, bulk: true, aggregateType: "ENCOUNTER", scope: "FACILITY",
     sensitivity: "INTERNAL", producer: "legacy import (confirmImport: a CLOSED visit from the old system)",
     payload: z.object({ encounterId: id, patientId: id, batchId: id, encounterType: z.enum(["OPD", "ED", "IPD", "DAYCARE", "TELEMEDICINE"]) }).strict(),
   }),
@@ -1841,6 +1949,42 @@ export const EVENT_CONTRACTS: EventContract[] = [
     type: "LegacyImportBatchCommitted", version: 1, aggregateType: "LEGACY_IMPORT_BATCH", scope: "FACILITY",
     sensitivity: "LOW", producer: "legacy import (confirmImport: the counts of one file)",
     payload: z.object({ batchId: id, patients: count, encounters: count, refused: count }).strict(),
+  }),
+  // ── Flagship 3d — legacy import in chunks, resumable, and the review queue ──
+  contract({
+    type: "LegacyImportBatchStarted", version: 1, aggregateType: "LEGACY_IMPORT_BATCH", scope: "FACILITY",
+    sensitivity: "LOW", producer: "legacy import (confirmImport: a confirmed run begins; the rows it plans)",
+    payload: z.object({ batchId: id, patients: count, reviews: count, encounters: count, results: count.optional() }).strict(),
+  }),
+  contract({
+    type: "LegacyImportChunkCommitted", version: 1, bulk: true, aggregateType: "LEGACY_IMPORT_BATCH", scope: "FACILITY",
+    sensitivity: "LOW", producer: "legacy import (confirmImport: one chunk of ~500 rows, its own transaction)",
+    payload: z.object({ batchId: id, chunk: count, part: z.enum(["PATIENTS", "REVIEWS", "ENCOUNTERS", "RESULTS"]), rows: count }).strict(),
+  }),
+  contract({
+    type: "LegacyImportBatchFailed", version: 1, aggregateType: "LEGACY_IMPORT_BATCH", scope: "FACILITY",
+    sensitivity: "LOW", producer: "legacy import (confirmImport: a chunk failed and rolled back alone; the chunks before it stay)",
+    payload: z.object({ batchId: id, chunk: count, part: z.enum(["PATIENTS", "REVIEWS", "ENCOUNTERS", "RESULTS"]) }).strict(),
+  }),
+  contract({
+    type: "LegacyImportBatchResumed", version: 1, aggregateType: "LEGACY_IMPORT_BATCH", scope: "FACILITY",
+    sensitivity: "LOW", producer: "legacy import (confirmImport: the same file again after a failure, after the chunks already in)",
+    payload: z.object({ batchId: id, chunksCommitted: count }).strict(),
+  }),
+  contract({
+    type: "LegacyResultImported", version: 1, bulk: true, aggregateType: "LEGACY_LAB_RESULT", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "legacy import (confirmImport: one HL7 ORU result, kept apart from the live results; no live consumer listens)",
+    payload: z.object({ resultId: id, patientId: id, batchId: id, converted: z.boolean() }).strict(),
+  }),
+  contract({
+    type: "LegacyPatientReviewQueued", version: 1, bulk: true, aggregateType: "LEGACY_PATIENT_REVIEW", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "legacy import (confirmImport: a re-imported patient whose details differ; the names of the fields only)",
+    payload: z.object({ reviewId: id, patientId: id, batchId: id, differences: z.array(z.enum(["fullName", "sex", "dob", "phone"])) }).strict(),
+  }),
+  contract({
+    type: "LegacyPatientReviewDecided", version: 1, aggregateType: "LEGACY_PATIENT_REVIEW", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "legacy import (decidePatientReview: the hospital admin accepts the incoming details or keeps the existing ones; the reason is audited, never in the event)",
+    payload: z.object({ reviewId: id, patientId: id, decision: z.enum(["ACCEPTED", "KEPT"]), fields: z.array(z.enum(["fullName", "sex", "dob", "phone"])) }).strict(),
   }),
 ];
 

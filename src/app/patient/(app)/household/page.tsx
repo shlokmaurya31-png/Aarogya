@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Users, UserPlus, ShieldCheck, Upload } from "lucide-react";
 import { Card, SectionTitle, Empty } from "@/components/patient-portal/ui";
 import { SharedRecordSections, type SharedRecordData } from "@/components/hospital-os/SharedRecordSections";
+import { LoadMore } from "@/components/hospital-os/shared/LoadMore";
 import { DEFAULT_SHARE_CHOICE, ShareChoices, choiceBody, type ShareChoiceValue } from "@/components/patient-portal/ShareChoices";
 
 /**
@@ -142,6 +143,8 @@ function GuardianChoices({ profile }: { profile: Profile }) {
 function MemberPanel({ profile }: { profile: Profile }) {
   const [view, setView] = useState<{ record: (SharedRecordData & { patient: { id: string } }) | null; uploads: { id: string; title: string }[] } | null>(null);
   const [facts, setFacts] = useState<Fact[]>([]);
+  // Flagship 3c: facts come in pages; the first page says how many there are.
+  const [factsMore, setFactsMore] = useState<{ cursor: string | null; total: number }>({ cursor: null, total: 0 });
   const [title, setTitle] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [code, setCode] = useState<string | null>(null);
@@ -159,7 +162,7 @@ function MemberPanel({ profile }: { profile: Profile }) {
     ]).then(([v, f]) => {
       if (!alive) return;
       if (v?.ok) setView(v.data);
-      if (f?.ok) setFacts(f.data.facts);
+      if (f?.ok) { setFacts(f.data.facts); setFactsMore({ cursor: f.data.nextCursor ?? null, total: f.data.total ?? f.data.facts.length }); }
     });
     return () => { alive = false; };
   }, [profile, tick]);
@@ -169,6 +172,11 @@ function MemberPanel({ profile }: { profile: Profile }) {
     const r = await fetch(`/api/patient/members/${profile.personId}/documents`, { method: "POST", body: fd }).catch(() => null);
     setMsg(r?.ok ? "Uploaded. It will be read shortly; then confirm what was found." : "The upload didn't go through."); setFile(null); setTitle(""); load();
   }
+  const moreFacts = useCallback(async () => {
+    if (!factsMore.cursor) return;
+    const r = await call(`/api/patient/members/${profile.personId}/facts?cursor=${encodeURIComponent(factsMore.cursor)}`, undefined, "GET");
+    if (r.ok) { setFacts((xs) => [...xs, ...r.data.facts]); setFactsMore((m) => ({ ...m, cursor: r.data.nextCursor ?? null })); }
+  }, [factsMore.cursor, profile.personId]);
   async function confirmAll() {
     const ok = facts.filter((f) => f.bulkConfirmable);
     const r = await call(`/api/patient/members/${profile.personId}/facts`, { decisions: ok.map((f) => ({ factId: f.id, version: f.version, decision: "CONFIRM" })) });
@@ -193,8 +201,9 @@ function MemberPanel({ profile }: { profile: Profile }) {
           </div>
           {facts.length > 0 && (
             <div className="mt-3" aria-label="Found in the documents">
-              <p className="text-[12.5px] font-medium">Found in their documents ({facts.length}), waiting for you to check</p>
+              <p className="text-[12.5px] font-medium">Found in their documents ({factsMore.total}), waiting for you to check</p>
               <ul className="mt-1 space-y-0.5 text-[12px] text-text-secondary">{facts.map((f) => <li key={f.id}>{f.factType.toLowerCase().replace("_", " ")}: {Object.values(f.value).filter((x) => typeof x === "string").join(" ")}</li>)}</ul>
+              {factsMore.cursor && <LoadMore onLoad={moreFacts} label="Show more of what was found" />}
               <button onClick={confirmAll} disabled={!facts.some((f) => f.bulkConfirmable)} className="mt-2 rounded-md border border-hairline px-3 py-1 text-[12px] disabled:opacity-50">Confirm the clear ones</button>
             </div>
           )}

@@ -1,6 +1,6 @@
 # Importing a hospital's old HIMS
 
-- **Status:** Designed (Flagship 1d, 2026-10-28); the open questions decided (2026-10-29, §10); **phase 1 built in Flagship 2** (CSV patients and encounters, dry run and confirmed run, §11).
+- **Status:** Designed (Flagship 1d, 2026-10-28); the open questions decided (2026-10-29, §10; three more 2026-11-08); **phase 1 built in Flagship 2** (CSV patients and encounters, dry run and confirmed run, §11); the review queue, "Recorded by" and chunked runs in Flagship 3d (§11.1); **phase 2, HL7 v2 ADT and ORU, in Flagship 5** (§11.2).
 - **What:** bringing a hospital's history from its previous system into Aarogya when it switches over: **patients, encounters, results and bills**, from **CSV exports, HL7 v2 messages or FHIR R4 bundles**.
 - **The rule:** *refuse, don't guess.* A row that can't be mapped exactly is refused with a reason; it never becomes a best guess in a patient's record. Wrong-patient data is worse than missing data.
 - **Builds on:** the staged FHIR import (`src/lib/hospital/interoperability/fhir/import.ts`: an external payload never reaches a clinical table; it is staged as MAPPED / CONFLICT / REJECTED and promoted only by a deliberate review), provenance (`interoperability/provenance.ts`), external identifiers (`externalIdentity.ts`), the patient duplicate and merge tools (`/api/hospital/patients/duplicates`, `merge`), the event spine, and the facility/Person split (`docs/ARCHITECTURE.md` §2).
@@ -135,6 +135,9 @@ Refused rows stay in staging with their reason. The hospital can fix them at the
 6. **Opening balances are hidden in the patient app until legal review. Decided.**
 7. **Patients admitted on cut-over night come in as active admissions, with a manual checklist. Decided.** A ward-by-ward checklist (bed, re-prescription by the treating doctor, allergies confirmed) closes each one; an imported order never drives the MAR.
 8. **The hospital's medical records officer signs off the mapping. Decided.**
+9. **A re-imported patient whose details differ goes to a review queue. Decided (2026-11-08; was Flagship 2's open question 4).** The hospital admin accepts the incoming details or keeps the existing ones, each audited with a reason. A difference is never ignored silently, and never applied automatically. Built in Flagship 3d (§11.1).
+10. **Legacy clinician names are shown on imported entries as "Recorded by: <name> (imported)". Decided (2026-11-08; was open question 5).**
+11. **Imports run in chunks of about 500 rows, each chunk its own transaction, resumable after a failure with no duplicates. Decided (2026-11-08; was open question 6).**
 
 ## 11. As built (Flagship 2, phase 1)
 
@@ -147,3 +150,56 @@ Refused rows stay in staging with their reason. The hospital can fix them at the
 - **Re-runs:** the same file again is a no-op (the file hash and each row's source key are unique per facility).
 - **Gate:** `verify-postgres-legacy-import` (dry run writes nothing; bad rows refused with reasons; a re-run creates no duplicates; another hospital can't see the import; no Person link; no live consumer reacts).
 - **Not yet (later phases):** results, HL7 and FHIR, medications and allergies, bills and opening balances, retraction, reconcile.
+
+### 11.2 Phase 2: HL7 v2 ADT and ORU (Flagship 5)
+
+- **The same routes and rules as CSV:**
+  - `POST /api/hospital/legacy-import` with `{ profile, hl7 }` runs the dry run; it writes nothing and returns the dry-run hash;
+  - `…/confirm` runs the import in chunks, resumable;
+  - matching is by exact MRN only (the PID-3 identifier of the mapped type, e.g. `MR`);
+  - a re-imported patient whose details differ goes to the review queue;
+  - the 3-year window applies.
+- **The reader** (`legacyImport/hl7.ts`): messages are split on MSH and segments on CR, LF or CRLF, with MLLP framing dropped. Each message's own separators are used, escape sequences are decoded, and HL7 field numbering is kept (MSH-1 is the separator). Times are read with their offset, else in the facility's zone. A file that isn't HL7 is refused whole.
+- **Identity numbers:** never imported. PID-19 and any PID-3 identifier of an identity type (NI, SS, UIDAI, PPN, PAN…) are dropped, and the report names them. A mapping that takes an identity type as the MRN is refused whole.
+- **ADT** (A01, A03, A04, A08): one patient per MRN; a visit is a PV1-19 visit number across its messages (admission time PV1-44, discharge PV1-45, class PV1-2, service PV1-10, attending PV1-7, kept as "Recorded by: <name> (imported)"). Messages that disagree about a visit are refused. Refused too:
+  - an inpatient or ED visit with no discharge, which is still admitted at cut-over and comes in through the ward-by-ward checklist, never the file (§10.7);
+  - cancellations (A11, A13…) and any other message type.
+- **ORU** (R01): each OBX for a patient accepted in the file or imported before. Results never create a patient. A result needs:
+  - a mapped test (OBX-3 → the hospital's name and unit);
+  - a final or corrected status (OBX-11 F or C);
+  - an observation time (OBX-14, else OBR-7);
+  - a number, when OBX-2 is NM.
+
+  **Units are converted only on an exact (test, unit) mapping** (decided §10.2); the sent value and unit are kept beside the converted one. Anything else is refused with its reason (`UNMAPPED_TEST`, `UNIT_UNMAPPED`, `NOT_FINAL`, `NOT_NUMERIC`).
+- **Where results go:** `LegacyLabResult`, apart from the live `LabResult`. An imported result never enters the verification queue, a critical-result alert or the patient's released reports. It shows in the chart's trend (`GET /api/hospital/patients/{id}/lab-trend?test=…`), labelled **"imported"** (decided §10.2), next to the hospital's own verified results.
+- **Events:** `LegacyResultImported` (bulk lane, like the other row events) and the chunk events with part `RESULTS`.
+- **Gate:** `verify-postgres-legacy-import-hl7` (synthetic messages only).
+- **Not yet:** FHIR bundles, medications and allergies from HL7, the imported results in the timeline.
+
+### 11.1 Review queue, "Recorded by" and chunked runs (Flagship 3d, decided §10.9–10.11)
+
+- **Chunks.** A confirmed run writes about 500 rows per chunk (`IMPORT_CHUNK_ROWS`). Each chunk is one transaction holding:
+  - its rows (bulk inserts) and their source keys;
+  - each row's import event;
+  - `LegacyImportChunkCommitted`;
+  - the batch's progress (`chunksCommitted`).
+
+  A run begins with `LegacyImportBatchStarted`.
+- **Failure and resume.** A chunk that fails rolls back alone. The batch becomes FAILED (`lastError`, `LegacyImportBatchFailed`), and the chunks before it stay. Sending the same file again resumes (`LegacyImportBatchResumed`) and skips every row whose source key already exists, so nothing is imported twice. Key lookups run in slices of 5,000. A file may be up to 8 MB.
+- **Review queue.** An MRN already imported, arriving with different details, becomes a `LegacyPatientReview` (`LegacyPatientReviewQueued`):
+  - only the fields the file gives count: a missing date of birth or phone is not a difference, and never clears one;
+  - the same difference is queued once.
+
+  The hospital admin then:
+  - lists the queue at `GET /api/hospital/legacy-import/reviews`;
+  - decides at `POST …/reviews/{id}/decide` with ACCEPT or KEEP and a reason (audited, `LegacyPatientReviewDecided`).
+
+  ACCEPT changes only the fields that differed, and only while the patient still has the details the review was made against; otherwise it is refused with a 409. The dry run reports `toReview`.
+- **Recorded by.** The old system's clinician is kept as written. An imported visit shows it on the timeline and in the chart's encounters (`recordedBy`) as "Recorded by: <name> (imported)".
+- **Gate:** `verify-postgres-legacy-import-scale`:
+  - a 50,000-row synthetic file and 2,000 visits;
+  - a forced failure inside chunk 37: exactly 18,500 patients stay, and the batch is FAILED;
+  - the resume: exactly 50,000, no key twice, one event per row;
+  - the review queue: queued once, nothing applied, keep and accept audited, accept refused after a change;
+  - "Recorded by".
+- **Not yet:** a screen for the review queue (the API only, like the import itself).

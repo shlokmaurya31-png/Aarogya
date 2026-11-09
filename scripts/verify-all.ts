@@ -116,12 +116,28 @@ const ORDER = [
   "verify-postgres-walk-ins",
   // Flagship 2a: a facility's day is its own under any server zone (HTTP; builds the app)
   "verify-postgres-time-zones",
+  // Flagship 3b: changing a facility's time zone (request, platform decision, bookings told)
+  "verify-postgres-time-zone-change",
   // Flagship 2d: the chart and the timeline in exact pages
   "verify-postgres-pagination",
+  // Flagship 3c: facts to confirm in pages
+  "verify-postgres-facts-paging",
   // Flagship 2, step 5: offline nursing, phase 1 (devices, dose leases, sync)
   "verify-postgres-offline-sync",
+  // Flagship 3a: the charge nurse per shift (handover mid-lease)
+  "verify-postgres-charge-shifts",
+  // Flagship 4a: offline vitals, I/O, tasks and PRN
+  "verify-postgres-offline-phase2",
+  // Flagship 4b: the charge nurse's queue and the 15-minute escalation
+  "verify-postgres-offline-queue",
+  // Flagship 4e: offline mode per ward, behind the clinical sign-off
+  "verify-postgres-offline-switch",
+  // Flagship 6: Scan and Share check-in (mock ABDM gateway)
+  "verify-postgres-scan-share",
   // Flagship 2, step 6: legacy import, phase 1 (CSV patients and encounters)
   "verify-postgres-legacy-import",
+  // Flagship 5: HL7 v2 ADT and ORU (synthetic messages)
+  "verify-postgres-legacy-import-hl7",
   "verify-postgres-schema-constraints",
   // Week 3: workflow spine
   "verify-postgres-runner",
@@ -178,6 +194,10 @@ const ORDER = [
   "verify-postgres-order-status",
 ];
 const LAST = "verify-postgres-phase-b-final";
+// Flagship 3d: run after every other gate (the unlisted ones too, which drain
+// the outbox) and just before LAST: the 50,000-row import leaves ~52,000
+// bulk-lane events, and nothing after it dispatches.
+const LATE = ["verify-postgres-legacy-import-scale"];
 
 // verify-abdm-sandbox makes real network calls to dev.abdm.gov.in and needs
 // ABDM sandbox credentials; without them it reports BLOCKED and exits 0,
@@ -227,12 +247,12 @@ function discover(opts: Options): string[] {
     .map((f) => f.replace(/\.ts$/, ""))
     .filter((n) => !EXCLUDED.has(n));
 
-  const unlisted = found.filter((n) => n !== LAST && !ORDER.includes(n)).sort();
+  const unlisted = found.filter((n) => n !== LAST && !ORDER.includes(n) && !LATE.includes(n)).sort();
   for (const n of unlisted) console.warn(`note: ${n} is not in the ORDER list; running it before ${LAST}.`);
   const missing = ORDER.filter((n) => !found.includes(n));
   for (const n of missing) console.warn(`note: ${n} is listed in ORDER but no longer exists; skipping.`);
 
-  let names = [...ORDER.filter((n) => found.includes(n)), ...unlisted, ...(found.includes(LAST) ? [LAST] : [])];
+  let names = [...ORDER.filter((n) => found.includes(n)), ...unlisted, ...LATE.filter((n) => found.includes(n)), ...(found.includes(LAST) ? [LAST] : [])];
   if (opts.only.length) names = names.filter((n) => opts.only.some((p) => n.includes(p)));
   return names;
 }

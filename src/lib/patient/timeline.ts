@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { importedRecordedBy } from "@/lib/hospital/legacyImport/display";
 import { resolvePatientIdsForRead } from "./merge";
 import { TRANSFER_WITH_LOCATIONS, transferRouteLabel } from "@/lib/hospital/admission";
 import { documentVisibilityFor, personDocumentsFor, type DocumentViewer } from "@/lib/person/access";
@@ -49,8 +50,12 @@ function streamsFor(patientIds: string[], documentsVisible: Awaited<ReturnType<t
   const P = { in: patientIds };
   const desc = <F extends string>(field: F) => [{ [field]: "desc" }, { id: "asc" }] as { [K in F]: "desc" }[] & { id: "asc" }[];
   return [
-    { prefix: "encounter", fetch: async (r, take) => (await prisma.encounter.findMany({ where: { patientId: P, registeredAt: bound(r) }, include: { department: { select: { name: true } } }, orderBy: desc("registeredAt"), take }))
-      .map((e) => ({ id: `encounter-${e.id}`, timestamp: e.registeredAt.toISOString(), type: "Encounter", summary: `${e.type} encounter registered${e.chiefComplaint ? ` — ${e.chiefComplaint}` : ""}${e.importBatchId ? " (imported from the hospital's previous system)" : ""}`, department: e.department?.name, sourceType: "Encounter", sourceId: e.id })) },
+    { prefix: "encounter", fetch: async (r, take) => {
+      const rows = await prisma.encounter.findMany({ where: { patientId: P, registeredAt: bound(r) }, include: { department: { select: { name: true } } }, orderBy: desc("registeredAt"), take });
+      // Flagship 3d: an imported visit names the old system's clinician, as text.
+      const recordedBy = await importedRecordedBy(rows.filter((e) => e.importBatchId).map((e) => e.id));
+      return rows.map((e) => ({ id: `encounter-${e.id}`, timestamp: e.registeredAt.toISOString(), type: "Encounter", summary: `${e.type} encounter registered${e.chiefComplaint ? ` — ${e.chiefComplaint}` : ""}${e.importBatchId ? ` (imported from the hospital's previous system)${recordedBy.has(e.id) ? `. ${recordedBy.get(e.id)}` : ""}` : ""}`, department: e.department?.name, sourceType: "Encounter", sourceId: e.id }));
+    } },
     { prefix: "encounter-closed", fetch: async (r, take) => (await prisma.encounter.findMany({ where: { patientId: P, closedAt: notNull(r) }, include: { department: { select: { name: true } } }, orderBy: desc("closedAt"), take }))
       .map((e) => ({ id: `encounter-closed-${e.id}`, timestamp: e.closedAt!.toISOString(), type: "Encounter", summary: `${e.type} encounter ${e.status === "CANCELLED" ? "cancelled" : "closed"}`, department: e.department?.name, sourceType: "Encounter", sourceId: e.id })) },
     { prefix: "diagnosis", fetch: async (r, take) => (await prisma.diagnosis.findMany({ where: { patientId: P, createdAt: bound(r) }, include: { diagnosedBy: STAFF_NAME }, orderBy: desc("createdAt"), take }))

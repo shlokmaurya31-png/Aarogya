@@ -22,6 +22,7 @@ import "./lib/gateBootstrap";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../src/lib/db";
 import { confirmImport, dryRunImport, getImportBatch } from "../src/lib/hospital/legacyImport/service";
+import { importedRecordedBy } from "../src/lib/hospital/legacyImport/display";
 import { registerAllConsumers } from "../src/lib/runner/consumers";
 import { dispatchPendingDomainEvents } from "../src/lib/events/dispatcher";
 import { tag } from "./lib/shareFixture";
@@ -114,7 +115,9 @@ async function main() {
   report("No identity number anywhere in what was imported", !JSON.stringify(await prisma.patient.findMany({ where: { id: { in: patientIds } } })).includes("123412341234"));
   const encs = await prisma.encounter.findMany({ where: { patientId: { in: patientIds } } });
   report("Imported visits are CLOSED, with the old dates (in India time)", encs.length === 3 && encs.every((e) => e.status === "CLOSED") && encs.some((e) => e.registeredAt.toISOString() === `${y - 1}-02-05T05:00:00.000Z`));
-  report("The legacy clinician is kept as a text name", keys.some((k) => k.clinicianName === "Dr A Sharma (legacy)"));
+  const sharmaVisit = keys.find((k) => k.clinicianName === "Dr A Sharma");
+  report("The legacy clinician is kept as a text name", Boolean(sharmaVisit));
+  report("…and shown on the imported entry as \"Recorded by: Dr A Sharma (imported)\"", (await importedRecordedBy([sharmaVisit?.targetId ?? ""])).get(sharmaVisit?.targetId ?? "") === "Recorded by: Dr A Sharma (imported)");
   report("Imported patients are never linked to a Person", (await prisma.personPatientLink.count({ where: { patientId: { in: patientIds } } })) === 0 && (await prisma.patient.count({ where: { id: { in: patientIds }, userId: { not: null } } })) === 0);
   const events = await prisma.domainEventOutbox.findMany({ where: { facilityId: PUNE, OR: [{ aggregateId: { in: [...patientIds, ...encs.map((e) => e.id), run.batchId] } }] }, select: { eventType: true } });
   report("Every row emitted its import event, and nothing live", events.filter((e) => e.eventType === "LegacyPatientImported").length === 2 && events.filter((e) => e.eventType === "LegacyEncounterImported").length === 3 && events.some((e) => e.eventType === "LegacyImportBatchCommitted") && !events.some((e) => ["PatientRegistered", "EncounterOpened"].includes(e.eventType)), [...new Set(events.map((e) => e.eventType))].join(","));
@@ -127,10 +130,11 @@ async function main() {
   // 4. Exact keys only.
   const second = { profile, patientsCsv: `MRN,Name,Gender\nA1-${tag},Asha R (renamed),F`, encountersCsv: `MRN,Visit,Type,Date\nA1-${tag},V9-${tag},OP,01/04/${y - 1}` };
   const dry2 = await dryRunImport(PUNE, second);
-  report("A second file naming an imported MRN: no new patient, the visit added to that one", dry2.counts.patients.toCreate === 0 && dry2.counts.patients.alreadyImported === 1 && dry2.counts.encounters.toCreate === 1, JSON.stringify(dry2.counts));
+  report("A second file naming an imported MRN with another name: no new patient, the difference for review, the visit added to that one", dry2.counts.patients.toCreate === 0 && dry2.counts.patients.alreadyImported === 0 && dry2.counts.patients.toReview === 1 && dry2.counts.encounters.toCreate === 1, JSON.stringify(dry2.counts));
   await confirmImport({ userId: admin.id, facilityId: PUNE }, { ...second, dryRunHash: dry2.dryRunHash });
   const asha = keys.find((k) => k.kind === "PATIENT" && k.sourceKey === `A1-${tag}`)!.targetId;
   report("…and the imported patient keeps their name (nothing is updated by a re-import)", (await prisma.patient.findUniqueOrThrow({ where: { id: asha } })).fullName === "Asha Rao, Mrs" && (await prisma.encounter.count({ where: { patientId: asha } })) === 3);
+  report("…while the difference waits in the review queue (the name only: the file has no date of birth or phone)", (await prisma.legacyPatientReview.findMany({ where: { facilityId: PUNE, patientId: asha, status: "OPEN" } })).map((r) => r.differences.join(",")).join(";") === "fullName");
 
   // 5. Another hospital.
   report("Another hospital can't see the import (404)", await getImportBatch(NOIDA, run.batchId).then(() => false, (e) => (e as Error).constructor.name === "NotFoundError"));
