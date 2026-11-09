@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fixture, signIn } from "./fixture";
+import { fixture, signIn, bodyIfFailed } from "./fixture";
 
 /**
  * Week 5 final — an OPD visit: the front desk registers a new patient, finds
@@ -21,7 +21,7 @@ test("OPD visit: register → book → check in → the doctor's diagnosis, note
   const registered = desk.waitForResponse((r) => r.url().endsWith("/api/hospital/patients") && r.request().method() === "POST");
   await desk.getByRole("button", { name: "Register patient" }).click();
   const reg = await registered;
-  expect(reg.ok(), await reg.text()).toBe(true);
+  expect(reg.ok(), await bodyIfFailed(reg, reg.ok())).toBe(true);
   // Registering selects the new patient for booking.
   await expect(desk.getByText(`Registered ${name}`).first()).toBeVisible();
   await expect(desk.getByText("Booking for selected patient above.").first()).toBeVisible();
@@ -64,7 +64,7 @@ test("OPD visit: register → book → check in → the doctor's diagnosis, note
   const placed = doctor.waitForResponse((r) => r.url().endsWith("/api/hospital/orders/medication") && r.request().method() === "POST");
   await doctor.getByRole("button", { name: "Place order" }).click();
   const placedRes = await placed;
-  expect(placedRes.status(), await placedRes.text()).toBeLessThan(400);
+  expect(placedRes.status(), await bodyIfFailed(placedRes, placedRes.status() < 400)).toBeLessThan(400);
   // The safety check may ask for a reason first (allergy status unknown); the doctor gives one.
   const ordered = doctor.getByText(/Medication ordered\.|safety flag\(s\) noted/).first();
   const override = doctor.getByPlaceholder("Override reason (required to proceed)");

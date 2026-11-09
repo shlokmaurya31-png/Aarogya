@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fixture, signIn } from "./fixture";
+import { fixture, signIn, bodyIfFailed } from "./fixture";
 import { hospitalStep } from "./steps";
 
 /**
@@ -49,7 +49,7 @@ test("ED → admission → ICU → OT → discharge → invoice → claim draft"
   const initiated = admin.waitForResponse((r) => /\/api\/hospital\/admissions\/[^/]+\/discharge$/.test(r.url()) && r.request().method() === "POST");
   await dc.getByRole("button", { name: "Initiate discharge" }).click();
   const ini = await initiated;
-  expect(ini.ok(), await ini.text()).toBe(true);
+  expect(ini.ok(), await bodyIfFailed(ini, ini.ok())).toBe(true);
   await expect(dc.getByRole("button", { name: "Finalize discharge" })).toBeVisible();
   // Each readiness flag is saved, then the board reloads it.
   for (const label of ["Clinically ready", "Documentation", "Billing", "Insurance", "Pharmacy", "Transport"]) {
@@ -58,14 +58,14 @@ test("ED → admission → ICU → OT → discharge → invoice → claim draft"
       const saved = admin.waitForResponse((r) => r.url().includes("/discharge") && r.request().method() === "PATCH");
       await box.click();
       const res = await saved;
-      expect(res.ok(), await res.text()).toBe(true);
+      expect(res.ok(), await bodyIfFailed(res, res.ok())).toBe(true);
       await expect(box).toBeChecked();
     }
   }
   const finalized = admin.waitForResponse((r) => r.url().endsWith("/discharge/finalize"));
   await dc.getByRole("button", { name: "Finalize discharge" }).click();
   const fin = await finalized;
-  expect(fin.ok(), await fin.text()).toBe(true);
+  expect(fin.ok(), await bodyIfFailed(fin, fin.ok())).toBe(true);
   await expect(admin.getByText(/Patient discharged/).first()).toBeVisible();
   void icuOt;
 
