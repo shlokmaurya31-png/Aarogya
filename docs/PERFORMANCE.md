@@ -124,3 +124,8 @@ The bulk lane above (now the **import lane**) kept live events first but cleared
 
   The gate's budget for a critical result is 5 s (one idle worker sleep and one tick), with or without a backlog. During the backlog the worker is already awake and checks the live lane between slices, so it answers sooner than an idle one.
 - **Trade-off:** more concurrent database work while an import clears: four connections' worth by default. Raise the setting only with database headroom; 1 restores the old behaviour.
+
+## Flagship 5d: the 50,000-row gates in their own CI job
+
+The Integrity gates job took about 29 minutes in Flagship 4 (limit raised to 50), most of the growth from the two 50,000-row gates: the import lane builds and clears its own backlog, and the legacy import runs at scale. They now run as their own job, **Scale gates** (`npm run verify:all -- --group scale`, limit 35 minutes), in parallel with **Integrity gates** (`--group main`, the other 129, limit back to 30 minutes), each on its own Postgres service. The nightly isolated run is split the same way. Locally, `npm run verify:all` still runs all 131 (`--group all`, the default). Each scale gate needs only the seed, which `verify:isolated` already proves by running each on a fresh database.
+
