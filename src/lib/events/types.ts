@@ -168,6 +168,8 @@ export const AGGREGATE_TYPES = [
   // Flagship 6 — Scan and Share.
   "SCAN_SHARE_COUNTER",
   "SCAN_SHARE_CHECK_IN",
+  // Flagship 4b — a staff member's chart preferences (show imported results).
+  "CHART_PREFERENCE",
 ] as const;
 export type AggregateType = (typeof AGGREGATE_TYPES)[number];
 

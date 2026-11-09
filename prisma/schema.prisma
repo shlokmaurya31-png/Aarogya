@@ -78,6 +78,8 @@ model User {
   /// cookies, so this counter IS the revocation mechanism — a cookie whose
   /// version does not match is refused. See src/lib/auth/session.ts.
   tokenVersion Int      @default(0)
+  /// Flagship 4b: the chart's timeline shows results imported from the hospital's previous system (labelled "imported"). Off by default; per user.
+  showImportedResults Boolean @default(false)
   role         Role
   displayName  String
   /// Legal name where one is needed (students, for verification); displayName is the preferred name.

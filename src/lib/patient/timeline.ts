@@ -25,6 +25,8 @@ export interface TimelineEntry {
   actor?: string | null;
   sourceType: string;
   sourceId: string;
+  /** Flagship 4b: from the hospital's previous system (shown labelled "imported", and only when the viewer turned "show imported" on). */
+  imported?: boolean;
 }
 
 // Milestone E hardening: every source is capped (TIMELINE_ROW_LIMIT, its most
@@ -46,10 +48,22 @@ const bound = (r: Range) => r ?? {};
 const notNull = (r: Range) => ({ not: null, ...bound(r) });
 const STAFF_NAME = { select: { user: { select: { displayName: true } } } } as const;
 
-function streamsFor(patientIds: string[], documentsVisible: Awaited<ReturnType<typeof documentVisibilityFor>>): Stream[] {
+function streamsFor(patientIds: string[], documentsVisible: Awaited<ReturnType<typeof documentVisibilityFor>>, opts: { importedAtFacility?: string } = {}): Stream[] {
   const P = { in: patientIds };
   const desc = <F extends string>(field: F) => [{ [field]: "desc" }, { id: "asc" }] as { [K in F]: "desc" }[] & { id: "asc" }[];
+  // Flagship 4b: results imported from the previous system (LegacyLabResult),
+  // only when the staff viewer asked for them. They are a separate table, so
+  // nothing here can put them into verification, alerts or released reports.
+  const imported: Stream[] = !opts.importedAtFacility ? [] : [
+    { prefix: "imported-result", fetch: async (r, take) => (await prisma.legacyLabResult.findMany({ where: { patientId: P, facilityId: opts.importedAtFacility, observedAt: bound(r) }, orderBy: desc("observedAt"), take }))
+      .map((x) => ({
+        id: `imported-result-${x.id}`, timestamp: x.observedAt.toISOString(), type: "Result", imported: true,
+        summary: `Imported result: ${x.testName} ${x.value}${x.unit ? ` ${x.unit}` : ""}${x.abnormalFlag && x.abnormalFlag !== "N" ? ` (flag ${x.abnormalFlag})` : ""}${x.originalUnit ? ` (sent as ${x.originalValue} ${x.originalUnit})` : ""}. Imported from the hospital's previous system, not verified here`,
+        sourceType: "LegacyLabResult", sourceId: x.id,
+      })) },
+  ];
   return [
+    ...imported,
     { prefix: "encounter", fetch: async (r, take) => {
       const rows = await prisma.encounter.findMany({ where: { patientId: P, registeredAt: bound(r) }, include: { department: { select: { name: true } } }, orderBy: desc("registeredAt"), take });
       // Flagship 3d: an imported visit names the old system's clinician, as text.
@@ -171,11 +185,12 @@ export async function buildPatientTimeline(patientId: string, viewer: DocumentVi
  * cursor in its own time order (ties at the cursor's moment read whole and
  * cut in memory, so the database's collation never decides an order).
  */
-export async function timelinePage(patientId: string, viewer: DocumentViewer, opts: { cursor?: string | null; limit?: number } = {}): Promise<{ entries: TimelineEntry[]; nextCursor: string | null }> {
+export async function timelinePage(patientId: string, viewer: DocumentViewer, opts: { cursor?: string | null; limit?: number; includeImported?: boolean } = {}): Promise<{ entries: TimelineEntry[]; nextCursor: string | null }> {
   const limit = Math.min(Math.max(1, opts.limit ?? TIMELINE_PAGE_SIZE), 200);
   const cursor = decodeTimelineCursor(opts.cursor);
   const patientIds = await resolvePatientIdsForRead(patientId);
-  const streams = streamsFor(patientIds, await documentVisibilityFor(viewer, patientIds));
+  // Imported results are for staff only: the patient's own and a proxy's feeds never carry them.
+  const streams = streamsFor(patientIds, await documentVisibilityFor(viewer, patientIds), { importedAtFacility: opts.includeImported && viewer.kind === "STAFF" ? viewer.facilityId : undefined });
   const take = limit + 1;
   // A stream cut at `take` rows is completed with every row at its last
   // moment, so the cut never falls inside a run of equal timestamps (whose

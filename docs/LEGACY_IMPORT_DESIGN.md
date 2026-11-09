@@ -174,7 +174,7 @@ Refused rows stay in staging with their reason. The hospital can fix them at the
 - **Where results go:** `LegacyLabResult`, apart from the live `LabResult`. An imported result never enters the verification queue, a critical-result alert or the patient's released reports. It shows in the chart's trend (`GET /api/hospital/patients/{id}/lab-trend?test=…`), labelled **"imported"** (decided §10.2), next to the hospital's own verified results.
 - **Events:** `LegacyResultImported` (bulk lane, like the other row events) and the chunk events with part `RESULTS`.
 - **Gate:** `verify-postgres-legacy-import-hl7` (synthetic messages only).
-- **Not yet:** FHIR bundles, medications and allergies from HL7, the imported results in the timeline.
+- **Not yet:** FHIR bundles, medications and allergies from HL7. (The imported results in the timeline: Flagship 4b, §11.4.)
 
 ### 11.1 Review queue, "Recorded by" and chunked runs (Flagship 3d, decided §10.9–10.11)
 
@@ -215,3 +215,11 @@ Refused rows stay in staging with their reason. The hospital can fix them at the
 - **Deciding.** "Accept the import" or "Keep existing", each with a reason (required, up to 500 characters). Both go through the existing `decide` endpoint, so both are audited (`hospital.legacy-import.review.accepted` / `.kept`) and emit `LegacyPatientReviewDecided` in the same transaction. A 409 (the patient changed since, or someone else decided first) is shown as it is, and the queue reloads.
 - **Decided for you:** the list shows the patient's current details next to the import's, never a diff against the old system's other rows. No bulk "accept all": each patient is decided by a person, one at a time.
 - **Journey:** `e2e/import-review.spec.ts`. The fixture runs a real CSV import, then a re-import that renames one patient and changes another's phone. The journey refuses a decision with no reason, keeps one, accepts the other, and finds both on their tabs with their reasons.
+
+### 11.4 Imported results in the timeline (Flagship 4b, decided 2026-11-09; was Flagship 3's open question)
+
+- **Hidden unless asked for.** The chart's timeline gets a "Show imported results" switch. It is off for everyone to begin with, and it is remembered per user (`User.showImportedResults`) on the server, so it follows the user across devices. Changing it is `PUT /api/hospital/chart-preferences` and emits `ChartPreferenceChanged` in the same transaction; setting it to what it already is changes nothing and emits nothing.
+- **What shows.** With it on, each `LegacyLabResult` is a "Result" entry at its observed time: "Imported result: <test> <value> <unit>". It carries the old system's flag and, after a unit conversion, the value as sent. Each entry ends "Imported from the hospital's previous system, not verified here" and has an "imported" badge (`imported: true` on the entry). It pages exactly with the rest of the feed (its own stream, `imported-result`).
+- **Still never anywhere else.** They stay in their own table, so they never reach verification, critical alerts, tasks or released reports, whatever the setting. They are for staff only: the patient's feed, a proxy's feed, and the whole-feed builder (the patient app, summaries, the AI) never carry them, even when the flag is passed. Only the viewer's own facility's imported results are read.
+- **Decided for you:** off by default; per user rather than per facility, because one clinician's choice should not change another's chart; no imported-results count in the timeline header.
+- **Gate:** `verify-postgres-imported-timeline`. It covers off by default, the user's own setting with its event, the labelled entries and exact paging with them on, and nothing on the patient side or elsewhere. Over HTTP, the route follows the caller's own setting.

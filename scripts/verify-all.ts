@@ -138,6 +138,8 @@ const ORDER = [
   "verify-postgres-legacy-import",
   // Flagship 5: HL7 v2 ADT and ORU (synthetic messages)
   "verify-postgres-legacy-import-hl7",
+  // Flagship 4b: imported results in the timeline, behind "show imported" (HTTP; builds the app)
+  "verify-postgres-imported-timeline",
   "verify-postgres-schema-constraints",
   // Week 3: workflow spine
   "verify-postgres-runner",
