@@ -182,6 +182,11 @@ async function main() {
       const res = await mockInsurerRespond(PUNE, r.id, { decision: a.decision, approvedAmountMinor: a.approvedAmountMinor, queryText: a.queryText });
       return out({ requestId: r.id, ...res });
     }
+    case "upload-sha": {
+      // Flagship 5 (6c): the stored upload's checksum, by its title (the patient's own document).
+      const d = await prisma.personDocument.findFirstOrThrow({ where: { title: arg }, orderBy: { uploadedAt: "desc" }, select: { sha256: true } });
+      return out(d);
+    }
     case "take-over-give": {
       const nurse = await staffOf(f.nurse.email);
       const N = { userId: nurse.userId, staffId: nurse.staffId, facilityId: PUNE };

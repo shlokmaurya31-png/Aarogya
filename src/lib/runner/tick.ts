@@ -1,4 +1,5 @@
 import { dispatchPendingDomainEvents, type DispatchResult } from "@/lib/events/dispatcher";
+import { purgeExpiredUploads } from "@/lib/patient/experience/resumableUpload";
 import { tickWorkflows, type TickResult } from "@/lib/workflows/engine";
 import { sweepMedicationSchedule, type SweepResult } from "@/lib/hospital/marSweep";
 import { sweepDelegationExpiry } from "@/lib/patient/experience/delegationSweep";
@@ -115,8 +116,8 @@ export async function runTick(opts: RunTickOptions = {}): Promise<RunTickResult>
     }
     : { sharesExpired: 0, requestsExpired: 0, accessSummaries: 0 };
   const doctors = Date.now() - started < budgetMs
-    ? { slotsRefreshed: (await sweepNextSlots({ now: opts.now })).refreshed, documentsPurged: (await purgeVerificationDocuments({ now: opts.now })).purged }
-    : { slotsRefreshed: 0, documentsPurged: 0 };
+    ? { slotsRefreshed: (await sweepNextSlots({ now: opts.now })).refreshed, documentsPurged: (await purgeVerificationDocuments({ now: opts.now })).purged, uploadsPurged: (await purgeExpiredUploads({ now: opts.now })).purged }
+    : { slotsRefreshed: 0, documentsPurged: 0, uploadsPurged: 0 };
   const households = Date.now() - started < budgetMs ? await sweepComingOfAge({ now: opts.now }) : { noticed: 0, cameOfAge: 0 };
   // Week 5c: card shares past their expiry, check-ins nobody arrived for, and "check-in is open" notices.
   const insurance = Date.now() - started < budgetMs

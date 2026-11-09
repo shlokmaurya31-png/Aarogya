@@ -12885,3 +12885,44 @@ model CashlessEligibility {
   @@index([facilityId, checkInId])
 }
 
+// ── Flagship 5, step 6c — resumable uploads for the patient app on a dropping connection ──
+
+enum UploadSessionStatus {
+  OPEN
+  COMPLETED
+}
+
+/// One upload in pieces, by the signed-in patient account: the pieces arrive in
+/// order, a piece sent twice is taken once, and the document is created only
+/// when every byte is here (then the pieces are deleted). An unfinished one is
+/// deleted after a day. Holds no Person or facility: the document's owner is
+/// resolved at completion, exactly as for a one-shot upload.
+model UploadSession {
+  id            String              @id @default(cuid())
+  userId        String
+  title         String
+  documentType  String
+  contentType   String
+  originalName  String
+  sizeBytes     Int
+  receivedBytes Int                 @default(0)
+  status        UploadSessionStatus @default(OPEN)
+  expiresAt     DateTime
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  chunks UploadChunk[]
+
+  @@index([userId, status])
+  @@index([expiresAt])
+}
+
+model UploadChunk {
+  id        String        @id @default(cuid())
+  sessionId String
+  session   UploadSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  offset    Int
+  bytes     Bytes
+
+  @@unique([sessionId, offset])
+}

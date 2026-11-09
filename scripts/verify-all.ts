@@ -190,6 +190,8 @@ const ORDER = [
   "verify-postgres-hospital-payments",
   // Flagship 5, step 5: cashless insurance, phase 1 (mock NHCX).
   "verify-postgres-cashless-claims",
+  // Flagship 5, step 6c: resumable uploads.
+  "verify-postgres-resumable-upload",
   // §7: the core-journey replay test, extended at each spine step.
   "verify-postgres-core-journey",
   // Batch 4: bounded retries; runs after the tenancy sweep (checks its fixtures)

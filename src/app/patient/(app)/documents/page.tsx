@@ -1,7 +1,8 @@
 "use client";
 
+import { ResumableUpload } from "@/components/patient-portal/ResumableUpload";
 import { useCallback, useEffect, useState } from "react";
-import { Upload, FileText, CheckCircle2 } from "lucide-react";
+import { FileText, CheckCircle2 } from "lucide-react";
 import { Card, SectionTitle, Empty, Unavailable, StatusPill, formatDate, usePatientData } from "@/components/patient-portal/ui";
 import { LoadMore } from "@/components/hospital-os/shared/LoadMore";
 
@@ -139,35 +140,12 @@ function DocumentRow({ doc }: { doc: Doc }) {
 
 export default function DocumentsPage() {
   const { state, reload } = usePatientData<{ documents: Doc[] }>("/api/patient/person/documents");
-  const [file, setFile] = useState<File | null>(null);
-  const [title, setTitle] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  async function upload(e: React.FormEvent) {
-    e.preventDefault();
-    if (!file) return;
-    setBusy(true); setError(null);
-    const form = new FormData();
-    form.set("file", file); form.set("title", title.trim() || file.name); form.set("type", "REPORT");
-    const r = await fetch("/api/patient/documents", { method: "POST", body: form }).catch(() => null);
-    setBusy(false);
-    if (!r?.ok) return setError((await r?.json().catch(() => null))?.error ?? "The upload didn't go through. Try again.");
-    setFile(null); setTitle(""); (e.target as HTMLFormElement).reset();
-    reload();
-  }
   return (
     <div className="space-y-5">
       <h1 className="text-[18px] font-semibold">My documents</h1>
       <Card>
         <SectionTitle>Add a report</SectionTitle>
-        <form onSubmit={upload} className="flex flex-wrap items-center gap-2">
-          <input type="file" accept="application/pdf,image/jpeg,image/png" aria-label="Report file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="text-[12.5px]" />
-          <input value={title} onChange={(e) => setTitle(e.target.value.slice(0, 120))} placeholder="Title (optional)" aria-label="Title" className="min-w-0 flex-1 rounded-md border border-hairline bg-transparent px-2.5 py-1.5 text-[12.5px]" />
-          <button type="submit" disabled={!file || busy} className="inline-flex items-center gap-1.5 rounded-md bg-cyan px-3 py-1.5 text-[12.5px] font-medium text-ink disabled:opacity-50">
-            <Upload size={13} /> {busy ? "Uploading…" : "Upload"}
-          </button>
-        </form>
-        {error && <p className="mt-2 text-[12px] text-amber">{error}</p>}
+        <ResumableUpload onUploaded={reload} />
         <p className="mt-2 text-[12px] text-text-secondary">PDFs and photos of lab reports, prescriptions and discharge summaries. The file is kept exactly as you uploaded it.</p>
       </Card>
       <Card>
