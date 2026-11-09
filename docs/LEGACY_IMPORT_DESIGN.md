@@ -172,7 +172,7 @@ Refused rows stay in staging with their reason. The hospital can fix them at the
 
   **Units are converted only on an exact (test, unit) mapping** (decided §10.2); the sent value and unit are kept beside the converted one. Anything else is refused with its reason (`UNMAPPED_TEST`, `UNIT_UNMAPPED`, `NOT_FINAL`, `NOT_NUMERIC`).
 - **Where results go:** `LegacyLabResult`, apart from the live `LabResult`. An imported result never enters the verification queue, a critical-result alert or the patient's released reports. It shows in the chart's trend (`GET /api/hospital/patients/{id}/lab-trend?test=…`), labelled **"imported"** (decided §10.2), next to the hospital's own verified results.
-- **Events:** `LegacyResultImported` (bulk lane, like the other row events) and the chunk events with part `RESULTS`.
+- **Events:** `LegacyResultImported` (bulk lane, like the other row events; the lane's capacity is set by `EVENT_IMPORT_LANE_CONCURRENCY` since Flagship 4c, docs/PERFORMANCE.md) and the chunk events with part `RESULTS`.
 - **Gate:** `verify-postgres-legacy-import-hl7` (synthetic messages only).
 - **Not yet:** FHIR bundles, medications and allergies from HL7. (The imported results in the timeline: Flagship 4b, §11.4.)
 

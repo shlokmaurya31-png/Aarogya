@@ -201,7 +201,11 @@ const LAST = "verify-postgres-phase-b-final";
 // Flagship 3d: run after every other gate (the unlisted ones too, which drain
 // the outbox) and just before LAST: the 50,000-row import leaves ~52,000
 // bulk-lane events, and nothing after it dispatches.
-const LATE = ["verify-postgres-legacy-import-scale"];
+// Flagship 4c: the import-lane gate builds and clears its own 50,000-row
+// backlog (it leaves an empty queue), so it goes just before the scale gate.
+const LATE = ["verify-postgres-import-lane", "verify-postgres-legacy-import-scale"];
+// Gates that need longer than --timeout (they clear a 50,000-event backlog).
+const MIN_TIMEOUT_MS: Record<string, number> = { "verify-postgres-import-lane": 1_500_000 };
 
 // verify-abdm-sandbox makes real network calls to dev.abdm.gov.in and needs
 // ABDM sandbox credentials; without them it reports BLOCKED and exits 0,
@@ -473,7 +477,7 @@ async function main() {
     console.log(`[${i + 1}/${names.length}] ${name}`);
     if (opts.freshEach) await freshFromTemplate();
     const t0 = Date.now();
-    const r = await run(TSX, [path.join("scripts", `${name}.ts`)], opts.timeoutMs, { measure: true });
+    const r = await run(TSX, [path.join("scripts", `${name}.ts`)], Math.max(opts.timeoutMs, MIN_TIMEOUT_MS[name] ?? 0), { measure: true });
     const status = r.timedOut ? "TIMEOUT" : r.code === 0 ? "PASS" : "FAIL";
     const durationMs = Date.now() - t0;
     const silent = !r.stdout.trim() && !r.stderr.trim();

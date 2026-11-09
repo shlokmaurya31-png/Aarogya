@@ -32,6 +32,8 @@ export interface DispatchOptions {
   batchSize?: number;
   maxDurationMs?: number;
   now?: Date;
+  /** Flagship 4c: the import lane's concurrency (default: importLaneConcurrency(), from EVENT_IMPORT_LANE_CONCURRENCY). */
+  importConcurrency?: number;
 }
 export interface DispatchResult {
   claimed: number;
@@ -46,6 +48,30 @@ export const STALE_CLAIM_MS = 5 * 60_000;
 const MAX_ROUNDS = 50;
 
 /**
+ * Flagship 4c — the import lane's capacity. A legacy import's row events
+ * (bulk) are processed by a capped pool of concurrent workers, so a backlog of
+ * 50,000 clears in minutes rather than half an hour, while live events always
+ * go first: the import lane is claimed only when no live event is waiting, in
+ * slices of IMPORT_SLICE_PER_WORKER per worker, and the live lane is checked
+ * again after every slice. One claim never holds two events of one aggregate
+ * (a claimable event's older siblings are all done), so running a slice
+ * concurrently keeps each aggregate's order.
+ *
+ * EVENT_IMPORT_LANE_CONCURRENCY sets it (1–16, default 4; anything else falls
+ * back to the default). 1 is the sequential lane of Flagship 3.
+ */
+export const IMPORT_LANE_CONCURRENCY_DEFAULT = 4;
+export const IMPORT_LANE_CONCURRENCY_MAX = 16;
+const IMPORT_SLICE_PER_WORKER = 8;
+
+export function importLaneConcurrency(raw: string | undefined = process.env.EVENT_IMPORT_LANE_CONCURRENCY): number {
+  const n = raw === undefined || raw.trim() === "" ? NaN : Number(raw);
+  return Number.isInteger(n) && n >= 1 && n <= IMPORT_LANE_CONCURRENCY_MAX ? n : IMPORT_LANE_CONCURRENCY_DEFAULT;
+}
+
+type Lane = "LIVE" | "IMPORT";
+
+/**
  * Workflow spine §3.3 — one statement claims a batch:
  *   - FOR UPDATE SKIP LOCKED, so concurrent workers take disjoint batches;
  *   - per-aggregate ordering: an event is claimable only when no older (lower
@@ -54,20 +80,21 @@ const MAX_ROUNDS = 50;
  *     every event of one transaction.
  * A dead-lettered event no longer blocks its successors.
  */
-async function claimBatch(token: string, now: Date, batchSize: number): Promise<string[]> {
+async function claimBatch(token: string, now: Date, batchSize: number, lane: Lane): Promise<string[]> {
+  const bulk = lane === "IMPORT";
   const rows = await prisma.$queryRaw<{ id: string; seq: bigint }[]>`
     UPDATE "DomainEventOutbox" o
     SET "status" = 'PROCESSING', "claimToken" = ${token}, "lastAttemptAt" = ${now},
         "attemptCount" = o."attemptCount" + 1, "updatedAt" = ${now}
     WHERE o."id" IN (
       SELECT c."id" FROM "DomainEventOutbox" c
-      WHERE c."status" IN ('PENDING', 'RETRY')
+      WHERE c."status" IN ('PENDING', 'RETRY') AND c."bulk" = ${bulk}
         AND (c."nextAttemptAt" IS NULL OR c."nextAttemptAt" <= ${now})
         AND NOT EXISTS (
           SELECT 1 FROM "DomainEventOutbox" e
           WHERE e."aggregateType" = c."aggregateType" AND e."aggregateId" = c."aggregateId"
             AND e."seq" < c."seq" AND e."status" IN ('PENDING', 'RETRY', 'PROCESSING'))
-      ORDER BY c."bulk", c."seq"
+      ORDER BY c."seq"
       FOR UPDATE SKIP LOCKED
       LIMIT ${batchSize})
     RETURNING o."id", o."seq"`;
@@ -92,25 +119,41 @@ export async function dispatchPendingDomainEvents(opts: DispatchOptions = {}): P
   const now = opts.now ?? new Date();
   const batchSize = Math.min(Math.max(1, opts.batchSize ?? 50), 500);
   const deadline = Date.now() + (opts.maxDurationMs ?? 25_000);
+  const concurrency = Math.min(Math.max(1, Math.floor(opts.importConcurrency ?? importLaneConcurrency())), IMPORT_LANE_CONCURRENCY_MAX);
+  const slice = Math.min(batchSize, concurrency * IMPORT_SLICE_PER_WORKER);
   const res: DispatchResult = { claimed: 0, processed: 0, retried: 0, deadLettered: 0, skipped: 0 };
   await reapStaleClaims(now);
+  const tally = (outcome: Outcome) => {
+    if (outcome === "PROCESSED") res.processed++;
+    else if (outcome === "RETRY") res.retried++;
+    else if (outcome === "DEAD_LETTER") res.deadLettered++;
+    else res.skipped++;
+  };
 
   // Claim and process in rounds, so a chain of events on one aggregate drains
   // in one call (each round can only take the head of every aggregate). A
   // claimed batch is always processed in full; the deadline is checked between
   // rounds, so nothing is left PROCESSING when the budget runs out.
-  for (let round = 0; round < MAX_ROUNDS && Date.now() <= deadline; round++) {
+  // Flagship 4c: every round takes the live lane first, one at a time as
+  // before; only a round with no live event takes a slice of the import lane,
+  // concurrently. The round cap counts live rounds; import slices are bounded
+  // by the deadline.
+  for (let liveRounds = 0; liveRounds < MAX_ROUNDS && Date.now() <= deadline;) {
     const token = randomUUID();
-    const ids = await claimBatch(token, now, batchSize);
+    const live = await claimBatch(token, now, batchSize, "LIVE");
+    if (live.length > 0) {
+      liveRounds++;
+      res.claimed += live.length;
+      for (const id of live) tally(await processClaimed(id, token, now, registry));
+      continue;
+    }
+    const ids = await claimBatch(token, now, slice, "IMPORT");
     if (ids.length === 0) break;
     res.claimed += ids.length;
-    for (const id of ids) {
-      const outcome = await processClaimed(id, token, now, registry);
-      if (outcome === "PROCESSED") res.processed++;
-      else if (outcome === "RETRY") res.retried++;
-      else if (outcome === "DEAD_LETTER") res.deadLettered++;
-      else res.skipped++;
-    }
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(concurrency, ids.length) }, async () => {
+      while (next < ids.length) tally(await processClaimed(ids[next++], token, now, registry));
+    }));
   }
   return res;
 }
