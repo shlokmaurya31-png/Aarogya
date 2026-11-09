@@ -5,6 +5,7 @@ import { withApiErrors, NotFoundError, BadRequestError } from "@/lib/auth/rbac";
 import { decodeTimelineCursor, timelinePage, timelineSummary } from "@/lib/patient/timeline";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { noteStaffChartRead } from "@/lib/doctors/self";
+import { chartPreferences } from "@/lib/hospital/chartPreferences";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return withApiErrors(async () => {
@@ -22,8 +23,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const cursor = searchParams.get("cursor");
     if (cursor && !decodeTimelineCursor(cursor)) throw new BadRequestError("Invalid cursor.");
     const limit = searchParams.get("limit");
+    // Flagship 4b: imported results only when this user turned "show imported" on.
+    const { showImportedResults } = await chartPreferences(session.userId);
     const [page, summary] = await Promise.all([
-      timelinePage(id, viewer, { cursor, limit: limit ? Number(limit) || undefined : undefined }),
+      timelinePage(id, viewer, { cursor, limit: limit ? Number(limit) || undefined : undefined, includeImported: showImportedResults }),
       cursor ? null : timelineSummary(id, viewer),
     ]);
 
@@ -35,6 +38,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       { facilityId, patientId: id }
     );
 
-    return { timeline: page.entries, nextCursor: page.nextCursor, ...(summary ? { summary } : {}) };
+    return { timeline: page.entries, nextCursor: page.nextCursor, showImportedResults, ...(summary ? { summary } : {}) };
   });
 }

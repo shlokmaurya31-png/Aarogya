@@ -129,3 +129,25 @@ Decided §7.4 (in scope for the first OPDs) and §7.3 (ABHA verify-only). Built 
 - **Never an Aadhaar number:** a profile carrying an Aadhaar-like number anywhere is refused whole and nothing is kept. No column can hold one. The ABHA number is kept only as a hash and its last 4.
 - **Gates:** `verify-postgres-scan-share`; the browser journey `e2e/scan-share.spec.ts` (the patient scans and gets a token, then the desk registers them from the profile).
 - **Not yet:** the sandbox adapter and its callback (the v3 profile-share specification first), the HFR id per facility, the patient's ABHA address remembered on their account (it is typed each time while `PERSON_ABHA_LINKING` is off).
+
+### 8.1 Before the sandbox adapter: check the profile fields against the official v3 specification (Flagship 4e, 2026-11-09)
+
+**Decided: the mock stays.** No sandbox or production Scan and Share adapter is written until every field below has been checked against the **official ABDM v3 specification** for the profile share (the published API reference and the sandbox's own request samples, at the version the sandbox runs). A secondary source, a blog or another vendor's SDK is not enough. Today's `AbdmProfileShare` (`src/lib/hospital/interoperability/abdm/scanShare.ts`) is our own shape, written from this plan, and none of its names is confirmed.
+
+To check, field by field, with the result written here:
+
+| Our field | To confirm in the v3 specification |
+|---|---|
+| `requestId`, `timestamp` | The request id and time headers or body fields, and which one the on-share answer must echo |
+| `hipId`, `counterId` | How the scanned QR's facility (HIP / HFR id) and counter code arrive, and their format |
+| `profile.abhaNumber` | The name, the format (with or without hyphens), and whether it can be absent |
+| `profile.abhaAddress` | The name and suffixes (`@sbx` in the sandbox, `@abdm` in production) |
+| `profile.name` | One name or name parts |
+| `profile.gender` | The code set (M/F/O, or more) |
+| `profile.yearOfBirth`, `monthOfBirth`, `dayOfBirth` | Separate parts, or a date; which may be absent |
+| `profile.phoneNumber` | The name, the format, and whether it is verified |
+| Address, district, state, pincode | Present in the share? We keep none today; decide before storing any |
+| Anything carrying Aadhaar | Confirm that nothing in the share carries an Aadhaar number. Our refusal of an Aadhaar-like value anywhere in the profile stays either way |
+| The on-share answer | Its endpoint, the token field, the error shape and the time limit |
+
+The adapter is written only after that, and it maps the specification's fields onto this interface; the hospital side (`receiveProfileShare`) does not change. Until then, `ABDM_SCAN_SHARE_MODE` other than `mock` is refused, as built.

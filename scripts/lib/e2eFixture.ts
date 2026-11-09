@@ -61,6 +61,8 @@ export interface E2eFixture {
   shareId: string;
   samplePdf: string;
   sampleTitle: string;
+  /** Flagship 4a: one re-import renamed a patient, another changed a phone; both wait in the import review queue. */
+  importReview: { renamedFrom: string; renamedTo: string; phoneChanged: string };
 }
 
 async function drain() {
@@ -153,6 +155,20 @@ export async function buildE2eFixture(outDir: string): Promise<E2eFixture> {
   const { setFacilityGateway } = await import("../../src/lib/insurance/hospitalPayments");
   await setFacilityGateway({ userId: adminUser.id, facilityId: PUNE }, { keyId: `rzp_test_e2e${tag}`.slice(0, 40), secretRef: E2E_GATEWAY_REF, mode: "TEST", enabled: true });
 
+  // Flagship 4a: two re-imported patients whose details differ, for the import review screen (a real CSV import, then a re-import).
+  const { dryRunImport, confirmImport } = await import("../../src/lib/hospital/legacyImport/service");
+  const importProfile = { sourceSystem: `E2E-${tag}`, dateFormat: "DD/MM/YYYY", patients: { columns: { mrn: "MRN", fullName: "Name", sex: "Gender", dob: "DOB", phone: "Mobile" }, sex: { M: "M", F: "F" } } };
+  const importAs = { userId: adminUser.id, facilityId: PUNE };
+  const reviewNames = [`Imported Rename ${tag}`, `Imported Phone ${tag}`];
+  for (const rows of [
+    [`R1-${tag},Imported Person ${tag},F,01/02/1970,9800011111`, `R2-${tag},${reviewNames[1]},M,03/04/1965,9800022222`],
+    [`R1-${tag},${reviewNames[0]},F,01/02/1970,9800011111`, `R2-${tag},${reviewNames[1]},M,03/04/1965,9800033333`],
+  ]) {
+    const csv = { profile: importProfile, patientsCsv: ["MRN,Name,Gender,DOB,Mobile", ...rows].join("\n") };
+    await confirmImport(importAs, { ...csv, dryRunHash: (await dryRunImport(PUNE, csv)).dryRunHash });
+  }
+  await drain();
+
   mkdirSync(outDir, { recursive: true });
   const samplePdf = path.join(outDir, "sample-report.pdf");
   writeFileSync(samplePdf, await fixturePdf(fixtureById("lab-en-cbc")!));
@@ -161,6 +177,7 @@ export async function buildE2eFixture(outDir: string): Promise<E2eFixture> {
     desk: { email: adminUser.email }, appointmentId: appointment.id, gatewaySecretRef: E2E_GATEWAY_REF,
     labTech: { email: labUser.email }, nurse: { email: nurseUser.email, name: nurseUser.displayName }, pharmacist: { email: pharmacistUser.email }, frontDesk: { email: frontDeskUser.email },
     shareId: redeemed.id, samplePdf, sampleTitle: `Blood count ${tag}`,
+    importReview: { renamedFrom: `Imported Person ${tag}`, renamedTo: reviewNames[0], phoneChanged: reviewNames[1] },
   };
   writeFileSync(path.join(outDir, "fixture.json"), JSON.stringify(fixture, null, 2));
   return fixture;

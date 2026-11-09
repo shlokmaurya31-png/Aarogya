@@ -108,3 +108,19 @@ Measured with `npm run perf:gate -- --fresh` on 2026-11-09 (branch `foundation/f
 A legacy import emits one event per row, which is about 52,000 for a 50,000-row file. The dispatcher took them oldest first, so in `verify:all` they starved every later live event; in production, critical-result notifications and task generation would have waited minutes behind an import. Import row events are now in a **bulk lane** (`bulk: true` on their contracts, `DomainEventOutbox.bulk`): live events are always claimed first, and each aggregate's order is kept.
 
 **Cost:** the backlog still has to drain. On this laptop, about 52,000 bulk events took about 25 minutes through the two wildcard consumers. They never delay a live event, but a drain that waits for an empty outbox (a test helper, a local e2e run on the verify database after `verify:all`) waits for them.
+
+## Flagship 4c: the import lane's capacity
+
+The bulk lane above (now the **import lane**) kept live events first but cleared one event at a time. It now has its own capped concurrency: `EVENT_IMPORT_LANE_CONCURRENCY`, 1–16, default 4; anything else falls back to the default.
+
+- **How it works.** Each dispatch round claims the live lane first and processes it one at a time, as before. Only a round with no live event waiting claims a slice of the import lane: 8 events per worker. The slice is processed concurrently, and then the live lane is checked again. One claim never holds two events of one aggregate, so each aggregate's order is kept.
+- **Measured by `verify-postgres-import-lane`** on this laptop (2026-11-09), with a 50,000-row import (50,100 events):
+
+| | One at a time (Flagship 3) | Concurrency 4 (default) |
+|---|---|---|
+| Import lane throughput | 55 events/s | 462 events/s |
+| 50,100 events cleared in | ≈ 15 min | ≈ 1 min 48 s (the worker cleared the last 39,524 in 1 min 26 s) |
+| A critical result's event handled (the worker's loop) | 513–1,916 ms with no backlog | 86–99 ms during the backlog |
+
+  The gate's budget for a critical result is 5 s (one idle worker sleep and one tick), with or without a backlog. During the backlog the worker is already awake and checks the live lane between slices, so it answers sooner than an idle one.
+- **Trade-off:** more concurrent database work while an import clears: four connections' worth by default. Raise the setting only with database headroom; 1 restores the old behaviour.

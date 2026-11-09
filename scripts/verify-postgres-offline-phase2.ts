@@ -106,11 +106,12 @@ async function main() {
   report("PRN orders come with their limits; givable offline only when allowed, never when controlled", prnOf(para.id)?.givableOffline === true && prnOf(para.id)?.minIntervalMinutes === 240 && prnOf(notOffline.id)?.givableOffline === false && prnOf(tramadol.id)?.givableOffline === false && prnOf(tramadol.id)?.onlineOnly === true);
 
   // 2. Vitals and I/O.
-  const vitalsOp = { clientOperationId: op(), kind: "VITALS", encounterId: mine.encounterId, vitals: { hr: 112, sbp: 98, spo2: 93 }, deviceTime: at(-20).toISOString() };
+  const vitalsOp = { clientOperationId: op(), kind: "VITALS", encounterId: mine.encounterId, vitals: { hr: 112, sbp: 98, spo2: 93, consciousness: "ALERT", o2DeliveryMethod: "supplemental oxygen" }, deviceTime: at(-20).toISOString() };
   const s1 = await sync(devA.id, [vitalsOp, { clientOperationId: op(), kind: "INTAKE_OUTPUT", encounterId: mine.encounterId, ioType: "OUTPUT", category: "URINE", quantityMl: 350, deviceTime: at(-15).toISOString() }]);
   const v = await prisma.vital.findFirst({ where: { encounterId: mine.encounterId, hr: 112 } });
   const io = await prisma.intakeOutputRecord.findFirst({ where: { encounterId: mine.encounterId, quantityMl: 350 } });
   report("Vitals offline are applied at the time they were measured", s1.results[0].outcome === "APPLIED" && v?.recordedAt.getTime() === at(-20).getTime(), v?.recordedAt.toISOString());
+  report("…with the tablet's consciousness and oxygen answers (Flagship 4d, for its NEWS2 placeholder)", v?.consciousness === "ALERT" && v?.o2DeliveryMethod === "supplemental oxygen", `${v?.consciousness} ${v?.o2DeliveryMethod}`);
   report("…and I/O too", s1.results[1].outcome === "APPLIED" && io?.recordedAt.getTime() === at(-15).getTime());
   report("…each with its event in the command's transaction", (await prisma.domainEventOutbox.count({ where: { eventType: "ObservationRecorded", aggregateId: { in: [v!.id, io!.id] } } })) === 2 && (await prisma.domainEventOutbox.count({ where: { eventType: "OfflineCommandRecorded", eventVersion: 2, facilityId: PUNE, payload: { path: ["encounterId"], equals: mine.encounterId } } })) === 2);
   const replay = await sync(devA.id, [vitalsOp], at(2));

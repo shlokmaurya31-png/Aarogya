@@ -18,7 +18,7 @@ import { PatientDocumentsPanel } from "@/components/hospital-os/PatientDocuments
 import { ageLabel } from "@/lib/patient/age";
 import { LoadMore } from "@/components/hospital-os/shared/LoadMore";
 
-interface TimelineEntry { id: string; timestamp: string; type: string; summary: string; department?: string | null }
+interface TimelineEntry { id: string; timestamp: string; type: string; summary: string; department?: string | null; imported?: boolean }
 
 interface ChartData {
   patient: { id: string; uhid: string; fullName: string; sex: string; dob: string | null; dobPrecision?: string; bloodGroup: string | null };
@@ -72,6 +72,8 @@ export function PatientChart({ patientId }: { patientId: string }) {
   const [tab, setTab] = useState<"orders" | "notes" | "clinical" | "timeline" | "careplan" | "financial">("orders");
   const [timeline, setTimeline] = useState<TimelineEntry[] | null>(null);
   const [timelineCursor, setTimelineCursor] = useState<string | null>(null);
+  // Flagship 4b: imported results in the timeline, remembered per user (server side).
+  const [showImported, setShowImported] = useState(false);
 
   // Care plan composer (brief §6)
   const [cpProblem, setCpProblem] = useState("");
@@ -217,7 +219,12 @@ export function PatientChart({ patientId }: { patientId: string }) {
   }
 
   function loadTimeline() {
-    fetch(`/api/hospital/patients/${patientId}/timeline`).then((r) => r.json()).then((d) => { setTimeline(d.timeline ?? []); setTimelineCursor(d.nextCursor ?? null); });
+    fetch(`/api/hospital/patients/${patientId}/timeline`).then((r) => r.json()).then((d) => { setTimeline(d.timeline ?? []); setTimelineCursor(d.nextCursor ?? null); setShowImported(Boolean(d.showImportedResults)); });
+  }
+  async function toggleImported(show: boolean) {
+    const r = await fetch("/api/hospital/chart-preferences", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ showImportedResults: show }) }).catch(() => null);
+    if (!r?.ok) { push("Couldn't change that setting.", "red"); return; }
+    setTimeline(null); setTimelineCursor(null); loadTimeline();
   }
   const loadMoreTimeline = useCallback(async () => {
     if (!timelineCursor) return;
@@ -394,13 +401,21 @@ export function PatientChart({ patientId }: { patientId: string }) {
 
           {tab === "timeline" && (
             <Card className="rounded-[20px]">
-              <div className="flex items-center gap-2"><History size={14} className="text-cyan" /><CardLabel>Longitudinal timeline</CardLabel></div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2"><History size={14} className="text-cyan" /><CardLabel>Longitudinal timeline</CardLabel></div>
+                <label className="flex items-center gap-1.5 text-[12px] text-text-secondary" title="Results imported from the hospital's previous system. Not verified here; never alerts or released reports.">
+                  <input type="checkbox" checked={showImported} onChange={(e) => toggleImported(e.target.checked)} /> Show imported results
+                </label>
+              </div>
               <div className="mt-3 space-y-2.5">
                 {timeline === null && <p className="text-[12px] text-text-tertiary">Loading...</p>}
                 {timeline?.map((t) => (
                   <div key={t.id} className="flex gap-3 text-[12.5px]">
                     <span className="w-32 shrink-0 text-[11px] text-text-tertiary">{new Date(t.timestamp).toLocaleString()}</span>
-                    <span><span className="font-medium">{t.type}:</span> {t.summary}{t.department ? ` (${t.department})` : ""}</span>
+                    <span>
+                      <span className="font-medium">{t.type}:</span> {t.summary}{t.department ? ` (${t.department})` : ""}
+                      {t.imported && <span className="ml-1.5 rounded-full border border-amber/40 px-1.5 py-px text-[10.5px] font-medium uppercase tracking-wide text-amber">imported</span>}
+                    </span>
                   </div>
                 ))}
                 {timeline?.length === 0 && <p className="text-[12px] text-text-tertiary">No history recorded yet.</p>}

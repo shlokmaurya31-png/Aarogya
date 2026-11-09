@@ -17,5 +17,8 @@ export async function POST() {
     });
   }
   await destroySession();
-  return NextResponse.json({ ok: true });
+  // Flagship 4 (3): the browser drops its HTTP cache for this site too, so
+  // Back cannot show a signed-in page. Only "cache": "storage" would also
+  // wipe the ward tablet's encrypted offline store.
+  return NextResponse.json({ ok: true }, { headers: { "Cache-Control": "no-store", "Clear-Site-Data": '"cache"' } });
 }

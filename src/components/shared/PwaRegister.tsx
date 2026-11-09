@@ -1,8 +1,12 @@
 "use client";
 
 import { useEffect } from "react";
+import { usePathname } from "next/navigation";
+import { clearAppCaches, isSignInPath } from "@/lib/pwa/clearCaches";
 
 export function PwaRegister() {
+  const pathname = usePathname();
+
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
 
@@ -22,6 +26,12 @@ export function PwaRegister() {
 
     navigator.serviceWorker.register("/sw.js").catch(() => {});
   }, []);
+
+  // Flagship 4 (3): a sign-in page is where logout and an expired session
+  // land, so nothing cached outlives the session.
+  useEffect(() => {
+    if (pathname && isSignInPath(pathname)) void clearAppCaches();
+  }, [pathname]);
 
   return null;
 }

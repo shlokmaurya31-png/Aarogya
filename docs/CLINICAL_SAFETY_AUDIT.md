@@ -74,7 +74,9 @@ real clinical reference dataset would mean fabricating medical logic:
 - Renal/hepatic dose adjustment logic (needs weight-based/creatinine-based
   formulas tied to real nephrology/hepatology guidance — not built).
 - Sepsis risk scoring, fall risk scoring, early-warning scores (NEWS2-style)
-  — none implemented. Scholar's synthetic *teaching* cases reference these
+  — none implemented on the server. (Flagship 4d: the offline ward tablet
+  shows NEWS2 as a placeholder for "Call the doctor now", labelled "pending
+  clinical sign-off" — docs/OFFLINE_NURSING_DESIGN.md §13.6.) Scholar's synthetic *teaching* cases reference these
   concepts in their reference answer keys (for grading a student's
   reasoning), but that is educational content, not a live scoring engine
   applied to Hospital OS patients.

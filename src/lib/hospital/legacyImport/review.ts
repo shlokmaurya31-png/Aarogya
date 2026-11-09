@@ -18,11 +18,20 @@ type Details = { fullName: string; sex: string; dob: string | null; phone: strin
 const FIELDS = ["fullName", "sex", "dob", "phone"] as const;
 
 export async function listPatientReviews(facilityId: string, opts: { status?: "OPEN" | "ACCEPTED" | "KEPT" } = {}) {
-  return prisma.legacyPatientReview.findMany({
-    where: { facilityId, status: opts.status ?? "OPEN" },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  const status = opts.status ?? "OPEN";
+  const reviews = await prisma.legacyPatientReview.findMany({
+    where: { facilityId, status },
+    // Open: oldest first (a queue). Decided: the latest decisions first.
+    orderBy: status === "OPEN" ? [{ createdAt: "asc" }, { id: "asc" }] : [{ decidedAt: "desc" }, { id: "desc" }],
     take: 100,
-    select: { id: true, batchId: true, sourceSystem: true, sourceKey: true, patientId: true, incoming: true, existing: true, differences: true, status: true, createdAt: true, decidedAt: true, decisionReason: true },
+    select: { id: true, batchId: true, sourceSystem: true, sourceKey: true, patientId: true, incoming: true, existing: true, differences: true, status: true, createdAt: true, decidedAt: true, decidedByUserId: true, decisionReason: true },
+  });
+  // Flagship 4a: the screen shows each patient's UHID and current name, and who decided.
+  const patients = new Map((await prisma.patient.findMany({ where: { facilityId, id: { in: reviews.map((r) => r.patientId) } }, select: { id: true, uhid: true, fullName: true } })).map((p) => [p.id, p]));
+  const deciders = new Map((await prisma.user.findMany({ where: { id: { in: reviews.flatMap((r) => (r.decidedByUserId ? [r.decidedByUserId] : [])) } }, select: { id: true, displayName: true } })).map((u) => [u.id, u.displayName]));
+  return reviews.map(({ decidedByUserId, ...r }) => {
+    const p = patients.get(r.patientId);
+    return { ...r, patient: p ? { uhid: p.uhid, name: p.fullName } : null, decidedBy: decidedByUserId ? deciders.get(decidedByUserId) ?? null : null };
   });
 }
 

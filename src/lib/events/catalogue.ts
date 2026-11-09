@@ -1986,6 +1986,12 @@ export const EVENT_CONTRACTS: EventContract[] = [
     sensitivity: "INTERNAL", producer: "legacy import (decidePatientReview: the hospital admin accepts the incoming details or keeps the existing ones; the reason is audited, never in the event)",
     payload: z.object({ reviewId: id, patientId: id, decision: z.enum(["ACCEPTED", "KEPT"]), fields: z.array(z.enum(["fullName", "sex", "dob", "phone"])) }).strict(),
   }),
+  // Flagship 4b — imported results in the chart's timeline, per user.
+  contract({
+    type: "ChartPreferenceChanged", version: 1, aggregateType: "CHART_PREFERENCE", scope: "FACILITY",
+    sensitivity: "LOW", producer: "chart preferences (setShowImportedResults: a staff member turns \"show imported\" on or off for themselves; aggregate = the user)",
+    payload: z.object({ userId: id, showImportedResults: z.boolean() }).strict(),
+  }),
 ];
 
 const KEY = (type: string, version: number) => `${type}@${version}`;

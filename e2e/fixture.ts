@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import type { Page } from "@playwright/test";
+import type { Page, Response } from "@playwright/test";
 import type { E2eFixture } from "../scripts/lib/e2eFixture";
 
 export function fixture(): E2eFixture {
@@ -14,4 +14,14 @@ export async function signIn(page: Page, url: string, email: string, password: s
   await page.locator('input[type="email"]').first().fill(email);
   await page.locator('input[type="password"]').first().fill(password);
   await page.locator('form button[type="submit"]').first().click();
+}
+
+/**
+ * A response's body for an assertion's failure message, read only when it
+ * failed. Signed-in responses are Cache-Control: no-store (Flagship 4, step 3),
+ * and Chromium keeps no copy of such a body for the test once the page has
+ * read it, so reading it unconditionally would hang a passing test.
+ */
+export async function bodyIfFailed(r: Response, passed: boolean): Promise<string> {
+  return passed ? "" : r.text().catch(() => "(the response body is no longer available)");
 }

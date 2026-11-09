@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { news2, NEWS2_STATUS, type Consciousness } from "@/lib/ward/news2";
 import { dropFromOutbox, getDeviceId, loadPack, outbox, queue, savePack, setDeviceId, wipe, type OutboxCommand } from "@/lib/ward/store";
 
 /**
@@ -28,9 +29,16 @@ interface SyncSummary { at: string; applied: number; conflicts: number; refused:
 
 const hhmm = (iso: string | number | Date) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 const REASONS: [string, string][] = [["patient-declined", "Patient declined"], ["npo", "Nil by mouth"], ["unavailable", "Medicine not available"], ["clinical-hold", "Held on clinical grounds"]];
-/** "Call the doctor now" (design §5): wide thresholds; the advisor signs off the exact ones (§6.4). */
-function alarming(v: Record<string, number>) {
-  return (v.hr !== undefined && (v.hr > 130 || v.hr < 40)) || (v.sbp !== undefined && v.sbp < 90) || (v.spo2 !== undefined && v.spo2 < 90) || (v.rr !== undefined && (v.rr > 30 || v.rr < 8)) || (v.tempC !== undefined && v.tempC >= 39.5);
+const VITAL_FIELDS = [["hr", "HR"], ["sbp", "SBP"], ["dbp", "DBP"], ["rr", "RR"], ["spo2", "SpO2"], ["tempC", "Temp °C"]] as const;
+const CONSCIOUSNESS: [Consciousness, string][] = [["ALERT", "Alert"], ["NEW_CONFUSION", "New confusion"], ["VOICE", "Responds to voice"], ["PAIN", "Responds to pain"], ["UNRESPONSIVE", "Unresponsive"]];
+/** "Call the doctor now" (design §5): NEWS2 as the placeholder, pending the advisor's sign-off (§6.4, §13.6). */
+function earlyWarning(form: Record<string, string>) {
+  const num = (k: string) => (form[k] !== undefined && form[k] !== "" && Number.isFinite(Number(form[k])) ? Number(form[k]) : undefined);
+  return news2({
+    rr: num("rr"), spo2: num("spo2"), sbp: num("sbp"), hr: num("hr"), tempC: num("tempC"),
+    onOxygen: form.o2 === "" || form.o2 === undefined ? undefined : form.o2 === "yes",
+    consciousness: (form.consciousness || undefined) as Consciousness | undefined,
+  });
 }
 
 export function WardApp({ nurseName }: { nurseName: string }) {
@@ -231,16 +239,22 @@ export function WardApp({ nurseName }: { nurseName: string }) {
           {vitalsFor === p.patientId && p.encounterId && (
             <form className="mt-2 flex flex-wrap items-end gap-2" onSubmit={async (e) => {
               e.preventDefault();
-              const v = Object.fromEntries(Object.entries(vitals).filter(([, x]) => x !== "").map(([k, x]) => [k, Number(x)]));
+              const v: Record<string, number | string> = Object.fromEntries(VITAL_FIELDS.filter(([k]) => vitals[k] !== undefined && vitals[k] !== "").map(([k]) => [k, Number(vitals[k])]));
               if (!Object.keys(v).length) return;
+              if (vitals.consciousness) v.consciousness = vitals.consciousness;
+              if (vitals.o2) v.o2DeliveryMethod = vitals.o2 === "yes" ? "supplemental oxygen" : "room air";
+              const ew = earlyWarning(vitals);
               await record({ kind: "VITALS", encounterId: p.encounterId, vitals: v, label: `${p.name}: vitals` });
-              if (alarming(v)) setMessage(`${p.name}: Call the doctor now.`);
+              if (ew.callDoctor) setMessage(`${p.name}: Call the doctor now${ew.response === "EMERGENCY" ? ": emergency response" : ""}. NEWS2 ${ew.score} (placeholder, ${NEWS2_STATUS}).`);
               setVitalsFor(null);
             }}>
-              {([["hr", "HR"], ["sbp", "SBP"], ["dbp", "DBP"], ["rr", "RR"], ["spo2", "SpO2"], ["tempC", "Temp °C"]] as const).map(([k, l]) => (
+              {VITAL_FIELDS.map(([k, l]) => (
                 <label key={k} className="text-[11px] text-text-secondary">{l}<input aria-label={l} inputMode="decimal" value={vitals[k] ?? ""} onChange={(e) => setVitals({ ...vitals, [k]: e.target.value })} className="mt-0.5 block w-16 rounded border border-hairline bg-card px-1.5 py-1 text-[13px]" /></label>
               ))}
+              <label className="text-[11px] text-text-secondary">Oxygen<select aria-label="Oxygen" value={vitals.o2 ?? ""} onChange={(e) => setVitals({ ...vitals, o2: e.target.value })} className="mt-0.5 block rounded border border-hairline bg-card px-1.5 py-1 text-[13px]"><option value="">—</option><option value="no">Room air</option><option value="yes">On oxygen</option></select></label>
+              <label className="text-[11px] text-text-secondary">Consciousness<select aria-label="Consciousness" value={vitals.consciousness ?? ""} onChange={(e) => setVitals({ ...vitals, consciousness: e.target.value })} className="mt-0.5 block rounded border border-hairline bg-card px-1.5 py-1 text-[13px]"><option value="">—</option>{CONSCIOUSNESS.map(([c, l]) => <option key={c} value={c}>{l}</option>)}</select></label>
               <button type="submit" className="rounded-md bg-cyan px-3 py-1 text-[12px] font-medium text-ink">Save vitals</button>
+              <EarlyWarning form={vitals} />
             </form>
           )}
           {ioFor === p.patientId && p.encounterId && (
@@ -296,5 +310,16 @@ export function WardApp({ nurseName }: { nurseName: string }) {
         </section>
       )}
     </main>
+  );
+}
+
+/** The vitals form's live NEWS2 line, always labelled as the placeholder it is. */
+function EarlyWarning({ form }: { form: Record<string, string> }) {
+  const ew = earlyWarning(form);
+  return (
+    <p data-testid="early-warning" className={`basis-full text-[11.5px] ${ew.callDoctor ? "font-medium text-red-600" : "text-text-secondary"}`}>
+      Early warning: NEWS2 {ew.score}{ew.scored < 7 ? ` (${ew.scored} of 7 recorded)` : ""}{ew.callDoctor ? " · Call the doctor now" : ""} ·{" "}
+      <span className="rounded-full border border-amber/40 px-1.5 text-amber">placeholder, {NEWS2_STATUS}</span>
+    </p>
   );
 }

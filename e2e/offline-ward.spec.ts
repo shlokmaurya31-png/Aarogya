@@ -36,6 +36,13 @@ test("offline ward round: doses and vitals with the network cut, synced on recon
   await patient.getByLabel("HR", { exact: true }).fill("88");
   await patient.getByLabel("SBP").fill("124");
   await patient.getByLabel("SpO2").fill("97");
+  // Flagship 4d: the NEWS2 placeholder, labelled as such; an RR of 26 alone (a red score) would call the doctor.
+  const ew = patient.getByTestId("early-warning");
+  await expect(ew).toContainText("NEWS2 0 (3 of 7 recorded)");
+  await expect(ew).toContainText("placeholder, pending clinical sign-off");
+  await patient.getByLabel("RR", { exact: true }).fill("26");
+  await expect(ew).toContainText("NEWS2 3 (4 of 7 recorded) · Call the doctor now");
+  await patient.getByLabel("RR", { exact: true }).fill("");
   await patient.getByRole("button", { name: "Save vitals" }).click();
   await patient.getByRole("button", { name: "Done" }).click();
 
