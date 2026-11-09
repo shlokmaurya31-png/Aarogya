@@ -87,7 +87,7 @@ Every conflict is a row (`OfflineConflict`: kind, severity, the command, the fac
 1. **Never offline:** controlled drugs (`isControlled`, which needs a witness), high-alert medicines (insulin infusions, heparin, potassium chloride concentrate, chemotherapy), first doses of a new order, blood products. These show "Online only: use the downtime sheet if the network is down".
 2. **Offline PRN:** allowed only for orders the prescriber marks "PRN offline allowed", with the minimum interval and daily maximum enforced on the device.
 3. **The dose window offline:** the same window as online (e.g. one hour either side). A dose outside it is not offered offline.
-4. **The early-warning thresholds** the device uses, and the wording of "Call the doctor now".
+4. **The early-warning thresholds** the device uses, and the wording of "Call the doctor now". **Placeholder until then: NEWS2, pending clinical sign-off** (§13.6; Flagship 4, step 4d). The advisor may keep it, change its thresholds or replace it.
 5. **What counts as a double-dose incident** and who is told.
 
 ## 7. Downtime, and back to paper
@@ -243,7 +243,7 @@ Every conflict is a row (`OfflineConflict`: kind, severity, the command, the fac
 - **Screens:** the medication round, PRN doses, vitals, intake/output and tasks.
   - **Doses:** Given, Held or Refused with a reason. A dose another tablet holds shows "Not on this device", and controlled and high-alert medicines show "Online only".
   - **PRN:** the tablet holds the minimum interval and the daily maximum against the pack's doses and its own outbox. A dose over a limit is not given, and a `PRN_BREACH_REFUSED` flag tells the charge nurse.
-  - **Vitals:** a reading outside wide thresholds shows "Call the doctor now". The exact thresholds and the wording await the advisor (§6.4).
+  - **Vitals:** a reading outside wide thresholds shows "Call the doctor now". The exact thresholds and the wording await the advisor (§6.4). (Replaced by the NEWS2 placeholder, §13.6.)
 - **Offline:** a clear "Offline since hh:mm" banner. Every action is a command with its own id and the tablet's time, kept in the encrypted outbox. Past the facility's offline limit no dose can be given ("use the downtime sheet"), while vitals, intake/output and tasks are still recorded (§5).
 - **Reconnect:** the tablet pushes the outbox in order, then pulls a fresh pack. A fresh pack re-grants the tablet's own leases in one transaction, so its doses stay givable. It reports what was recorded and what went to the charge nurse.
 - **Journey:** `e2e/offline-ward.spec.ts` runs the whole round in Playwright:
@@ -274,3 +274,25 @@ Every conflict is a row (`OfflineConflict`: kind, severity, the command, the fac
   - resolving a conflict from a screen;
   - the advisor's sign-off on §6.
 
+### 13.6 The early warning on the tablet: NEWS2 as the placeholder (Flagship 4, step 4d; pending clinical sign-off)
+
+**Status: placeholder, pending clinical sign-off (§6.4).** The tablet shows this on screen, next to every score: "placeholder, pending clinical sign-off". Until the clinical advisor signs off the early-warning rule, "Call the doctor now" uses NEWS2 (Royal College of Physicians, 2017), unchanged, instead of the wide thresholds of §13.4. No other clinical rule changes. Nothing on the server scores or alerts on it, and the facility's own abnormal-vitals thresholds (`abnormalOf`) are untouched.
+
+| Parameter | 3 | 2 | 1 | 0 | 1 | 2 | 3 |
+|---|---|---|---|---|---|---|---|
+| Respiration rate (/min) | ≤8 | | 9–11 | 12–20 | | 21–24 | ≥25 |
+| SpO2 Scale 1 (%) | ≤91 | 92–93 | 94–95 | ≥96 | | | |
+| Air or oxygen | | Oxygen | | Air | | | |
+| Systolic BP (mmHg) | ≤90 | 91–100 | 101–110 | 111–219 | | | ≥220 |
+| Pulse (/min) | ≤40 | | 41–50 | 51–90 | 91–110 | 111–130 | ≥131 |
+| Consciousness | | | | Alert | | | New confusion, voice, pain, unresponsive (3) |
+| Temperature (°C) | ≤35.0 | | 35.1–36.0 | 36.1–38.0 | 38.1–39.0 | ≥39.1 (2) | |
+
+- **"Call the doctor now"** when the total is 5 or more, or any one parameter scores 3. At 7 or more it reads "Call the doctor now: emergency response". Below that there is no message. The live line under the vitals form shows the score and how many of the seven parameters were recorded.
+- **Decided for you:**
+  - SpO2 Scale 1 only. Scale 2, for hypercapnic respiratory failure, needs a clinician to choose it per patient, and the tablet can't know that.
+  - A parameter not recorded scores nothing; the line says "n of 7 recorded" rather than guessing.
+  - The tablet now asks "Room air / On oxygen" and the consciousness level (Alert, New confusion, Voice, Pain, Unresponsive). Both are sent with the vitals set and kept: `consciousness`, and `o2DeliveryMethod` as exactly "room air" or "supplemental oxygen".
+- **For the advisor to decide:** whether to keep NEWS2 or change its thresholds, Scale 2, the wording, and whether the server should score sets synced from the tablet (it does not today).
+- **Code:** `src/lib/ward/news2.ts`, with every band edge unit-tested in `news2.test.ts`; `src/components/ward/WardApp.tsx`.
+- **Journey:** `e2e/offline-ward.spec.ts` checks the line and its "pending clinical sign-off" label, and that a red score alone calls the doctor. The `verify-postgres-offline-phase2` gate checks that the two new answers are kept.

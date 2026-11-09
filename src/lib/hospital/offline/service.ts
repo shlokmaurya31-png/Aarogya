@@ -498,6 +498,8 @@ function parseVitals(raw: unknown): VitalsInput | null {
     any = true;
   }
   if (typeof v.consciousness === "string" && /^[A-Z_]{1,20}$/.test(v.consciousness)) out.consciousness = v.consciousness;
+  // Flagship 4d: the tablet asks room air or oxygen for its NEWS2 placeholder; the answer is kept with the set.
+  if (v.o2DeliveryMethod === "room air" || v.o2DeliveryMethod === "supplemental oxygen") out.o2DeliveryMethod = v.o2DeliveryMethod;
   return any ? out : null;
 }
 
