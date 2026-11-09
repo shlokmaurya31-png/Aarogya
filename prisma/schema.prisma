@@ -12742,3 +12742,146 @@ model LegacyPatientReview {
   @@unique([facilityId, sourceSystem, sourceKey, incomingHash])
   @@index([facilityId, status])
 }
+
+// ── Flagship 5, step 5 — cashless insurance, phase 1, behind a mock NHCX adapter (docs/CASHLESS_CLAIMS_DESIGN.md) ──
+
+enum CashlessStatus {
+  /// Waiting for the patient (or their INSURANCE proxy) to approve the proposed documents.
+  AWAITING_PATIENT
+  /// With the insurer.
+  SUBMITTED
+  /// The insurer asked a question; the desk answers.
+  QUERY
+  APPROVED
+  PARTIAL
+  REJECTED
+  CANCELLED
+}
+
+enum CashlessDocumentStatus {
+  PROPOSED
+  APPROVED
+  REMOVED
+}
+
+enum CashlessApprovalVia {
+  OWNER
+  PROXY
+}
+
+enum CashlessDecision {
+  APPROVED
+  PARTIAL
+  QUERY
+  REJECTED
+}
+
+/// The insurer's reason category for a partial approval or a rejection (closed; the insurer's own words are never kept).
+enum CashlessDecisionReason {
+  NOT_COVERED
+  WAITING_PERIOD
+  SUB_LIMIT
+  ROOM_RENT_LIMIT
+  DOCUMENTS_INSUFFICIENT
+  POLICY_INACTIVE
+  OTHER
+}
+
+enum CashlessEligibilityResult {
+  ELIGIBLE
+  NOT_ELIGIBLE
+}
+
+/// A cashless pre-authorisation for one admission and coverage. The canonical
+/// amounts live in PreAuthorization (written through requestPreAuth and
+/// decidePreAuth); this row carries the exchange's steps around it.
+model CashlessRequest {
+  id                  String                  @id @default(cuid())
+  facilityId          String
+  patientId           String
+  encounterId         String
+  coverageId          String
+  preAuthorizationId  String?                 @unique
+  status              CashlessStatus          @default(AWAITING_PATIENT)
+  /// From the admission; shown to the desk and sent to the insurer, never in an event.
+  diagnosis           String
+  plannedProcedure    String
+  estimateMinor       Int
+  approvedAmountMinor Int?
+  decisionReason      CashlessDecisionReason?
+  /// The insurer's latest question: untrusted text, for the desk only.
+  queryText           String?
+  /// The desk's latest answer, sent once its documents (if any) are approved.
+  queryAnswer         String?
+  queryCount          Int                     @default(0)
+  /// Server-made; the insurer's responses carry it back.
+  correlationId       String                  @unique
+  createdByUserId     String
+  submittedAt         DateTime?
+  decidedAt           DateTime?
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+  version             Int                     @default(1)
+
+  documents CashlessDocument[]
+  messages  CashlessInsurerMessage[]
+
+  @@index([facilityId, status])
+  @@index([patientId])
+  @@index([encounterId])
+}
+
+/// A hospital document the desk proposes for a request; it goes only once the patient approves it.
+model CashlessDocument {
+  id                 String                 @id @default(cuid())
+  requestId          String
+  request            CashlessRequest        @relation(fields: [requestId], references: [id])
+  facilityId         String
+  clinicalDocumentId String
+  title              String
+  /// 1 for the request; 2 and on for documents proposed with a query's answer.
+  round              Int                    @default(1)
+  status             CashlessDocumentStatus @default(PROPOSED)
+  decidedByUserId    String?
+  decidedVia         CashlessApprovalVia?
+  decidedAt          DateTime?
+  sentAt             DateTime?
+  createdAt          DateTime               @default(now())
+
+  @@unique([requestId, clinicalDocumentId])
+  @@index([facilityId])
+}
+
+/// Each insurer response, recorded once: the unique external id is the replay guard.
+model CashlessInsurerMessage {
+  id                  String                  @id @default(cuid())
+  facilityId          String
+  requestId           String
+  request             CashlessRequest         @relation(fields: [requestId], references: [id])
+  externalMessageId   String
+  decision            CashlessDecision
+  approvedAmountMinor Int?
+  reason              CashlessDecisionReason?
+  /// False when the request had moved on (decided or cancelled): kept, not applied.
+  applied             Boolean
+  receivedAt          DateTime                @default(now())
+
+  @@unique([facilityId, externalMessageId])
+  @@index([requestId])
+}
+
+/// An eligibility check of a card shared at check-in.
+model CashlessEligibility {
+  id              String                    @id @default(cuid())
+  facilityId      String
+  checkInId       String
+  patientId       String
+  result          CashlessEligibilityResult
+  coverageId      String?
+  correlationId   String                    @unique
+  checkedByUserId String
+  checkedAt       DateTime                  @default(now())
+
+  @@index([facilityId, checkInId])
+}
+

@@ -723,6 +723,10 @@ Person-scoped rows carry `personId` and no facility; "facility · patient (names
 | `CardShare` | person (shared with one facility) | PHI | — |
 | `PreArrivalCheckIn` | facility · patient (names a person) | PHI | — |
 | `ClaimDocumentRequest` | facility · patient | PHI | — |
+| `CashlessRequest` | facility · patient | PHI | Flagship 5: a cashless pre-authorisation through the (mock) exchange; diagnosis, procedure and the insurer's question are desk-only text, never in an event |
+| `CashlessDocument` | facility · patient (via request) | PHI | Flagship 5: a hospital document proposed for a request; sent only when the patient (or an INSURANCE proxy) approves it |
+| `CashlessInsurerMessage` | facility | Operational | Flagship 5: each insurer response once (`facilityId, externalMessageId` unique: the replay guard) |
+| `CashlessEligibility` | facility · patient | Operational | Flagship 5: an eligibility check of a card shared at check-in |
 | `FacilityPaymentGateway` | facility | no | — |
 | `PatientPaymentOrder` | facility · patient | PHI | — |
 | `FacilityGatewayWebhook` | facility | no | — |

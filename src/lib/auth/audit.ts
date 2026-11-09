@@ -120,6 +120,12 @@ export type AuditEventType =
   | "hospital.checkin.arrived"
   | "hospital.claimDocuments.requested"
   | "patient.claimDocuments.attached"
+  // Flagship 5, step 5 — cashless insurance (mock NHCX).
+  | "hospital.cashless.eligibility"
+  | "hospital.cashless.started"
+  | "hospital.cashless.queryAnswered"
+  | "hospital.cashless.cancelled"
+  | "patient.cashless.documentsDecided"
   | "hospital.paymentGateway.configured"
   | "patient.payment.orderCreated"
   | "hospital.payment.gatewayWebhook"

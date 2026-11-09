@@ -56,7 +56,8 @@ export async function sweepExpiredCardShares(now = new Date()) {
  * outcome and sends the patient to the desk. Either way the check-in's
  * eligibility changes with its event, and CoverageVerifiedFromCard.
  */
-export async function verifyCheckInCard(staff: { userId: string; facilityId: string }, checkInId: string, body: { outcome?: unknown; payerId?: unknown; planId?: unknown; validFrom?: unknown; validTo?: unknown; note?: unknown }) {
+/** The desk verifies a shared card into the facility's coverage: by hand (MANUAL), or after the exchange said it is eligible (ELIGIBILITY, Flagship 5 cashless). */
+export async function verifyCheckInCard(staff: { userId: string; facilityId: string }, checkInId: string, body: { outcome?: unknown; payerId?: unknown; planId?: unknown; validFrom?: unknown; validTo?: unknown; note?: unknown }, method: "MANUAL" | "ELIGIBILITY" = "MANUAL") {
   const ci = await prisma.preArrivalCheckIn.findUnique({ where: { id: checkInId } });
   if (!ci || ci.facilityId !== staff.facilityId || !ci.cardShareId) throw new NotFoundError();
   if (!["SUBMITTED", "READY", "NEEDS_DESK"].includes(ci.status)) throw new ConflictError("This check-in is closed.");
@@ -93,7 +94,7 @@ export async function verifyCheckInCard(staff: { userId: string; facilityId: str
     await tx.preArrivalCheckIn.update({ where: { id: ci.id }, data: { eligibility, status, needsDeskReason: reason, decidedByUserId: staff.userId, decidedAt: new Date(), version: { increment: 1 } } });
     await emitFacilityEvent(tx, {
       type: "CoverageVerifiedFromCard", aggregateId: ci.id, facilityId: ci.facilityId, actorUserId: staff.userId,
-      payload: { checkInId: ci.id, patientId: ci.patientId, insuranceShareId: ci.cardShareId!, coverageId: coverageId ?? undefined, method: "MANUAL", outcome: eligibility },
+      payload: { checkInId: ci.id, patientId: ci.patientId, insuranceShareId: ci.cardShareId!, coverageId: coverageId ?? undefined, method, outcome: eligibility },
     });
     if (status !== cur.status) {
       await emitFacilityEvent(tx, { type: "PreArrivalCheckInStatusChanged", aggregateId: ci.id, facilityId: ci.facilityId, actorUserId: staff.userId, payload: { checkInId: ci.id, patientId: ci.patientId, from: cur.status, to: status, needsDeskReason: reason ?? undefined } });

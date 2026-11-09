@@ -39,6 +39,7 @@ import { INSURER, admissionFor } from "./insuranceFixture";
 import { designateChargeNurse, overrideLease, registerWardDevice } from "../../src/lib/hospital/offline/service";
 import { enableOfflineForGate } from "./offlineFixture";
 import { countersWithQr, createCounter } from "../../src/lib/hospital/scanShare/service";
+import { mockInsurerRespond } from "../../src/lib/insurance/cashless/service";
 
 const out = (v: unknown) => console.log(JSON.stringify(v));
 
@@ -154,6 +155,32 @@ async function main() {
       const task = await prisma.task.create({ data: { facilityId: PUNE, title: `Reposition ${run}`, type: "GENERAL", source: "MANUAL", patientId: patient.id, encounterId: enc.id } });
       const device = await registerWardDevice(admin, { wardId: ward.id, label: `E2E tablet ${run}` });
       return out({ name, patientId: patient.id, encounterId: enc.id, deviceId: device.id, drugName, d1: d1.id, d2: d2.id, dc: dc.id, taskId: task.id, taskTitle: task.title });
+    }
+    case "cashless-admission": {
+      // Flagship 5: a patient of their own (the fixture patient's coverage belongs to the 5c journey), admitted at Pune with verified insurance, a primary diagnosis and three hospital documents.
+      const { registerPatientAccount } = await import("../../src/lib/patient/selfRegistration");
+      const { hashPassword } = await import("../../src/lib/auth/password");
+      const name = `Cashless Patient ${run}`;
+      const email = `e2e-cashless-${run}@verify.aarogya`;
+      const acc = await registerPatientAccount({ facilityId: PUNE, fullName: name, email, passwordHash: await hashPassword(f.password), sex: "M", dob: new Date("1979-05-05") });
+      if (acc.status !== "LINKED_NEW") throw new Error(`cashless patient: ${acc.status}`);
+      const personId = (await prisma.personAccount.findUniqueOrThrow({ where: { userId: acc.userId } })).personId;
+      await prisma.person.update({ where: { id: personId }, data: { dataClassification: "SYNTHETIC", preferredLanguage: "en" } });
+      const patientId = (await prisma.personPatientLink.findFirstOrThrow({ where: { personId, status: "ACTIVE" } })).patientId;
+      await prisma.$transaction((t) => addPatientCoverage(t, { patientId, payerId: INSURER, memberId: `E2E-CL-${run}`, validFrom: new Date(Date.now() - 86_400_000), addedByUserId: doc.userId }));
+      const a = await admissionFor(patientId, PUNE, doc.staffId);
+      const diagnosis = `Acute appendicitis ${run}`;
+      await prisma.diagnosis.create({ data: { patientId, encounterId: a.encounterId, diagnosis, type: "PRIMARY", diagnosedByStaffId: doc.staffId } });
+      const docOf = (title: string) => prisma.clinicalDocument.create({ data: { facilityId: PUNE, patientId, encounterId: a.encounterId, type: "REPORT", title: `${title} ${run}`, uploadedByStaffId: doc.staffId, storageRef: `e2e/${run}/${title}` } });
+      const [note, usg, estimate] = [await docOf("Admission note"), await docOf("Ultrasound abdomen"), await docOf("Cost estimate")];
+      return out({ encounterId: a.encounterId, name, email, diagnosis, note: note.title, usg: usg.title, estimate: estimate.title });
+    }
+    case "cashless-insurer": {
+      // The mock insurer answers the admission's open cashless request (the same path as a real callback).
+      const a = JSON.parse(arg) as { encounterId: string; decision: "APPROVED" | "PARTIAL" | "QUERY" | "REJECTED"; approvedAmountMinor?: number; queryText?: string };
+      const r = await prisma.cashlessRequest.findFirstOrThrow({ where: { encounterId: a.encounterId }, orderBy: { createdAt: "desc" } });
+      const res = await mockInsurerRespond(PUNE, r.id, { decision: a.decision, approvedAmountMinor: a.approvedAmountMinor, queryText: a.queryText });
+      return out({ requestId: r.id, ...res });
     }
     case "take-over-give": {
       const nurse = await staffOf(f.nurse.email);

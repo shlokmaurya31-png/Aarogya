@@ -45,6 +45,7 @@
   - bookings keep their instants and are never moved;
   - gate: `verify-postgres-time-zone-change`. | Engineering | Done |
 | 26 | **Import lane concurrency on staging** | `EVENT_IMPORT_LANE_CONCURRENCY` stays at its default of 4 (Flagship 4c; decided again in Flagship 5, step 3e). On the Supabase staging run (item 7), measure database headroom before any change: a 50,000-row synthetic import alongside `npm run perf:load`, at 4, 8 and 16, recording peak connections against the limit, CPU, the critical-result time (budget 5 s) and the clearing time (`docs/PERFORMANCE.md`, Flagship 4c). Raise the default only if the live lane stays within budget and connections stay below 70% of the limit; record the measurements here either way. | Engineering | Not started |
+| 27 | **Cashless through NHCX (Flagship 5)** | Phase 1 runs on a mock adapter only (`NHCX_CASHLESS_MODE=mock`; anything else is refused). Before any real cashless request: every "to confirm" row of `docs/CASHLESS_CLAIMS_DESIGN.md` §2 checked against the official NHCX specification and claims FHIR implementation guide; the hospital onboarded as an NHCX participant (keys and certificates in the KMS); the adapter written and run end to end in the NHCX sandbox; the patient's document-approval texts and notice reviewed by the lawyer (item 4); the regulator's time limits for cashless decisions confirmed. | Engineering + Legal + Finance | Not started |
 
 ## How to update this file
 

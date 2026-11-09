@@ -8,7 +8,7 @@ import {
   ClipboardCheck, FlaskConical, ScanLine, Receipt, DoorOpen,
   UserPlus, Siren, ArrowRightLeft, Pill, Microscope,
   ShieldCheck, BarChart3, Settings2, Boxes, Truck, HeartPulse, Scissors, Droplet, Wrench, Network, ShieldAlert, Plug,
-  Menu, X, Sparkles, CalendarCheck, FileInput } from "lucide-react";
+  Menu, X, Sparkles, CalendarCheck, FileInput, BadgeIndianRupee } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/navigation/ThemeToggle";
 import { StatusPill } from "@/components/ui/StatusPill";
@@ -43,6 +43,7 @@ const BILLING_GROUP_ADMIN: NavItem = {
   children: [
     { href: "/hospital-os/billing", label: "Encounters", icon: Receipt },
     { href: "/hospital-os/claims", label: "Claims", icon: ShieldCheck },
+    { href: "/hospital-os/claims/cashless", label: "Cashless", icon: BadgeIndianRupee },
     // Phase C5 — the NHCX protocol boundary, deliberately a separate entry from
     // Claims so "not sent" never looks like "not answered".
     { href: "/hospital-os/claims/exchange", label: "Claims Exchange", icon: Network },
@@ -57,6 +58,7 @@ const BILLING_GROUP_STAFF: NavItem = {
   children: [
     { href: "/hospital-os/billing", label: "Encounters", icon: Receipt },
     { href: "/hospital-os/claims", label: "Claims", icon: ShieldCheck },
+    { href: "/hospital-os/claims/cashless", label: "Cashless", icon: BadgeIndianRupee },
   ],
 };
 

@@ -394,6 +394,8 @@ const SEGMENT_MODELS: Record<string, string> = {
   "charge-shifts/[shiftId]": "WardChargeShift",
   // Flagship 3b: a facility's time-zone change request (decided by platform staff).
   "time-zone-requests/[requestId]": "FacilityTimeZoneChange",
+  // Flagship 5, step 5: cashless requests (facility-owned).
+  "cashless/[id]": "CashlessRequest",
 };
 
 type SegmentTarget = { kind: "record"; model: string } | { kind: "static"; values: string[] } | { kind: "unmapped" };

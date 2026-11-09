@@ -1987,6 +1987,32 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({ reviewId: id, patientId: id, decision: z.enum(["ACCEPTED", "KEPT"]), fields: z.array(z.enum(["fullName", "sex", "dob", "phone"])) }).strict(),
   }),
   // Flagship 4b — imported results in the chart's timeline, per user.
+  // ── Flagship 5, step 5 — cashless insurance, phase 1 (docs/CASHLESS_CLAIMS_DESIGN.md §9); never a diagnosis, a document title or the insurer's words ──
+  contract({
+    type: "CashlessEligibilityChecked", version: 1, aggregateType: "CASHLESS_ELIGIBILITY", scope: "FACILITY",
+    sensitivity: "LOW", producer: "cashless (checkEligibilityAtCheckIn: a card shared at check-in, checked through the exchange)",
+    payload: z.object({ eligibilityId: id, checkInId: id, patientId: id, result: z.enum(["ELIGIBLE", "NOT_ELIGIBLE"]), coverageId: optId }).strict(),
+  }),
+  contract({
+    type: "CashlessRequestStatusChanged", version: 1, aggregateType: "CASHLESS_REQUEST", scope: "FACILITY",
+    sensitivity: "LOW", producer: "cashless (the desk starts, answers or cancels a request; the patient's approval sends it; the insurer's response decides it)",
+    payload: z.object({
+      requestId: id, encounterId: id, patientId: id,
+      from: z.enum(["NONE", "AWAITING_PATIENT", "SUBMITTED", "QUERY", "APPROVED", "PARTIAL", "REJECTED", "CANCELLED"]),
+      to: z.enum(["AWAITING_PATIENT", "SUBMITTED", "QUERY", "APPROVED", "PARTIAL", "REJECTED", "CANCELLED"]),
+      decisionReason: z.enum(["NOT_COVERED", "WAITING_PERIOD", "SUB_LIMIT", "ROOM_RENT_LIMIT", "DOCUMENTS_INSUFFICIENT", "POLICY_INACTIVE", "OTHER"]).optional(),
+    }).strict(),
+  }),
+  contract({
+    type: "CashlessDocumentDecided", version: 1, aggregateType: "CASHLESS_REQUEST", scope: "FACILITY",
+    sensitivity: "LOW", producer: "cashless (decideCashlessDocuments: the patient, or their INSURANCE proxy, approves or removes a proposed document)",
+    payload: z.object({ requestId: id, documentId: id, patientId: id, to: z.enum(["APPROVED", "REMOVED"]), via: z.enum(["OWNER", "PROXY"]) }).strict(),
+  }),
+  contract({
+    type: "CashlessInsurerResponseReceived", version: 1, aggregateType: "CASHLESS_REQUEST", scope: "FACILITY",
+    sensitivity: "LOW", producer: "cashless (receiveInsurerResponse: each insurer message once; applied false when the request had moved on)",
+    payload: z.object({ requestId: id, messageId: id, patientId: id, decision: z.enum(["APPROVED", "PARTIAL", "QUERY", "REJECTED"]), applied: z.boolean() }).strict(),
+  }),
   contract({
     type: "ChartPreferenceChanged", version: 1, aggregateType: "CHART_PREFERENCE", scope: "FACILITY",
     sensitivity: "LOW", producer: "chart preferences (setShowImportedResults: a staff member turns \"show imported\" on or off for themselves; aggregate = the user)",

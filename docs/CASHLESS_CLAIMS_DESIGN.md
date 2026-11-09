@@ -217,3 +217,59 @@ interface CashlessExchange {
 7. **Government schemes (PM-JAY):** do they go through NHCX the same way, or through the scheme's own system?
 8. **Rejections:** should the app show the patient how to appeal, or is that the hospital's conversation?
 9. **Proxies:** may a proxy approve a sensitive document for an adult member, or only the member themself?
+
+## 15. As built (phase 1, Flagship 5 step 5, 2026-11-10)
+
+Where this section and §1–§14 differ, this section holds.
+
+### 15.1 What was built
+
+- **The adapter** (`src/lib/insurance/cashless/adapter.ts`): the interface of §10, with the mock as the only implementation. `NHCX_CASHLESS_MODE` other than `mock` is refused. The mock answers eligibility (not eligible when the card has no listed payer, or its member id ends 0000) and keeps what it was sent (`mockSent`), never making a network call. It is sent the member id's last 4 only.
+- **The service** (`src/lib/insurance/cashless/service.ts`):
+  - `checkEligibilityAtCheckIn`: the desk checks a check-in's shared card; eligible verifies it into the facility's `PatientCoverage` through the existing `verifyCheckInCard`, now with method `ELIGIBILITY` (reserved in 5c). Not eligible leaves the manual check.
+  - `startCashlessRequest`: from an admission (IPD with an `Admission`), with active non-cash coverage. The diagnosis defaults to the encounter's primary diagnosis, then the admission request's reason. It needs the planned procedure and the estimate, and 1–10 of the hospital's own documents for the patient (current; never an ID proof or a RESTRICTED document). One open request per admission. The patient and their INSURANCE proxies are told (`DOCUMENTS_REQUESTED`).
+  - `decideCashlessDocuments`: the patient or an INSURANCE proxy decides every proposed document at once (approve or remove); a document whose title looks sensitive needs `confirmSensitive`. Then, and only then, the request goes: `requestPreAuth` writes the canonical `PreAuthorization` for the estimate, and the adapter is sent exactly the approved documents. In answer to a query, the desk's answer goes with the newly approved ones.
+  - `receiveInsurerResponse`: each message once per facility and external id (`CashlessInsurerMessage`). A replay is a no-op, with no message, no event and no change; two concurrent deliveries resolve on the unique key. A message for a request that is not with the insurer is kept with `applied = false`. QUERY keeps the question (desk only) and tells the patient that one was asked. APPROVED and PARTIAL (with the amount; partial must be under the estimate) and REJECTED (with a closed reason category) decide the canonical pre-authorisation through `decidePreAuth`, so 5c's insurance status, `patient-insurance-notify` and discharge rules carry on unchanged.
+  - `answerCashlessQuery`: the desk's answer. With added documents, the request waits for the patient again; without, it goes now.
+  - `cancelCashlessRequest`: withdraws an undecided request.
+  - `mockInsurerRespond`: the mock insurer for the gates and the browser journey's hospital step, through the same path as a real callback.
+- **Events** (catalogued, FACILITY, ids and closed codes only): `CashlessEligibilityChecked`, `CashlessRequestStatusChanged`, `CashlessDocumentDecided`, `CashlessInsurerResponseReceived`; plus the reused `CoverageVerifiedFromCard` (method ELIGIBILITY), `PreauthStatusChanged` and `PreauthDecided`.
+- **Models:** `CashlessRequest`, `CashlessDocument`, `CashlessInsurerMessage` and `CashlessEligibility` (migration `20261110110000_cashless_phase1`, additive).
+- **Routes:**
+  - the desk (`insurance:preauth:manage`): `GET/POST /api/hospital/cashless`, `POST /api/hospital/cashless/{id}/answer`, `POST /api/hospital/cashless/{id}/cancel`;
+  - eligibility (`insurance:coverage:manage`): `POST /api/hospital/checkins/{id}/eligibility`;
+  - the patient (OWNER, or a PROXY with INSURANCE via `memberPersonId`): `GET /api/patient/insurance/cashless`, `POST /api/patient/insurance/cashless/{id}/documents`.
+
+  Every new `[id]` is in the tenancy sweep.
+- **Screens:**
+  - **The desk:** *Billing → Cashless* (`/hospital-os/claims/cashless`): admitted patients with verified insurance (start a request: diagnosis, procedure, estimate, documents), open requests with each document's state and the insurer's question shown as received (answer it, adding documents), and decided requests.
+  - **The patient:** *Insurance → Cashless at the hospital*: each document to send or not, then the status in plain words, and "Approved ₹X; your share ₹Y" with "Based on the hospital's estimate; the final bill is at discharge". A proxy sees the member's with `?memberPersonId=`.
+
+### 15.2 Gate and journey
+
+- **`verify-postgres-cashless-claims`** checks:
+  - eligibility, both ways, and another hospital's 404;
+  - the refusals at the start;
+  - nothing sent before approval, and all-or-nothing decisions;
+  - exactly the approved documents sent, never a removed one;
+  - the sensitive confirmation;
+  - proxies: INSURANCE follows and approves (logged); VIEW-only, a stranger and another person get nothing;
+  - another hospital can't see, answer, cancel or respond;
+  - query → answer with an added document approved first → partial ("₹3,000; your share ₹2,000") → a late message kept, not applied;
+  - a replay (twice, once as a different decision) is a no-op;
+  - approved in full, and rejected with its reason;
+  - every transition's event in order;
+  - no diagnosis, procedure, title, question or amount in any event or notification.
+- **`e2e/cashless.spec.ts`:** the desk starts the request in the browser. The patient sends one document and keeps one back. The insurer queries, and the desk answers, adding the estimate, which the patient approves. The insurer approves ₹40,000 of ₹50,000, and the patient sees "Approved ₹40,000; your share ₹10,000".
+
+### 15.3 Departures and decisions
+
+1. **Hospital documents only.** The desk proposes the hospital's own documents (`ClinicalDocument`) for the patient. The patient's uploads still reach a claim through 5c's claim-document requests. Proposing patient uploads for pre-authorisation is phase 2.
+2. **A RESTRICTED document can't be proposed** in this phase: the relationship check that RESTRICTED needs for staff reads isn't wired into the proposal.
+3. **The patient decides every proposed document at once** (send or don't send), and the request goes when they confirm. A request with every document removed still goes, without documents: the patient decided, and the desk may answer a query later.
+4. **The patient's share** before discharge is the hospital's estimate minus the insurer's approved amount, labelled as based on the estimate. It is shown only once the insurer has decided (no predicted values).
+5. **The insurer's question is never shown to the patient** (open question 6): they see that a question was asked and that the hospital is answering.
+6. **No development control for the mock insurer.** It is driven by the gates, the journey's hospital step and scripts; a desk button that pretends to be an insurer was left out on purpose.
+7. **The core journey isn't extended:** cashless adds no consumer, and its gate and browser journey cover it end to end.
+8. **Not built (phase 2):** enhancements, the discharge claim through the exchange, settlement from payment notices, time limits.
+
