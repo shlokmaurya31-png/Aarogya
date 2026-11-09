@@ -1920,12 +1920,12 @@ export const EVENT_CONTRACTS: EventContract[] = [
   }),
   // ── Flagship 2, step 6 — legacy import, phase 1 (docs/LEGACY_IMPORT_DESIGN.md §11): own types, so no live consumer reacts ──
   contract({
-    type: "LegacyPatientImported", version: 1, aggregateType: "PATIENT", scope: "FACILITY",
+    type: "LegacyPatientImported", version: 1, bulk: true, aggregateType: "PATIENT", scope: "FACILITY",
     sensitivity: "INTERNAL", producer: "legacy import (confirmImport: a patient from the old system, never linked to a Person)",
     payload: z.object({ patientId: id, batchId: id }).strict(),
   }),
   contract({
-    type: "LegacyEncounterImported", version: 1, aggregateType: "ENCOUNTER", scope: "FACILITY",
+    type: "LegacyEncounterImported", version: 1, bulk: true, aggregateType: "ENCOUNTER", scope: "FACILITY",
     sensitivity: "INTERNAL", producer: "legacy import (confirmImport: a CLOSED visit from the old system)",
     payload: z.object({ encounterId: id, patientId: id, batchId: id, encounterType: z.enum(["OPD", "ED", "IPD", "DAYCARE", "TELEMEDICINE"]) }).strict(),
   }),
@@ -1941,7 +1941,7 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({ batchId: id, patients: count, reviews: count, encounters: count }).strict(),
   }),
   contract({
-    type: "LegacyImportChunkCommitted", version: 1, aggregateType: "LEGACY_IMPORT_BATCH", scope: "FACILITY",
+    type: "LegacyImportChunkCommitted", version: 1, bulk: true, aggregateType: "LEGACY_IMPORT_BATCH", scope: "FACILITY",
     sensitivity: "LOW", producer: "legacy import (confirmImport: one chunk of ~500 rows, its own transaction)",
     payload: z.object({ batchId: id, chunk: count, part: z.enum(["PATIENTS", "REVIEWS", "ENCOUNTERS"]), rows: count }).strict(),
   }),
@@ -1956,7 +1956,7 @@ export const EVENT_CONTRACTS: EventContract[] = [
     payload: z.object({ batchId: id, chunksCommitted: count }).strict(),
   }),
   contract({
-    type: "LegacyPatientReviewQueued", version: 1, aggregateType: "LEGACY_PATIENT_REVIEW", scope: "FACILITY",
+    type: "LegacyPatientReviewQueued", version: 1, bulk: true, aggregateType: "LEGACY_PATIENT_REVIEW", scope: "FACILITY",
     sensitivity: "INTERNAL", producer: "legacy import (confirmImport: a re-imported patient whose details differ; the names of the fields only)",
     payload: z.object({ reviewId: id, patientId: id, batchId: id, differences: z.array(z.enum(["fullName", "sex", "dob", "phone"])) }).strict(),
   }),

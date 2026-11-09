@@ -17,6 +17,9 @@
  *      accepting changes only the differing fields, and is refused if the
  *      patient changed since; another hospital's admin gets a 404.
  *   6. Imported visits say "Recorded by: <name> (imported)" on the timeline.
+ *   7. The bulk lane: a live event emitted after the import is dispatched
+ *      before the ~50,000 import events (a critical result is never queued
+ *      behind an import).
  *
  * Runs in a facility of its own (the 50,000 patients stay out of other gates).
  * Usage: through `npm run verify:all`.
@@ -27,6 +30,9 @@ import { ensurePrimaryMembership } from "../prisma/seedData/staffMembership";
 import { confirmImport, dryRunImport, IMPORT_CHUNK_ROWS } from "../src/lib/hospital/legacyImport/service";
 import { decidePatientReview, listPatientReviews } from "../src/lib/hospital/legacyImport/review";
 import { timelinePage } from "../src/lib/patient/timeline";
+import { designateChargeNurse } from "../src/lib/hospital/offline/service";
+import { dispatchPendingDomainEvents } from "../src/lib/events/dispatcher";
+import { registerAllConsumers } from "../src/lib/runner/consumers";
 import { tag } from "./lib/shareFixture";
 
 const ROWS = 50_000;
@@ -134,6 +140,16 @@ async function main() {
   const visitPatient = (await prisma.legacyRecordKey.findFirstOrThrow({ where: { facilityId: fac.id, kind: "PATIENT", sourceKey: mrn(7) } })).targetId;
   const tl = await timelinePage(visitPatient, { kind: "STAFF", facilityId: fac.id });
   report("An imported visit says who recorded it in the old system", tl.entries.some((e) => e.summary.includes("Recorded by: Dr Legacy 1 (imported)")), tl.entries.find((e) => e.type === "Encounter")?.summary);
+
+  // 7. The bulk lane.
+  registerAllConsumers();
+  const liveWard = await prisma.ward.create({ data: { facilityId: fac.id, name: `Live ward ${tag}`, wardType: "GENERAL", departmentId: dept.id } });
+  await designateChargeNurse(admin, liveWard.id, { staffId: null });
+  const live = await prisma.domainEventOutbox.findFirstOrThrow({ where: { eventType: "WardChargeNurseDesignated", aggregateId: liveWard.id } });
+  const bulkBefore = await prisma.domainEventOutbox.count({ where: { facilityId: fac.id, bulk: true, status: { in: ["PENDING", "RETRY"] } } });
+  await dispatchPendingDomainEvents({ batchSize: 50, maxDurationMs: 2_000 });
+  const liveAfter = await prisma.domainEventOutbox.findUniqueOrThrow({ where: { id: live.id } });
+  report("A live event after the import is dispatched before the import's bulk events", liveAfter.status === "PROCESSED" && bulkBefore > 40_000 && live.bulk === false, `${liveAfter.status}; ${bulkBefore} bulk waiting`);
 
   console.log(`\n${pass} passed, ${fail} failed (${Math.round((Date.now() - t0) / 1000)} s)`);
   await prisma.$disconnect();

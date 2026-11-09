@@ -562,6 +562,8 @@ model DomainEventOutbox {
   /// When the row was written (processing/clock separation from occurredAt).
   recordedAt       DateTime                @default(now())
   status           DomainEventOutboxStatus @default(PENDING) // PENDING | PROCESSING | PROCESSED | RETRY | DEAD_LETTER
+  /// Flagship 3d: the bulk lane (a legacy import's rows), dispatched after every waiting live event.
+  bulk             Boolean                 @default(false)
   attemptCount     Int                     @default(0)
   maxAttempts      Int                     @default(8)
   /// Per-claim token; a dispatcher owns an event only while its token matches.
@@ -580,6 +582,7 @@ model DomainEventOutbox {
   personId String?
 
   @@index([status, nextAttemptAt])
+  @@index([status, bulk, seq])
   @@index([eventType])
   @@index([personId])
   @@index([aggregateType, aggregateId])

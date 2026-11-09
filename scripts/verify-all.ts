@@ -134,8 +134,6 @@ const ORDER = [
   "verify-postgres-offline-switch",
   // Flagship 2, step 6: legacy import, phase 1 (CSV patients and encounters)
   "verify-postgres-legacy-import",
-  // Flagship 3d: 50,000 rows in chunks, a forced failure and the resume, the review queue
-  "verify-postgres-legacy-import-scale",
   "verify-postgres-schema-constraints",
   // Week 3: workflow spine
   "verify-postgres-runner",
@@ -186,6 +184,9 @@ const ORDER = [
   "verify-postgres-bounded-retry",
   // Flagship 2b: one consumer registry in every entry point (HTTP; builds the app)
   "verify-postgres-consumer-registry",
+  // Flagship 3d: 50,000 rows in chunks, a forced failure and the resume, the review queue.
+  // Late: it leaves ~50,000 bulk-lane events, and none of the gates after it dispatches.
+  "verify-postgres-legacy-import-scale",
   // Runs last among the gates: checks every row the earlier gates created.
   "verify-postgres-facility-consistency",
   // Runs late: its whole-database check covers every earlier gate's orders.

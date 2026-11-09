@@ -207,6 +207,13 @@ export interface EventContract<P extends z.ZodTypeAny = z.ZodTypeAny> {
    * already in the outbox still dispatch and replay against this contract.
    */
   retired?: { since: string; replacedBy?: string };
+  /**
+   * Flagship 3d: an event emitted in bulk (a legacy import's rows). It is
+   * dispatched in the bulk lane: after every waiting live event, so 50,000
+   * imported rows never hold back a critical result's notification. Order
+   * within an aggregate is unchanged.
+   */
+  bulk?: boolean;
 }
 
 /** Input to emitDomainEvent — the caller supplies the business fields only. */
