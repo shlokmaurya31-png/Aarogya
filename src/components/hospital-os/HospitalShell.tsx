@@ -15,7 +15,7 @@ import { StatusPill } from "@/components/ui/StatusPill";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { AiAssistantProvider, AiCommandBar } from "@/components/ai/PortalAssistant";
 import { NotificationBell } from "@/components/hospital-os/NotificationBell";
-import { clearAppCaches } from "@/lib/pwa/clearCaches";
+import { clearAppData } from "@/lib/pwa/clearCaches";
 
 // Phase 4 Milestone D (brief §19) — `children` is additive/optional so
 // every existing flat nav entry keeps working unchanged; only the new
@@ -268,7 +268,7 @@ export function HospitalShell({
 
   async function handleLogout() {
     await fetch("/api/scholar-auth/logout", { method: "POST" });
-    await clearAppCaches();
+    await clearAppData();
     router.push("/hospital-os/login");
     router.refresh();
   }

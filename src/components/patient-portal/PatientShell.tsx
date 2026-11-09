@@ -10,7 +10,7 @@ import { Sparkles, FolderUp, Stethoscope } from "lucide-react";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { ThemeToggle } from "@/components/navigation/ThemeToggle";
 import { AiAssistantProvider, AiCommandBar } from "@/components/ai/PortalAssistant";
-import { clearAppCaches } from "@/lib/pwa/clearCaches";
+import { clearAppData } from "@/lib/pwa/clearCaches";
 
 /**
  * Phase D11 — the patient experience shell. A simple, single navigation model
@@ -41,7 +41,7 @@ export function PatientShell({ children, displayName }: { children: React.ReactN
 
   async function handleLogout() {
     await fetch("/api/scholar-auth/logout", { method: "POST" });
-    await clearAppCaches();
+    await clearAppData();
     router.push("/patient/login");
     router.refresh();
   }
