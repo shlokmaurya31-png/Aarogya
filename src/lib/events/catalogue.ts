@@ -1844,6 +1844,22 @@ export const EVENT_CONTRACTS: EventContract[] = [
       severity: z.enum(["WARNING", "CRITICAL"]), taskId: id,
     }).strict(),
   }),
+  // Flagship 6 — Scan and Share check-in (mock ABDM gateway).
+  contract({
+    type: "ScanShareCounterCreated", version: 1, aggregateType: "SCAN_SHARE_COUNTER", scope: "FACILITY",
+    sensitivity: "LOW", producer: "scan and share (createCounter: a counter with its QR)",
+    payload: z.object({ counterId: id, code: z.string().min(1) }).strict(),
+  }),
+  contract({
+    type: "ScanShareReceived", version: 1, aggregateType: "SCAN_SHARE_CHECK_IN", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "scan and share (receiveProfileShare: a verified ABHA profile in the check-in queue; ids only, never the profile)",
+    payload: z.object({ checkInId: id, counterId: id, matched: z.boolean(), gateway: z.enum(["MOCK"]), patientId: optId }).strict(),
+  }),
+  contract({
+    type: "ScanShareQueued", version: 1, aggregateType: "SCAN_SHARE_CHECK_IN", scope: "FACILITY",
+    sensitivity: "INTERNAL", producer: "scan and share (into the registration queue: a known record at once, or the desk's registration)",
+    payload: z.object({ checkInId: id, patientId: id, queueEntryId: id }).strict(),
+  }),
   // Flagship 4e — offline mode per ward, behind the clinical advisor's sign-off (§6).
   contract({
     type: "ClinicalSignOffRecorded", version: 1, aggregateType: "CLINICAL_SIGN_OFF", scope: "PLATFORM",

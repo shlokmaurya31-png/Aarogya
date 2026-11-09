@@ -42,6 +42,8 @@ export type AuditEventType =
   // Flagship 2, step 5 — offline nursing (a pack is a read of each patient's record; a takeover keeps its reason).
   | "hospital.offline.pack.issued"
   | "hospital.offline.lease.overridden"
+  // Flagship 6 — Scan and Share: the desk queues a shared profile (registering it, or for an existing UHID).
+  | "hospital.scan-share.queued"
   // Flagship 4e — the clinical sign-off (platform staff) and each ward's offline mode (hospital admin).
   | "platform.clinical-sign-off.recorded"
   | "platform.clinical-sign-off.revoked"

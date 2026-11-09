@@ -17,6 +17,7 @@
  *                              controlled one, a task
  *   take-over-give <adminId>   the charge nurse takes a dose over from the tablet and gives it online
  *   ward-state <json>          the server's record: doses, vitals, the task, open conflicts
+ *   scan-counter               Flagship 6: a Scan and Share counter at the facility, and its QR's path
  */
 import "./e2eGuard";
 import { readFileSync } from "node:fs";
@@ -37,6 +38,7 @@ import { PUNE } from "./e2eFixture";
 import { INSURER, admissionFor } from "./insuranceFixture";
 import { designateChargeNurse, overrideLease, registerWardDevice } from "../../src/lib/hospital/offline/service";
 import { enableOfflineForGate } from "./offlineFixture";
+import { countersWithQr, createCounter } from "../../src/lib/hospital/scanShare/service";
 
 const out = (v: unknown) => console.log(JSON.stringify(v));
 
@@ -168,6 +170,13 @@ async function main() {
       const task = await prisma.task.findUniqueOrThrow({ where: { id: a.taskId }, select: { status: true } });
       const conflicts = await prisma.offlineConflict.findMany({ where: { patientId: a.patientId }, select: { kind: true, severity: true, status: true } });
       return out({ d1: { status: d1.status, administeredAt: d1.administeredAt?.toISOString() ?? null }, d2Given, vitals: vitals.map((v) => v.hr), task: task.status, conflicts });
+    }
+    case "scan-counter": {
+      const code = `E2E-${run.toUpperCase().slice(-8)}`;
+      await createCounter({ userId: doc.userId, facilityId: PUNE }, { code, label: `E2E counter ${run}` });
+      const qr = (await countersWithQr(PUNE, "http://e2e.local")).find((c) => c.code === code)!;
+      const u = new URL(qr.url);
+      return out({ path: `${u.pathname}${u.search}`, label: `E2E counter ${run}` });
     }
     default:
       throw new Error(`unknown step ${cmd}`);

@@ -383,6 +383,8 @@ const SEGMENT_MODELS: Record<string, string> = {
   "leases/[leaseId]": "DoseLease",
   // Flagship 4e: the clinical sign-off (platform-wide).
   "clinical-sign-offs/[signOffId]": "ClinicalSignOff",
+  // Flagship 6: a Scan and Share check-in.
+  "scan-share/checkins/[checkInId]": "ScanShareCheckIn",
   "wards/[id]": "Ward",
   // Flagship 2, step 6: legacy import.
   "legacy-import/[batchId]": "LegacyImportBatch",

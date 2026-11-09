@@ -132,6 +132,8 @@ const ORDER = [
   "verify-postgres-offline-queue",
   // Flagship 4e: offline mode per ward, behind the clinical sign-off
   "verify-postgres-offline-switch",
+  // Flagship 6: Scan and Share check-in (mock ABDM gateway)
+  "verify-postgres-scan-share",
   // Flagship 2, step 6: legacy import, phase 1 (CSV patients and encounters)
   "verify-postgres-legacy-import",
   // Flagship 5: HL7 v2 ADT and ORU (synthetic messages)

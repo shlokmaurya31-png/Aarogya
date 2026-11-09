@@ -12451,6 +12451,87 @@ model ClinicalSignOff {
   @@index([scope])
 }
 
+// ── Flagship 6 — Scan and Share check-in (docs/ABDM_CERTIFICATION_PLAN.md §8, mock gateway) ──
+// A facility's counters each have a QR. A patient scans it and shares their
+// ABHA profile; the hospital side (the HIP) receives the profile through the
+// ABDM adapter (a mock until the sandbox), matches the facility record only
+// by an exact, verified ABHA number, and puts the patient in the check-in
+// queue with a token: straight into the registration queue when the record
+// is known, else for the desk to register from the shared profile (no form
+// for the patient). An Aadhaar number is never stored: a profile carrying
+// one is refused whole. The ABHA number is kept as a hash and its last 4.
+
+enum ScanShareStatus {
+  /**
+   * In the check-in queue, for the desk to register from the shared profile.
+   */
+  WAITING
+  /**
+   * In the registration queue (a QueueEntry), for a known or newly registered record.
+   */
+  QUEUED
+  CANCELLED
+}
+
+model ScanShareCounter {
+  id              String   @id @default(cuid())
+  facilityId      String
+  /**
+   * The counter's code in its QR (e.g. "OPD-1").
+   */
+  code            String
+  label           String
+  departmentId    String?
+  active          Boolean  @default(true)
+  createdByUserId String
+  createdAt       DateTime @default(now())
+
+  checkIns ScanShareCheckIn[]
+
+  @@unique([facilityId, code])
+}
+
+model ScanShareCheckIn {
+  id              String           @id @default(cuid())
+  facilityId      String
+  counter         ScanShareCounter @relation(fields: [counterId], references: [id])
+  counterId       String
+  /**
+   * The gateway's request id: a profile shared twice is one check-in.
+   */
+  requestId       String
+  /**
+   * MOCK until the ABDM sandbox adapter (§3.1).
+   */
+  gateway         String
+  abhaAddress     String
+  abhaNumberHash  String?
+  abhaNumberLast4 String?
+  name            String
+  sex             String
+  yearOfBirth     Int?
+  dob             DateTime?
+  phone           String?
+  status          ScanShareStatus  @default(WAITING)
+  token           String
+  /**
+   * YYYY-MM-DD in the facility's zone.
+   */
+  tokenDay        String
+  /**
+   * The facility record, when matched by the verified ABHA number or registered by the desk.
+   */
+  patientId       String?
+  queueEntryId    String?
+  queuedAt        DateTime?
+  queuedByUserId  String?
+  createdAt       DateTime         @default(now())
+
+  @@unique([facilityId, requestId])
+  @@unique([facilityId, tokenDay, token])
+  @@index([facilityId, tokenDay])
+}
+
 // ── Flagship 3a — the charge nurse per shift (docs/OFFLINE_NURSING_DESIGN.md §12.9) ──
 // The ward's shift roster names its charge nurse per shift. The current shift's
 // charge nurse takes dose leases over and is told of offline conflicts; with no

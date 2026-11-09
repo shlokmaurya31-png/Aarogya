@@ -165,6 +165,9 @@ export const AGGREGATE_TYPES = [
   "LEGACY_PATIENT_REVIEW",
   // Flagship 5 — an imported (HL7 ORU) result.
   "LEGACY_LAB_RESULT",
+  // Flagship 6 — Scan and Share.
+  "SCAN_SHARE_COUNTER",
+  "SCAN_SHARE_CHECK_IN",
 ] as const;
 export type AggregateType = (typeof AGGREGATE_TYPES)[number];
 
