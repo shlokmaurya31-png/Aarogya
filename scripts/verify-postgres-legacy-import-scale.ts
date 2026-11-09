@@ -147,9 +147,15 @@ async function main() {
   await designateChargeNurse(admin, liveWard.id, { staffId: null });
   const live = await prisma.domainEventOutbox.findFirstOrThrow({ where: { eventType: "WardChargeNurseDesignated", aggregateId: liveWard.id } });
   const bulkBefore = await prisma.domainEventOutbox.count({ where: { facilityId: fac.id, bulk: true, status: { in: ["PENDING", "RETRY"] } } });
-  await dispatchPendingDomainEvents({ batchSize: 50, maxDurationMs: 2_000 });
-  const liveAfter = await prisma.domainEventOutbox.findUniqueOrThrow({ where: { id: live.id } });
-  report("A live event after the import is dispatched before the import's bulk events", liveAfter.status === "PROCESSED" && bulkBefore > 40_000 && live.bulk === false, `${liveAfter.status}; ${bulkBefore} bulk waiting`);
+  // Dispatch in small rounds until the live event is handled (older live events, e.g. the seed's, go first).
+  let liveAfter = await prisma.domainEventOutbox.findUniqueOrThrow({ where: { id: live.id } });
+  for (let i = 0; i < 200 && liveAfter.status !== "PROCESSED"; i++) {
+    await dispatchPendingDomainEvents({ batchSize: 50, maxDurationMs: 1_000 });
+    liveAfter = await prisma.domainEventOutbox.findUniqueOrThrow({ where: { id: live.id } });
+  }
+  // Live events are claimed before any bulk one: at most the last round's spare places went to the import's events.
+  const bulkAfter = await prisma.domainEventOutbox.count({ where: { facilityId: fac.id, bulk: true, status: { in: ["PENDING", "RETRY"] } } });
+  report("A live event after the import is dispatched before the import's bulk events", liveAfter.status === "PROCESSED" && live.bulk === false && bulkBefore > 40_000 && bulkAfter >= bulkBefore - 50, `${liveAfter.status}; ${bulkBefore} bulk waiting before, ${bulkAfter} after`);
 
   console.log(`\n${pass} passed, ${fail} failed (${Math.round((Date.now() - t0) / 1000)} s)`);
   await prisma.$disconnect();
