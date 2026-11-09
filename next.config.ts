@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { SESSION_COOKIE } from "./src/lib/auth/sessionCookie";
 import { ABDM_CALLBACK_PATHS } from "./src/lib/hospital/interoperability/abdm/contract";
 
 // Baseline hardening that cannot break rendering. A script/style CSP is not
@@ -23,6 +24,12 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       { source: "/:path*", headers: securityHeaders },
+      // Flagship 4 (3): no API response and no signed-in response may be
+      // stored by the browser or a service worker. The session cookie marks
+      // a signed-in request; Next's immutable /_next/static files are left be.
+      { source: "/api/:path*", headers: [{ key: "Cache-Control", value: "no-store" }] },
+      { source: "/((?!_next/static|_next/image).*)", has: [{ type: "cookie", key: SESSION_COOKIE }], headers: [{ key: "Cache-Control", value: "private, no-store" }] },
+      { source: "/sw.js", headers: [{ key: "Cache-Control", value: "no-cache, no-store, must-revalidate" }] },
       // Flagship 4c: the ward tablet's service worker is always fetched fresh (node_modules/next/dist/docs/01-app/02-guides/progressive-web-apps.md §8).
       { source: "/ward-sw.js", headers: [{ key: "Content-Type", value: "application/javascript; charset=utf-8" }, { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" }] },
     ];

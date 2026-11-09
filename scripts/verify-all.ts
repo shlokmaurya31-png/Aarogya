@@ -186,6 +186,8 @@ const ORDER = [
   "verify-postgres-core-journey",
   // Batch 4: bounded retries; runs after the tenancy sweep (checks its fixtures)
   "verify-postgres-bounded-retry",
+  // Flagship 4 (3): the main app's cache keeps nothing private (sandboxed sw.js; HTTP; builds the app)
+  "verify-postgres-cache-privacy",
   // Flagship 2b: one consumer registry in every entry point (HTTP; builds the app)
   "verify-postgres-consumer-registry",
   // Runs last among the gates: checks every row the earlier gates created.

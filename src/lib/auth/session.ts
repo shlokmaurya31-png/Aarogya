@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
 import type { Role } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { SESSION_COOKIE } from "./sessionCookie";
 
 /**
  * Aarogya Scholar sessions are an httpOnly, HMAC-signed cookie — not a JWT
@@ -12,7 +13,7 @@ import { prisma } from "@/lib/db";
  * docs/STUDENT_PLATFORM_ARCHITECTURE.md §2.2 for the production follow-up).
  */
 
-const COOKIE_NAME = "aarogya_scholar_session";
+const COOKIE_NAME = SESSION_COOKIE;
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14; // 14 days
 
 export interface SessionPayload {
