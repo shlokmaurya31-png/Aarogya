@@ -188,15 +188,16 @@ const ORDER = [
   "verify-postgres-bounded-retry",
   // Flagship 2b: one consumer registry in every entry point (HTTP; builds the app)
   "verify-postgres-consumer-registry",
-  // Flagship 3d: 50,000 rows in chunks, a forced failure and the resume, the review queue.
-  // Late: it leaves ~50,000 bulk-lane events, and none of the gates after it dispatches.
-  "verify-postgres-legacy-import-scale",
   // Runs last among the gates: checks every row the earlier gates created.
   "verify-postgres-facility-consistency",
   // Runs late: its whole-database check covers every earlier gate's orders.
   "verify-postgres-order-status",
 ];
 const LAST = "verify-postgres-phase-b-final";
+// Flagship 3d: run after every other gate (the unlisted ones too, which drain
+// the outbox) and just before LAST: the 50,000-row import leaves ~52,000
+// bulk-lane events, and nothing after it dispatches.
+const LATE = ["verify-postgres-legacy-import-scale"];
 
 // verify-abdm-sandbox makes real network calls to dev.abdm.gov.in and needs
 // ABDM sandbox credentials; without them it reports BLOCKED and exits 0,
@@ -246,12 +247,12 @@ function discover(opts: Options): string[] {
     .map((f) => f.replace(/\.ts$/, ""))
     .filter((n) => !EXCLUDED.has(n));
 
-  const unlisted = found.filter((n) => n !== LAST && !ORDER.includes(n)).sort();
+  const unlisted = found.filter((n) => n !== LAST && !ORDER.includes(n) && !LATE.includes(n)).sort();
   for (const n of unlisted) console.warn(`note: ${n} is not in the ORDER list; running it before ${LAST}.`);
   const missing = ORDER.filter((n) => !found.includes(n));
   for (const n of missing) console.warn(`note: ${n} is listed in ORDER but no longer exists; skipping.`);
 
-  let names = [...ORDER.filter((n) => found.includes(n)), ...unlisted, ...(found.includes(LAST) ? [LAST] : [])];
+  let names = [...ORDER.filter((n) => found.includes(n)), ...unlisted, ...LATE.filter((n) => found.includes(n)), ...(found.includes(LAST) ? [LAST] : [])];
   if (opts.only.length) names = names.filter((n) => opts.only.some((p) => n.includes(p)));
   return names;
 }
