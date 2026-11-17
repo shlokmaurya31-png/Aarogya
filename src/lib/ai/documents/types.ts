@@ -26,7 +26,8 @@ export interface CandidateFact {
 }
 
 declare const permitBrand: unique symbol;
-export interface ProcessingPermit { readonly personId: string; readonly purpose: "DOCUMENT_PROCESSING"; readonly [permitBrand]: true }
+/** `real`: the Person is REAL (not SYNTHETIC); an external provider then also needs its own data-policy flag (src/lib/ai/dataPolicy.ts). */
+export interface ProcessingPermit { readonly personId: string; readonly purpose: "DOCUMENT_PROCESSING"; readonly real: boolean; readonly [permitBrand]: true }
 
 export interface VisionOcrProvider {
   readonly id: "claude" | "mock";

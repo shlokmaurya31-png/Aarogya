@@ -1,32 +1,47 @@
-/**
- * The portal assistant (/api/chat) answers from the REAL record, scoped to the
- * caller, through the AI provider boundary.
- *
- *   - A patient's context is built from their own record (via the patient
- *     portal's readers): real allergies and active medicines, nothing from
- *     the landing page's demo story, nothing from another patient or facility.
- *   - Asking for a patient outside the caller's accessible set is a 404.
- *   - A delegate sees only the data classes shared with them.
- *   - A clinician's context is the one chart they were authorized for.
- *   - With no model configured, the mock provider answers honestly.
- *
- * Links a test PATIENT-role user to a seeded patient; run on a throwaway
- * database (verify:all resets it). Usage:
- *   DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-ai-assistant.ts
- */
 import "./lib/gateBootstrap";
+/**
+ * RAG Phase 1, step 1.1 — the portal assistant (POST /api/chat) passes the
+ * same checks as /api/ai/ask, through its gateway (src/lib/rag/assistant.ts).
+ *
+ * Until Phase 1 the route built a record context and sent it to the provider
+ * with no real-data switch, AI consent, permit, masking, citation or log.
+ * Now the assistant is record-free, and a staff question naming a patient
+ * goes to the record gateway. A capturing mock records exactly what reaches
+ * the provider, so a check fails if anything of a record does.
+ *
+ *   1. A patient: the provider is given no record (their allergies, medicines,
+ *      name and UHID never reach it); their phone number and ABHA-shaped
+ *      numbers are masked out of the message; the interaction is logged
+ *      (metadata only, no text).
+ *   2. The patient safety rules run before any model: an urgent symptom gets
+ *      the emergency line; a dosing question gets "ask your care team"; the
+ *      provider is never called.
+ *   3. AI consent declined: 403, the provider never called.
+ *   4. A REAL Person while the switch is off: 403, the provider never called.
+ *      With the switch on and consent granted, the Anthropic provider still
+ *      refuses for lack of its own data-policy flag (default off).
+ *   5. A login with no Person: refused (it can't have consented).
+ *   6. Staff naming a patient: the record gateway. Another facility's patient
+ *      is 404; a nurse's unassigned patient is 404; nothing reaches the
+ *      assistant provider either way.
+ *   7. Staff at a facility where the AI is off: 403.
+ *   8. Scholar: a record-free reply, logged with no person or facility.
+ *   9. Rate limits counted on the interaction log: the patient's 7th
+ *      request within a minute is a 429.
+ *
+ * Usage: through `npm run verify:all`.
+ */
+import { randomUUID } from "node:crypto";
 import { Role } from "@prisma/client";
 import { prisma } from "../src/lib/db";
-import { NotFoundError } from "../src/lib/auth/rbac";
-import { resolveReadScope, type PatientAccessScope, type PatientContext } from "../src/lib/patient/context";
-import { listMedications } from "../src/lib/patient/experience/medications";
-import { patientAssistantContext, clinicianAssistantContext } from "../src/lib/ai/assistantContext";
+import { setAIProviderForTest } from "../src/lib/ai/getAIProvider";
 import { MockAIProvider } from "../src/lib/ai/mockProvider";
-import { landingStoryTimeline } from "../src/content/marketing/landingDemo";
+import { AnthropicAIProvider } from "../src/lib/ai/anthropicProvider";
+import { issueAssistantPermit } from "../src/lib/ai/assistantPermit";
+import { decidePersonConsent } from "../src/lib/person/consent";
+import { chatAboutRecord, chatGeneral } from "../src/lib/rag/assistant";
+import { phrase } from "../src/lib/rag/phrases";
 import { linkAccountForGate } from "./lib/personFixture";
-
-// Mirrors src/lib/patient/experience/medications.ts (what the portal calls "active").
-const ACTIVE_MED_STATUSES = ["ORDERED", "VERIFIED", "DISPENSED", "ACTIVE"] as const;
 
 let pass = 0;
 let fail = 0;
@@ -36,69 +51,120 @@ function report(name: string, ok: boolean, detail?: string) {
   else fail += 1;
 }
 
+const seen: string[] = [];
+const mock = new MockAIProvider();
+const capturing = Object.assign(Object.create(mock) as MockAIProvider, {
+  assistantReply: (input: Parameters<MockAIProvider["assistantReply"]>[0], permit: Parameters<MockAIProvider["assistantReply"]>[1]) => {
+    seen.push(JSON.stringify(input));
+    return mock.assistantReply(input, permit);
+  },
+});
+const outcome = <T extends { outcome: string }>(p: Promise<T>) => p.then((r) => r.outcome, (e: { status?: number; code?: string }) => `${e?.status ?? "?"} ${e?.code ?? String(e)}`);
+
+async function patientWithPerson(tag: string, facilityId: string) {
+  const run = randomUUID().slice(0, 8);
+  const patient = await prisma.patient.create({ data: { uhid: `AIASST-${tag}-${run}`, facilityId, fullName: `Assistant ${tag} ${run}`, sex: "F", phone: `98${run.replace(/\D/g, "7").padEnd(8, "7").slice(0, 8)}` } });
+  await prisma.allergy.create({ data: { patientId: patient.id, substance: `Allergen${run}`, severity: "MILD" } });
+  const user = await prisma.user.create({ data: { email: `ai-assistant-${tag}-${run}@verify.aarogya`, displayName: `Assistant ${tag}`, role: Role.PATIENT, passwordHash: "x" } });
+  const { personId } = await linkAccountForGate(prisma, user.id, patient.id);
+  return { patient, user, personId, run };
+}
+
 async function main() {
-  // A Pune patient with an active allergy AND an active medicine (so both
-  // checks below are meaningful), linked to a portal account.
-  const target = await prisma.patient.findFirstOrThrow({
-    where: {
-      facilityId: "fac-amc-pune", userId: null, mergedIntoId: null,
-      // Phase 0: not already connected to another Person.
-      personLinks: { none: { status: { in: ["ACTIVE", "PENDING_VERIFICATION", "REVERIFICATION_REQUIRED"] } } },
-      allergies: { some: { status: "ACTIVE" } },
-      medicationOrders: { some: { status: { in: [...ACTIVE_MED_STATUSES] } } },
-    },
-    include: { allergies: { where: { status: "ACTIVE" } } },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-  });
-  const user = await prisma.user.upsert({
-    where: { email: "ai-assistant-patient@verify.aarogya" },
-    update: {},
-    create: { email: "ai-assistant-patient@verify.aarogya", displayName: "AI assistant patient", role: Role.PATIENT, passwordHash: "x" },
-  });
-  await linkAccountForGate(prisma, user.id, target.id);
-  const ctx: PatientContext = { session: { userId: user.id, role: Role.PATIENT } as PatientContext["session"], userId: user.id, selfPatientId: target.id, selfPatientIds: [target.id] };
+  setAIProviderForTest(capturing);
+  const PUNE = "fac-amc-pune";
 
-  // 1. The patient's own record.
-  const scope = await resolveReadScope(ctx);
-  const context = await patientAssistantContext(scope);
-  const allergies = target.allergies.map((a) => a.substance);
-  report("Patient context lists the patient's real allergies", allergies.every((a) => context.includes(a)), allergies.join(", "));
-  const activeMeds = (await listMedications(scope)).filter((m) => m.isActive).map((m) => m.drug);
-  // The context is deliberately small: each section shows its 8 most recent
-  // entries (listMedications is newest first).
-  const shown = activeMeds.slice(0, 8);
-  report("Patient context lists the patient's most recent active medicines", shown.length > 0 && shown.every((d) => context.includes(d)), shown.join(", "));
-  if (activeMeds.length > 8) {
-    const medLines = (context.split("ACTIVE MEDICINES\n")[1] ?? "").split("\n\n")[0].split("\n").filter((l) => l.startsWith("- "));
-    report("Patient context stays capped at 8 medicines", medLines.length === 8, `${medLines.length} shown of ${activeMeds.length} active`);
-  }
-  report("Patient context contains nothing from the landing demo story", landingStoryTimeline.every((e) => !context.includes(e.title) && !context.includes(e.description)));
-  const others = await prisma.patient.findMany({ where: { id: { not: target.id } }, select: { fullName: true }, take: 200, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
-  const leaked = others.map((o) => o.fullName).filter((n) => n && n !== target.fullName && context.includes(n));
-  report("Patient context names no other patient", leaked.length === 0, leaked.slice(0, 3).join(", "));
+  // 1. A patient: no record reaches the provider; identifiers masked; logged without text.
+  const a = await patientWithPerson("a", PUNE);
+  await prisma.person.update({ where: { id: a.personId }, data: { dataClassification: "SYNTHETIC" } });
+  const allergies = (await prisma.allergy.findMany({ where: { patientId: a.patient.id }, select: { substance: true } })).map((x) => x.substance);
+  const marks = [a.patient.fullName, a.patient.uhid, ...allergies];
+  seen.length = 0;
+  const r1 = await chatGeneral({ kind: "PATIENT", userId: a.user.id }, { message: `My number is ${a.patient.phone} and ABHA 12-3456-7890-1234. What can you do?` });
+  report("Patient: answered", r1.outcome === "ANSWERED", r1.outcome);
+  report("Patient: the provider was called once", seen.length === 1, String(seen.length));
+  report("Patient: no record reaches the provider (name, UHID, allergies)", seen.every((t) => marks.every((m) => !t.includes(m))));
+  report("Patient: their phone number is masked out of the message", seen.every((t) => !t.includes(a.patient.phone!)) && seen.some((t) => t.includes("[redacted]")));
+  report("Patient: an ABHA-shaped number is masked out of the message", seen.every((t) => !t.includes("12-3456-7890-1234")));
+  const row = await prisma.aiInteraction.findUnique({ where: { id: r1.interactionId } });
+  report("Patient: logged as ASSISTANT, with no text kept", row?.mode === "ASSISTANT" && row.personId === a.personId && !row.questionCiphertext && !row.answerCiphertext && row.patientId === null);
+  report("Patient: the reply carries the advisory label", r1.label.startsWith("AI-generated"));
 
-  // 2. A patient outside the caller's accessible set is a 404.
-  const stranger = await prisma.patient.findFirstOrThrow({ where: { facilityId: "fac-amc-noida" }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
-  const strangerScope = await resolveReadScope(ctx, stranger.id).then(() => "resolved", (e) => (e instanceof NotFoundError ? "404" : String(e)));
-  report("Asking about another facility's patient is a 404", strangerScope === "404", strangerScope);
+  // 2. Safety rules before any model.
+  seen.length = 0;
+  const urgent = await chatGeneral({ kind: "PATIENT", userId: a.user.id }, { message: "I have chest pain and can't breathe" });
+  report("Urgent symptom: the emergency line only, no model", urgent.outcome === "REFUSED_SAFETY" && urgent.text === phrase("en", "emergency") && seen.length === 0);
+  const dosing = await chatGeneral({ kind: "PATIENT", userId: a.user.id }, { message: "Should I stop my metformin?" });
+  report("Dosing question: ask your care team, no model", dosing.outcome === "REFUSED_SAFETY" && dosing.text === phrase("en", "askCareTeam") && seen.length === 0);
 
-  // 3. A delegate with only APPOINTMENTS shared sees no clinical sections.
-  const delegate: PatientAccessScope = { ...scope, isSelf: false, delegationId: "verify-delegation", allowedClasses: new Set(["APPOINTMENTS"]) };
-  const delegated = await patientAssistantContext(delegate);
-  report(
-    "A delegate without RECORDS sees no allergies",
-    delegated.includes("ALLERGIES\n(not shared with this account)") && allergies.every((a) => !delegated.includes(a))
-  );
-  report("A delegate's context says it is a delegated view", delegated.includes("delegated access"));
+  // 3. AI consent declined.
+  const b = await patientWithPerson("b", PUNE);
+  await prisma.person.update({ where: { id: b.personId }, data: { dataClassification: "SYNTHETIC" } });
+  await decidePersonConsent({ userId: b.user.id, purpose: "AI_ASSISTANCE", decision: "DECLINED" });
+  seen.length = 0;
+  const declined = await outcome(chatGeneral({ kind: "PATIENT", userId: b.user.id }, { message: "hello" }));
+  report("AI consent declined: 403, no model", declined === "403 AI_AI_DECLINED" && seen.length === 0, declined);
 
-  // 4. The clinician context is the authorized chart.
-  const chart = await clinicianAssistantContext(target.id, target.facilityId);
-  report("Clinician context is the real chart", chart.includes(target.uhid) && allergies.every((a) => chart.includes(a)));
+  // 4. A REAL Person.
+  const c = await patientWithPerson("c", PUNE);
+  await prisma.person.update({ where: { id: c.personId }, data: { dataClassification: "REAL" } });
+  const prevSwitch = process.env.AI_REAL_DATA_ENABLED;
+  delete process.env.AI_REAL_DATA_ENABLED;
+  seen.length = 0;
+  const real = await outcome(chatGeneral({ kind: "PATIENT", userId: c.user.id }, { message: "hello" }));
+  report("REAL Person, switch off: 403, no model", real === "403 AI_REAL_DATA_DISABLED" && seen.length === 0, real);
+  process.env.AI_REAL_DATA_ENABLED = "true";
+  delete process.env.AI_PHI_ALLOWED_ANTHROPIC;
+  await decidePersonConsent({ userId: c.user.id, purpose: "AI_ASSISTANCE", decision: "GRANTED" });
+  const anthropic = new AnthropicAIProvider("sk-ant-not-a-real-key");
+  const policy = await anthropic.assistantReply({ audience: "patient", message: "hello" }, issueAssistantPermit(true)).then(() => "sent", (e: Error) => e.message);
+  report("Switch on, consent granted, provider flag off: Anthropic refuses before any network call", policy === "DATA_POLICY", policy);
+  if (prevSwitch === undefined) delete process.env.AI_REAL_DATA_ENABLED; else process.env.AI_REAL_DATA_ENABLED = prevSwitch;
 
-  // 5. No model configured: the mock provider is honest.
-  const reply = await new MockAIProvider().assistantReply({ audience: "patient", context, message: "What are my allergies?" });
-  report("Mock provider says the assistant isn't connected, and invents nothing", reply.includes("isn't connected") && allergies.every((a) => !reply.includes(a)));
+  // 5. A login with no Person.
+  const orphan = await prisma.user.create({ data: { email: `ai-assistant-orphan-${randomUUID().slice(0, 8)}@verify.aarogya`, displayName: "No person", role: Role.PATIENT, passwordHash: "x" } });
+  seen.length = 0;
+  const noPerson = await outcome(chatGeneral({ kind: "PATIENT", userId: orphan.id }, { message: "hello" }));
+  report("A login with no Person: refused, no model", noPerson.startsWith("403 AI_") && seen.length === 0, noPerson);
 
+  // 6. Staff naming a patient: the record gateway.
+  const staff = async (role: Role, facilityId: string) => {
+    const p = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { department: { facilityId }, user: { role } }, orderBy: { id: "asc" }, select: { userId: true } });
+    return { kind: "STAFF" as const, userId: p.userId, role, facilityId };
+  };
+  seen.length = 0;
+  const noidaDoctor = await staff(Role.DOCTOR, "fac-amc-noida");
+  const cross = await outcome(chatAboutRecord(noidaDoctor, { patientId: a.patient.id, message: "What are the allergies?" }));
+  report("Another facility's patient: 404", cross === "404 NOT_FOUND", cross);
+  // Nurses have no department; the seeded Pune nurse is found by login.
+  const nurse = { kind: "STAFF" as const, userId: (await prisma.user.findUniqueOrThrow({ where: { email: "nurse1@amc-demo.aarogya" }, select: { id: true } })).id, role: Role.NURSE, facilityId: PUNE };
+  const unassigned = await outcome(chatAboutRecord(nurse, { patientId: a.patient.id, message: "What are the allergies?" }));
+  report("A nurse's unassigned patient: 404", unassigned === "404 NOT_FOUND", unassigned);
+  report("Record questions never reach the record-free assistant", seen.length === 0, String(seen.length));
+
+  // 7. AI off at the facility: Noida's published ai.enabled is retired for the check, then restored.
+  const noidaOn = await prisma.configurationOverride.findMany({ where: { facilityId: "fac-amc-noida", key: "ai.enabled", status: "PUBLISHED" }, select: { id: true } });
+  await prisma.configurationOverride.updateMany({ where: { id: { in: noidaOn.map((o) => o.id) } }, data: { status: "RETIRED" } });
+  seen.length = 0;
+  const off = await outcome(chatGeneral(noidaDoctor, { message: "hello" }));
+  await prisma.configurationOverride.updateMany({ where: { id: { in: noidaOn.map((o) => o.id) } }, data: { status: "PUBLISHED" } });
+  report("Staff where the AI is off: 403, no model", noidaOn.length > 0 && off === "403 AI_NOT_ENABLED" && seen.length === 0, off);
+
+  // 8. Scholar: record-free.
+  const student = await prisma.user.findFirstOrThrow({ where: { role: Role.STUDENT }, orderBy: { id: "asc" }, select: { id: true } });
+  seen.length = 0;
+  const s = await chatGeneral({ kind: "OTHER", userId: student.id, role: Role.STUDENT }, { message: "Explain the Glasgow coma scale" });
+  const srow = await prisma.aiInteraction.findUnique({ where: { id: s.interactionId } });
+  report("Scholar: answered record-free, logged with no person, patient or facility", s.outcome === "ANSWERED" && !!srow && srow.personId === null && srow.patientId === null && srow.facilityId === null);
+
+  // 9. Rate limits on the interaction log.
+  const d = await patientWithPerson("d", PUNE);
+  await prisma.person.update({ where: { id: d.personId }, data: { dataClassification: "SYNTHETIC" } });
+  const results: string[] = [];
+  for (let i = 0; i < 7; i++) results.push(await outcome(chatGeneral({ kind: "PATIENT", userId: d.user.id }, { message: `question ${i}` })));
+  report("Patient: six a minute, the seventh is 429", results.slice(0, 6).every((x) => x === "ANSWERED") && results[6] === "429 RATE_LIMITED", results.join(","));
+
+  setAIProviderForTest(null);
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();
   process.exit(fail === 0 ? 0 : 1);

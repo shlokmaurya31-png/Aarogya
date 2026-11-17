@@ -6,8 +6,11 @@ process.env.EMAIL_PROVIDER = "outbox";
  * Person B's own data carries a unique canary: an upload's title, a
  * patient-provided entry's value (Week 4a), a contact
  * and the access log. Then every staff-side surface that can show a
- * patient's documents (the documents list's filter, timeline, summary, the
- * clinician AI context) and every other account is asked, in each state:
+ * patient's documents (the documents list's filter, timeline, summary) and
+ * every other account is asked, in each state. (RAG Phase 1: the portal
+ * assistant no longer builds a clinician record context; a staff AI question
+ * about a record goes through the record gateway, whose Person B upload
+ * canaries are in verify-postgres-rag-leaks.)
  *
  *   B hasn't chosen to share uploads              → staff see nothing
  *   B shares, but no care relationship            → nothing
@@ -44,7 +47,6 @@ import { listReports } from "../src/lib/patient/experience/reports";
 import { buildRecords } from "../src/lib/patient/experience/records";
 import { buildPatientTimeline } from "../src/lib/patient/timeline";
 import { buildPatientSummary } from "../src/lib/patient/summary";
-import { clinicianAssistantContext } from "../src/lib/ai/assistantContext";
 import { staffDocumentVisibility, personAccess } from "../src/lib/person/access";
 import { staffPersonDocuments, personDocumentDownload } from "../src/lib/person/documents";
 import { personOverview } from "../src/lib/person/overview";
@@ -105,10 +107,9 @@ async function main() {
       ...(await staffPersonDocuments(facilityId, [patientId])),
     ];
     const [timeline, summary] = await Promise.all([buildPatientTimeline(patientId, { kind: "STAFF", facilityId }), buildPatientSummary(patientId, { kind: "STAFF", facilityId })]);
-    const ai = await clinicianAssistantContext(patientId, facilityId);
     const provided = await staffPatientProvidedRecords(facilityId, [patientId]);
     const conflicts = await facilityConflicts(facilityId, [patientId]);
-    return JSON.stringify({ docs, timeline, summary, ai, provided, conflicts });
+    return JSON.stringify({ docs, timeline, summary, provided, conflicts });
   };
   const sees = async (facilityId: string, patientId: string) => (await staffViews(facilityId, patientId)).includes(CANARY);
   const aSees = async () => {

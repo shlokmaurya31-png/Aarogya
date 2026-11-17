@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { issuePermit } from "./documents/permit";
+import { realDataEnabled } from "./dataPolicy";
 import type { ProcessingPermit } from "./documents/types";
 import { issueAiPermit } from "./record/permit";
 import type { AiPermit } from "./record/types";
@@ -19,17 +20,15 @@ export const REAL_DATA_PURPOSES = ["DOCUMENT_PROCESSING", "AI_ASSISTANCE"] as co
 export type RealDataPurpose = (typeof REAL_DATA_PURPOSES)[number];
 export type RealDataRefusal = "REAL_DATA_DISABLED" | "CONSENT_REQUIRED" | "PERSON_NOT_ACTIVE";
 
-export function realDataEnabled(env: Record<string, string | undefined> = process.env): boolean {
-  return env.AI_REAL_DATA_ENABLED === "true";
-}
+export { realDataEnabled };
 
-export async function mayProcessPersonData(personId: string, purpose: RealDataPurpose, env = process.env): Promise<{ allowed: true } | { allowed: false; reason: RealDataRefusal }> {
+export async function mayProcessPersonData(personId: string, purpose: RealDataPurpose, env = process.env): Promise<{ allowed: true; real: boolean } | { allowed: false; reason: RealDataRefusal }> {
   const person = await prisma.person.findUnique({ where: { id: personId }, select: { status: true, dataClassification: true } });
   if (!person || person.status !== "ACTIVE") return { allowed: false, reason: "PERSON_NOT_ACTIVE" };
-  if (person.dataClassification === "SYNTHETIC") return { allowed: true };
+  if (person.dataClassification === "SYNTHETIC") return { allowed: true, real: false };
   if (!realDataEnabled(env)) return { allowed: false, reason: "REAL_DATA_DISABLED" };
   const consent = await prisma.personConsent.findFirst({ where: { personId, purpose, status: "ACTIVE" }, select: { decision: true } });
-  return consent?.decision === "GRANTED" ? { allowed: true } : { allowed: false, reason: "CONSENT_REQUIRED" };
+  return consent?.decision === "GRANTED" ? { allowed: true, real: true } : { allowed: false, reason: "CONSENT_REQUIRED" };
 }
 
 /**
@@ -38,7 +37,7 @@ export async function mayProcessPersonData(personId: string, purpose: RealDataPu
  */
 export async function documentProcessingPermit(personId: string, env = process.env): Promise<{ allowed: true; permit: ProcessingPermit } | { allowed: false; reason: RealDataRefusal }> {
   const r = await mayProcessPersonData(personId, "DOCUMENT_PROCESSING", env);
-  return r.allowed ? { allowed: true, permit: issuePermit(personId) } : r;
+  return r.allowed ? { allowed: true, permit: issuePermit(personId, r.real) } : r;
 }
 
 // ── Week 4b: the AI over the record (docs/RAG_DESIGN.md §11) ─────────────────

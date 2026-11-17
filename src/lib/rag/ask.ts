@@ -59,8 +59,14 @@ export class AskError extends Error {
 // ── Rate limits (§8.3) ─────────────────────────────────────────────────────
 export const LIMITS = { STAFF: { perMinute: 20, perDay: 400 }, PATIENT: { perMinute: 6, perDay: 60 }, concurrent: 2 } as const;
 const inFlight = new Map<string, number>();
+/** One more request in flight for this user, until the returned function is called. */
+export function holdSlot(userId: string): () => void {
+  inFlight.set(userId, (inFlight.get(userId) ?? 0) + 1);
+  return () => inFlight.set(userId, Math.max(0, (inFlight.get(userId) ?? 1) - 1));
+}
 
-async function checkLimits(actor: AiActor) {
+/** Counted on the interaction log, so the limits hold across instances. Shared with the portal assistant (assistant.ts). */
+export async function checkLimits(actor: AiActor) {
   const who = actor.kind === "STAFF" ? LIMITS.STAFF : LIMITS.PATIENT;
   const now = Date.now();
   const counted = { userId: actor.userId, outcome: { not: "RATE_LIMITED" as const } };

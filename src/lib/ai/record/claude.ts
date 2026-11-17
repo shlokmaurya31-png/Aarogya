@@ -3,6 +3,7 @@ import { z } from "zod";
 import { aiModel } from "@/lib/ai/models";
 import { MODES, type AiMode } from "@/lib/rag/modes";
 import { assertAiPermit } from "./permit";
+import { providerMayReceive } from "@/lib/ai/dataPolicy";
 import { RecordAiUnavailableError, type AnswerRequest, type RecordAnswer, type RecordAnswerProvider } from "./types";
 
 /**
@@ -47,6 +48,8 @@ export function claudeRecordAnswer(apiKey: string): RecordAnswerProvider {
     id: "claude",
     async answerFromRecord(req, permit): Promise<RecordAnswer> {
       assertAiPermit(permit);
+      // Real data also needs this provider's own flag (ADR 0005 part C; default off).
+      if (!providerMayReceive("ANTHROPIC", permit.real)) throw new RecordAiUnavailableError("DATA_POLICY");
       const model = aiModel(MODES[req.mode].model);
       const { system, user } = buildRecordPrompt(req);
       let res: Anthropic.Message;

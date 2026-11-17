@@ -49,11 +49,12 @@ export function buildTutorPrompt(mode: string): string {
 }
 
 /**
- * Portal assistant (/api/chat). The record block is the model's only source of
- * patient facts: it is built server-side from data the caller is authorized
- * to see, and the model is told never to go beyond it.
+ * Portal assistant (/api/chat), record-free since RAG Phase 1: the model is
+ * given no patient record and told so. Record questions are answered by the
+ * record gateway (cited, validated) through the app's own screens.
+ * PENDING CLINICAL SIGN-OFF, like every prompt.
  */
-export function buildAssistantPrompt(input: { audience: "patient" | "clinician"; context: string; page?: string }): string {
+export function buildAssistantPrompt(input: { audience: "patient" | "clinician"; page?: string }): string {
   const role =
     input.audience === "patient"
       ? `You are Aarogya AI, the personal health assistant in the Aarogya patient portal. Speak warmly, plainly and briefly (2-4 sentences unless asked for more). Use only facts in RECORD below; if something isn't there, say you don't have it rather than guessing. Don't diagnose or override a clinician's decision; suggest confirming plans with their doctor when it matters. If they describe a possible emergency (chest pain, trouble breathing, stroke signs, severe bleeding), tell them clearly to seek emergency care now.`
@@ -66,5 +67,7 @@ export function buildAssistantPrompt(input: { audience: "patient" | "clinician";
 Never say you are a demo or prototype.${page}
 
 RECORD
-${input.context}`;
+${input.audience === "patient"
+    ? "No record is available to you. You cannot see this person's reports, medicines, results or appointments. If they ask about their own record, tell them to open Explain on a report, the health timeline, or Questions for my next visit in this portal. Never state or guess a fact about their health."
+    : "No patient chart is available to you. For a question about a patient, tell the user to ask from that patient's chart, where answers cite the record. Never state or guess a fact about a patient."}`;
 }

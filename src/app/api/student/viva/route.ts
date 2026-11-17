@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { requireVerifiedStudent } from "@/lib/auth/currentStudent";
 import { withApiErrors, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { getActiveCaseProvider } from "@/lib/clinical/gateway";
-import { getAIProvider } from "@/lib/ai/getAIProvider";
+import { getScholarAI } from "@/lib/ai/scholar";
 
 interface TranscriptEntry {
   prompt: string;
@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
     const full = await provider.getCaseFull(caseId);
     if (!full) throw new NotFoundError("Case not found.");
 
-    const ai = getAIProvider();
+    const ai = getScholarAI();
 
     if (type === "feedback") {
       const feedback = await ai.tutorFeedback({

@@ -72,6 +72,23 @@ export async function logRateLimited(actor: AiActor, mode: string): Promise<void
   await prisma.aiInteraction.create({ data: { userId: actor.userId, role: actor.kind === "STAFF" ? actor.role : "PATIENT", facilityId: actor.kind === "STAFF" ? actor.facilityId : null, mode, language: "en", model: "none", embeddingModel: "none", embeddingVersion: 0, outcome: "RATE_LIMITED", latencyMs: 0, metadataExpiresAt: new Date(Date.now() + METADATA_DAYS * DAY) } });
 }
 
+/**
+ * RAG Phase 1 — one portal-assistant request (mode ASSISTANT): metadata only.
+ * The assistant is record-free, so there is no patient, no source and no
+ * score; its text is never kept, for staff or patients.
+ */
+export async function logAssistantInteraction(input: { id: string; userId: string; role: string; organizationId: string | null; facilityId: string | null; personId: string | null; language: string; outcome: "ANSWERED" | "REFUSED_SAFETY" | "ERROR"; model: string; inputTokens: number; outputTokens: number; started: number }): Promise<void> {
+  const now = new Date();
+  await prisma.aiInteraction.create({
+    data: {
+      id: input.id, userId: input.userId, role: input.role, organizationId: input.organizationId, facilityId: input.facilityId, personId: input.personId,
+      mode: "ASSISTANT", language: input.language, model: input.model, embeddingModel: "none", embeddingVersion: 0, outcome: input.outcome,
+      retrievedChunkIds: [], citedChunkIds: [], inputTokens: input.inputTokens, outputTokens: input.outputTokens, latencyMs: Date.now() - input.started,
+      metadataExpiresAt: new Date(now.getTime() + METADATA_DAYS * DAY), createdAt: now,
+    },
+  });
+}
+
 /** A family member's access was revoked: the text kept of their AI questions about the patient goes (metadata stays). */
 export async function purgeProxyAiText(proxyGrantId: string): Promise<number> {
   return (await prisma.aiInteraction.updateMany({

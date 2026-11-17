@@ -1,122 +1,72 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireSession, UnauthorizedError, NotFoundError, ForbiddenError } from "@/lib/auth/rbac";
-import { rateLimit } from "@/lib/auth/rateLimit";
-import { recordAuditEvent } from "@/lib/auth/audit";
+import { requireSession, UnauthorizedError, ForbiddenError, NotFoundError, BadRequestError } from "@/lib/auth/rbac";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
-import { prisma } from "@/lib/db";
-import { getAIProvider } from "@/lib/ai/getAIProvider";
-import { patientAssistantContext, clinicianAssistantContext } from "@/lib/ai/assistantContext";
-import { requirePatientContext, resolveReadScope } from "@/lib/patient/context";
+import { AskError } from "@/lib/rag/ask";
+import { chatAboutRecord, chatGeneral, CHAT_LIMITS, type ChatActor } from "@/lib/rag/assistant";
 
 /**
- * The portal assistant ("Aarogya AI"). The record it answers from is built on
- * the server from what the caller is authorized to read. Nothing about the
- * patient comes from the client, and the audience comes from the account's
- * role, not from the request.
+ * POST /api/chat — the portal assistant ("Aarogya AI").
  *
- *   PATIENT accounts  their own record, or a delegated one (patientId), via
- *                     the patient portal's scope and data classes.
- *   Hospital staff    a general clinical assistant; with a patientId, that
- *                     one chart, only if the caller may read charts in the
- *                     patient's facility. The read is audited.
- *   Everyone else     (e.g. Scholar) a general assistant with no patient
- *                     record.
+ * RAG Phase 1: this route no longer builds a record and no longer reaches a
+ * provider itself. Everything goes through the assistant gateway
+ * (src/lib/rag/assistant.ts), which applies the same checks as /api/ai/ask:
  *
- * The model is reached only through the AI provider boundary (src/lib/ai):
- * with no ANTHROPIC_API_KEY the mock provider answers honestly instead of
- * failing.
+ *   Hospital staff naming a patient   the record gateway (CHART_QA): access
+ *                                     resolver, real-data switch, AI consent,
+ *                                     masked sources, cited and validated
+ *                                     sentences, the interaction log.
+ *   Everyone else                     a record-free reply: no patient record
+ *                                     is given to the model. A patient asks
+ *                                     about their record through Explain, the
+ *                                     timeline and pre-visit questions.
+ *
+ * Nothing about the caller comes from the request: the role, the facility
+ * and every access decision come from the session. The response is
+ * { text, outcome, label, interactionId, citations }; { error } otherwise
+ * (400, 401, 403, 404, 413, 429, 503).
  */
-
-// Every call can spend model credits, so the route is signed-in only and
-// capped per user. Clients fall back to canned replies on any non-200.
-const PER_MINUTE = 10;
-const PER_DAY = 200;
-const MAX_MESSAGE_CHARS = 2000;
-const MAX_PAGE_CHARS = 100;
 const MAX_BODY_BYTES = 64 * 1024;
+const HOSPITAL_ROLES = new Set(["DOCTOR", "NURSE", "LAB_TECHNICIAN", "RADIOLOGY_TECH", "PHARMACIST", "BILLING_STAFF", "FRONT_DESK", "HOSPITAL_ADMIN", "PROCUREMENT_OFFICER"]);
 
-const HOSPITAL_ROLES = new Set(["DOCTOR", "NURSE", "LAB_TECHNICIAN", "RADIOLOGY_TECH", "PHARMACIST", "BILLING_STAFF", "FRONT_DESK", "HOSPITAL_ADMIN"]);
+function errorResponse(err: unknown): NextResponse {
+  if (err instanceof AskError) return NextResponse.json({ error: err.code }, { status: err.status });
+  if (err instanceof UnauthorizedError) return NextResponse.json({ error: "Sign in to use the assistant." }, { status: 401 });
+  if (err instanceof ForbiddenError) return NextResponse.json({ error: err.message }, { status: 403 });
+  if (err instanceof NotFoundError) return NextResponse.json({ error: "Not found." }, { status: 404 });
+  if (err instanceof BadRequestError) return NextResponse.json({ error: err.message }, { status: 400 });
+  // Other 4xx domain errors (e.g. a suspended tenant's 403) keep their status.
+  const status = (err as { status?: unknown })?.status;
+  if (typeof status === "number" && status >= 400 && status < 500) return NextResponse.json({ error: err instanceof Error ? err.message : "Request failed." }, { status });
+  console.error("chat failed", err instanceof Error ? err.name : "unknown");
+  return NextResponse.json({ error: "Internal error." }, { status: 500 });
+}
 
 export async function POST(req: NextRequest) {
-  let session: Awaited<ReturnType<typeof requireSession>>;
   try {
-    session = await requireSession();
+    const session = await requireSession();
+    const raw = await req.text();
+    if (Buffer.byteLength(raw, "utf8") > MAX_BODY_BYTES) return NextResponse.json({ error: "Request too large." }, { status: 413 });
+    let body: { message?: unknown; page?: unknown; patientId?: unknown };
+    try { body = JSON.parse(raw); } catch { throw new BadRequestError("Invalid JSON."); }
+    const message = typeof body.message === "string" ? body.message.trim() : "";
+    if (!message) throw new BadRequestError("Missing 'message' string.");
+    if (message.length > CHAT_LIMITS.messageChars) throw new BadRequestError(`Message exceeds ${CHAT_LIMITS.messageChars} characters.`);
+    const page = typeof body.page === "string" ? body.page.slice(0, CHAT_LIMITS.pageChars) : undefined;
+    const patientId = typeof body.patientId === "string" && body.patientId ? body.patientId.slice(0, 64) : null;
+
+    if (HOSPITAL_ROLES.has(session.role)) {
+      if (patientId) {
+        // A record question: only for roles that may ask the record AI, and only through its gateway.
+        const { session: s, facilityId } = await requireFacilityStaff("ai:record:ask");
+        return NextResponse.json(await chatAboutRecord({ kind: "STAFF", userId: s.userId, role: s.role, facilityId }, { patientId, message }));
+      }
+      const { session: s, facilityId } = await requireFacilityStaff("clinical:chart:read");
+      return NextResponse.json(await chatGeneral({ kind: "STAFF", userId: s.userId, role: s.role, facilityId }, { message, page }));
+    }
+    // A patient's `patientId` (a delegated record) is ignored: the assistant is record-free for patients.
+    const actor: ChatActor = session.role === "PATIENT" ? { kind: "PATIENT", userId: session.userId } : { kind: "OTHER", userId: session.userId, role: session.role };
+    return NextResponse.json(await chatGeneral(actor, { message, page }));
   } catch (err) {
-    if (err instanceof UnauthorizedError) {
-      return NextResponse.json({ error: "Sign in to use the assistant." }, { status: 401 });
-    }
-    throw err;
-  }
-  const userId = session.userId;
-
-  for (const [scope, limit, windowMs] of [
-    ["min", PER_MINUTE, 60_000],
-    ["day", PER_DAY, 86_400_000],
-  ] as const) {
-    const rl = await rateLimit(`chat:${scope}:${userId}`, limit, windowMs);
-    if (!rl.allowed) {
-      return NextResponse.json(
-        { error: "Too many assistant requests. Try again shortly." },
-        { status: 429, headers: { "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } }
-      );
-    }
-  }
-
-  const raw = await req.text();
-  if (raw.length > MAX_BODY_BYTES) {
-    return NextResponse.json({ error: "Request too large." }, { status: 413 });
-  }
-  let body: { message?: unknown; page?: unknown; patientId?: unknown };
-  try {
-    body = JSON.parse(raw);
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON." }, { status: 400 });
-  }
-  const { message } = body;
-  if (!message || typeof message !== "string") {
-    return NextResponse.json({ error: "Missing 'message' string." }, { status: 400 });
-  }
-  if (message.length > MAX_MESSAGE_CHARS) {
-    return NextResponse.json({ error: `Message exceeds ${MAX_MESSAGE_CHARS} characters.` }, { status: 400 });
-  }
-  const page = typeof body.page === "string" ? body.page.slice(0, MAX_PAGE_CHARS) : undefined;
-  const patientId = typeof body.patientId === "string" && body.patientId ? body.patientId : null;
-
-  let audience: "patient" | "clinician";
-  let context: string;
-  try {
-    if (session.role === "PATIENT") {
-      audience = "patient";
-      const scope = await resolveReadScope(await requirePatientContext(), patientId);
-      context = await patientAssistantContext(scope);
-    } else if (HOSPITAL_ROLES.has(session.role) && patientId) {
-      audience = "clinician";
-      const { facilityId } = await requireFacilityStaff("clinical:chart:read");
-      const patient = await prisma.patient.findUnique({ where: { id: patientId }, select: { facilityId: true } });
-      if (!patient || patient.facilityId !== facilityId) throw new NotFoundError("Patient not found.");
-      context = await clinicianAssistantContext(patientId, facilityId);
-      await recordAuditEvent("hospital.patient.viewed", userId, { patientId, view: "ai-assistant" }, { facilityId, patientId });
-    } else {
-      // Scholar and staff without an open chart: no patient record at all.
-      audience = "clinician";
-      context = "No patient chart is open.";
-    }
-  } catch (err) {
-    if (err instanceof NotFoundError) return NextResponse.json({ error: "Not found." }, { status: 404 });
-    if (err instanceof ForbiddenError) return NextResponse.json({ error: err.message }, { status: 403 });
-    // Other 4xx domain errors (e.g. a suspended tenant's 403) keep their status.
-    const status = (err as { status?: unknown })?.status;
-    if (typeof status === "number" && status >= 400 && status < 500) {
-      return NextResponse.json({ error: err instanceof Error ? err.message : "Request failed." }, { status });
-    }
-    throw err;
-  }
-
-  try {
-    const text = await getAIProvider().assistantReply({ audience, context, page, message });
-    return NextResponse.json({ text });
-  } catch (err) {
-    console.error("AI provider error:", err);
-    return NextResponse.json({ error: "AI request failed." }, { status: 502 });
+    return errorResponse(err);
   }
 }

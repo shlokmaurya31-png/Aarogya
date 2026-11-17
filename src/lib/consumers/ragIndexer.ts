@@ -2,7 +2,7 @@ import type { RagSourceType } from "@prisma/client";
 import type { DomainEventConsumer } from "@/lib/events/consumers";
 import { RetryableEventError } from "@/lib/events/types";
 import { prisma } from "@/lib/db";
-import { EmbeddingUnavailableError } from "@/lib/ai/embeddings";
+import { EmbeddingUnavailableError } from "@/lib/ai/embeddings/types";
 import { indexSource, reindexPerson, removePersonAiIndex, setPersonOnFacilityIndex } from "@/lib/rag/indexer";
 import { removeOwnerIndex } from "@/lib/rag/remove";
 import { purgeProxyAiText } from "@/lib/rag/interactions";

@@ -2,7 +2,15 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { aiModel } from "@/lib/ai/models";
 import { assertPermit } from "./permit";
-import { DocumentProviderError, type CandidateFact, type FactExtractor, type MedicineTagger, type TranslationProvider, type VisionOcrProvider } from "./types";
+import { providerMayReceive } from "@/lib/ai/dataPolicy";
+
+import { DocumentProviderError, type ProcessingPermit, type CandidateFact, type FactExtractor, type MedicineTagger, type TranslationProvider, type VisionOcrProvider } from "./types";
+
+/** A permit, and for real data this provider's own data-policy flag (ADR 0005 part C; default off). */
+function guard(permit: ProcessingPermit | undefined): asserts permit is ProcessingPermit {
+  assertPermit(permit);
+  if (!providerMayReceive("ANTHROPIC", permit.real)) throw new DocumentProviderError("REAL_DATA_DISABLED");
+}
 
 /**
  * Week 4a — Claude implementations of the document providers
@@ -86,7 +94,7 @@ export function claudeOcr(c: ClaudeDocumentClient): VisionOcrProvider {
   return {
     id: "claude",
     async ocrPage(page, hints, permit) {
-      assertPermit(permit);
+      guard(permit);
       const model = aiModel(hints.retry ? "ocr_retry" : "ocr");
       const data = page.bytes.toString("base64");
       const source: Anthropic.ContentBlockParam = page.contentType === "application/pdf"
@@ -117,7 +125,7 @@ export function claudeTranslation(c: ClaudeDocumentClient): TranslationProvider 
   return {
     id: "claude",
     async translate(text, from, to, opts, permit) {
-      assertPermit(permit);
+      guard(permit);
       const model = aiModel("translation");
       const system = [
         `Translate the user's text from ${from} to ${to} for a patient reading their own medical document.`,
@@ -141,7 +149,7 @@ export function claudeExtraction(c: ClaudeDocumentClient): FactExtractor {
   return {
     id: "claude",
     async extract(page, permit, opts) {
-      assertPermit(permit);
+      guard(permit);
       const model = aiModel("extraction");
       const system = [
         opts?.pass === 2
@@ -171,7 +179,7 @@ export function claudeTagging(c: ClaudeDocumentClient): MedicineTagger {
   return {
     id: "claude",
     async tagMedicines(text, permit) {
-      assertPermit(permit);
+      guard(permit);
       const model = aiModel("tagging");
       const r = await c.toolCall({
         model,
