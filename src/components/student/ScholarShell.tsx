@@ -12,7 +12,7 @@ import { ThemeToggle } from "@/components/navigation/ThemeToggle";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { ToastViewport } from "@/components/shared/ToastViewport";
 import { AiAssistantProvider, AiCommandBar } from "@/components/ai/PortalAssistant";
-import { clearAppCaches } from "@/lib/pwa/clearCaches";
+import { clearAppData } from "@/lib/pwa/clearCaches";
 
 const NAV = [
   { href: "/student/dashboard", label: "Overview", icon: LayoutGrid },
@@ -42,7 +42,7 @@ export function ScholarShell({
 
   async function handleLogout() {
     await fetch("/api/scholar-auth/logout", { method: "POST" });
-    await clearAppCaches();
+    await clearAppData();
     router.push("/student");
     router.refresh();
   }

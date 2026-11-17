@@ -1,5 +1,6 @@
 "use client";
 
+import { NEWS2_STATUS } from "@/lib/clinical/news2";
 import { useEffect, useState, useCallback } from "react";
 import { ChartAi } from "@/components/ai/ChartAi";
 import { RecordRequests } from "./RecordRequests";
@@ -27,7 +28,7 @@ interface ChartData {
   diagnoses: { id: string; diagnosis: string; type: string; status: string }[];
   encounters: { id: string; type: string; status: string; chiefComplaint: string | null; registeredAt: string }[];
   notes: { id: string; type: string; status: string; content: { assessment?: string; plan?: string; [k: string]: unknown }; author: { user: { displayName: string } }; createdAt: string }[];
-  vitals: { id: string; hr: number | null; sbp: number | null; dbp: number | null; spo2: number | null; tempC: number | null; recordedAt: string }[];
+  vitals: { id: string; hr: number | null; sbp: number | null; dbp: number | null; spo2: number | null; tempC: number | null; recordedAt: string; news2Score?: number | null; news2Parameters?: number | null; news2Status?: string | null }[];
   medicationOrders: {
     id: string; drugName: string; dose: string; route: string; frequency: string; status: string; orderedAt: string; isControlled: boolean;
     safetyWarnings: { id: string; severity: string; message: string; acknowledgedAt: string | null }[];
@@ -532,6 +533,12 @@ export function PatientChart({ patientId }: { patientId: string }) {
                 <div key={v.id} className="text-[11.5px]">
                   <span className="text-text-tertiary">{new Date(v.recordedAt).toLocaleString()}</span>{" "}
                   HR {v.hr ?? "-"} · BP {v.sbp ?? "-"}/{v.dbp ?? "-"} · SpO2 {v.spo2 ?? "-"}% · Temp {v.tempC ?? "-"}°C
+                  {v.news2Score != null && (
+                    <span aria-label="Early warning score">
+                      {" "}· NEWS2 {v.news2Score}{v.news2Parameters != null && v.news2Parameters < 7 ? ` (${v.news2Parameters} of 7 recorded)` : ""}{" "}
+                      <span className="rounded-full border border-amber/40 px-1.5 text-amber">{v.news2Status === "PENDING_CLINICAL_SIGN_OFF" ? `placeholder, ${NEWS2_STATUS}` : NEWS2_STATUS}</span>
+                    </span>
+                  )}
                 </div>
               ))}
               {data.vitals.length === 0 && <p className="text-[11.5px] text-text-tertiary">No vitals recorded.</p>}

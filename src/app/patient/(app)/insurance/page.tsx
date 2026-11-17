@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { CashlessRequests } from "@/components/patient-portal/CashlessRequests";
 import { Card, SectionTitle, Empty, Unavailable, usePatientData, formatDate, StatusPill, rupees } from "@/components/patient-portal/ui";
 
 /**
@@ -171,6 +172,7 @@ export default function InsurancePage() {
         ) : <Empty>No cards yet.</Empty>}
         {adding && <AddCard onDone={() => { setAdding(false); cards.reload(); }} />}
       </Card>
+      <Suspense fallback={null}><CashlessRequests /></Suspense>
       <Card>
         <SectionTitle>Visits and bills</SectionTitle>
         {status.state.status === "loading" ? <Empty>Loading…</Empty> : status.state.status === "error" ? <Unavailable label="Bills" /> : status.state.data.visits.length === 0 ? <Empty>No bills yet.</Empty> : (

@@ -146,6 +146,9 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/billing/bootstrap.ts#ensureBillingBootstrap": { category: "BOOKKEEPING", reason: "idempotent bootstrap / one-off migration" },
   // Phase 0 — steps of linking/unlinking a record to a Person; the outcome is
   // emitted when the link becomes ACTIVE (or is refused/ends) or UNLINKED.
+  "src/lib/patient/experience/resumableUpload.ts#startUpload": { category: "PROCESS_STEP", reason: "Flagship 5 (6c): a resumable upload begins; its outcome is the document, uploaded through uploadPatientDocument", boundary: ["PersonDocumentUploaded"] },
+  "src/lib/patient/experience/resumableUpload.ts#putUploadChunk": { category: "PROCESS_STEP", reason: "Flagship 5 (6c): one piece of a resumable upload; its outcome is the document", boundary: ["PersonDocumentUploaded"] },
+  "src/lib/patient/experience/resumableUpload.ts#purgeExpiredUploads": { category: "BOOKKEEPING", reason: "Flagship 5 (6c): unfinished uploads older than a day are deleted (no document ever existed)" },
   "src/lib/person/linking.ts#submitSecondFactor": { category: "PROCESS_STEP", reason: "second factor checked, code sent (or moved to in-person); the outcome is the link", boundary: ["PersonPatientLinked"] },
   "src/lib/person/linking.ts#startInPersonVerification": { category: "PROCESS_STEP", reason: "first staff member's ID check; a second approves and the person confirms", boundary: ["PersonPatientLinked"] },
   "src/lib/person/linking.ts#approveInPersonVerification": { category: "PROCESS_STEP", reason: "second staff member's approval; the person still confirms", boundary: ["PersonPatientLinked"] },
@@ -163,6 +166,7 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/household/dependentConsent.ts#legalDocumentUrl": { category: "BOOKKEEPING", reason: "Week 5b: the reviewing staff member's read of a legal document, in the member's access log (part of the read)" },
   "src/lib/insurance/cards.ts#cardForEdit": { category: "BOOKKEEPING", reason: "Week 5c: a proxy's read of a member's card, in the member's access log (part of the read)" },
   "src/lib/insurance/cards.ts#staffCard": { category: "BOOKKEEPING", reason: "Week 5c: a facility's read of a card through its card share, in the member's access log (part of the read)" },
+  "src/lib/insurance/cashless/service.ts#patientCashless": { category: "BOOKKEEPING", reason: "Flagship 5 cashless: a proxy's read of a member's cashless requests, in the member's access log (part of the read)" },
   "src/lib/household/proxy.ts#logProxy": { category: "BOOKKEEPING", reason: "Week 5b: a proxy's action in the member's access log (docs/HOUSEHOLD_DESIGN.md §5): part of the action, no record changes" },
   "src/lib/rag/access.ts#resolveAiAccess": { category: "BOOKKEEPING", reason: "Week 5b: a proxy's AI request in the member's access log (part of the read)" },
   "src/lib/household/guardianConsent.ts#startGuardianConsent": { category: "PROCESS_STEP", reason: "Week 5b: a pending guardian's choice for a managed child (the code sent); confirming it records the consent", boundary: ["PersonConsentDecided"] },

@@ -5,6 +5,7 @@ import { recordAuditEvent } from "@/lib/auth/audit";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 import { createTask } from "@/lib/hospital/task";
 import { administerMedicationTx, givePrnDoseTx, prnStanding, recordOfflineGivenTx } from "@/lib/hospital/medicationLifecycle";
+import { news2OfSyncedVitals } from "@/lib/clinical/news2";
 import { abnormalOf, recordIntakeOutputTx, recordVitalsTx, type VitalsInput } from "@/lib/hospital/clinicalRecords";
 import { closeTask } from "@/lib/hospital/task";
 import { assertFacilityNurse, currentChargeNurse } from "./chargeShift";
@@ -555,7 +556,7 @@ async function applyRecordCommand(nurse: NurseActor, device: { id: string; wardI
       if (kind === "VITALS") {
         const vitals = parseVitals(raw.vitals);
         if (!vitals) return refuse("INVALID_VALUES");
-        await recordVitalsTx(tx, { encounterId: encounter.id, facilityId: nurse.facilityId, staffId: nurse.staffId, vitals, byUserId: nurse.userId, recordedAt: appliedTime }, await abnormalOf(nurse.facilityId, vitals));
+        await recordVitalsTx(tx, { encounterId: encounter.id, facilityId: nurse.facilityId, staffId: nurse.staffId, vitals, byUserId: nurse.userId, recordedAt: appliedTime, news2: news2OfSyncedVitals(vitals) }, await abnormalOf(nurse.facilityId, vitals));
       } else {
         const ioType = raw.ioType === "INPUT" || raw.ioType === "OUTPUT" ? raw.ioType : null;
         const category = ioType && (IO_CATEGORIES[ioType] as readonly string[]).includes(String(raw.category)) ? String(raw.category) : null;

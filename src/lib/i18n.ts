@@ -1,22 +1,12 @@
-export type LanguageCode = "en" | "hi" | "bn" | "mr" | "te" | "ta" | "gu" | "ur" | "kn" | "or" | "ml";
-
-export const LANGUAGES: { code: LanguageCode; label: string; nativeLabel: string }[] = [
-  { code: "en", label: "English", nativeLabel: "English" },
-  { code: "hi", label: "Hindi", nativeLabel: "हिन्दी" },
-  { code: "bn", label: "Bengali", nativeLabel: "বাংলা" },
-  { code: "mr", label: "Marathi", nativeLabel: "मराठी" },
-  { code: "te", label: "Telugu", nativeLabel: "తెలుగు" },
-  { code: "ta", label: "Tamil", nativeLabel: "தமிழ்" },
-  { code: "gu", label: "Gujarati", nativeLabel: "ગુજરાતી" },
-  { code: "ur", label: "Urdu", nativeLabel: "اردو" },
-  { code: "kn", label: "Kannada", nativeLabel: "ಕನ್ನಡ" },
-  { code: "or", label: "Odia", nativeLabel: "ଓଡ଼ିଆ" },
-  { code: "ml", label: "Malayalam", nativeLabel: "മലയാളം" },
-];
+export type { LanguageCode } from "./i18nShell";
+export { LANGUAGES } from "./i18nShell";
+import { SHELL_TRANSLATIONS, type LanguageCode } from "./i18nShell";
 
 type Translation = Partial<Record<LanguageCode, string>> & { en: string };
 
 export const TRANSLATIONS: Record<string, Translation> = {
+  // The shell's own strings (theme, toasts, the patient app's navigation) live in ./i18nShell, which the patient app loads alone.
+  ...SHELL_TRANSLATIONS,
   // Nav tabs
   "nav.summary": { en: "Summary", hi: "सारांश", bn: "সারসংক্ষেপ", mr: "सारांश", te: "సారాంశం", ta: "சுருக்கம்", gu: "સારાંશ", ur: "خلاصہ", kn: "ಸಾರಾಂಶ", or: "ସାରାଂଶ", ml: "സംഗ്രഹം" },
   "nav.history": { en: "History", hi: "इतिहास", bn: "ইতিহাস", mr: "इतिहास", te: "చరిత్ర", ta: "வரலாறு", gu: "ઇતિહાસ", ur: "تاریخ", kn: "ಇತಿಹಾಸ", or: "ଇତିହାସ", ml: "ചരിത്രം" },
@@ -220,8 +210,6 @@ export const TRANSLATIONS: Record<string, Translation> = {
   "settings.field.confirmPassword": { en: "Confirm new password", hi: "नए पासवर्ड की पुष्टि करें", bn: "নতুন পাসওয়ার্ড নিশ্চিত করুন", mr: "नवीन पासवर्डची पुष्टी करा", te: "కొత్త పాస్‌వర్డ్‌ను నిర్ధారించండి", ta: "புதிய கடவுச்சொல்லை உறுதிப்படுத்தவும்", gu: "નવો પાસવર્ડ ખાતરી કરો", ur: "نیا پاس ورڈ تصدیق کریں", kn: "ಹೊಸ ಪಾಸ್‌ವರ್ಡ್ ದೃಢೀಕರಿಸಿ", or: "ନୂଆ ପାସୱାର୍ଡ ନିଶ୍ଚିତ କରନ୍ତୁ", ml: "പുതിയ പാസ്‌വേഡ് സ്ഥിരീകരിക്കുക" },
   "settings.btn.updatePassword": { en: "Update password", hi: "पासवर्ड अपडेट करें", bn: "পাসওয়ার্ড আপডেট করুন", mr: "पासवर्ड अपडेट करा", te: "పాస్‌వర్డ్‌ను అప్‌డేట్ చేయండి", ta: "கடவுச்சொல்லைப் புதுப்பிக்கவும்", gu: "પાસવર્ડ અપડેટ કરો", ur: "پاس ورڈ اپ ڈیٹ کریں", kn: "ಪಾಸ್‌ವರ್ಡ್ ನವೀಕರಿಸಿ", or: "ପାସୱାର୍ଡ ଅପଡେଟ କରନ୍ତୁ", ml: "പാസ്‌വേഡ് അപ്ഡേറ്റ് ചെയ്യുക" },
   "settings.section.appearance": { en: "Appearance", hi: "दिखावट", bn: "চেহারা", mr: "देखावा", te: "రూపం", ta: "தோற்றம்", gu: "દેખાવ", ur: "ظاہری شکل", kn: "ಗೋಚರತೆ", or: "ଦୃଶ୍ୟ", ml: "രൂപം" },
-  "settings.theme.light": { en: "Light", hi: "लाइट", bn: "লাইট", mr: "लाइट", te: "లైట్", ta: "லைட்", gu: "લાઇટ", ur: "لائٹ", kn: "ಲೈಟ್", or: "ଲାଇଟ", ml: "ലൈറ്റ്" },
-  "settings.theme.dark": { en: "Dark", hi: "डार्क", bn: "ডার্ক", mr: "डार्क", te: "డార్క్", ta: "டார்க்", gu: "ડાર્ક", ur: "ڈارک", kn: "ಡಾರ್ಕ್", or: "ଡାର୍କ", ml: "ഡാർക്ക്" },
   "settings.section.language": { en: "Language", hi: "भाषा", bn: "ভাষা", mr: "भाषा", te: "భాష", ta: "மொழி", gu: "ભાષા", ur: "زبان", kn: "ಭಾಷೆ", or: "ଭାଷା", ml: "ഭാഷ" },
   "settings.section.logout": { en: "Log out", hi: "लॉग आउट", bn: "লগ আউট", mr: "लॉग आउट", te: "లాగ్ అవుట్", ta: "வெளியேறு", gu: "લોગ આઉટ", ur: "لاگ آؤٹ", kn: "ಲಾಗ್ ಔಟ್", or: "ଲଗ ଆଉଟ", ml: "ലോഗ് ഔട്ട്" },
   "settings.logout.description": { en: "You'll need to sign in again to access your account.", hi: "अपने खाते तक पहुंचने के लिए आपको फिर से साइन इन करना होगा।", bn: "আপনার অ্যাকাউন্ট অ্যাক্সেস করতে আবার সাইন ইন করতে হবে।", mr: "तुमच्या खात्यात प्रवेश करण्यासाठी तुम्हाला पुन्हा साइन इन करावे लागेल.", te: "మీ ఖాతాను యాక్సెస్ చేయడానికి మీరు మళ్లీ సైన్ ఇన్ చేయాలి.", ta: "உங்கள் கணக்கை அணுக மீண்டும் உள்நுழைய வேண்டும்.", gu: "તમારા ખાતામાં પ્રવેશવા માટે તમારે ફરીથી સાઇન ઇન કરવું પડશે.", ur: "اپنے اکاؤنٹ تک رسائی کے لیے آپ کو دوبارہ سائن ان کرنا ہوگا۔", kn: "ನಿಮ್ಮ ಖಾತೆಯನ್ನು ಪ್ರವೇಶಿಸಲು ನೀವು ಮತ್ತೆ ಸೈನ್ ಇನ್ ಮಾಡಬೇಕಾಗುತ್ತದೆ.", or: "ଆପଣଙ୍କ ଖାତାରେ ପ୍ରବେଶ କରିବାକୁ ପୁନର୍ବାର ସାଇନ ଇନ କରିବାକୁ ପଡିବ।", ml: "നിങ്ങളുടെ അക്കൗണ്ട് ആക്‌സസ് ചെയ്യാൻ വീണ്ടും സൈൻ ഇൻ ചെയ്യേണ്ടിവരും." },
@@ -661,12 +649,9 @@ export const TRANSLATIONS: Record<string, Translation> = {
   "ai.closeAssistant": { en: "Close Aarogya AI assistant", hi: "आरोग्य AI सहायक बंद करें", bn: "আরোগ্য AI সহকারী বন্ধ করুন", mr: "आरोग्य AI सहाय्यक बंद करा", te: "ఆరోగ్య AI సహాయకుడిని మూసివేయండి", ta: "ஆரோக்யா AI உதவியாளரை மூடு", gu: "આરોગ્ય AI સહાયક બંધ કરો", ur: "آروگیا AI معاون بند کریں", kn: "ಆರೋಗ್ಯ AI ಸಹಾಯಕವನ್ನು ಮುಚ್ಚಿ", or: "ଆରୋଗ୍ୟ AI ସହାୟକ ବନ୍ଦ କରନ୍ତୁ", ml: "ആരോഗ്യ AI സഹായി അടയ്ക്കുക" },
 
   // Theme, labs, notifications, misc common
-  "theme.switchToLight": { en: "Switch to light theme", hi: "लाइट थीम पर स्विच करें", bn: "লাইট থিমে স্যুইচ করুন", mr: "लाइट थीमवर स्विच करा", te: "లైట్ థీమ్‌కు మారండి", ta: "லைட் தீமிற்கு மாறவும்", gu: "લાઇટ થીમ પર સ્વિચ કરો", ur: "لائٹ تھیم پر جائیں", kn: "ಲೈಟ್ ಥೀಮ್‌ಗೆ ಬದಲಿಸಿ", or: "ଲାଇଟ ଥିମକୁ ସ୍ୱିଚ କରନ୍ତୁ", ml: "ലൈറ്റ് തീമിലേക്ക് മാറുക" },
-  "theme.switchToDark": { en: "Switch to dark theme", hi: "डार्क थीम पर स्विच करें", bn: "ডার্ক থিমে স্যুইচ করুন", mr: "डार्क थीमवर स्विच करा", te: "డార్క్ థీమ్‌కు మారండి", ta: "டார்க் தீமிற்கு மாறவும்", gu: "ડાર્ક થીમ પર સ્વિચ કરો", ur: "ڈارک تھیم پر جائیں", kn: "ಡಾರ್ಕ್ ಥೀಮ್‌ಗೆ ಬದಲಿಸಿ", or: "ଡାର୍କ ଥିମକୁ ସ୍ୱିଚ କରନ୍ତୁ", ml: "ഡാർക്ക് തീമിലേക്ക് മാറുക" },
   "labs.eyebrow": { en: "Lab Results", hi: "लैब परिणाम", bn: "ল্যাব ফলাফল", mr: "लॅब निकाल", te: "ల్యాబ్ ఫలితాలు", ta: "ஆய்வக முடிவுகள்", gu: "લેબ પરિણામો", ur: "لیب نتائج", kn: "ಲ್ಯಾಬ್ ಫಲಿತಾಂಶಗಳು", or: "ଲ୍ୟାବ ଫଳାଫଳ", ml: "ലാബ് ഫലങ്ങൾ" },
   "labs.ref": { en: "Ref", hi: "संदर्भ", bn: "রেফ", mr: "संदर्भ", te: "రెఫ్", ta: "குறிப்பு", gu: "સંદર્ભ", ur: "حوالہ", kn: "ಉಲ್ಲೇಖ", or: "ରେଫ", ml: "റഫ" },
   "notifications.empty": { en: "Nothing new yet.", hi: "अभी तक कुछ नया नहीं।", bn: "এখনো নতুন কিছু নেই।", mr: "अजून काहीही नवीन नाही.", te: "ఇంకా కొత్తది ఏమీ లేదు.", ta: "இன்னும் புதியது எதுவும் இல்லை.", gu: "હજુ સુધી કંઈ નવું નથી.", ur: "ابھی تک کچھ نیا نہیں۔", kn: "ಇನ್ನೂ ಹೊಸದೇನೂ ಇಲ್ಲ.", or: "ଏପର୍ଯ୍ୟନ୍ତ କିଛି ନୂଆ ନାହିଁ।", ml: "ഇതുവരെ പുതിയതൊന്നുമില്ല." },
-  "common.dismiss": { en: "Dismiss", hi: "खारिज करें", bn: "খারিজ করুন", mr: "रद्द करा", te: "తీసివేయండి", ta: "நிராகரி", gu: "રદ કરો", ur: "برخاست کریں", kn: "ವಜಾಗೊಳಿಸಿ", or: "ଖାରଜ କରନ୍ତୁ", ml: "നിരസിക്കുക" },
 
   // Bed booking card (patient/doctor shared)
   "bedBooking.title": { en: "Instant Bed Booking", hi: "तुरंत बिस्तर बुकिंग", bn: "তাৎক্ষণিক বেড বুকিং", mr: "त्वरित बेड बुकिंग", te: "తక్షణ బెడ్ బుకింగ్", ta: "உடனடி படுக்கை முன்பதிவு", gu: "તાત્કાલિક બેડ બુકિંગ", ur: "فوری بستر بکنگ", kn: "ತಕ್ಷಣ ಹಾಸಿಗೆ ಬುಕಿಂಗ್", or: "ତତ୍କ୍ଷଣାତ ବେଡ଼ ବୁକିଂ", ml: "തൽക്ഷണ ബെഡ് ബുക്കിംഗ്" },

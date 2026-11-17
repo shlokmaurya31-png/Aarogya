@@ -5,6 +5,7 @@ import { parseEnum, parseOptionalEnum } from "@/lib/enumValue";
 import { emitFacilityEvent } from "@/lib/events/facilityEvent";
 import { normalizeCode } from "./problemList";
 import { findAbnormalVitals, type AbnormalVital } from "./vitalsThresholds";
+import type { News2Result } from "@/lib/clinical/news2";
 
 type Tx = Prisma.TransactionClient;
 
@@ -43,13 +44,15 @@ export function abnormalOf(facilityId: string, v: VitalsInput) {
 }
 
 /** The vitals set inside the caller's transaction (Flagship 4a: an offline set keeps the time it was measured). */
-export async function recordVitalsTx(tx: Tx, input: { encounterId: string; facilityId: string; staffId: string; vitals: VitalsInput; byUserId: string; recordedAt?: Date }, abnormal: AbnormalVital[]) {
+export async function recordVitalsTx(tx: Tx, input: { encounterId: string; facilityId: string; staffId: string; vitals: VitalsInput; byUserId: string; recordedAt?: Date; news2?: News2Result }, abnormal: AbnormalVital[]) {
   const v = input.vitals;
+  // Flagship 5a: a set synced from the ward tablet carries the tablet's NEWS2 score, stored for display only (pending clinical sign-off; no alerting).
+  const ew = input.news2 ? { news2Score: input.news2.score, news2Parameters: input.news2.scored, news2Red: input.news2.red, news2Status: "PENDING_CLINICAL_SIGN_OFF" as const } : {};
   const enc = await encounterIn(tx, input.encounterId, input.facilityId);
   const created = await tx.vital.create({
     data: {
       encounterId: enc.id, recordedByStaffId: input.staffId, hr: v.hr, sbp: v.sbp, dbp: v.dbp, rr: v.rr, spo2: v.spo2, tempC: v.tempC,
-      painScore: v.painScore, consciousness: v.consciousness, o2DeliveryMethod: v.o2DeliveryMethod, o2FlowRate: v.o2FlowRate, ...(input.recordedAt ? { recordedAt: input.recordedAt } : {}),
+      painScore: v.painScore, consciousness: v.consciousness, o2DeliveryMethod: v.o2DeliveryMethod, o2FlowRate: v.o2FlowRate, ...ew, ...(input.recordedAt ? { recordedAt: input.recordedAt } : {}),
     },
   });
   await emitFacilityEvent(tx, {

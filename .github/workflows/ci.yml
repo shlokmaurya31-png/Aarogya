@@ -3,8 +3,12 @@ name: CI
 # CI tests what production runs: PostgreSQL 16 + pgvector (ADR 0001).
 #
 #   Test & Build      migrate a fresh Postgres, unit tests, production build
-#   Integrity gates   npm run verify:all: every scripts/verify-postgres-*.ts
+#   Integrity gates   npm run verify:all -- --group main: every
+#                     scripts/verify-postgres-*.ts but the 50,000-row ones,
 #                     against a reset + migrated + seeded Postgres
+#   Scale gates       npm run verify:all -- --group scale: the 50,000-row
+#                     gates (import lane, legacy import scale), in parallel,
+#                     on their own Postgres (Flagship 5d)
 #   Browser smoke     npm run e2e:smoke: Playwright (Chromium) through the core
 #                     journeys (e2e/*.spec.ts): OPD visit; ED → admission → ICU →
 #                     OT → discharge → invoice → claim draft; a medication round
@@ -84,7 +88,8 @@ jobs:
     runs-on: ubuntu-latest
     # Flagship 3: 128 gates, including the 50,000-row import (~2 min), take ~20 min on a runner.
     # Flagship 4: 131 gates took 30 min on a runner (the import-lane gate builds and clears its own 50,000-row backlog).
-    timeout-minutes: 50
+    # Flagship 5d: the 50,000-row gates moved to their own job (scale-gates, below), in parallel.
+    timeout-minutes: 30
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -125,16 +130,80 @@ jobs:
           PGPASSWORD=aarogya psql -h localhost -U aarogya -d aarogya -c "CREATE DATABASE aarogya_verify"
 
       # Resets, migrates and seeds aarogya_verify (VERIFY_DATABASE_URL) once,
-      # then runs every gate in order against it (scripts/verify-all.ts); the
-      # job's DATABASE_URL is never reset. Exits non-zero if any gate fails.
-      - name: verify:all
-        run: npm run verify:all
+      # then runs every gate but the 50,000-row ones in order against it
+      # (scripts/verify-all.ts); the job's DATABASE_URL is never reset. Exits
+      # non-zero if any gate fails.
+      - name: verify:all (main group)
+        run: npm run verify:all -- --group main
 
       - name: Upload gate report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: verify-report
+          # The summary and every gate's own log (its checks, measurements and errors).
+          path: |
+            .verify-report/latest.md
+            .verify-report/gates/
+          include-hidden-files: true
+          if-no-files-found: warn
+
+  scale-gates:
+    name: Scale gates
+    runs-on: ubuntu-latest
+    # Flagship 5d: the two 50,000-row gates (the import lane builds and clears its own
+    # backlog, ~10 min; the legacy import at scale), on their own database, in parallel with
+    # the Integrity gates job.
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: aarogya
+          POSTGRES_PASSWORD: aarogya
+          POSTGRES_DB: aarogya
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya"
+      DIRECT_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya"
+      SHADOW_DATABASE_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya_shadow"
+      VERIFY_DATABASE_URL: "postgresql://aarogya:aarogya@localhost:5432/aarogya_verify"
+      AUTH_SECRET: "ci-dummy-secret-not-used-for-anything-real-000000"
+      CLINICAL_DATA_MODE: synthetic
+      AI_PROVIDER: mock
+      ABDM_ENVIRONMENT: DISABLED
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create shadow and verify databases
+        run: |
+          PGPASSWORD=aarogya psql -h localhost -U aarogya -d aarogya -c "CREATE DATABASE aarogya_shadow"
+          PGPASSWORD=aarogya psql -h localhost -U aarogya -d aarogya -c "CREATE DATABASE aarogya_verify"
+
+      # Resets, migrates and seeds its own aarogya_verify, then runs only the
+      # 50,000-row gates (scripts/verify-all.ts, SCALE).
+      - name: verify:all (scale group)
+        run: npm run verify:all -- --group scale
+
+      - name: Upload gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-report-scale
           # The summary and every gate's own log (its checks, measurements and errors).
           path: |
             .verify-report/latest.md

@@ -29,6 +29,10 @@ import { ensurePrimaryMembership } from "../prisma/seedData/staffMembership";
 import { createMedicationOrder, givePrnDose, PrnLimitError } from "../src/lib/hospital/medicationLifecycle";
 import { designateChargeNurse, issuePack, registerWardDevice, syncCommands } from "../src/lib/hospital/offline/service";
 import { tag } from "./lib/shareFixture";
+import { news2OfSyncedVitals } from "../src/lib/clinical/news2";
+import { recordVitals } from "../src/lib/hospital/clinicalRecords";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { enableOfflineForGate } from "./lib/offlineFixture";
 
 const PUNE = "fac-amc-pune";
@@ -106,12 +110,25 @@ async function main() {
   report("PRN orders come with their limits; givable offline only when allowed, never when controlled", prnOf(para.id)?.givableOffline === true && prnOf(para.id)?.minIntervalMinutes === 240 && prnOf(notOffline.id)?.givableOffline === false && prnOf(tramadol.id)?.givableOffline === false && prnOf(tramadol.id)?.onlineOnly === true);
 
   // 2. Vitals and I/O.
+  const tStart = new Date();
   const vitalsOp = { clientOperationId: op(), kind: "VITALS", encounterId: mine.encounterId, vitals: { hr: 112, sbp: 98, spo2: 93, consciousness: "ALERT", o2DeliveryMethod: "supplemental oxygen" }, deviceTime: at(-20).toISOString() };
   const s1 = await sync(devA.id, [vitalsOp, { clientOperationId: op(), kind: "INTAKE_OUTPUT", encounterId: mine.encounterId, ioType: "OUTPUT", category: "URINE", quantityMl: 350, deviceTime: at(-15).toISOString() }]);
   const v = await prisma.vital.findFirst({ where: { encounterId: mine.encounterId, hr: 112 } });
   const io = await prisma.intakeOutputRecord.findFirst({ where: { encounterId: mine.encounterId, quantityMl: 350 } });
   report("Vitals offline are applied at the time they were measured", s1.results[0].outcome === "APPLIED" && v?.recordedAt.getTime() === at(-20).getTime(), v?.recordedAt.toISOString());
   report("…with the tablet's consciousness and oxygen answers (Flagship 4d, for its NEWS2 placeholder)", v?.consciousness === "ALERT" && v?.o2DeliveryMethod === "supplemental oxygen", `${v?.consciousness} ${v?.o2DeliveryMethod}`);
+  // Flagship 5a: the server scores a synced set with the tablet's own NEWS2 module, stores it, and alerts on nothing.
+  const ew = news2OfSyncedVitals(vitalsOp.vitals);
+  report("A synced set is scored with the tablet's NEWS2 code and stored with the set, labelled pending clinical sign-off",
+    v?.news2Score === ew.score && v?.news2Parameters === ew.scored && v?.news2Red === ew.red && v?.news2Status === "PENDING_CLINICAL_SIGN_OFF" && ew.score === 8 && ew.scored === 5,
+    `NEWS2 ${v?.news2Score}, ${v?.news2Parameters} of 7, ${v?.news2Status}`);
+  const tasksAfterSync = await prisma.task.count({ where: { patientId: mine.patientId, createdAt: { gte: tStart } } });
+  report("…and nothing alerts on it: no task, flag or notification for the score (the clinical sign-off is pending)",
+    tasksAfterSync === 0 && (await prisma.domainEventOutbox.count({ where: { facilityId: PUNE, createdAt: { gte: tStart }, eventType: { notIn: ["ObservationRecorded", "OfflineCommandRecorded"] }, payload: { path: ["patientId"], equals: mine.patientId } } })) === 0
+      && serverReadersOfNews2().join(",") === "src/lib/hospital/clinicalRecords.ts",
+    `${tasksAfterSync} tasks; server code reading the score: ${serverReadersOfNews2().join(", ")}`);
+  const online = await recordVitals({ encounterId: mine.encounterId, facilityId: PUNE, staffId: nurse.staffId, vitals: { hr: 140, spo2: 88 }, byUserId: nurse.userId });
+  report("A set recorded any other way carries no NEWS2 score", online.vital.news2Score === null && online.vital.news2Status === null);
   report("…and I/O too", s1.results[1].outcome === "APPLIED" && io?.recordedAt.getTime() === at(-15).getTime());
   report("…each with its event in the command's transaction", (await prisma.domainEventOutbox.count({ where: { eventType: "ObservationRecorded", aggregateId: { in: [v!.id, io!.id] } } })) === 2 && (await prisma.domainEventOutbox.count({ where: { eventType: "OfflineCommandRecorded", eventVersion: 2, facilityId: PUNE, payload: { path: ["encounterId"], equals: mine.encounterId } } })) === 2);
   const replay = await sync(devA.id, [vitalsOp], at(2));
@@ -191,3 +208,18 @@ async function main() {
 }
 
 main().catch(async (e) => { console.error(e); await prisma.$disconnect(); process.exit(1); });
+
+/** Server code (outside the NEWS2 module and screens) that names the stored score: only the writer may (no alerting on it). */
+function serverReadersOfNews2() {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    for (const f of readdirSync(dir)) {
+      const p = join(dir, f);
+      if (statSync(p).isDirectory()) walk(p);
+      else if (/\.ts$/.test(f) && !/\.test\.ts$/.test(f) && /news2(Score|Red)/.test(readFileSync(p, "utf8"))) out.push(p);
+    }
+  };
+  walk("src/lib");
+  walk("src/app/api");
+  return out.sort();
+}

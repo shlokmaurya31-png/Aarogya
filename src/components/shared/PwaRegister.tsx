@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { usePathname } from "next/navigation";
-import { clearAppCaches, isSignInPath } from "@/lib/pwa/clearCaches";
+import { clearAppData, isSignInPath } from "@/lib/pwa/clearCaches";
 
 export function PwaRegister() {
   const pathname = usePathname();
@@ -30,7 +30,7 @@ export function PwaRegister() {
   // Flagship 4 (3): a sign-in page is where logout and an expired session
   // land, so nothing cached outlives the session.
   useEffect(() => {
-    if (pathname && isSignInPath(pathname)) void clearAppCaches();
+    if (pathname && isSignInPath(pathname)) void clearAppData();
   }, [pathname]);
 
   return null;

@@ -170,6 +170,9 @@ export const AGGREGATE_TYPES = [
   "SCAN_SHARE_CHECK_IN",
   // Flagship 4b — a staff member's chart preferences (show imported results).
   "CHART_PREFERENCE",
+  // Flagship 5, step 5 — cashless insurance (mock NHCX).
+  "CASHLESS_REQUEST",
+  "CASHLESS_ELIGIBILITY",
 ] as const;
 export type AggregateType = (typeof AGGREGATE_TYPES)[number];
 

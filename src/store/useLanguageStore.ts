@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { LanguageCode } from "@/lib/i18n";
+import type { LanguageCode } from "@/lib/i18nShell";
 
 interface LanguageState {
   language: LanguageCode;

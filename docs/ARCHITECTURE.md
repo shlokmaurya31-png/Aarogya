@@ -141,7 +141,7 @@ The mocks are the default everywhere except where a real provider is configured 
 |---|---|---|
 | Unit and rule tests | `npm test` | Pure logic, the catalogue, emit coverage, tenancy and merge classification, the guards |
 | Lint and types | `npm run lint`, `npm run build` | Blocking in CI |
-| Gates | `npm run verify:all` | About 115 scripts against a reset local database (`aarogya_verify`; a shared guard refuses any other). Each proves one area's guarantees with positive controls and zero-tolerance leak checks. The core journey replays a whole hospital stay and the person-side stories |
+| Gates | `npm run verify:all` | About 130 scripts against a reset local database (`aarogya_verify`; a shared guard refuses any other). Each proves one area's guarantees with positive controls and zero-tolerance leak checks. The core journey replays a whole hospital stay and the person-side stories. In CI they run as two parallel jobs, each on its own database: *Integrity gates* (`--group main`) and *Scale gates* (`--group scale`, the two 50,000-row gates); the nightly isolated run is split the same way (Flagship 5d). `--list` prints what a run would do |
 | Browser journeys | `npm run e2e:smoke` | Playwright (Chromium) through the real app and worker, on synthetic, tagged fixtures |
 | Migration drift | CI | The migrations must produce exactly the schema |
 
