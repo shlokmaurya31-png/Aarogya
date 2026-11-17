@@ -667,7 +667,10 @@ async function seedAddressedRows(personId: string) {
   if (await prisma.cardShare.count({ where: { id: ADDRESSED.cardShare } })) return;
   const key = currentCardKey();
   if (!key) throw new Error("No insurance card key (scripts/lib/gateBootstrap.ts sets one for every gate).");
-  const patient = await prisma.patient.findFirstOrThrow({ where: { facilityId: FACILITIES.pune, mergedIntoId: null }, orderBy: [{ createdAt: "asc" }, { id: "asc" }], select: { id: true } });
+  // Its own Pune record, linked to Person a (a check-in is made by the record's own Person; the facility-consistency gate checks it).
+  const user = await prisma.personAccount.findFirstOrThrow({ where: { personId, role: "OWNER" }, select: { userId: true } });
+  const patient = await prisma.patient.create({ data: { uhid: `SWEEP-ADDRESSED-${personId.slice(-6)}`, facilityId: FACILITIES.pune, fullName: `${MARKER} addressed`, sex: "F" }, select: { id: true } });
+  await prisma.personPatientLink.create({ data: { personId, patientId: patient.id, facilityId: FACILITIES.pune, status: "ACTIVE", method: "SELF_CREATED", linkedAt: new Date(), linkedByUserId: user.userId } });
   const staffUser = await prisma.user.findFirstOrThrow({ where: { role: Role.DOCTOR, hospitalStaffProfile: { department: { facilityId: FACILITIES.pune } } }, orderBy: { id: "asc" }, select: { id: true } });
   const soon = new Date(Date.now() + 2 * 86_400_000);
   await prisma.insuranceCard.create({ data: { id: ADDRESSED.card, personId, payerType: "PRIVATE_INSURER", payerName: `${MARKER} insurer`, memberIdCipher: encryptCardValue("SWEEP-MEMBER-0001", key.key), memberIdLast4: "0001", keyVersion: key.version, addedByPersonId: personId } });
