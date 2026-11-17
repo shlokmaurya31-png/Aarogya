@@ -118,6 +118,32 @@ Each refuses if it finds rows it cannot classify. With today's data none should 
 
 No ingestion, no new mode, no screen. No embedding model is adopted.
 
+### 3.5 As built (2026-11-17)
+
+| Step | Built | Gate |
+|---|---|---|
+| 1.1 | `/api/chat` goes through `src/lib/rag/assistant.ts`. Staff naming a patient get the record gateway (`askAi`, CHART_QA). Everything else is **record-free**: the assistant is given no record at all, and passes rate limits, the real-data switch, the person's AI consent (the same 403s), the patient safety rules, identifier masking, an assistant permit, the provider flag and a metadata-only log. | `verify-postgres-ai-assistant` (19 checks); `providerRoutes.test.ts` walks every route's imports: a provider is reachable only through a listed gateway that makes its checks |
+| 1.2 | `AI_PHI_ALLOWED_ANTHROPIC`, `AI_PHI_ALLOWED_VOYAGE` (default off), checked inside every real provider beside its permit. Document permits now carry `real`. | `dataPolicy.test.ts`; the assistant gate |
+| 1.3–1.6 | Five migrations, as §3.2. Knowledge rows in the existing index with `KNOWLEDGE`; `IMPORTED` origin (staff only, labelled, never verified); `PENDING` status. | `verify-postgres-rag-knowledge-schema` (39 checks, each refusal with a control); drift check |
+| 1.7 | `AiInteractionSource` written for every answer (no text); accounting columns filled; `AiEmbeddingCache` behind `cachedKnowledgeEmbeddings` (knowledge text only). | `verify-postgres-ai-ask` (+6 checks) |
+| 1.8 | Recall, Precision, MRR, nDCG in the RAG eval. **Baseline: Recall@8 0.80, Precision@8 0.22, MRR 0.64, nDCG@10 0.68** over 22 answered questions: below Phase 3's targets (0.90, 0.70), which Phase 3 must close. | `verify-postgres-rag-eval` records it |
+| 1.9 | `npm run eval:rag:indic` with optional local-model vectors (`scripts/indic-embed.py`). Results: [`RAG_INDIC_BENCHMARK.md`](RAG_INDIC_BENCHMARK.md). | `verify-postgres-rag-indic` holds the offline floors |
+
+**Found and fixed on the way:**
+- **Indic query words were broken** before they reached Postgres (vowel signs are combining marks and were dropped): same-script keyword Recall@5 0.18 → 1.00.
+- **The tenancy sweep depended on gate order** (PR #18; included here): a false positive, no leak.
+- The build's type check ran out of Node's default heap on some CI runs: the CI build step gets 4 GB.
+
+**Decisions taken while building** (each the more conservative option):
+- The portal assistant is **record-free for everyone**, not only behind consent. A patient asks about their record through Explain, the timeline and pre-visit questions, which cite. A free-form patient mode over the record stays dropped (RAG_DESIGN §14).
+- Its general replies are logged as `mode ASSISTANT`, metadata only; **no text is kept**, for staff or patients.
+- A login with no Person can't have consented: refused, as for real data.
+- `knowledge:manage` and `knowledge:approve` are **not created in Phase 1**; they come with the routes in Phase 2 (step 2.2). The `Role` enum has no medical superintendent or quality lead (§13.2).
+- Knowledge rows are `VERIFIED` origin (an approved document) and labelled `reference` by their owner type; they carry no sharing category, by a CHECK.
+- An imported result's renderer exists; nothing indexes imported results until Phase 3 (step 3.6).
+- The mock embedder's tokeniser is left as it is: changing it would change stored mock vectors (a re-embed).
+- The new RAG gates run in name order with the other unlisted gates, as the existing RAG gates do.
+
 ## 4. Phase 2: knowledge ingestion
 
 **Goal:** an approved, versioned document becomes searchable, and nothing else does.

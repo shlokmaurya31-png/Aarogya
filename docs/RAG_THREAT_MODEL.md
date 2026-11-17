@@ -255,8 +255,8 @@ Severity is the harm if the mitigation fails: **Critical** (patient data to the 
 |---|---|---|---|---|
 | T-R01 | Cross-tenant retrieval | Critical | Yes, for patients | Leak gate; extended in 3, 5, 7 |
 | T-R02 | Patient IDOR | Critical | Yes, except `/api/chat` | Leak gate; 5 |
-| T-R03 | `/api/chat` bypass | Critical before real data | **No** | 1 (guard), 5 (fix) |
-| T-R04 | Real data to an unapproved provider | Critical | Partly | 1 |
+| T-R03 | `/api/chat` bypass | Critical before real data | **Yes, since Phase 1** (a gateway; record-free, record questions to askAi) | `verify-postgres-ai-assistant`, `providerRoutes.test.ts` |
+| T-R04 | Real data to an unapproved provider | Critical | **Yes, since Phase 1** (per-provider flags, default off) | `dataPolicy.test.ts`, `verify-postgres-ai-assistant` |
 | T-R05 | AI without consent | Critical | Yes, except `/api/chat` | Leak gate; 1 |
 | T-R06 | Share, proxy, consent limits | Critical | Yes | Leak gate §13; 3 |
 | T-R07 | Prompt injection | Critical | Partly | 2, 5, 7 |
