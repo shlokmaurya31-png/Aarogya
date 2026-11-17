@@ -12,10 +12,19 @@ import { scoreQuestion, type EvalQuestion, type QuestionScore } from "../../src/
 import { AI_MODES, MODES, type AiMode } from "../../src/lib/rag/modes";
 import { modeThreshold } from "../../src/lib/rag/retrieve";
 import type { EvalFixture } from "./ragEvalFixture";
+import { summarize } from "../../src/lib/rag/metrics";
 
 export const QUESTIONS: { status: string; questions: EvalQuestion[] } = JSON.parse(readFileSync(path.resolve(__dirname, "..", "..", "eval", "rag", "questions.json"), "utf8"));
 
-export interface EvalRun { scores: QuestionScore[]; results: { id: string; result: AskResult | null; error?: string; latencyMs: number; tokens: number }[]; thresholds: Record<string, number> }
+/** RAG Phase 1, step 1.8: what each answered question retrieved, in rank order (source types), and which types it expected. */
+export interface RankedRetrieval { id: string; types: string[]; expected: string[] }
+export interface EvalRun { scores: QuestionScore[]; results: { id: string; result: AskResult | null; error?: string; latencyMs: number; tokens: number }[]; thresholds: Record<string, number>; ranked: RankedRetrieval[] }
+
+/** Recall@8, Precision@8, MRR and nDCG@10 by expected source type, over the answered questions that name one. */
+export function retrievalMetrics(run: EvalRun) {
+  const js = run.ranked.map((r) => ({ ranked: r.types, relevant: (t: string) => r.expected.includes(t) }));
+  return summarize(js, 8, 10);
+}
 
 /** The per-minute limit counts the eval's own requests; its clock moves their timestamps back between questions. */
 const cool = (userId: string) => prisma.$executeRaw`UPDATE "AiInteraction" SET "createdAt" = "createdAt" - interval '2 minutes', "textExpiresAt" = "textExpiresAt" - interval '2 minutes' WHERE "userId" = ${userId} AND "createdAt" > now() - interval '2 minutes'`;
@@ -23,6 +32,7 @@ const cool = (userId: string) => prisma.$executeRaw`UPDATE "AiInteraction" SET "
 export async function runRagEval(fx: EvalFixture): Promise<EvalRun> {
   const scores: QuestionScore[] = [];
   const results: EvalRun["results"] = [];
+  const ranked: RankedRetrieval[] = [];
   for (const q of QUESTIONS.questions) {
     const actor = fx.actors[q.actor as keyof EvalFixture["actors"]];
     await cool(actor.userId);
@@ -38,9 +48,11 @@ export async function runRagEval(fx: EvalFixture): Promise<EvalRun> {
       });
       const row = await prisma.aiInteraction.findUniqueOrThrow({ where: { id: r.meta.interactionId } });
       const ragIds = row.retrievedChunkIds.filter((id) => !id.startsWith("live:") && !id.startsWith("upload:"));
-      const types = (await prisma.ragChunk.findMany({ where: { id: { in: ragIds } }, select: { sourceType: true } })).map((c) => c.sourceType as string)
-        .concat(row.retrievedChunkIds.filter((id) => id.startsWith("live:")).map((id) => ({ med: "MEDICATION_ORDER", dose: "MEDICATION_DOSE", allergy: "ALLERGY" }[id.split(":")[1]] ?? "LIVE")))
-        .concat(row.retrievedChunkIds.some((id) => id.startsWith("upload:")) ? ["PATIENT_DOCUMENT"] : []);
+      const typeOf = new Map((await prisma.ragChunk.findMany({ where: { id: { in: ragIds } }, select: { id: true, sourceType: true } })).map((c) => [c.id, c.sourceType as string]));
+      // In rank order (the order the sources were given to the model).
+      const types = row.retrievedChunkIds.map((id) => (id.startsWith("live:") ? ({ med: "MEDICATION_ORDER", dose: "MEDICATION_DOSE", allergy: "ALLERGY" }[id.split(":")[1]] ?? "LIVE") : id.startsWith("upload:") ? "PATIENT_DOCUMENT" : typeOf.get(id)))
+        .filter((t): t is string => !!t);
+      if (q.expect.outcome === "ANSWERED" && q.expect.sources?.length) ranked.push({ id: q.id, types, expected: q.expect.sources });
       scores.push(scoreQuestion(q, r, row, types));
       results.push({ id: q.id, result: r, latencyMs: Date.now() - started, tokens: row.inputTokens + row.outputTokens });
     } catch (err) {
@@ -49,7 +61,7 @@ export async function runRagEval(fx: EvalFixture): Promise<EvalRun> {
     }
   }
   const thresholds = Object.fromEntries(await Promise.all(AI_MODES.map(async (m) => [m, await modeThreshold(m, null, null)])));
-  return { scores, results, thresholds };
+  return { scores, results, thresholds, ranked };
 }
 
 export function evalMarkdown(run: EvalRun, provider: string): string {
@@ -64,6 +76,7 @@ export function evalMarkdown(run: EvalRun, provider: string): string {
     `- **Correct with valid citations: ${scored}/${n} (${pct(scored)})** (target ≥ 90%)`,
     `- Correct: ${run.scores.filter((s) => s.correct).length}/${n}; cited validly: ${run.scores.filter((s) => s.cited).length}/${n}; expected source retrieved: ${run.scores.filter((s) => s.retrieved).length}/${n}`,
     `- Thresholds in force: ${Object.entries(run.thresholds).map(([m, t]) => `${m} ${t}`).join(", ")}`,
+    (() => { const m = retrievalMetrics(run); return `- Retrieval (by expected source type, ${m.n} answered questions): Recall@8 ${m.recall.toFixed(2)}, Precision@8 ${m.precision.toFixed(2)}, MRR ${m.mrr.toFixed(2)}, nDCG@10 ${m.ndcg.toFixed(2)}`; })(),
     `- Latency per question: median ${lat[Math.floor(lat.length / 2)]} ms, max ${lat.at(-1)} ms; tokens ${run.results.reduce((a, r) => a + r.tokens, 0)}`, "",
     "| Group | Scored |", "|---|---|", ...groups.map((g) => { const xs = run.scores.filter((s) => s.group === g); return `| ${g} | ${xs.filter((s) => s.score).length}/${xs.length} |`; }), "",
     "| Question | Mode | Outcome | Score | Why not |", "|---|---|---|---|---|",

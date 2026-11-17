@@ -38,6 +38,7 @@
     "rag:backfill": "tsx scripts/rag-backfill.ts",
     "eval:rag": "tsx scripts/eval-rag.ts",
     "eval:rag:real": "tsx scripts/eval-rag.ts --provider real",
+    "eval:rag:indic": "tsx scripts/eval-rag-indic.ts",
     "e2e:smoke": "tsx scripts/e2e-smoke.ts",
     "e2e": "tsx scripts/e2e-smoke.ts",
     "perf:seed": "tsx scripts/perf-gate.ts --fresh --seed-only",

@@ -93,3 +93,15 @@ export async function aiAssistancePermit(owner: AiDataOwner, env = process.env):
   const subject = "personId" in owner ? `person:${owner.personId}` : `patient:${owner.patientId}`;
   return { ...r, permit: issueAiPermit(subject, r.real) };
 }
+
+/**
+ * RAG Phase 1 — a permit for an organisation's knowledge text (SOPs, policies,
+ * references): no person, so no consent applies and it is never "real" patient
+ * data. Whether an external provider may receive it is the organisation's own
+ * setting, ai.knowledge.external_providers (default off), checked where the
+ * text is embedded (src/lib/rag/embedCache.ts). Knowledge ingestion (Phase 2)
+ * issues it only for a version that passed the identifier check.
+ */
+export function knowledgePermit(organizationId: string): AiPermit {
+  return issueAiPermit(`knowledge:${organizationId}`, false);
+}

@@ -16,6 +16,10 @@ export interface Candidate { chunkId: string; vectorRank: number | null; similar
 
 export interface EmbeddingSpaceRef { model: string; version: number }
 
+/** Anything that is not part of a word in any of the app's eleven scripts: letters, combining marks, digits and the zero-width (non-)joiner are. */
+export const WORD_BREAK = /[^\p{L}\p{M}\p{N}\u200C\u200D]+/u;
+const WORD_BREAK_G = new RegExp(WORD_BREAK.source, "gu");
+
 function segmentSql(seg: ScopeSegment, t: Prisma.Sql): Prisma.Sql | null {
   const owner: Prisma.Sql[] = [];
   if (seg.facility && seg.facility.patientIds.length && seg.facility.facilityIds.length) {
@@ -47,9 +51,13 @@ export function scopeSql(scope: RetrievalScope, alias: "c" | "e" = "c"): Prisma.
   return segs.length ? Prisma.sql`${t}."status" = 'ACTIVE' AND (${Prisma.join(segs, " OR ")})` : Prisma.sql`false`;
 }
 
-/** A word list as an OR tsquery, each word sanitized to letters and digits; a stemmed English word matches as a prefix ("allerg:*"). */
+/**
+ * A word list as an OR tsquery, each word sanitized to letters, combining marks and digits; a stemmed English word matches as a prefix ("allerg:*").
+ * RAG Phase 1 fix: Indic vowel signs and viramas are marks (\p{M}), and Telugu/Kannada words carry a zero-width (non-)joiner; dropping them turned
+ * "मधुमेह" into "मधमह", which matches nothing (the Indic benchmark: same-script keyword recall 0.18 before the fix).
+ */
 export function orTsQuery(terms: readonly string[]): string {
-  const clean = [...new Set(terms.map((t) => t.toLowerCase().normalize("NFKC").replace(/[^\p{L}\p{N}]+/gu, "")).filter((t) => t.length > 1))];
+  const clean = [...new Set(terms.map((t) => t.toLowerCase().normalize("NFKC").replace(WORD_BREAK_G, "")).filter((t) => t.length > 1))];
   return clean.map((t) => { const s = stem(t); return s !== t ? `${s}:*` : t; }).join(" | ");
 }
 

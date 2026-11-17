@@ -23,7 +23,8 @@ const MOCK_MODEL = "mock-record-1";
 const STOP = new Set(["the", "a", "an", "of", "is", "was", "are", "were", "what", "which", "when", "her", "his", "their", "did", "does", "do", "on", "in", "for", "to", "and", "or", "with", "any", "has", "have", "had", "this", "that", "patient", "my", "me", "i", "show", "tell", "about", "last", "latest", "current", "recent", "most"]);
 
 export function contentWords(text: string): string[] {
-  return text.toLowerCase().normalize("NFKC").split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 1 && !STOP.has(w));
+  // Combining marks and zero-width joiners are part of a word (Indic scripts; RAG Phase 1 fix).
+  return text.toLowerCase().normalize("NFKC").split(/[^\p{L}\p{M}\p{N}\u200C\u200D]+/u).filter((w) => w.length > 1 && !STOP.has(w));
 }
 
 function lines(text: string): string[] {
