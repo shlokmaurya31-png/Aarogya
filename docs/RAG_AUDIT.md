@@ -1,6 +1,6 @@
 # RAG Phase 0: repository audit
 
-- **Status:** Phase 0 deliverable (2026-11-17). No migrations and no feature code in this phase.
+- **Status:** Phase 0 deliverable (2026-11-17). No migrations and no feature code in this phase. It is a snapshot of `main` at `d93c72a`; what was decided afterwards is in the plan's §13.
 - **Branch:** `rag/phase-0`, from `main` at `d93c72a`.
 - **Audited against:** the enterprise RAG specification (the "spec" below) and the Aarogya rules that override it.
 - **Companions:**

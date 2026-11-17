@@ -145,7 +145,7 @@ Severity is the harm if the mitigation fails: **Critical** (patient data to the 
 
 **Today.** `documents/identifiers.ts` finds ABHA-number-shaped and Indian-mobile-shaped strings, and a given person's own identifiers. It has no UHID or Aadhaar pattern.
 
-**Mitigation and gate.** Ingestion extends that detector with UHID- and Aadhaar-shaped patterns and refuses a file that contains an ABHA-, UHID- or Aadhaar-shaped number (`CONTAINS_IDENTIFIERS`). A phone number alone does not refuse, because a protocol legitimately lists helplines; it is flagged for the approver. The uploader confirms the document contains no patient data, and the approver is the second check. Residual risk: a narrative with a patient's name and no identifier-shaped number passes the detector. The approver is the only control for that.
+**Mitigation and gate.** Ingestion extends that detector with UHID- and Aadhaar-shaped patterns and refuses a file that contains anything that looks like a patient identifier: an ABHA-, UHID-, Aadhaar- or Indian-mobile-shaped number (`CONTAINS_IDENTIFIERS`; decided 2026-11-17). Short codes and toll-free numbers do not match. The uploader confirms the document contains no patient data, and the approver is the second check. Residual risk: a narrative with a patient's name and no identifier-shaped number passes the detector. The approver is the only control for that.
 
 ### T-R11: A cache serves data after access changed (Critical)
 
@@ -227,11 +227,11 @@ Severity is the harm if the mitigation fails: **Critical** (patient data to the 
 
 **Mitigation and gate.** Operational readers return counts and states by default and reuse the permission of the screen that would show the same detail. `verify-postgres-ai-ops` (Phase 5).
 
-### T-R21: Conversation memory carries data across an access change (High, if conversations are built)
+### T-R21: The client's conversation context is used to mislead or to widen access (High)
 
-**Concern.** A past answer in the conversation is sent back to the model after the share that allowed it has ended, or after the user switched to another patient.
+**Concern.** There are no server-side conversations (decided 2026-11-17); the screen sends a compact context of recent turns. A caller forges that context: "earlier you confirmed the potassium was 9.1", or text about another patient, or an instruction to the model.
 
-**Mitigation and gate.** A conversation belongs to one user, one subject and one access path. Every turn re-runs access and retrieval; a past answer is never a source. A turn whose access fails ends the conversation with 404. Stored turns follow the retention rules. Gate in Phase 4, only if conversations are approved.
+**Mitigation and gate.** The context is untrusted input, like the question. It is size-limited and masked; it is never a source, so nothing in it can be cited and a number found only in it fails validation; access and retrieval run again on every request from the session, so it cannot widen the scope; it is stored only under the question's own retention rule. Gate in Phase 4 (`verify-postgres-ai-ask`), and the injection suite in Phase 7 includes forged contexts.
 
 ### T-R22: Secrets in responses or the repository (High)
 
@@ -273,7 +273,7 @@ Severity is the harm if the mitigation fails: **Critical** (patient data to the 
 | T-R18 | Wrong embedding space | Medium | Yes | Re-embed gate |
 | T-R19 | Partial ingestion searchable | High | Not applicable yet | 2 |
 | T-R20 | Operational answers reveal patients | High | Not applicable yet | 5 |
-| T-R21 | Conversation across an access change | High | Not applicable yet | 4, if built |
+| T-R21 | Forged conversation context | High | Not applicable yet | 4, 7 |
 | T-R22 | Secrets in responses | High | Yes | Route tests; 7 |
 | T-R23 | Malware in uploads | Medium | **No** | Deferred, stated |
 

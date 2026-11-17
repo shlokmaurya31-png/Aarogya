@@ -1,6 +1,6 @@
 # RAG implementation plan: phases 1–8
 
-- **Status:** Proposed (Phase 0, 2026-11-17). Each phase starts only after the one before it is merged and its open questions are answered.
+- **Status:** Accepted (Phase 0, 2026-11-17; the twelve questions of §13 were decided the same day). Each phase starts only after the one before it is merged.
 - **Architecture:** [`RAG_ARCHITECTURE.md`](RAG_ARCHITECTURE.md). **Audit:** [`RAG_AUDIT.md`](RAG_AUDIT.md). **Threats:** [`RAG_THREAT_MODEL.md`](RAG_THREAT_MODEL.md). **Decisions:** [`adr/0005`](adr/0005-rag-embeddings-providers-and-tables.md).
 
 ## Contents
@@ -17,7 +17,7 @@
 10. Phase 8: evaluation and production readiness
 11. The evaluation set and how thresholds are set
 12. Definition of done, mapped to phases
-13. Open questions before Phase 1
+13. Decisions before Phase 1 (decided 2026-11-17)
 
 ---
 
@@ -32,7 +32,7 @@
 
 `npm test`, `npm run lint -- --max-warnings=0`, `npm run build`, `npm run verify:all`, `npm run verify:isolated`, `npm run e2e`, `npm run perf:gate`, `npm run perf:mobile`.
 
-`perf:mobile` arrives with PR #16. Until that merges it is reported as "not on main yet", never as passed.
+`perf:mobile` arrived with PR #16 (merged 2026-11-17).
 
 **Data and providers**
 
@@ -61,10 +61,10 @@
 
 | Phase | Delivers | Migrations | Depends on |
 |---|---|---|---|
-| 1 | Guards, schema, provider policy, the Indic benchmark | 5 | PR #16 merged; open questions 1–4 |
-| 2 | Knowledge documents: upload, parse, chunk, embed, approve, version | 1 | Phase 1; the DOCX decision |
+| 1 | Guards, schema, provider policy, the Indic benchmark | 5 | PR #16 merged (done) |
+| 2 | Knowledge documents: upload, parse, chunk, embed, approve, version | 1 | Phase 1; the two approver roles (§13, open) |
 | 3 | Intent router, structured readers, knowledge retrieval, Indic keyword search, imported label | 1 | Phase 2 |
-| 4 | Token budgets, deterministic compression, embedding cache, usage accounting | 0–1 | Phase 3; the conversation decision |
+| 4 | Token budgets, deterministic compression, embedding cache, usage accounting, the client's compact context | 0 | Phase 3 |
 | 5 | The gateway complete: tiers, provider routing, `/api/chat` behind it, operational mode | 0 | Phase 4 |
 | 6 | The screens, in eleven languages | 0 | Phase 5 |
 | 7 | Every threat in the threat model has a gate | 0 | Phase 6 |
@@ -127,10 +127,10 @@ No ingestion, no new mode, no screen. No embedding model is adopted.
 | # | Step | Gate |
 |---|---|---|
 | 2.1 | **Events:** `KnowledgeDocumentCreated`, `KnowledgeDocumentVersionUploaded`, `…Parsed`, `…Indexed`, `…IngestionFailed`, `…Approved`, `…Rejected`, `…Published`, `…Superseded`, `…Withdrawn`, `…Expired`. Catalogue and its document regenerated. | The emit-coverage test; `verify-postgres-consumer-registry`. |
-| 2.2 | **Permissions and routes:** `ai:knowledge:manage`, `ai:knowledge:approve`; upload, status, approve, withdraw. Two people to publish. | `verify-postgres-knowledge-access` (new): each route by role; the uploader cannot approve; another facility's document is 404. |
-| 2.3 | **Parsers:** PDF text, plain text, Markdown, HTML, CSV, JSON. DOCX per the decision. Image-only pages through the 4a OCR provider with a knowledge permit. | Golden-file tests per format. A file whose type and bytes disagree is refused. |
+| 2.2 | **Permissions and routes:** `knowledge:manage` (default: hospital administrator), `knowledge:approve` (default: medical superintendent, quality lead); upload, status, approve, withdraw. Two people to publish. | `verify-postgres-knowledge-access` (new): each route by role; the uploader cannot approve; another facility's document is 404. |
+| 2.3 | **Parsers:** PDF text, plain text, Markdown, HTML, CSV, JSON. DOCX is deferred (§13 decision 7) and refused with a message asking for a PDF export. Image-only pages through the 4a OCR provider with a knowledge permit. | Golden-file tests per format. A file whose type and bytes disagree is refused. |
 | 2.4 | **Sections, normalisation, noise removal.** Tables kept whole with their header. Page and section path on every chunk. | Golden tests; a property test that no number or unit is lost in normalisation. |
-| 2.5 | **Identifier refusal.** The identifier detector gains UHID- and Aadhaar-shaped patterns. A file with an ABHA-, UHID- or Aadhaar-shaped number is refused (`CONTAINS_IDENTIFIERS`); a phone number alone is flagged for the approver. | A fixture per pattern is refused; a protocol with only a helpline number is flagged and not refused; a clean one passes. No refused number is stored or logged. |
+| 2.5 | **Identifier refusal** (§13 decision 8). The identifier detector gains UHID- and Aadhaar-shaped patterns. A file containing anything that looks like a patient identifier (an ABHA-, UHID-, Aadhaar- or Indian-mobile-shaped number) is refused (`CONTAINS_IDENTIFIERS`). | A fixture per pattern is refused; a clean one passes; short codes and toll-free numbers (112, 108, 1800…) pass. No refused number is stored or logged. |
 | 2.6 | **The `knowledge-ingest` consumer** on the bulk lane; embeds; writes chunks `PENDING`. | `verify-postgres-knowledge-ingest` (new), below. |
 | 2.7 | **Publish, supersede, expire, withdraw.** The runner publishes at the effective date and expires at the expiry date. | The same gate. |
 | 2.8 | **Admin view** of ingestion status and failures; re-run of a failed version. | Route tests; no file content in the view. |
@@ -174,7 +174,7 @@ No ingestion, no new mode, no screen. No embedding model is adopted.
 | 3.3 | **Structured readers:** latest vitals, latest and trend per analyte, pending orders, current encounter, problems and diagnoses. | `verify-postgres-rag-readers` (new): each reader under each access path returns only what that path allows; a share's period and categories apply; a sensitive item needs its opt-in. Leak-gate canaries per reader. |
 | 3.4 | **Knowledge scope and `KNOWLEDGE_QA`.** `ai:knowledge:ask`; access classes by role. | Leak gate extended: another organisation's document; another facility's; a class the role lacks; an unpublished version; **a patient canary never appears in a knowledge answer and a knowledge request never returns a patient chunk.** |
 | 3.5 | **Keyword search:** the English column; trigram word similarity; the abbreviation table; canonical medicine names as extra index terms. | Unit tests from the audit's measurements. The Indic benchmark's inflected and transliterated cases meet their thresholds. |
-| 3.6 | **Imported results:** `LEGACY_LAB_RESULT` indexed with origin `IMPORTED`; the label; ranking below verified. Per the answer to open question 6. | `verify-postgres-ai-ask` extended: an imported value is labelled; it never appears as the "latest" value when a verified one exists; a disagreement is stated. |
+| 3.6 | **Imported results** (§13 decision 6): `LEGACY_LAB_RESULT` indexed with origin `IMPORTED`, `STAFF_ONLY` audience; the label; ranking below verified. | `verify-postgres-ai-ask` extended: an imported value is labelled; it never appears as the "latest" value when a verified one exists; a disagreement is stated. |
 | 3.7 | **Context building:** passage deduplication; neighbours; structured facts first. | Unit tests; the evaluation's citation checks. |
 | 3.8 | **The evaluation set grows** to the composition in §11. | `verify-postgres-rag-eval`. |
 
@@ -213,11 +213,11 @@ No ingestion, no new mode, no screen. No embedding model is adopted.
 | 4.3 | **Estimator calibration** per language from provider-reported usage. With mocks, from a fixed reference table. | The estimate is within 15% of the reference for each of the eleven languages. |
 | 4.4 | **Embedding cache** by content hash, knowledge only. **Query-embedding cache** in Postgres, knowledge modes only. | `verify-postgres-ai-cache` (new): a patient-mode question never creates a cache row; a cache row holds no text; a hit returns the identical vector. |
 | 4.5 | **Usage accounting** complete: tokens, rerank units, estimated cost, cache hits, latencies, module, intent, tier. `GET /api/ai/usage`. | Route tests by role; totals reconcile with `AiInteraction` rows; no per-user figure outside the facility's administrator. |
-| 4.6 | **Conversations,** only if open question 5 says yes. | `verify-postgres-ai-conversations`: no patient text stored without the opt-in; every turn re-runs access; a revoked share ends the next turn with 404. |
+| 4.6 | **The client's compact context** (§13 decision 5: no server-side conversations). The request may carry a bounded summary of recent turns, kept by the screen. It shapes the wording of the question only. | `verify-postgres-ai-ask` extended: the context is size-limited and masked like a question; nothing in it can be cited or pass validation as a fact; it never widens the scope; it is stored only where the question's text is. Every turn re-runs access. |
 
 ### 6.2 Migration
 
-1. `ai_conversations`, only with step 4.6.
+None.
 
 ### 6.3 Thresholds
 
@@ -413,19 +413,35 @@ About 230 questions, some counted in two groups.
 | 16 | Reproducible evaluation | 1, 3, 8 | `eval:rag` |
 | 17 | Existing functionality intact | Every phase | `verify:all`, `e2e`, `perf:gate` |
 
-## 13. Open questions before Phase 1
+## 13. Decisions before Phase 1 (decided 2026-11-17)
 
-These need your decision. The recommended answer is first in each.
+The twelve questions Phase 0 raised, each as decided by the product owner on 2026-11-17.
 
-1. **PR #16 first?** It changes `schema.prisma` by 199 lines. **Recommended:** merge it before Phase 1 starts, so the five migrations are written once. The alternative is to start Phase 1's steps 1.1 and 1.2 (no schema) now and wait for the merge before 1.3.
-2. **Embeddings for real data: may a self-hosted model run as one new service in Mumbai?** ADR 0005 shows that a model of the size that does well on Indic languages cannot run inside a Vercel function, and that no external embedding provider found offers processing in India. **Recommended:** decide nothing now; stay on the mock; let the Phase 1 benchmark produce numbers; then choose between (a) an exception to "no new services" for one embedding container in `ap-south-1`, (b) an external provider under a signed data-processing agreement and a recorded cross-border assessment, or (c) a small model inside the function, if the benchmark shows it is good enough.
-3. **Knowledge chunks in the existing index tables?** **Recommended:** yes, with `ownerType = KNOWLEDGE` (ADR 0005 part B). The alternative is a separate `KnowledgeChunk` table, which keeps non-patient rows physically apart at the cost of a second copy of the embedding-space and re-embed machinery.
-4. **Who may approve a knowledge document?** **Recommended:** a new permission, `ai:knowledge:approve`, given to the hospital administrator and the clinical advisor role, and never the uploader of that version. Which existing roles should hold `ai:knowledge:manage`?
-5. **Conversations?** **Recommended:** not in these phases. Keep every request single-shot, as today, and let the screen hold the visible thread. If you want server-side memory: staff turns encrypted for at most 90 days, patient turns only under the `AI_TEXT_RETENTION` opt-in, and every turn re-checks access.
-6. **Imported results in AI answers?** **Recommended:** staff modes only, always labelled "imported", ranked below verified, never the "latest" value when a verified one exists, and not shown to patients until the clinical advisor has a view. Should it also follow each user's "show imported results" chart preference?
-7. **DOCX.** **Recommended:** defer. Accept PDF, plain text, Markdown, HTML, CSV and JSON in Phase 2, and ask administrators to export DOCX to PDF. The alternative is one small DOCX-to-text dependency.
-8. **External providers for knowledge documents.** A knowledge document has no patient identifiers but may be confidential to the hospital. **Recommended:** a per-organisation setting, default off, separate from the patient-data flag.
-9. **Scholar knowledge.** Should Scholar get its own retrieval over synthetic teaching material in these phases? **Recommended:** no. Reserve the scope in the schema's CHECKs and build nothing until Scholar asks for it.
-10. **The Upstash Redis backend in `rateLimit()`.** It exists for sign-in limits and conflicts with "no Redis". The AI layer does not use it. **Recommended:** leave it out of this work and decide separately whether to move sign-in limiting to Postgres.
-11. **The clinical advisor.** Prompts, refusal rules, the sensitive list and the evaluation answers all wait for one. Is there a name, or do the phases continue to mark these "pending clinical advisor"?
-12. **Real-provider keys.** The Anthropic account has no credit and there is no Voyage key. **Recommended:** fund a small synthetic-only budget before Phase 8, so the real evaluation and the benchmark can run at least once. Until then those lines read "pending".
+| # | Question | Decision |
+|---|---|---|
+| 1 | PR #16 first? | **Done.** PR #16 was merged into `main` (merge commit `1c6d535`) before Phase 1 began. |
+| 2 | A self-hosted embedding service in Mumbai? | **Decided after the Phase 1 benchmark.** Nothing is adopted until it has numbers; the mock stays active (ADR 0005 part A). |
+| 3 | Where knowledge chunks live | **In the existing index tables,** with the `KNOWLEDGE` owner type (ADR 0005 part B). No `KnowledgeChunk` table. |
+| 4 | Who manages and who approves knowledge documents | **`knowledge.manage`** (default: hospital administrator) and **`knowledge.approve`** (default: medical superintendent, quality lead). **The approver can never be the uploader.** |
+| 5 | Server-side conversations | **None in these phases.** The client keeps recent turns and sends a compact context with the question. No conversation tables. |
+| 6 | Imported results in AI answers | **Staff modes only, always labelled "imported", never the "latest" value when a verified one exists.** |
+| 7 | DOCX | **Deferred.** PDF, plain text, Markdown, HTML, CSV and JSON first. |
+| 8 | Knowledge documents and external providers | **A per-organisation setting, default off.** A knowledge upload containing anything that looks like patient identifiers is **refused**. |
+| 9 | Scholar retrieval | **Not now.** |
+| 10 | Upstash Redis in the sign-in rate limiter | **Out of scope;** a separate decision. The AI layer does not use it. |
+| 11 | The clinical advisor | **None yet.** Prompts, refusal rules, the sensitive-category list and the evaluation answers stay "pending clinical sign-off", and each uses the most conservative option. |
+| 12 | A budget for real providers | **Pending.** The mocks stay. |
+
+### 13.1 What the decisions change in this plan
+
+- **Decision 4:** the permissions are written `knowledge:manage` and `knowledge:approve` in code, in the colon form every other permission uses (`ai:record:ask`). They are the two decided permissions; only the separator differs.
+- **Decision 5:** step 4.6 is the client's compact context, and Phase 4 has no migration. The context is untrusted text: it is masked, size-limited, never a source, and never widens access.
+- **Decision 6:** an imported result is indexed for the `STAFF_ONLY` audience, so no patient or proxy mode can retrieve it. The per-user "show imported results" chart preference is not consulted by the AI: the label and the ranking rule apply to every staff member alike.
+- **Decision 8:** an Indian-mobile-shaped number counts as "looks like a patient identifier", so a document that prints one is refused, and the uploader removes it or replaces it with a short code or a toll-free number. This is stricter than Phase 0 proposed (flag for the approver).
+- **Decision 11:** where a rule has a stricter and a looser reading, the stricter one is built. Patient-facing modes stay on the strongest tier, refuse diagnosis and dosing, and withhold a whole answer on any validation failure.
+
+### 13.2 Still open
+
+1. **The approver roles do not exist.** The `Role` enum has `HOSPITAL_ADMIN` and no medical superintendent or quality lead. Phase 2 needs either two new roles, or a named existing role to hold `knowledge:approve`. Until one holds it, nothing can be published, which is the safe default.
+2. **The embedding model for real data** (decision 2), after the benchmark.
+3. **The clinical advisor** (decision 11) and **the real-provider budget** (decision 12). Both block only the real-data switch, which stays off.

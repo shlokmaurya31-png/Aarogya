@@ -1,6 +1,6 @@
 # ADR 0005: RAG embeddings, the provider data policy, and which tables are new
 
-- **Status:** Proposed (Phase 0). Part A's model choice is deliberately left open until it has numbers; parts B and C are ready for a decision.
+- **Status:** Accepted (2026-11-17). Parts B and C are decided. Part A's decision is "adopt nothing until the Phase 1 benchmark has numbers"; the model itself will be chosen by a later ADR.
 - **Date:** 2026-11-17
 - **Context documents:** [`../RAG_AUDIT.md`](../RAG_AUDIT.md), [`../RAG_ARCHITECTURE.md`](../RAG_ARCHITECTURE.md), [`../RAG_DESIGN.md`](../RAG_DESIGN.md) §6.2 and §16.3.
 
@@ -92,7 +92,7 @@ So cost does not decide this. Residency and Vercel feasibility do.
 
 If the benchmark's order matches the published one, the recommendation will be **BGE-M3, self-hosted in `ap-south-1`**, for real data: it is the only candidate here with published Indic results, an 8,192-token input limit, a permissive licence, and processing in India with no cross-border transfer.
 
-That recommendation **requires an exception to "no new services"**: one stateless embedding container, behind the existing `EmbeddingProvider` adapter, with the mock as the default and the container enabled only by environment (ADR 0003). It is put to you as open question 2. It is not assumed.
+That recommendation **requires an exception to "no new services"**: one stateless embedding container, behind the existing `EmbeddingProvider` adapter, with the mock as the default and the container enabled only by environment (ADR 0003). It is not assumed: the product owner decides after the Phase 1 benchmark (decided 2026-11-17).
 
 If the exception is refused, the fallbacks in order are:
 
@@ -143,7 +143,7 @@ The rule: a new table only where an existing one cannot be extended, with the re
 | `EmbeddingJob` | Not created | The transactional outbox, the bulk lane, `runTick` and `RagBackfillCursor` already are the job system, with retries, dead letters and replay. Ingestion state is on the version row. |
 | `RAGQueryLog` | Not created | `AiInteraction` already is it, with retention and review built. |
 | `RAGSourceReference` | Created as `AiInteractionSource` | Named after the model it belongs to. |
-| `AIConversation`, `AIConversationMessage` | **Not created; waits for a decision** | Stored turns are retained patient text. Today that needs encryption, a 90-day limit and, for patients, an explicit opt-in. Open question 5. |
+| `AIConversation`, `AIConversationMessage` | **Not created** (decided 2026-11-17) | No server-side conversations in these phases. The client keeps recent turns and sends a compact context. Stored turns would be retained patient text. |
 
 ### B.4 The alternative considered for knowledge chunks
 
@@ -162,7 +162,7 @@ The risk accepted: one more owner kind in the tables that hold clinical text. It
 - Enum values first, in their own migration.
 - Every new CHECK is added `NOT VALID`, then validated; if validation finds a row, the migration stops and names it. It does not repair the row.
 - No existing column is dropped or retyped.
-- All five Phase 1 migrations are written after PR #16 merges, because it changes the same schema file.
+- All five Phase 1 migrations are written after PR #16 merged (2026-11-17), because it changed the same schema file.
 
 ---
 
@@ -181,7 +181,7 @@ A provider's flag is turned on only after `PRE_LAUNCH_CHECKLIST.md` records, for
 
 ### C.2 Knowledge documents
 
-They contain no patient identifiers but may be confidential to the hospital. Sending them to an external provider is governed by a separate per-organisation setting, default off (open question 8).
+They contain no patient identifiers but may be confidential to the hospital. Sending them to an external provider is governed by a separate per-organisation setting, default off. An upload containing anything that looks like a patient identifier is refused (both decided 2026-11-17).
 
 ### C.3 Provider families stay separate
 

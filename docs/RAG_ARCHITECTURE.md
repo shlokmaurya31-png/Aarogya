@@ -1,6 +1,6 @@
 # RAG architecture: the intelligence layer across Aarogya
 
-- **Status:** Proposed (Phase 0, 2026-11-17). Nothing here is built until its phase in [`RAG_IMPLEMENTATION_PLAN.md`](RAG_IMPLEMENTATION_PLAN.md).
+- **Status:** Accepted (Phase 0, 2026-11-17, with the decisions in the plan's §13). Nothing here is built until its phase in [`RAG_IMPLEMENTATION_PLAN.md`](RAG_IMPLEMENTATION_PLAN.md).
 - **Builds on:** [`RAG_DESIGN.md`](RAG_DESIGN.md) (Week 4b, built), [`DOCUMENT_PIPELINE_DESIGN.md`](DOCUMENT_PIPELINE_DESIGN.md) (4a), [`CONSENT_SHARING_DESIGN.md`](CONSENT_SHARING_DESIGN.md) (4c), ADRs 0001–0004.
 - **Decisions it depends on:** [`adr/0005-rag-embeddings-providers-and-tables.md`](adr/0005-rag-embeddings-providers-and-tables.md).
 - **Findings it answers:** [`RAG_AUDIT.md`](RAG_AUDIT.md). **Threats:** [`RAG_THREAT_MODEL.md`](RAG_THREAT_MODEL.md).
@@ -330,10 +330,10 @@ Only a version that is published, effective, not expired and not superseded is a
 
 | Action | Permission |
 |---|---|
-| Upload a draft version | `ai:knowledge:manage` |
-| Approve and publish | `ai:knowledge:approve`, and never the uploader of that version |
+| Upload a draft version | `knowledge:manage` (default: hospital administrator) |
+| Approve and publish | `knowledge:approve` (default: medical superintendent, quality lead), and never the uploader of that version |
 | Ask | `ai:knowledge:ask`, limited by access class |
-| Withdraw | `ai:knowledge:manage` |
+| Withdraw | `knowledge:manage` |
 
 Two people are needed to publish. A document that every clinician's assistant will quote should not be one person's upload.
 
@@ -380,7 +380,7 @@ The pipeline's steps, against the spec's nineteen:
 - **Never half-indexed.** Chunks are written `PENDING` and become `ACTIVE` only at publish, in one transaction. Retrieval filters on `ACTIVE`.
 - **Retryable.** A provider failure is a retry with backoff; a file that cannot be parsed is `FAILED` with a closed code, visible in the admin view, and can be re-run.
 - **Old versions stay traceable.** A superseded version keeps its row, its file and its `RagDocument` row (status `SUPERSEDED`). Its chunks are deleted, as for patient sources. A citation to it still resolves through `AiInteractionSource`.
-- **No patient data.** A knowledge document must not contain patient identifiers, because a knowledge row is readable by a whole facility. Ingestion extends the existing identifier detector (ABHA- and mobile-shaped today) with UHID- and Aadhaar-shaped patterns, and refuses a file with an ABHA-, UHID- or Aadhaar-shaped number (`CONTAINS_IDENTIFIERS`). A phone number alone is flagged for the approver, since a protocol may list helplines.
+- **No patient data.** A knowledge document must not contain patient identifiers, because a knowledge row is readable by a whole facility. Ingestion extends the existing identifier detector (ABHA- and mobile-shaped today) with UHID- and Aadhaar-shaped patterns, and refuses a file containing anything that looks like a patient identifier, an Indian-mobile-shaped number included (`CONTAINS_IDENTIFIERS`; decided 2026-11-17). Short codes and toll-free numbers do not match and pass.
 
 ### 8.5 The 4a pipeline is not duplicated
 
@@ -473,13 +473,15 @@ It must be lossless for clinical content. A property test asserts that every num
 
 **Level 2, by a model (not built unless measured):** only if the evaluation shows a mode that cannot fit its budget after level 1. If built, its output is never the sole evidence: the original chunk stays the citation, and the validator checks against the original.
 
-### 11.4 Conversation memory
+### 11.4 Conversation context (no server-side memory)
 
-Every request is single-shot today. Whether to add conversations is open question 5, because stored turns are retained patient text. The design, if approved:
+**Decided 2026-11-17: no server-side conversations in these phases.** Every request stays single-shot. The screen keeps the recent turns and may send a compact context with the next question.
 
-- the current question, plus at most the last few turns that the router marks as referenced;
-- a turn's stored text follows the existing retention rule: staff text encrypted for at most 90 days; patient text only under the `AI_TEXT_RETENTION` opt-in;
-- **memory never overrides the record.** Each turn re-runs access and retrieval; a past answer is context for the wording of the question, never a source.
+- **Bounded:** a few hundred tokens, counted in the request's budget. Longer is refused, not truncated silently.
+- **Untrusted:** it comes from the browser. It is masked like a question, never treated as an instruction, and never a source. Nothing in it can be cited, and a number that appears only in it fails validation.
+- **Never widens access.** Access and retrieval run again on every request, from the session. A context that mentions another patient changes nothing about what is retrieved.
+- **Stored only where the question is.** It follows the same retention rule: staff text encrypted for at most 90 days; patient text only under the `AI_TEXT_RETENTION` opt-in.
+- **The record always wins.** A past answer in the context is wording, not evidence.
 
 ### 11.5 Accounting
 
@@ -534,7 +536,7 @@ Every line of an answer shows where its facts came from.
 |---|---|---|
 | `verified` | Issued or signed by a hospital in the system | Yes |
 | `patient-provided` | Confirmed by the person or a proxy from an upload; not clinician-verified | **No** |
-| `imported` (new) | Brought from the hospital's previous system; not verified here | **No** |
+| `imported` (new) | Brought from the hospital's previous system; not verified here. Staff modes only | **No** |
 | `reference` (new) | From an approved knowledge document; not about this patient | Not applicable |
 | `handwritten`, `translated`, `not yet confirmed by you` | As today | — |
 
@@ -601,7 +603,7 @@ Invalidation for the knowledge caches is by key, not by event: the key contains 
 | `GET /api/ai/me` | Exists | Signed in |
 | `GET /api/ai/interactions`, `…/report`, `POST …/:id/text` | Exist | Reviewer roles |
 | `GET /api/ai/sources/:id` | New | Access re-checked for the caller, now |
-| `POST /api/ai/knowledge`, `GET /api/ai/knowledge/:id`, `POST …/versions`, `POST …/versions/:v/approve`, `POST …/withdraw` | New | `ai:knowledge:manage`, `ai:knowledge:approve` |
+| `POST /api/ai/knowledge`, `GET /api/ai/knowledge/:id`, `POST …/versions`, `POST …/versions/:v/approve`, `POST …/withdraw` | New | `knowledge:manage`, `knowledge:approve` |
 | `GET /api/ai/usage` | New | `ai:usage:read` |
 | `GET /api/ai/admin/health`, `POST /api/ai/admin/reindex` | New | Platform admin |
 | `POST /api/chat` | Exists; record questions go through the gateway | Signed in |
@@ -621,4 +623,7 @@ Every response is `Cache-Control: no-store`, like every other API response (the 
 | Writes by the AI | Principle 6 |
 | A Tier 3 workflow | Nothing has asked for one |
 | `KnowledgeChunk`, `EmbeddingJob`, `RAGQueryLog` tables | Existing tables are extended (ADR 0005) |
+| Conversation tables and server-side memory | Decided 2026-11-17: the client keeps recent turns (§11.4) |
+| Scholar retrieval | Decided 2026-11-17: not now |
+| A DOCX parser | Decided 2026-11-17: deferred |
 | A new job system, a vector database, Redis | Rule 6 |
