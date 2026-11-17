@@ -1,6 +1,7 @@
 # Retrieval-augmented answers over the patient record: design (Week 4b)
 
 - **Status:** Revision 3, **built in Week 4b** (2026-10-18; §16 records what the code does where it differs). Real data stays off.
+- **What comes next (2026-11-17):** the wider intelligence layer (knowledge documents, structured and operational retrieval, token economy) is planned in `docs/RAG_AUDIT.md`, `docs/RAG_ARCHITECTURE.md`, `docs/RAG_IMPLEMENTATION_PLAN.md`, `docs/RAG_THREAT_MODEL.md` and ADR 0005. This document stays the record of what Week 4b built.
 - **Revision 3 (2026-10-17):**
   - person-owned sources (`docs/PERSON_IDENTITY_DESIGN.md`, Phase 0);
   - product decisions 2–11 applied (§13.2): the reviewer roles, deferred India-hosted embeddings with a re-embed job instead of a fixed vector column, same-organization consent through the existing consent model, guardian consents lapsing at 18, items pending the clinical advisor.
