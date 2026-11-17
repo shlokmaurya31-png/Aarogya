@@ -38,6 +38,11 @@ const MODALITY: Record<string, string> = { XRAY: "X-ray", CT: "CT scan", MRI: "M
 export async function loadSource(ref: SourceRef): Promise<Loaded> {
   const id = ref.sourceId;
   switch (ref.sourceType) {
+    // RAG Phase 1: the types exist; their indexing doesn't yet. Knowledge documents are
+    // chunked by knowledge ingestion (Phase 2), imported results indexed in Phase 3 (step 3.6).
+    case "KNOWLEDGE_DOCUMENT":
+    case "LEGACY_LAB_RESULT":
+      return { action: "NEVER" };
     case "CLINICAL_NOTE": {
       const n = await prisma.clinicalNote.findUnique({ where: { id }, select: { type: true, content: true, status: true, signedAt: true, createdAt: true, supersedesId: true, encounter: { select: { patientId: true } } } });
       if (!n) return gone;

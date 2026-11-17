@@ -22,7 +22,9 @@ export type SourceInput =
   | { sourceType: "DISCHARGE_SUMMARY"; summary: unknown; dischargeType?: string | null; at: Date }
   | { sourceType: "GENERATED_DOCUMENT" | "CLINICAL_DOCUMENT"; docType: string; title: string; patientVisible: boolean; at: Date }
   | { sourceType: "PATIENT_PROVIDED_RECORD"; kind: "DIAGNOSIS" | "MEDICATION_HISTORY" | "LAB_RESULT" | "PROCEDURE" | "ALLERGY"; value: Record<string, unknown>; at: Date; handwritten: boolean; documentTitle?: string | null; byProxy?: boolean }
-  | { sourceType: "PATIENT_DOCUMENT"; docType: string; title: string; at: Date };
+  | { sourceType: "PATIENT_DOCUMENT"; docType: string; title: string; at: Date }
+  /** RAG Phase 1: a result imported from the hospital's previous system (LegacyLabResult), as mapped; staff only, never verified. */
+  | { sourceType: "LEGACY_LAB_RESULT"; testName: string; value: string; unit?: string | null; referenceRange?: string | null; flag?: string | null; sourceSystem: string; at: Date };
 
 export interface Rendered {
   sourceType: RagSourceType;
@@ -75,7 +77,7 @@ const PP_CATEGORY: Record<string, RagCategory> = { DIAGNOSIS: "DIAGNOSES", MEDIC
 function base(sourceType: RagSourceType, label: string, title: string, at: Date, more: Partial<Rendered> & Pick<Rendered, "sections" | "categories">): Rendered {
   const origin = more.origin ?? "VERIFIED";
   const handwritten = more.handwritten ?? false;
-  const originLabel = origin === "VERIFIED" ? "verified" : `patient-provided${more.byProxy ? " · confirmed by proxy" : ""}${handwritten ? " · handwritten" : ""}`;
+  const originLabel = origin === "VERIFIED" ? "verified" : origin === "IMPORTED" ? "imported" : `patient-provided${more.byProxy ? " · confirmed by proxy" : ""}${handwritten ? " · handwritten" : ""}`;
   return {
     sourceType, label, title, recordedAt: at, origin, handwritten,
     sensitiveCategory: more.sensitiveCategory ?? null, audience: more.audience ?? "PATIENT_VISIBLE",
@@ -95,6 +97,12 @@ export function renderSource(s: SourceInput): Rendered {
         audience: "STAFF_ONLY",
         sensitiveCategory: sensitiveCategoryOf({ texts: [s.noteType, ...sections.map((x) => x.text)] }),
       });
+    }
+    case "LEGACY_LAB_RESULT": {
+      // Decided 2026-11-17: staff modes only, always "imported", never a verified fact.
+      const flag = s.flag ? FLAG[s.flag] ?? s.flag.toLowerCase() : null;
+      const text = sentence(`Imported result from ${s.sourceSystem}: ${s.testName} ${s.value}${s.unit ? ` ${s.unit}` : ""}${s.referenceRange ? ` (reference ${s.referenceRange})` : ""}${flag ? `, ${flag}` : ""}, observed ${isoDay(s.at)}; not verified in this hospital`);
+      return base("LEGACY_LAB_RESULT", "Imported lab result", s.testName, s.at, { sections: [{ text }], categories: ["LABS"], origin: "IMPORTED", audience: "STAFF_ONLY", sensitiveCategory: sensitiveCategoryOf({ texts: [s.testName] }) });
     }
     case "LAB_RESULT": {
       const flag = s.flag ? FLAG[s.flag] ?? s.flag.toLowerCase() : null;

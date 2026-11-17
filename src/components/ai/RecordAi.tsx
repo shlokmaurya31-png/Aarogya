@@ -135,7 +135,7 @@ export function RecordAi({ patientId, modes, documentId, appointmentId, shareId,
                   <li key={c.n} className="text-[11.5px]">
                     <span className="text-cyan">[{c.n}]</span>{" "}
                     {patient ? <span>{c.title}</span> : <a className="underline-offset-2 hover:underline" href={c.link}>{c.title}</a>}
-                    <span className="ml-1 text-text-secondary">· {c.origin === "VERIFIED" ? "verified" : "patient-provided"}{c.handwritten ? " · handwritten" : ""}</span>
+                    <span className="ml-1 text-text-secondary">· {c.origin === "VERIFIED" ? "verified" : c.origin === "IMPORTED" ? "imported" : "patient-provided"}{c.handwritten ? " · handwritten" : ""}</span>
                   </li>
                 ))}
               </ul>

@@ -56,7 +56,7 @@ function mask(text: string, ids: readonly string[]): string {
 /** Staff asking about one patient: the record gateway, as CHART_QA. */
 export async function chatAboutRecord(actor: Extract<ChatActor, { kind: "STAFF" }>, input: { patientId: string; message: string }): Promise<ChatResult> {
   if (input.message.length > CHAT_LIMITS.recordQuestionChars) throw new AskError(400, "QUESTION_TOO_LONG");
-  const r = await askAi(actor, { mode: "CHART_QA", patientId: input.patientId, question: input.message });
+  const r = await askAi(actor, { mode: "CHART_QA", patientId: input.patientId, question: input.message }, { module: "CHAT" });
   const text = r.sentences.map((s) => (s.citations.length ? `${s.text} [${s.citations.join(", ")}]` : s.text)).join("\n");
   return { text: text || phrase("en", "noRecord"), outcome: r.outcome, label: r.meta.label, interactionId: r.meta.interactionId, citations: r.citations };
 }
