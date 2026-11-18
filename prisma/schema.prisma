@@ -28,7 +28,7 @@ datasource db {
   directUrl         = env("DIRECT_URL")
   shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
   // pgvector, for RAG embeddings (no vector columns yet). See ADR 0001.
-  extensions        = [vector]
+  extensions        = [vector, pg_trgm]
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -70,22 +70,22 @@ enum Role {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  passwordHash String
+  id                  String   @id @default(cuid())
+  email               String   @unique
+  passwordHash        String
   /// Bumped to invalidate every existing session for this user (logout-all,
   /// password change, role change, admin revoke). Sessions are stateless HMAC
   /// cookies, so this counter IS the revocation mechanism — a cookie whose
   /// version does not match is refused. See src/lib/auth/session.ts.
-  tokenVersion Int      @default(0)
+  tokenVersion        Int      @default(0)
   /// Flagship 4b: the chart's timeline shows results imported from the hospital's previous system (labelled "imported"). Off by default; per user.
-  showImportedResults Boolean @default(false)
-  role         Role
-  displayName  String
+  showImportedResults Boolean  @default(false)
+  role                Role
+  displayName         String
   /// Legal name where one is needed (students, for verification); displayName is the preferred name.
-  legalName    String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  legalName           String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
   studentProfile       StudentProfile?
   hospitalStaffProfile HospitalStaffProfile?
@@ -964,6 +964,9 @@ model Organization {
   domainEvents         DomainEventOutbox[]
   medicationItemLinks  MedicationItemLink[]
 
+  /// RAG Phase 1.
+  knowledgeDocuments KnowledgeDocument[]
+
   @@index([status])
 }
 
@@ -1098,6 +1101,9 @@ model Facility {
 
   allergyStatusEntries AllergyStatusEntry[]
   ragDocuments         RagDocument[]
+
+  /// RAG Phase 1.
+  knowledgeDocuments KnowledgeDocument[]
 
   @@unique([organizationId, slug])
   @@index([organizationId])
@@ -2671,8 +2677,8 @@ model Problem {
 }
 
 model Vital {
-  id                String    @id @default(cuid())
-  encounter         Encounter @relation(fields: [encounterId], references: [id])
+  id                String       @id @default(cuid())
+  encounter         Encounter    @relation(fields: [encounterId], references: [id])
   encounterId       String
   recordedByStaffId String
   hr                Int?
@@ -2686,7 +2692,7 @@ model Vital {
   consciousness     String?
   o2DeliveryMethod  String? // "room air" | "nasal cannula" | "face mask" | ...
   o2FlowRate        Float?
-  recordedAt        DateTime  @default(now())
+  recordedAt        DateTime     @default(now())
   /// Flagship 5a: NEWS2 scored on the server for a set synced from the ward
   /// tablet (the tablet's own module, src/lib/clinical/news2.ts). Display only:
   /// nothing alerts on it while the clinical sign-off is pending. Null for
@@ -11059,6 +11065,8 @@ model PatientAllergyNotice {
 enum RagOwnerType {
   FACILITY_PATIENT
   PERSON
+  /// RAG Phase 1: an approved knowledge document of an organisation (or one of its facilities); no patient, no person.
+  KNOWLEDGE
 }
 
 enum RagSourceType {
@@ -11076,11 +11084,16 @@ enum RagSourceType {
   PROBLEM
   DISCHARGE_SUMMARY
   PATIENT_PROVIDED_RECORD
+  /// RAG Phase 1.
+  KNOWLEDGE_DOCUMENT
+  LEGACY_LAB_RESULT
 }
 
 enum RagOrigin {
   VERIFIED
   PATIENT_PROVIDED
+  /// RAG Phase 1: brought from the hospital's previous system; not verified here, never a verified fact. Staff only.
+  IMPORTED
 }
 
 /// Sharing categories (PRODUCT_SPEC feature B, plus the record's own kinds).
@@ -11115,6 +11128,8 @@ enum RagDocumentStatus {
   ACTIVE
   SUPERSEDED
   WITHDRAWN
+  /// RAG Phase 1: written, not yet published (a knowledge version before approval); never a retrieval candidate.
+  PENDING
 }
 
 enum RagWithdrawReason {
@@ -11160,11 +11175,15 @@ model RagDocument {
   withdrawnAt        DateTime?
   withdrawnReason    RagWithdrawReason?
   createdAt          DateTime              @default(now())
+  /// RAG Phase 1, KNOWLEDGE only: the version indexed, and who may read it.
+  knowledgeVersionId String?
+  accessClass        KnowledgeAccessClass?
   chunks             RagChunk[]
 
   @@unique([sourceType, sourceId, sourceVersion])
   @@index([facilityId, patientId, status])
   @@index([personId, status])
+  @@index([knowledgeVersionId])
 }
 
 /// The unit retrieval returns. The filter columns are the document's, copied.
@@ -11196,10 +11215,23 @@ model RagChunk {
   tokenCount          Int
   /// Generated: to_tsvector('simple', …) over the context, heading, text and any translation (GIN-indexed).
   tsv                 Unsupported("tsvector")? @default(dbgenerated("to_tsvector('simple'::regconfig, ((((((COALESCE(context, ''::text) || ' '::text) || COALESCE(heading, ''::text)) || ' '::text) || text) || ' '::text) || COALESCE(\"translatedText\", ''::text)))"))
+  /// RAG Phase 1: the chunk's own language (ISO 639-1); the English stems below exist only for English.
+  language            String                   @default("en")
+  /// Generated: to_tsvector('english', …) for an English chunk, else null (GIN-indexed).
+  tsvEnglish          Unsupported("tsvector")? @default(dbgenerated("\nCASE\n    WHEN (language = 'en'::text) THEN to_tsvector('english'::regconfig, ((((COALESCE(context, ''::text) || ' '::text) || COALESCE(heading, ''::text)) || ' '::text) || text))\n    ELSE NULL::tsvector\nEND"))
+  /// RAG Phase 1, KNOWLEDGE only: the organisation and who may read it; page and section for citations.
+  organizationId      String?
+  accessClass         KnowledgeAccessClass?
+  pageNumber          Int?
+  sectionPath         String?
   embeddings          RagEmbedding[]
 
   @@unique([documentId, chunkNo])
   @@index([tsv], type: Gin)
+  @@index([tsvEnglish], type: Gin)
+  /// Trigram word similarity for Indic inflection and transliterated spellings (docs/RAG_AUDIT.md §11).
+  @@index([text(ops: raw("gin_trgm_ops"))], type: Gin, map: "RagChunk_text_trgm_idx")
+  @@index([organizationId, status, accessClass])
   @@index([facilityId, patientId, status, audience])
   @@index([personId, status, audience])
 }
@@ -11230,11 +11262,15 @@ model RagEmbedding {
   origin            RagOrigin
   recordedAt        DateTime
   sourceId          String
+  /// RAG Phase 1: copied from the chunk by the same trigger (KNOWLEDGE rows).
+  organizationId    String?
+  accessClass       KnowledgeAccessClass?
   createdAt         DateTime               @default(now())
 
   @@unique([chunkId, embeddingModel, embeddingVersion])
   @@index([patientId, embeddingModel, embeddingVersion])
   @@index([personId, embeddingModel, embeddingVersion])
+  @@index([organizationId, embeddingModel, embeddingVersion])
 }
 
 enum RagEmbeddingSpaceStatus {
@@ -11280,38 +11316,52 @@ enum AiTextScope {
 
 /// One AI request, for audit, safety review and evaluation (§3.3). BOOKKEEPING under the emit rule.
 model AiInteraction {
-  id                 String               @id @default(cuid())
-  organizationId     String?
-  facilityId         String?
-  userId             String
-  role               String
-  patientId          String?
-  personId           String?
-  proxyGrantId       String?
-  shareId            String?
-  consentId          String?
-  mode               String
-  language           String
-  model              String
-  embeddingModel     String
-  embeddingVersion   Int
-  outcome            AiInteractionOutcome
-  retrievedChunkIds  String[]
-  citedChunkIds      String[]
-  topScore           Float?
-  threshold          Float?
-  inputTokens        Int                  @default(0)
-  outputTokens       Int                  @default(0)
-  latencyMs          Int
+  id                    String                @id @default(cuid())
+  organizationId        String?
+  facilityId            String?
+  userId                String
+  role                  String
+  patientId             String?
+  personId              String?
+  proxyGrantId          String?
+  shareId               String?
+  consentId             String?
+  mode                  String
+  language              String
+  model                 String
+  embeddingModel        String
+  embeddingVersion      Int
+  outcome               AiInteractionOutcome
+  retrievedChunkIds     String[]
+  citedChunkIds         String[]
+  topScore              Float?
+  threshold             Float?
+  inputTokens           Int                   @default(0)
+  outputTokens          Int                   @default(0)
+  latencyMs             Int
   /// AES-256-GCM, application-level; kept only under §4.3.
-  questionCiphertext String?
-  answerCiphertext   String?
-  keyVersion         Int?
-  textScope          AiTextScope?
-  textExpiresAt      DateTime?
+  questionCiphertext    String?
+  answerCiphertext      String?
+  keyVersion            Int?
+  textScope             AiTextScope?
+  textExpiresAt         DateTime?
   /// Metadata (ids, scores, outcome, counts) is kept for a year.
-  metadataExpiresAt  DateTime
-  createdAt          DateTime             @default(now())
+  metadataExpiresAt     DateTime
+  createdAt             DateTime              @default(now())
+  /// RAG Phase 1 — accounting (docs/RAG_ARCHITECTURE.md §11.5). The surface asked from, the route the
+  /// router chose, the tier (0 = no model), the provider, and what the request cost.
+  module                String?
+  intent                String?
+  tier                  Int?
+  provider              String?
+  embeddingTokens       Int                   @default(0)
+  rerankUnits           Int                   @default(0)
+  /// Estimated from the dated price table, in millionths of a US dollar.
+  estimatedCostMicroUsd Int                   @default(0)
+  cacheHits             Int                   @default(0)
+  retrievalMs           Int?
+  generationMs          Int?
+  sources               AiInteractionSource[]
 
   @@index([facilityId, createdAt])
   @@index([userId, createdAt])
@@ -11340,6 +11390,157 @@ model AiTextReadLog {
 
   @@index([readAt])
   @@index([interactionId])
+}
+
+/// RAG Phase 1 — what one AI answer rested on (docs/adr/0005 part B): a row per retrieved
+/// source, cited or not, with no text. Outlives the chunk (deleted on supersede), so a
+/// citation can still be traced a year later; deleted with its interaction.
+model AiInteractionSource {
+  id                 String        @id @default(cuid())
+  interaction        AiInteraction @relation(fields: [interactionId], references: [id], onDelete: Cascade)
+  interactionId      String
+  /// 1-based, in the order the sources were given to the model.
+  rank               Int
+  cited              Boolean
+  /// CHUNK (the index), LIVE (a structured reader) or UPLOAD (an unconfirmed upload read directly).
+  sourceKind         String
+  sourceType         String
+  sourceId           String
+  /// The index rows at the time (no foreign key: they are derived data and may be gone).
+  chunkId            String?
+  ragDocumentId      String?
+  sourceVersion      Int?
+  knowledgeVersionId String?
+  pageNumber         Int?
+  sectionPath        String?
+  origin             RagOrigin
+  recordedAt         DateTime
+  createdAt          DateTime      @default(now())
+
+  @@unique([interactionId, rank])
+  @@index([sourceType, sourceId])
+}
+
+/// RAG Phase 1 — a vector by content hash within one embedding space, so identical
+/// knowledge text is embedded once (ADR 0005 part B). Holds a hash and a vector, never text.
+model AiEmbeddingCache {
+  id               String                 @id @default(cuid())
+  embeddingModel   String
+  embeddingVersion Int
+  /// sha-256 (hex) of the exact text embedded.
+  contentHash      String
+  dims             Int
+  embedding        Unsupported("halfvec")
+  createdAt        DateTime               @default(now())
+  lastUsedAt       DateTime               @default(now())
+
+  @@unique([embeddingModel, embeddingVersion, contentHash])
+  @@index([lastUsedAt])
+}
+
+// ── RAG Phase 1 — knowledge documents (docs/RAG_ARCHITECTURE.md §8; ADR 0005 part B) ──
+// An organisation's (or one facility's) approved SOPs, policies and references.
+// No patient data: an upload that looks like it carries a patient identifier
+// is refused (Phase 2). Chunks and vectors live in the RAG index (ownerType KNOWLEDGE).
+
+enum KnowledgeDocumentType {
+  SOP
+  POLICY
+  CLINICAL_REFERENCE
+  FORMULARY
+  ADMIN
+  EDUCATIONAL
+}
+
+/// Who may read a document; roles map onto these (Phase 3).
+enum KnowledgeAccessClass {
+  ALL_STAFF
+  CLINICAL
+  PHARMACY
+  BILLING
+  ADMIN
+}
+
+enum KnowledgeApprovalStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+enum KnowledgeIngestionStatus {
+  RECEIVED
+  PARSING
+  CHUNKING
+  EMBEDDING
+  INDEXED
+  FAILED
+}
+
+/// No scanner is procured: every version is NOT_SCANNED, and the admin view says so.
+enum KnowledgeScanStatus {
+  NOT_SCANNED
+  CLEAN
+  INFECTED
+}
+
+/// The identity of a document across its versions.
+model KnowledgeDocument {
+  id               String                     @id @default(cuid())
+  organization     Organization               @relation(fields: [organizationId], references: [id])
+  organizationId   String
+  /// Null: every facility of the organisation.
+  facility         Facility?                  @relation(fields: [facilityId], references: [id], onDelete: Restrict)
+  facilityId       String?
+  type             KnowledgeDocumentType
+  accessClass      KnowledgeAccessClass
+  title            String
+  description      String?
+  ownerUserId      String
+  /// The version in force now (published, effective, not expired), if any.
+  currentVersionId String?                    @unique
+  createdAt        DateTime                   @default(now())
+  updatedAt        DateTime                   @updatedAt
+  versions         KnowledgeDocumentVersion[]
+
+  @@index([organizationId, facilityId])
+}
+
+/// One uploaded file of a document. The approver is never the uploader (a CHECK).
+model KnowledgeDocumentVersion {
+  id                    String                   @id @default(cuid())
+  document              KnowledgeDocument        @relation(fields: [documentId], references: [id])
+  documentId            String
+  version               Int
+  storageRef            String
+  /// sha-256 (hex) of the bytes: the same bytes twice for one document are refused.
+  sha256                String
+  contentType           String
+  language              String                   @default("en")
+  byteSize              Int
+  pageCount             Int?
+  uploadedByUserId      String
+  uploadedAt            DateTime                 @default(now())
+  approvalStatus        KnowledgeApprovalStatus  @default(DRAFT)
+  approvedByUserId      String?
+  approvedAt            DateTime?
+  rejectedReason        String?
+  effectiveAt           DateTime?
+  expiresAt             DateTime?
+  publishedAt           DateTime?
+  supersededByVersionId String?                  @unique
+  withdrawnAt           DateTime?
+  ingestionStatus       KnowledgeIngestionStatus @default(RECEIVED)
+  ingestionAttempts     Int                      @default(0)
+  /// A closed code, never provider or file text.
+  ingestionError        String?
+  scanStatus            KnowledgeScanStatus      @default(NOT_SCANNED)
+  createdAt             DateTime                 @default(now())
+
+  @@unique([documentId, version])
+  @@unique([documentId, sha256])
+  @@index([approvalStatus, effectiveAt])
+  @@index([ingestionStatus])
 }
 
 /// Week 4b — the backfill's resumable cursor, per facility and source type (docs/RAG_DESIGN.md §5.7).

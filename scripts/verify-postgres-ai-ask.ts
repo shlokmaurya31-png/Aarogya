@@ -104,6 +104,8 @@ function recorder(inner: RecordAnswerProvider) {
 const cool = (userId: string) => prisma.$executeRaw`UPDATE "AiInteraction" SET "createdAt" = "createdAt" - interval '2 minutes', "textExpiresAt" = "textExpiresAt" - interval '2 minutes' WHERE "userId" = ${userId} AND "createdAt" > now() - interval '2 minutes'`;
 const refusedWith = async (p: Promise<unknown>, status: number) => p.then(() => false, (e) => e instanceof AskError && e.status === status);
 
+const gateStarted = new Date();
+
 async function main() {
   registerAllConsumers();
   setDocumentProvidersForTest(null);
@@ -269,6 +271,25 @@ async function main() {
     report("HTTP: the treating doctor's chart Q&A streams (200)", ds.status === 200 && (await ds.text()).includes("11.2 g/dL"));
   } finally {
     child.kill("SIGTERM");
+  }
+
+  // RAG Phase 1, step 1.7 — what every answer rested on, and what it cost.
+  {
+    const rows = await prisma.aiInteraction.findMany({ where: { createdAt: { gte: gateStarted }, mode: { not: "ASSISTANT" }, outcome: { in: ["ANSWERED", "CITATION_INVALID"] } }, include: { sources: true } });
+    report("Attribution: answered requests exist to check", rows.length >= 5, String(rows.length));
+    const bad = rows.filter((r) => r.sources.length !== r.retrievedChunkIds.length
+      || r.sources.filter((x) => x.cited).length !== r.citedChunkIds.length
+      || r.sources.some((x) => x.sourceKind === "CHUNK" && !r.retrievedChunkIds.includes(x.chunkId!)));
+    report("Attribution: every answered request has one source row per source, the cited ones marked", bad.length === 0, `${bad.length} of ${rows.length} differ`);
+    const chunkRows = rows.flatMap((r) => r.sources).filter((x) => x.sourceKind === "CHUNK");
+    report("Attribution: an index source names its document and version", chunkRows.length > 0 && chunkRows.every((x) => x.ragDocumentId && x.sourceVersion !== null));
+    // The table has no text column at all; and nothing in it carries a chunk's text.
+    const texts = (await prisma.ragChunk.findMany({ where: { id: { in: chunkRows.map((x) => x.chunkId!) } }, select: { text: true } })).map((c) => c.text);
+    const asJson = JSON.stringify(rows.flatMap((r) => r.sources));
+    report("Attribution: no source row holds text", texts.length > 0 && texts.every((t) => !asJson.includes(t)));
+    report("Accounting: answered requests record module, provider, tier 2 and timings", rows.every((r) => r.module && r.provider === "mock" && r.tier === 2 && r.retrievalMs !== null && r.generationMs !== null));
+    const noModel = await prisma.aiInteraction.findMany({ where: { createdAt: { gte: gateStarted }, outcome: { in: ["NO_RECORD", "REFUSED_SAFETY"] }, provider: null }, select: { tier: true } });
+    report("Accounting: an answer given without a model is tier 0", noModel.length > 0 && noModel.every((r) => r.tier === 0));
   }
 
   setRecordAnswerProviderForTest(null);

@@ -1,5 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { AIProvider, AssistantInput, CaseFactSheet } from "./provider";
+import { AIUnavailableError, type AIProvider, type AssistantInput, type AssistantPermit, type CaseFactSheet } from "./provider";
+import { assertAssistantPermit } from "./assistantPermit";
+import { providerMayReceive } from "./dataPolicy";
 import { buildPatientDialoguePrompt, buildVivaExaminerPrompt, buildTutorPrompt, buildAssistantPrompt } from "./prompts";
 
 const MODEL = "claude-sonnet-5";
@@ -49,7 +51,10 @@ export class AnthropicAIProvider implements AIProvider {
     return this.complete(buildTutorPrompt(input.mode), userMessage, input.mode === "DEBRIEF" ? 500 : 200);
   }
 
-  async assistantReply(input: AssistantInput): Promise<string> {
+  async assistantReply(input: AssistantInput, permit: AssistantPermit): Promise<string> {
+    assertAssistantPermit(permit);
+    // Real data also needs this provider's own flag (ADR 0005 part C; default off).
+    if (!providerMayReceive("ANTHROPIC", permit.real)) throw new AIUnavailableError("DATA_POLICY");
     return this.complete(buildAssistantPrompt(input), input.message, 512);
   }
 }

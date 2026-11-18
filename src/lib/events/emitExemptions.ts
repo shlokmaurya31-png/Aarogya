@@ -156,6 +156,7 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/person/linking.ts#startReverification": { category: "PROCESS_STEP", reason: "a migrated link's verification opened (same routes as a new link); the outcome is the link", boundary: ["PersonPatientLinked"] },
   "src/lib/person/merge.ts#startPersonMerge": { category: "PROCESS_STEP", reason: "the other account's password checked and a code sent to each account; the outcome is the merge", boundary: ["PersonMerged"] },
   // Week 4b — the AI index is derived data, rebuilt from the record (docs/RAG_DESIGN.md §4.1).
+  "src/lib/rag/embedCache.ts#cachedKnowledgeEmbeddings": { category: "BOOKKEEPING", reason: "a content-hash cache of knowledge-text vectors (RAG Phase 1): derived, idempotent, holds no text; no record changes" },
   "src/lib/rag/embed.ts#writeEmbeddings": { category: "CONSUMER_OUTPUT", reason: "embeddings of indexed chunks, derived data written by the rag-indexer and the re-embed job (idempotent)" },
   "src/lib/rag/indexer.ts#indexSource": { category: "CONSUMER_OUTPUT", reason: "the rag-indexer's derived index (documents, chunks, embeddings) of a source whose own change emitted its event" },
   "src/lib/rag/indexer.ts#withdrawSource": { category: "CONSUMER_OUTPUT", reason: "the rag-indexer retiring a voided, superseded or withdrawn source's derived index rows" },
@@ -174,6 +175,7 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/household/comingOfAge.ts#startClaimOwnContact": { category: "PROCESS_STEP", reason: "Week 5b: an open claim (the code sent to the member's own contact)", boundary: ["MemberAccountClaimed"] },
   "src/lib/household/comingOfAge.ts#startClaimInPerson": { category: "PROCESS_STEP", reason: "Week 5b: an open claim after the in-person check (audited)", boundary: ["MemberAccountClaimed"] },
   "src/lib/sharing/accessLog.ts#logRecordAccess": { category: "BOOKKEEPING", reason: "a read of the person's record in their access log (docs/CONSENT_SHARING_DESIGN.md §7.1): part of the read, no record changes" },
+  "src/lib/rag/interactions.ts#logAssistantInteraction": { category: "BOOKKEEPING", reason: "metadata of a portal-assistant request (RAG Phase 1), part of the interaction log; no text, no record changes" },
   "src/lib/rag/interactions.ts#logRateLimited": { category: "BOOKKEEPING", reason: "metadata of a refused AI request (outcome RATE_LIMITED), part of the interaction log" },
   "src/lib/rag/interactions.ts#purgeExpiredAiInteractions": { category: "BOOKKEEPING", reason: "retention sweep of the AI interaction log (text at expiry, metadata after a year)" },
   "src/lib/rag/interactions.ts#readInteractionText": { category: "BOOKKEEPING", reason: "access log and audit of a reviewer's read of retained AI text; no state change" },

@@ -56,7 +56,7 @@ export interface RecordAnswerProvider {
 
 /** The provider is down or refused: the API answers 503, never the mock (§6.1). */
 export class RecordAiUnavailableError extends Error {
-  constructor(readonly code: "PROVIDER_UNAVAILABLE" | "RATE_LIMITED" | "INTERNAL") {
+  constructor(readonly code: "PROVIDER_UNAVAILABLE" | "RATE_LIMITED" | "INTERNAL" | "DATA_POLICY") {
     super(`AI provider unavailable: ${code}`);
     this.name = "RecordAiUnavailableError";
   }

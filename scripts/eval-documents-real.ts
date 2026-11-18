@@ -66,7 +66,7 @@ async function main() {
   console.log(`Real-provider evaluation: ${fixtures.length} synthetic samples, input ${input}, concurrency ${concurrency}. Synthetic fixtures only; the real-data switch is off.`);
   const started = Date.now();
   // A permit for the synthetic fixtures only: no Person, no database.
-  const report = await runEvaluation(providers, issuePermit("evaluation:synthetic-fixtures"), evaluationDictionary(), fixtures, input, {
+  const report = await runEvaluation(providers, issuePermit("evaluation:synthetic-fixtures", false), evaluationDictionary(), fixtures, input, {
     concurrency, continueOnError: true,
     onSample: (s) => console.log(`  ${s.id.padEnd(16)} ${s.error ? `error ${s.error}` : `${s.correctFields}/${s.expectedFields} fields, ${s.ms} ms`}`),
   });

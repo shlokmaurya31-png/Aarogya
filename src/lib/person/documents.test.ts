@@ -8,8 +8,9 @@ describe("the upload move knows every column that can point at a ClinicalDocumen
       .filter((m) => m.fields.some((f) => f.name === "documentId" && f.kind === "scalar"))
       .map((m) => m.name)
       // These documentId columns point at a PersonDocument, never a ClinicalDocument;
-      // RagChunk's points at its RagDocument (the AI index's own row).
-      .filter((m) => !["DocumentProcessing", "PatientProvidedRecord", "RagChunk"].includes(m))
+      // RagChunk's points at its RagDocument (the AI index's own row); KnowledgeDocumentVersion's
+      // at its KnowledgeDocument (RAG Phase 1; a foreign key to that table only).
+      .filter((m) => !["DocumentProcessing", "PatientProvidedRecord", "RagChunk", "KnowledgeDocumentVersion"].includes(m))
       .sort();
     expect(withDocumentId).toEqual([...CLINICAL_DOCUMENT_REFERENCES].sort());
   });

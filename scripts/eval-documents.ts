@@ -29,7 +29,7 @@ async function main() {
   }
   const providers = real ? getDocumentProviders() : getDocumentProviders({});
   // A permit for synthetic fixtures only: no Person, no database row is read or written.
-  const report = await runEvaluation(providers, issuePermit("evaluation:synthetic-fixtures"), evaluationDictionary(), undefined, real ? "rendered-image" : "marker-pdf");
+  const report = await runEvaluation(providers, issuePermit("evaluation:synthetic-fixtures", false), evaluationDictionary(), undefined, real ? "rendered-image" : "marker-pdf");
   const md = reportMarkdown(report, real ? "claude" : "mock");
   if (out) writeFileSync(out, md + "\n");
   console.log(md);

@@ -17,19 +17,28 @@ export interface CaseFactSheet {
 }
 
 /**
- * The portal assistant (/api/chat). `context` is the ONLY record the model
- * may use, already authorized and minimized server-side; it is never the
- * client's word. "patient": the signed-in patient (or a delegate) about their
- * own record. "clinician": hospital staff, optionally with one authorized
- * chart; Scholar users get no patient record at all.
+ * The portal assistant (/api/chat), record-free since RAG Phase 1: it is
+ * given NO patient record. A question about a record is answered by the
+ * record gateway (src/lib/rag/ask.ts), with citations, or not at all. The
+ * message arrives with identifiers masked (src/lib/rag/assistant.ts).
  */
 export interface AssistantInput {
   audience: "patient" | "clinician";
-  context: string;
   /** The portal section the user is on, as a hint for open questions. */
   page?: string;
   message: string;
 }
+
+declare const assistantPermitBrand: unique symbol;
+/**
+ * Issued only by the assistant gateway (src/lib/rag/assistant.ts) after its
+ * checks. `real`: the caller's person or facility is REAL, so an external
+ * provider also needs the switch and its own data-policy flag.
+ */
+export interface AssistantPermit { readonly real: boolean; readonly [assistantPermitBrand]: true }
+
+/** What Aarogya Scholar may call: synthetic teaching cases only, never the portal assistant. */
+export type ScholarAI = Pick<AIProvider, "id" | "patientDialogue" | "vivaExaminer" | "tutorFeedback">;
 
 export interface AIProvider {
   readonly id: "anthropic" | "mock";
@@ -49,8 +58,8 @@ export interface AIProvider {
     scoreSummary: string;
     weakDimension?: string;
   }): Promise<string>;
-  /** One portal-assistant reply, grounded only in input.context. */
-  assistantReply(input: AssistantInput): Promise<string>;
+  /** One record-free portal-assistant reply. Needs a permit from the assistant gateway. */
+  assistantReply(input: AssistantInput, permit: AssistantPermit): Promise<string>;
 }
 
 export class AIUnavailableError extends Error {}

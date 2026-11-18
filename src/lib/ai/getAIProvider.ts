@@ -3,8 +3,15 @@ import { MockAIProvider } from "./mockProvider";
 import { AnthropicAIProvider } from "./anthropicProvider";
 
 let cached: AIProvider | null = null;
+let override: AIProvider | null = null;
+
+/** Tests and gates only: replace the provider (null restores the configured one). */
+export function setAIProviderForTest(p: AIProvider | null): void {
+  override = p;
+}
 
 export function getAIProvider(): AIProvider {
+  if (override) return override;
   if (cached) return cached;
   const apiKey = process.env.ANTHROPIC_API_KEY;
   const configured = process.env.AI_PROVIDER ?? "anthropic";

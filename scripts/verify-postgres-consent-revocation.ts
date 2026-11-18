@@ -24,7 +24,9 @@ import { exportPatientToFhir } from "../src/lib/hospital/interoperability/fhir/e
 import { createSharingRequest, revokePatientConsent } from "../src/lib/patient/experience/consent";
 import { revokeDelegation } from "../src/lib/patient/experience/family";
 import { resolveReadScope, type PatientAccessScope, type PatientContext } from "../src/lib/patient/context";
-import { patientAssistantContext } from "../src/lib/ai/assistantContext";
+import { setAIProviderForTest } from "../src/lib/ai/getAIProvider";
+import { MockAIProvider } from "../src/lib/ai/mockProvider";
+import { chatGeneral } from "../src/lib/rag/assistant";
 import { linkAccountForGate } from "./lib/personFixture";
 
 let pass = 0;
@@ -86,13 +88,22 @@ async function main() {
   const delegateCtx: PatientContext = { session: { userId: delegateUser.id, role: "PATIENT" } as PatientContext["session"], userId: delegateUser.id, selfPatientId: null, selfPatientIds: [] };
   const live = await resolveReadScope(delegateCtx, patient.id).catch(() => null);
   report("Live delegation: the delegate can read the record", live !== null && live.allowedClasses.has("RECORDS"));
-  report("Live delegation: the AI assistant gets context", live !== null && (await patientAssistantContext(live)).includes("delegated access"));
+  // RAG Phase 1: the portal assistant is record-free. Whatever a delegate asks, before or after
+  // the revocation, nothing of the delegated record reaches the provider.
+  const seen: string[] = [];
+  const mock = new MockAIProvider();
+  setAIProviderForTest(Object.assign(Object.create(mock), { assistantReply: (i: Parameters<MockAIProvider["assistantReply"]>[0], p: Parameters<MockAIProvider["assistantReply"]>[1]) => { seen.push(JSON.stringify(i)); return mock.assistantReply(i, p); } }));
+  const marks = [patient.fullName, patient.uhid, ...(await prisma.allergy.findMany({ where: { patientId: patient.id }, select: { substance: true } })).map((x) => x.substance)].filter((x): x is string => !!x && x.length >= 3);
+  const askAsDelegate = () => chatGeneral({ kind: "PATIENT", userId: delegateUser.id }, { message: `What are ${patient.fullName}'s allergies?` }).then((r) => r.outcome, (e) => `refused ${e?.code ?? e}`);
+  const before = await askAsDelegate();
+  report("Live delegation: the assistant is given none of the delegated record", seen.every((t) => marks.every((m) => !t.includes(m))), before);
 
   await revokeDelegation(self, owner.id, delegation.id, "verify gate");
   const after = await resolveReadScope(delegateCtx, patient.id).then(() => "read", (e) => (e instanceof NotFoundError ? "404" : String(e)));
   report("Revoked: the delegate's portal reads are refused (404)", after === "404", after);
-  const aiAfter = await resolveReadScope(delegateCtx, patient.id).then((s) => patientAssistantContext(s)).then(() => "context built", () => "refused");
-  report("Revoked: the AI assistant gets no context", aiAfter === "refused");
+  const aiAfter = await askAsDelegate();
+  report("Revoked: the assistant is still given none of the record", seen.every((t) => marks.every((m) => !t.includes(m))), aiAfter);
+  setAIProviderForTest(null);
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();

@@ -8,6 +8,9 @@ import { chunkSections, estimateTokens, sentences, CHUNK } from "./chunk";
 const at = new Date("2026-10-14T09:30:00Z");
 
 const GOLDEN: [SourceInput, string, string, string[]][] = [
+  // RAG Phase 1: an imported result is labelled "imported" and says it is not verified here.
+  [{ sourceType: "LEGACY_LAB_RESULT", testName: "Hemoglobin", value: "10.9", unit: "g/dL", referenceRange: "12.0 - 15.5", flag: "L", sourceSystem: "OldHIS", at },
+    "[Imported lab result · Hemoglobin · 2026-10-14 · imported]", "Imported result from OldHIS: Hemoglobin 10.9 g/dL (reference 12.0 - 15.5), low, observed 2026-10-14; not verified in this hospital.", ["LABS"]],
   [{ sourceType: "LAB_RESULT", testName: "Hemoglobin", value: "11.2", unit: "g/dL", referenceRange: "12.0 - 15.5", flag: "LOW", at, amended: false },
     "[Lab result · Hemoglobin · 2026-10-14 · verified]", "Hemoglobin 11.2 g/dL (reference 12.0 - 15.5), low, resulted 2026-10-14.", ["LABS"]],
   [{ sourceType: "LAB_RESULT", testName: "Creatinine", value: "1.10", unit: "mg/dL", flag: "NORMAL", at, amended: true },
@@ -52,12 +55,14 @@ describe("renderers (golden)", () => {
     expect(renderSource({ sourceType: "IMAGING_REPORT", study: "X-Ray Chest PA", findings: "Opacity right lower zone.", impression: "Consolidation.", at, amended: false }).sections.map((s) => s.heading)).toEqual(["Findings", "Impression"]);
     expect(jsonSections({ course: "Uneventful", advice: ["Rest", "Fluids"] })).toEqual([{ heading: "Course", text: "Uneventful" }, { heading: "Advice", text: "Rest\nFluids" }]);
   });
-  it("patient-provided entries are PERSON-origin; everything else verified; staff-only documents stay staff-only", () => {
-    for (const [input] of GOLDEN) expect(renderSource(input).origin).toBe(input.sourceType.startsWith("PATIENT_") ? "PATIENT_PROVIDED" : "VERIFIED");
+  it("patient-provided entries are PERSON-origin; imported ones IMPORTED; everything else verified; staff-only documents stay staff-only", () => {
+    for (const [input] of GOLDEN) expect(renderSource(input).origin).toBe(input.sourceType.startsWith("PATIENT_") ? "PATIENT_PROVIDED" : input.sourceType === "LEGACY_LAB_RESULT" ? "IMPORTED" : "VERIFIED");
     expect(renderSource({ sourceType: "CLINICAL_DOCUMENT", docType: "consent", title: "x", patientVisible: false, at }).audience).toBe("STAFF_ONLY");
   });
   it("every source type renders to at least one category", () => {
-    const covered = new Set([...GOLDEN.map((g) => g[0].sourceType), "CLINICAL_NOTE", "IMAGING_REPORT", "DISCHARGE_SUMMARY", "CLINICAL_DOCUMENT"]);
+    // KNOWLEDGE_DOCUMENT is not a patient source: a knowledge document has no sharing category
+    // (a CHECK holds it to none) and is chunked by knowledge ingestion (RAG Phase 2), not rendered here.
+    const covered = new Set([...GOLDEN.map((g) => g[0].sourceType), "CLINICAL_NOTE", "IMAGING_REPORT", "DISCHARGE_SUMMARY", "CLINICAL_DOCUMENT", "KNOWLEDGE_DOCUMENT"]);
     expect([...covered].sort()).toEqual(Object.values($Enums.RagSourceType).sort());
     expect(renderSource({ sourceType: "DISCHARGE_SUMMARY", summary: {}, at }).categories).toEqual(["DISCHARGE_SUMMARIES"]);
   });
@@ -100,5 +105,11 @@ describe("chunker", () => {
     // Every line is in some chunk, whole.
     for (const line of long.split("\n")) expect(chunks.some((c) => c.text.split("\n").includes(line))).toBe(true);
     expect(estimateTokens("one two three")).toBe(4);
+  });
+});
+
+describe("imported results (RAG Phase 1, decided 2026-11-17)", () => {
+  it("are staff-only, never patient-visible", () => {
+    expect(renderSource({ sourceType: "LEGACY_LAB_RESULT", testName: "TSH", value: "3.1", sourceSystem: "OldHIS", at }).audience).toBe("STAFF_ONLY");
   });
 });

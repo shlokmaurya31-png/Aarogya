@@ -7,8 +7,8 @@ import type { ProcessingPermit } from "./types";
  */
 const issued = new WeakSet<object>();
 
-export function issuePermit(personId: string): ProcessingPermit {
-  const p = Object.freeze({ personId, purpose: "DOCUMENT_PROCESSING" as const }) as unknown as ProcessingPermit;
+export function issuePermit(personId: string, real: boolean): ProcessingPermit {
+  const p = Object.freeze({ personId, purpose: "DOCUMENT_PROCESSING" as const, real }) as unknown as ProcessingPermit;
   issued.add(p);
   return p;
 }

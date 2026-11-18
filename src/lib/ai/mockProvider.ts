@@ -1,4 +1,5 @@
-import type { AIProvider, AssistantInput, CaseFactSheet } from "./provider";
+import type { AIProvider, AssistantInput, AssistantPermit, CaseFactSheet } from "./provider";
+import { assertAssistantPermit } from "./assistantPermit";
 
 /**
  * Deterministic, scripted fallback used whenever ANTHROPIC_API_KEY is absent
@@ -45,7 +46,8 @@ export class MockAIProvider implements AIProvider {
    * No model is configured: say so plainly instead of pretending to answer.
    * The record itself stays available in the portal's own sections.
    */
-  async assistantReply(input: AssistantInput): Promise<string> {
+  async assistantReply(input: AssistantInput, permit: AssistantPermit): Promise<string> {
+    assertAssistantPermit(permit);
     return input.audience === "patient"
       ? "Aarogya AI isn't connected right now, so I can't answer questions yet. Your appointments, medicines, reports and bills are all in the sections of this portal."
       : "The clinical assistant isn't connected in this environment (no AI provider configured). The chart and worklists are unaffected.";

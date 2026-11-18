@@ -8,7 +8,7 @@ import { documentProviderKind, getDocumentProviders, mockControl, setDocumentPro
 import { mockExtraction, mockOcr, mockTagging, mockTranslation } from "./mock";
 import { issuePermit } from "./permit";
 
-const permit = issuePermit("person-test");
+const permit = issuePermit("person-test", false);
 const canon = (t: string, v: Record<string, unknown>) => JSON.stringify([t, Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)))]);
 const fx = (id: string) => fixtureById(id)!;
 const ocrOf = async (id: string) => mockOcr.ocrPage({ bytes: await fixturePdf(fx(id)), contentType: "application/pdf" }, {}, permit);

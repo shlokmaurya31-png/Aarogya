@@ -121,6 +121,8 @@ const EXACT: Record<string, KeySpec> = {
   "ai.staff_text_retention_days": number({ scopes: ["ORGANIZATION"], default: 90, min: 1, max: 90, description: "Days staff AI question and answer text is kept (encrypted) for safety review before it is purged (max 90)." }),
   "ai.daily_request_budget": number({ scopes: ["ORGANIZATION", "FACILITY"], default: 2000, min: 0, max: 1_000_000, description: "AI requests a facility may make per day, all staff together." }),
   "ai.lapsed_consent_index_days": number({ scopes: ["ORGANIZATION"], default: 90, min: 0, max: 90, description: "Days a lapsed AI consent's index is kept (so confirming needs no rebuild) before it is deleted (max 90)." }),
+  // RAG Phase 1 (decided 2026-11-17): knowledge documents carry no patient data but may be the hospital's own confidential material.
+  "ai.knowledge.external_providers": boolean({ scopes: ["ORGANIZATION"], default: false, description: "Whether this organisation's knowledge documents (SOPs, policies, references) may be sent to an external AI provider. Off by default; patient data is governed separately (the real-data switch and each provider's own flag)." }),
   "billing.late_charge.document_type": enumSpec(["SUPPLEMENTARY_INVOICE", "DEBIT_NOTE"], { scopes: ["ORGANIZATION", "FACILITY"], default: "SUPPLEMENTARY_INVOICE", description: "Document that collects charges posted after the encounter's invoice is issued, linked to the original." }),
 };
 

@@ -18,7 +18,7 @@ import { registerAllConsumers } from "../src/lib/runner/consumers";
 import { setDocumentProvidersForTest } from "../src/lib/ai/documents";
 import { setRecordAnswerProviderForTest } from "../src/lib/ai/record";
 import { buildEvalFixture } from "./lib/ragEvalFixture";
-import { evalMarkdown, QUESTIONS, runRagEval } from "./lib/ragEval";
+import { evalMarkdown, QUESTIONS, retrievalMetrics, runRagEval } from "./lib/ragEval";
 
 let pass = 0;
 let fail = 0;
@@ -52,6 +52,12 @@ async function main() {
   report("The expected source retrieved for at least 90%", retrieved >= 27, `${retrieved}/30`);
   report("Every not-in-the-record question answered NO_RECORD (three in patient modes)", run.scores.filter((s) => s.group === "NO_RECORD").every((s) => s.correct));
   report("The diagnosis question refused (REFUSED_SAFETY)", run.scores.find((s) => s.id === "E5")!.correct);
+  // RAG Phase 1, step 1.8: retrieval metrics, recorded as the baseline (plan §3.3: no threshold in Phase 1;
+  // they become floors in Phase 3, which targets Recall@8 ≥ 0.90 and MRR ≥ 0.70). Baseline on 2026-11-17:
+  // Recall@8 0.80, Precision@8 0.22, MRR 0.64, nDCG@10 0.68 over 22 answered questions.
+  const m = retrievalMetrics(run);
+  report("Retrieval metrics computed for every answered question that names a source", m.n === run.ranked.length && m.n >= 20, `n=${m.n}`);
+  console.log(`  baseline: Recall@8 ${m.recall.toFixed(3)}, Precision@8 ${m.precision.toFixed(3)}, MRR ${m.mrr.toFixed(3)}, nDCG@10 ${m.ndcg.toFixed(3)}`);
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();

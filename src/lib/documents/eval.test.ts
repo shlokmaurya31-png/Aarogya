@@ -22,7 +22,7 @@ describe("document evaluation set", () => {
   });
 
   it("meets the targets on the mock providers", async () => {
-    const r = await runEvaluation(getDocumentProviders({}), issuePermit("evaluation"), evaluationDictionary());
+    const r = await runEvaluation(getDocumentProviders({}), issuePermit("evaluation", false), evaluationDictionary());
     const verdict = meetsTargets(r);
     expect(verdict.misses).toEqual([]);
     expect(r.exactness).toBe(TARGETS.exactness);
@@ -38,7 +38,7 @@ describe("document evaluation set", () => {
 
   it("runs the rendered, normalized page images through the same steps (one sample per language)", async () => {
     const oneEach = [...new Map(FIXTURES.map((f) => [f.language, f])).values()];
-    const r = await runEvaluation(getDocumentProviders({}), issuePermit("evaluation"), evaluationDictionary(), oneEach, "rendered-image");
+    const r = await runEvaluation(getDocumentProviders({}), issuePermit("evaluation", false), evaluationDictionary(), oneEach, "rendered-image");
     expect(r.samples).toHaveLength(11);
     expect(r.exactness).toBe(1);
     expect(r.printed).toBeGreaterThanOrEqual(TARGETS.printed);

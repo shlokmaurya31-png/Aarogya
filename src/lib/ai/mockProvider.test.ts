@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { MockAIProvider } from "./mockProvider";
 import type { CaseFactSheet } from "./provider";
+import { issueAssistantPermit } from "./assistantPermit";
 
 const FACT: CaseFactSheet = {
   caseTitle: "Test case",
@@ -39,9 +40,16 @@ describe("MockAIProvider.assistantReply", () => {
   it("says plainly that the assistant isn't connected, and repeats nothing from the record", async () => {
     const provider = new MockAIProvider();
     for (const audience of ["patient", "clinician"] as const) {
-      const reply = await provider.assistantReply({ audience, context: "ALLERGIES\n- Penicillin", message: "What am I allergic to?" });
+      const reply = await provider.assistantReply({ audience, message: "Am I allergic to Penicillin?" }, issueAssistantPermit(false));
       expect(reply).toMatch(/isn't connected/);
       expect(reply).not.toContain("Penicillin");
     }
+  });
+});
+
+describe("MockAIProvider.assistantReply without a permit", () => {
+  it("refuses an object that merely looks like one", async () => {
+    const forged = Object.freeze({ real: false }) as unknown as Parameters<MockAIProvider["assistantReply"]>[1];
+    await expect(new MockAIProvider().assistantReply({ audience: "patient", message: "hello" }, forged)).rejects.toThrow(/without a permit/);
   });
 });

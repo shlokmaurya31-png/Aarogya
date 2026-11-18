@@ -1,4 +1,4 @@
-import { Prisma, type RagEmbeddingSpace } from "@prisma/client";
+import { Prisma, type RagEmbeddingSpace, type RagOwnerType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { embeddingProviderFor } from "@/lib/ai/embeddings";
 import type { AiPermit } from "@/lib/ai/record/types";
@@ -29,7 +29,7 @@ export async function writableSpaces(db: Db = prisma): Promise<RagEmbeddingSpace
 export interface EmbeddingRow {
   chunkId: string;
   vector: number[];
-  ownerType: "FACILITY_PATIENT" | "PERSON";
+  ownerType: RagOwnerType;
   facilityId: string | null;
   patientId: string | null;
   personId: string | null;

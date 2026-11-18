@@ -1,13 +1,15 @@
 import { z } from "zod";
 import { assertAiPermit } from "@/lib/ai/record/permit";
+import { providerMayReceive } from "@/lib/ai/dataPolicy";
 import { EmbeddingUnavailableError, type EmbeddingProvider } from "./types";
 
 /**
  * Week 4b — Voyage embeddings and rerank (docs/RAG_DESIGN.md §6.2): a
- * multilingual model at 1024 dimensions plus its reranker, for SYNTHETIC
- * data only: it refuses a permit for real data until the DPDP cross-border
- * check for this processor is done (pre-launch items 3–4) and this guard is
- * changed on purpose. Errors become closed codes; the key is never logged.
+ * multilingual model at 1024 dimensions plus its reranker. It refuses a
+ * permit for real data unless the global switch AND this provider's own flag
+ * (AI_PHI_ALLOWED_VOYAGE, off by default; src/lib/ai/dataPolicy.ts) are on:
+ * the flag is set only after the DPDP cross-border check for this processor
+ * (pre-launch items 3–4). Errors become closed codes; the key is never logged.
  */
 export const VOYAGE_DEFAULTS = { model: "voyage-multilingual-2", rerankModel: "rerank-2", dims: 1024 } as const;
 
@@ -33,7 +35,7 @@ export function voyageEmbeddings(apiKey: string, opts: { model?: string; rerankM
   }
   const guard = (permit: Parameters<EmbeddingProvider["embed"]>[2]) => {
     assertAiPermit(permit);
-    if (permit.real) throw new EmbeddingUnavailableError("REAL_DATA_REFUSED");
+    if (!providerMayReceive("VOYAGE", permit.real)) throw new EmbeddingUnavailableError("REAL_DATA_REFUSED");
   };
   return {
     id: "voyage",

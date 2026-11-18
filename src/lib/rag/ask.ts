@@ -39,10 +39,10 @@ export interface AskRequest {
 }
 
 export type Outcome = "ANSWERED" | "NO_RECORD" | "REFUSED_SAFETY" | "CITATION_INVALID" | "RATE_LIMITED" | "ERROR";
-export type Label = "verified" | "patient-provided" | "confirmed by proxy" | "translated" | "handwritten" | "not yet confirmed by you";
+export type Label = "verified" | "patient-provided" | "imported" | "confirmed by proxy" | "translated" | "handwritten" | "not yet confirmed by you";
 
 export interface Citation {
-  n: number; chunkId: string; sourceType: string; sourceId: string; origin: "VERIFIED" | "PATIENT_PROVIDED"; translated: boolean; handwritten: boolean;
+  n: number; chunkId: string; sourceType: string; sourceId: string; origin: "VERIFIED" | "PATIENT_PROVIDED" | "IMPORTED"; translated: boolean; handwritten: boolean;
   recordedAt: string; title: string; link: string;
 }
 export interface OutSentence { text: string; citations: number[]; labels: Label[]; kind: "FACT" | "GUIDANCE" }
@@ -59,8 +59,14 @@ export class AskError extends Error {
 // ── Rate limits (§8.3) ─────────────────────────────────────────────────────
 export const LIMITS = { STAFF: { perMinute: 20, perDay: 400 }, PATIENT: { perMinute: 6, perDay: 60 }, concurrent: 2 } as const;
 const inFlight = new Map<string, number>();
+/** One more request in flight for this user, until the returned function is called. */
+export function holdSlot(userId: string): () => void {
+  inFlight.set(userId, (inFlight.get(userId) ?? 0) + 1);
+  return () => inFlight.set(userId, Math.max(0, (inFlight.get(userId) ?? 1) - 1));
+}
 
-async function checkLimits(actor: AiActor) {
+/** Counted on the interaction log, so the limits hold across instances. Shared with the portal assistant (assistant.ts). */
+export async function checkLimits(actor: AiActor) {
   const who = actor.kind === "STAFF" ? LIMITS.STAFF : LIMITS.PATIENT;
   const now = Date.now();
   const counted = { userId: actor.userId, outcome: { not: "RATE_LIMITED" as const } };
@@ -82,7 +88,7 @@ async function checkLimits(actor: AiActor) {
 }
 
 // ── Sources ─────────────────────────────────────────────────────────────────
-interface Source { n: number; chunkId: string; context: string; text: string; origin: "VERIFIED" | "PATIENT_PROVIDED"; sourceType: string; sourceId: string; recordedAt: Date; handwritten: boolean; translation?: { language: string; text: string }; unconfirmed?: boolean }
+interface Source { n: number; chunkId: string; documentId?: string; context: string; text: string; origin: "VERIFIED" | "PATIENT_PROVIDED" | "IMPORTED"; sourceType: string; sourceId: string; recordedAt: Date; handwritten: boolean; translation?: { language: string; text: string }; unconfirmed?: boolean }
 
 function mask(text: string, ids: readonly string[]): string {
   const spans = identifierSpans(text, ids).sort((a, b) => b.start - a.start);
@@ -122,7 +128,7 @@ async function unconfirmedUpload(access: AiAccess, documentId: string): Promise<
 function labelsFor(cited: Source[], answerLanguage: string): Label[] {
   const labels = new Set<Label>();
   for (const c of cited) {
-    labels.add(c.origin === "VERIFIED" ? "verified" : "patient-provided");
+    labels.add(c.origin === "VERIFIED" ? "verified" : c.origin === "IMPORTED" ? "imported" : "patient-provided");
     if (c.handwritten) labels.add("handwritten");
     if (c.origin !== "VERIFIED" && c.context.includes("confirmed by proxy")) labels.add("confirmed by proxy");
     if (c.unconfirmed) labels.add("not yet confirmed by you");
@@ -137,6 +143,8 @@ export interface AskHooks {
   /** Called with each validated sentence as it is released (staff modes stream; patient modes call it after the whole answer passed). */
   onSentence?: (s: OutSentence) => void | Promise<void>;
   onMeta?: (m: AskMeta) => void | Promise<void>;
+  /** RAG Phase 1: the surface asking (recorded on the interaction): /api/ai/ask, or /api/chat's record questions. */
+  module?: "ASK" | "CHAT";
 }
 
 export async function askAi(actor: AiActor, req: AskRequest, hooks: AskHooks = {}): Promise<AskResult> {
@@ -186,12 +194,17 @@ async function run(actor: AiActor, req: AskRequest, hooks: AskHooks, started: nu
   // The label and the interaction id go first (§8.2), before any sentence.
   await hooks.onMeta?.(m);
 
+  // RAG Phase 1 accounting: how long retrieval and generation took, and which provider answered.
+  const timing: { retrievalMs: number | null; generationMs: number | null; provider: string | null } = { retrievalMs: null, generationMs: null, provider: null };
   const finish = async (outcome: Outcome, sentences: OutSentence[], sources: Source[], extra: { topScore?: number | null; threshold?: number | null; model?: string; inputTokens?: number; outputTokens?: number; retrieved?: string[] } = {}): Promise<AskResult> => {
     const citedNs = new Set(sentences.flatMap((s) => s.citations));
     const cited = sources.filter((s) => citedNs.has(s.n));
     await logInteraction({
       ...base, outcome, answerText: sentences.map((s) => s.text).join("\n"), retrievedChunkIds: extra.retrieved ?? sources.map((s) => s.chunkId), citedChunkIds: cited.map((s) => s.chunkId),
       topScore: extra.topScore ?? null, threshold: extra.threshold ?? null, model: extra.model ?? "none", inputTokens: extra.inputTokens ?? 0, outputTokens: extra.outputTokens ?? 0,
+      // What the answer rested on: one row per source given to the model, cited or not; never text.
+      sources: sources.map((s) => ({ rank: s.n, cited: citedNs.has(s.n), chunkId: s.chunkId, ragDocumentId: s.documentId ?? null, sourceType: s.sourceType, sourceId: s.sourceId, origin: s.origin, recordedAt: s.recordedAt })),
+      accounting: { module: hooks.module ?? "ASK", intent: req.mode, tier: timing.provider ? 2 : 0, provider: timing.provider, retrievalMs: timing.retrievalMs, generationMs: timing.generationMs },
     });
     // Staff answers already streamed what passed; everything else is released now, whole.
     if (spec.audience === "PATIENT" || (outcome !== "ANSWERED" && outcome !== "CITATION_INVALID")) for (const s of sentences) await hooks.onSentence?.(s);
@@ -231,11 +244,13 @@ async function run(actor: AiActor, req: AskRequest, hooks: AskHooks, started: nu
         }
       }
       const visitReason = req.appointmentId ? (await prisma.appointment.findFirst({ where: { id: req.appointmentId, patientId: { in: access.subject.patientIds } }, select: { reason: true } }))?.reason ?? undefined : undefined;
+      const r0 = Date.now();
       retrieval = await retrieve(access, { question: req.question, visitReason, reportSourceIds });
+      timing.retrievalMs = Date.now() - r0;
       if (retrieval.noRecord) return finish("NO_RECORD", [guidance("noRecord")], [], { topScore: retrieval.topScore, threshold: retrieval.threshold, retrieved: retrieval.candidateIds });
       const items: (RetrievedChunk | LiveFact)[] = [...retrieval.chunks, ...retrieval.live];
       sources = items.map((c, i) => ({
-        n: i + 1, chunkId: c.chunkId, context: c.context, text: c.text, origin: c.origin, sourceType: c.sourceType, sourceId: c.sourceId, recordedAt: c.recordedAt,
+        n: i + 1, chunkId: c.chunkId, ...("documentId" in c ? { documentId: c.documentId } : {}), context: c.context, text: c.text, origin: c.origin, sourceType: c.sourceType, sourceId: c.sourceId, recordedAt: c.recordedAt,
         handwritten: "handwritten" in c ? c.handwritten : false,
         ...("translatedText" in c && c.translatedText && c.translationLanguage === language ? { translation: { language, text: c.translatedText } } : {}),
       }));
@@ -249,9 +264,14 @@ async function run(actor: AiActor, req: AskRequest, hooks: AskHooks, started: nu
   const ids = await subjectIdentifiers(access);
   const provided: RecordSource[] = sources.map((s) => ({ n: s.n, chunkId: s.chunkId, context: mask(s.context, ids), text: mask(s.text, ids), ...(s.translation ? { translation: { language: s.translation.language, text: mask(s.translation.text, ids) } } : {}) }));
   let answer;
+  const provider = getRecordAnswerProvider();
+  timing.provider = provider.id;
+  const g0 = Date.now();
   try {
-    answer = await getRecordAnswerProvider().answerFromRecord({ mode: req.mode, audience: spec.audience, language, question: req.question, sources: provided }, access.permit);
+    answer = await provider.answerFromRecord({ mode: req.mode, audience: spec.audience, language, question: req.question, sources: provided }, access.permit);
+    timing.generationMs = Date.now() - g0;
   } catch (err) {
+    timing.generationMs = Date.now() - g0;
     if (err instanceof RecordAiUnavailableError) {
       await finish("ERROR", [], sources, { retrieved: sources.map((s) => s.chunkId) });
       throw new AskError(503, err.code);

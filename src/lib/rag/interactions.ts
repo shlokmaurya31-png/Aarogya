@@ -1,4 +1,4 @@
-import type { AiTextReadReason, AiTextScope } from "@prisma/client";
+import type { AiTextReadReason, AiTextScope, RagOrigin } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { resolveEffectiveInternal } from "@/lib/config/resolver";
 import { recordAuditEvent } from "@/lib/auth/audit";
@@ -30,7 +30,16 @@ export interface LogInput {
   space: { model: string; version: number }; started: number;
   outcome: "ANSWERED" | "NO_RECORD" | "REFUSED_SAFETY" | "CITATION_INVALID" | "RATE_LIMITED" | "ERROR";
   retrievedChunkIds: string[]; citedChunkIds: string[]; topScore: number | null; threshold: number | null; model: string; inputTokens: number; outputTokens: number;
+  /** RAG Phase 1: the sources given to the model (AiInteractionSource rows; no text). */
+  sources?: LoggedSource[];
+  /** RAG Phase 1: accounting (docs/RAG_ARCHITECTURE.md §11.5). */
+  accounting?: { module: string; intent: string; tier: number; provider: string | null; retrievalMs: number | null; generationMs: number | null };
 }
+
+export interface LoggedSource { rank: number; cited: boolean; chunkId: string; ragDocumentId: string | null; sourceType: string; sourceId: string; origin: RagOrigin; recordedAt: Date }
+
+/** live:<kind>:<id> is a structured reader's fact; upload:<doc>:<page> an unconfirmed upload read directly; anything else an index chunk. */
+const sourceKind = (chunkId: string) => (chunkId.startsWith("live:") ? "LIVE" : chunkId.startsWith("upload:") ? "UPLOAD" : "CHUNK");
 
 async function textPolicy(input: LogInput): Promise<{ scope: AiTextScope; days: number } | null> {
   if (input.actor.kind === "STAFF") {
@@ -54,8 +63,17 @@ export async function logInteraction(input: LogInput): Promise<string> {
     ? { questionCiphertext: encryptText(input.question ?? "", key.key), answerCiphertext: encryptText(input.answerText, key.key), keyVersion: key.version, textScope: policy.scope, textExpiresAt: new Date(now.getTime() + policy.days * DAY - 1000) }
     : {};
   const a = input.access;
+  const docIds = [...new Set((input.sources ?? []).map((s) => s.ragDocumentId).filter((x): x is string => !!x))];
+  const versions = new Map((docIds.length ? await prisma.ragDocument.findMany({ where: { id: { in: docIds } }, select: { id: true, sourceVersion: true, knowledgeVersionId: true } }) : []).map((d) => [d.id, d]));
+  const acc = input.accounting;
   await prisma.aiInteraction.create({
     data: {
+      ...(acc ? { module: acc.module, intent: acc.intent, tier: acc.tier, provider: acc.provider, retrievalMs: acc.retrievalMs, generationMs: acc.generationMs } : {}),
+      sources: { create: (input.sources ?? []).map((s) => {
+        const kind = sourceKind(s.chunkId);
+        const d = s.ragDocumentId ? versions.get(s.ragDocumentId) : undefined;
+        return { rank: s.rank, cited: s.cited, sourceKind: kind, sourceType: s.sourceType, sourceId: s.sourceId, chunkId: kind === "CHUNK" ? s.chunkId : null, ragDocumentId: s.ragDocumentId, sourceVersion: d?.sourceVersion ?? null, knowledgeVersionId: d?.knowledgeVersionId ?? null, origin: s.origin, recordedAt: s.recordedAt };
+      }) },
       id: input.id, organizationId: a.callerOrganizationId ?? null, facilityId: a.callerFacilityId ?? null, userId: input.actor.userId, role: input.actor.kind === "STAFF" ? input.actor.role : "PATIENT",
       patientId: a.subject.patientId, personId: a.subject.personId, shareId: a.shareId ?? null, consentId: a.consentId ?? null,
       mode: input.mode, language: input.language, model: input.model, embeddingModel: input.space.model, embeddingVersion: input.space.version,
@@ -70,6 +88,24 @@ export async function logInteraction(input: LogInput): Promise<string> {
 /** A refused request still leaves metadata (no text). */
 export async function logRateLimited(actor: AiActor, mode: string): Promise<void> {
   await prisma.aiInteraction.create({ data: { userId: actor.userId, role: actor.kind === "STAFF" ? actor.role : "PATIENT", facilityId: actor.kind === "STAFF" ? actor.facilityId : null, mode, language: "en", model: "none", embeddingModel: "none", embeddingVersion: 0, outcome: "RATE_LIMITED", latencyMs: 0, metadataExpiresAt: new Date(Date.now() + METADATA_DAYS * DAY) } });
+}
+
+/**
+ * RAG Phase 1 — one portal-assistant request (mode ASSISTANT): metadata only.
+ * The assistant is record-free, so there is no patient, no source and no
+ * score; its text is never kept, for staff or patients.
+ */
+export async function logAssistantInteraction(input: { id: string; userId: string; role: string; organizationId: string | null; facilityId: string | null; personId: string | null; language: string; outcome: "ANSWERED" | "REFUSED_SAFETY" | "ERROR"; model: string; inputTokens: number; outputTokens: number; started: number }): Promise<void> {
+  const now = new Date();
+  await prisma.aiInteraction.create({
+    data: {
+      id: input.id, userId: input.userId, role: input.role, organizationId: input.organizationId, facilityId: input.facilityId, personId: input.personId,
+      mode: "ASSISTANT", language: input.language, model: input.model, embeddingModel: "none", embeddingVersion: 0, outcome: input.outcome,
+      module: "CHAT", intent: "GENERAL", tier: input.model === "none" ? 0 : 2, provider: input.model === "none" ? null : input.model,
+      retrievedChunkIds: [], citedChunkIds: [], inputTokens: input.inputTokens, outputTokens: input.outputTokens, latencyMs: Date.now() - input.started,
+      metadataExpiresAt: new Date(now.getTime() + METADATA_DAYS * DAY), createdAt: now,
+    },
+  });
 }
 
 /** A family member's access was revoked: the text kept of their AI questions about the patient goes (metadata stays). */
