@@ -93,7 +93,8 @@ jobs:
     # Flagship 3: 128 gates, including the 50,000-row import (~2 min), take ~20 min on a runner.
     # Flagship 4: 131 gates took 30 min on a runner (the import-lane gate builds and clears its own 50,000-row backlog).
     # Flagship 5d: the 50,000-row gates moved to their own job (scale-gates, below), in parallel.
-    timeout-minutes: 30
+    # RAG Phase 2: 136 gates reached the 30-minute limit with three left (all passing so far); the knowledge gates add ~3 min.
+    timeout-minutes: 40
     services:
       postgres:
         image: pgvector/pgvector:pg16
