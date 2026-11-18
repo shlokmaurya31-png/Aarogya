@@ -54,6 +54,11 @@ const PRISMA = path.join(ROOT, "node_modules", ".bin", "prisma");
 // phase-b-final is the whole-system gate and always runs last
 // (docs/PHASE_B_FINAL_INTEGRITY_GATE.md §7).
 const ORDER = [
+  // Every hospital list/search/lookup endpoint over HTTP, as every role: no
+  // other facility's rows (builds and starts the app itself). Runs FIRST, on
+  // the seed alone, and again after every other gate (AFTER_ALL): its result
+  // must not depend on what ran before it (found 2026-11-17).
+  "verify-postgres-tenancy-sweep",
   // Phase 4 / 4.5 — diagnostics and resource scheduling
   "verify-postgres-diagnostics",
   "verify-postgres-scheduling",
@@ -101,9 +106,6 @@ const ORDER = [
   "verify-postgres-d11-patient-experience",
   // Postgres cutover — dialect behaviour SQLite used to hide
   "verify-postgres-search",
-  // Every hospital list/search/lookup endpoint over HTTP, as every role:
-  // no other facility's rows (builds and starts the app itself)
-  "verify-postgres-tenancy-sweep",
   // Week 2: identity and records
   "verify-postgres-ai-assistant",
   "verify-postgres-verification-uploads",
@@ -212,6 +214,9 @@ const LAST = "verify-postgres-phase-b-final";
 // Flagship 4c: the import-lane gate builds and clears its own 50,000-row
 // backlog (it leaves an empty queue), so it goes just before the scale gate.
 const LATE = ["verify-postgres-import-lane", "verify-postgres-legacy-import-scale"];
+// The tenancy sweep once more, over everything every other gate left behind
+// (the main group only; with --fresh-each it sees a fresh database, like the first).
+const AFTER_ALL = "verify-postgres-tenancy-sweep-last";
 // Flagship 5d: the 50,000-row gates, run as their own CI job (--group scale) in
 // parallel with the rest (--group main). Each needs only the seed, so either
 // group starts from its own reset database.
@@ -275,12 +280,12 @@ function discover(opts: Options): string[] {
     .map((f) => f.replace(/\.ts$/, ""))
     .filter((n) => !EXCLUDED.has(n));
 
-  const unlisted = found.filter((n) => n !== LAST && !ORDER.includes(n) && !LATE.includes(n)).sort();
+  const unlisted = found.filter((n) => n !== LAST && n !== AFTER_ALL && !ORDER.includes(n) && !LATE.includes(n)).sort();
   for (const n of unlisted) console.warn(`note: ${n} is not in the ORDER list; running it before ${LAST}.`);
   const missing = ORDER.filter((n) => !found.includes(n));
   for (const n of missing) console.warn(`note: ${n} is listed in ORDER but no longer exists; skipping.`);
 
-  let names = [...ORDER.filter((n) => found.includes(n)), ...unlisted, ...LATE.filter((n) => found.includes(n)), ...(found.includes(LAST) ? [LAST] : [])];
+  let names = [...ORDER.filter((n) => found.includes(n)), ...unlisted, ...LATE.filter((n) => found.includes(n)), ...(found.includes(LAST) ? [LAST] : []), ...(found.includes(AFTER_ALL) ? [AFTER_ALL] : [])];
   if (opts.group !== "all") names = names.filter((n) => SCALE.has(n) === (opts.group === "scale"));
   if (opts.only.length) names = names.filter((n) => opts.only.some((p) => n.includes(p)));
   return names;

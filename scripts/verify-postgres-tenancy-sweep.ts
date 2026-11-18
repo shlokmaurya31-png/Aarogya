@@ -37,7 +37,12 @@
  *      contacts, identifiers, consents, access log, documents, merge
  *      requests and records) belong to no tenant; no hospital route returns
  *      one to any staff or organization actor. Week 4b: the AI index's and AI
- *      interactions' PERSON-owned rows too.
+ *      interactions' PERSON-owned rows too. The one exception, stated exactly
+ *      in scripts/lib/personAddressed.ts: a row the person addressed to a
+ *      facility (a card share, an access request it made, a linked Person…)
+ *      is that facility's to receive, and nobody else's. The sweep seeds one
+ *      of each kind it can for Pune, so the rule is exercised whichever gates
+ *      ran before it; verify:all runs the sweep first and again last.
  * A route that is not probed and not on the documented allowlist fails the
  * gate.
  *
@@ -58,6 +63,9 @@ import { ensureFixture, ownershipWhere, type Tenant } from "../prisma/seedData/t
 import { startServer, loginAs } from "./lib/appServer";
 import { ensurePrimaryMembership } from "../prisma/seedData/staffMembership";
 import { MIXED_OWNER_MODELS, PERSON_SCOPED_MODELS } from "../src/lib/person/tenancy";
+import { currentCardKey, encryptCardValue } from "../src/lib/insurance/cardCrypto";
+import { dayKey, facilityTimeZone } from "../src/lib/time/zone";
+import { addressedTo } from "./lib/personAddressed";
 
 const ROOT = path.resolve(__dirname, "..");
 const API_ROOT = path.join(ROOT, "src", "app", "api", "hospital");
@@ -641,6 +649,7 @@ async function seedPersonSegment(): Promise<Map<string, string>> {
     await prisma.$executeRaw`INSERT INTO "RagEmbedding" ("id", "chunkId", "embeddingModel", "embeddingVersion", "dims", "embedding", "ownerType", "personId") VALUES (${`sweep-emb-${pa}`}, ${chunk.id}, 'mock-hash-1024', 1, 3, '[1,0,0]'::halfvec, 'PERSON', ${pa})`;
     await prisma.aiInteraction.create({ data: { userId: "sweep", role: "PATIENT", personId: pa, mode: "EXPLAIN_REPORT", language: "en", model: "mock", embeddingModel: "mock-hash-1024", embeddingVersion: 1, outcome: "NO_RECORD", latencyMs: 1, metadataExpiresAt: new Date(Date.now() + 365 * 86_400_000) } });
   }
+  await seedAddressedRows(pa);
   const rows = new Map<string, string>();
   for (const model of PERSON_SCOPED_MODELS) {
     const found: { id: string }[] = await delegate(model).findMany({ select: { id: true } });
@@ -652,6 +661,24 @@ async function seedPersonSegment(): Promise<Map<string, string>> {
   }
   return rows;
 }
+/** The sweep's own addressed rows: Person a's card, shared with Pune for a check-in there today, and a request Pune made. */
+const ADDRESSED = { card: "sweep-addressed-card", cardShare: "sweep-addressed-card-share", checkIn: "sweep-addressed-check-in", request: "sweep-addressed-request" } as const;
+async function seedAddressedRows(personId: string) {
+  if (await prisma.cardShare.count({ where: { id: ADDRESSED.cardShare } })) return;
+  const key = currentCardKey();
+  if (!key) throw new Error("No insurance card key (scripts/lib/gateBootstrap.ts sets one for every gate).");
+  // Its own Pune record, linked to Person a (a check-in is made by the record's own Person; the facility-consistency gate checks it).
+  const user = await prisma.personAccount.findFirstOrThrow({ where: { personId, role: "OWNER" }, select: { userId: true } });
+  const patient = await prisma.patient.create({ data: { uhid: `SWEEP-ADDRESSED-${personId.slice(-6)}`, facilityId: FACILITIES.pune, fullName: `${MARKER} addressed`, sex: "F" }, select: { id: true } });
+  await prisma.personPatientLink.create({ data: { personId, patientId: patient.id, facilityId: FACILITIES.pune, status: "ACTIVE", method: "SELF_CREATED", linkedAt: new Date(), linkedByUserId: user.userId } });
+  const staffUser = await prisma.user.findFirstOrThrow({ where: { role: Role.DOCTOR, hospitalStaffProfile: { department: { facilityId: FACILITIES.pune } } }, orderBy: { id: "asc" }, select: { id: true } });
+  const soon = new Date(Date.now() + 2 * 86_400_000);
+  await prisma.insuranceCard.create({ data: { id: ADDRESSED.card, personId, payerType: "PRIVATE_INSURER", payerName: `${MARKER} insurer`, memberIdCipher: encryptCardValue("SWEEP-MEMBER-0001", key.key), memberIdLast4: "0001", keyVersion: key.version, addedByPersonId: personId } });
+  await prisma.cardShare.create({ data: { id: ADDRESSED.cardShare, cardId: ADDRESSED.card, personId, recipientFacilityId: FACILITIES.pune, checkInId: ADDRESSED.checkIn, expiresAt: soon, createdByPersonId: personId } });
+  await prisma.preArrivalCheckIn.create({ data: { id: ADDRESSED.checkIn, facilityId: FACILITIES.pune, kind: "APPOINTMENT", patientId: patient.id, personId, eligibility: "PENDING", token: "P-SWEEP", tokenDay: dayKey(new Date(), await facilityTimeZone(prisma, FACILITIES.pune)), cardShareId: ADDRESSED.cardShare, submittedByPersonId: personId } });
+  await prisma.accessRequest.create({ data: { id: ADDRESSED.request, personId, patientId: patient.id, requesterKind: "FACILITY", requesterUserId: staffUser.id, requesterFacilityId: FACILITIES.pune, purpose: "CONSULTATION", categories: ["LABS"], expiresAt: soon } });
+}
+
 const isFacilityLevel = (model: string, t: Tenant) => {
   const w = ownershipWhere(model, t);
   return w !== null && !("organizationId" in w) && model !== "Facility" && model !== "Organization";
@@ -724,19 +751,27 @@ async function main() {
     // Phase 0 — the PERSON segment: person-scoped rows belong to no facility or
     // organization, so no hospital route may ever return one, to any staff
     // actor of any tenant. Two Persons with every person-scoped row are seeded.
+    // The one exception (scripts/lib/personAddressed.ts): a row the person
+    // addressed to a facility is that facility's to receive, nobody else's.
     const personRows = await seedPersonSegment();
-    console.log(`Person-scoped rows (never returned by a hospital route): ${personRows.size}`);
+    const addressed = { pune: await addressedTo([FACILITIES.pune]), noida: await addressedTo([FACILITIES.noida]) };
+    const without = (m: Map<string, string>, ...own: Set<string>[]) => new Map([...m].filter(([id]) => !own.some((o) => o.has(id))));
+    console.log(`Person-scoped rows (returned by a hospital route only to the facility they were addressed to): ${personRows.size}; addressed to pune ${addressed.pune.size}, to noida ${addressed.noida.size}`);
+    // The rule must bite both ways: Pune's own addressed rows are Pune's, and forbidden to Noida.
+    for (const id of [ADDRESSED.card, ADDRESSED.cardShare, ADDRESSED.request]) {
+      if (addressed.pune.has(id) && !addressed.noida.has(id) && personRows.has(id)) ok(); else bad(`fixture: ${id} must be addressed to pune only`);
+    }
     const actors: Actor[] = [];
     for (const site of ["pune", "noida"] as Site[]) {
       const other: Site = site === "pune" ? "noida" : "pune";
       for (const role of HOSPITAL_ROLES) {
         actors.push({
           name: `${site}/${role}`, cookie: await login(base, site, role), home: site, foreignTenant: other,
-          foreign: merge(owned[other].facility, owned.other.facility, owned.other.org, personRows),
+          foreign: without(merge(owned[other].facility, owned.other.facility, owned.other.org, personRows), addressed[site]),
         });
       }
     }
-    actors.push({ name: "org admin", cookie: await loginEmail(base, ORG_ADMIN_EMAIL), home: "pune", foreignTenant: "other", foreign: merge(owned.other.facility, owned.other.org, personRows) });
+    actors.push({ name: "org admin", cookie: await loginEmail(base, ORG_ADMIN_EMAIL), home: "pune", foreignTenant: "other", foreign: without(merge(owned.other.facility, owned.other.org, personRows), addressed.pune, addressed.noida) });
     actors.push({ name: "platform admin", cookie: await loginEmail(base, PLATFORM_ADMIN_EMAIL), home: "pune", foreignTenant: null, foreign: null, facilityParam: FACILITIES.pune });
 
     const send = async (actor: Actor, method: string, url: string) => {
@@ -759,6 +794,21 @@ async function main() {
       if (found.length) bad(`${label} as ${actor.name} → HTTP ${r.status} returned ${found.length} foreign row(s): ${found.slice(0, 5).join(", ")}`);
       else ok();
     };
+
+    // The addressed rows, both ways: Pune receives its own (the exception is
+    // not vacuous), and Noida never does, plainly or by naming Pune.
+    {
+      const actor = (name: string) => actors.find((a) => a.name === name)!;
+      for (const [url, id, role] of [["/api/hospital/checkins", ADDRESSED.cardShare, "FRONT_DESK"], ["/api/hospital/access-requests", ADDRESSED.request, "HOSPITAL_ADMIN"]] as const) {
+        const own = await send(actor(`pune/${role}`), "GET", url);
+        if (own.status === 200 && own.text.includes(id)) ok(); else bad(`addressed: pune/${role} GET ${url} → HTTP ${own.status}, should list its own ${id}`);
+        for (const probe of [url, withParam(url, "facilityId", FACILITIES.pune)]) {
+          const r = await send(actor(`noida/${role}`), "GET", probe);
+          if (!r.text.includes(id)) ok(); else bad(`addressed: noida/${role} GET ${probe} → HTTP ${r.status} returned pune's ${id}`);
+        }
+      }
+      console.log("Addressed rows: pune lists its own check-in card share and access request; noida never does");
+    }
 
     // ── URL expansion ──
     /** Concrete URLs for a route with record segments filled by `pick` (null if a model has no id). */

@@ -7,6 +7,7 @@
  * in the process win, and .env fills in the rest (Prisma loads .env the same
  * way). A refusal exits before a single query.
  */
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parseEnv } from "node:util";
@@ -31,3 +32,12 @@ if (problem) {
 // the check-ins and summaries use. Set before any module reads the time; Node
 // re-reads TZ when it changes, and the apps a gate starts inherit it.
 process.env.TZ = GATE_TZ;
+
+// One insurance-card key for every gate of a run, however each was started.
+// Each insurance gate used to make its own random key, so a card one gate
+// stored could not be read by the app another gate started (the tenancy
+// sweep, run after them, got a 500 from the card route). A fixed, test-only
+// key, derived here and used only against the local verify database of
+// synthetic data; a key already in the environment wins.
+process.env.INSURANCE_CARD_KEY_VERSION ??= "1";
+process.env.INSURANCE_CARD_KEY_1 ??= createHash("sha256").update("aarogya gate card key, synthetic data only").digest("base64");
