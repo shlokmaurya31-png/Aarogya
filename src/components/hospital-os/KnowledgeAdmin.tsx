@@ -25,7 +25,7 @@ interface Doc { id: string; title: string; description: string | null; type: str
 interface ListResponse { documents: Doc[]; canManage: boolean; canApprove: boolean; orgAdmin: boolean }
 
 const STATE: Record<State, [string, StatusTone]> = {
-  PROCESSING: ["Processing", "info"], FAILED: ["Failed", "danger"], AWAITING_APPROVAL: ["Awaiting approval", "warning"],
+  PROCESSING: ["Processing", "brand"], FAILED: ["Failed", "danger"], AWAITING_APPROVAL: ["Awaiting approval", "warning"],
   SCHEDULED: ["Approved, not yet in force", "brand"], PUBLISHED: ["Published", "success"], SUPERSEDED: ["Superseded", "neutral"],
   EXPIRED: ["Expired", "neutral"], WITHDRAWN: ["Withdrawn", "neutral"], REJECTED: ["Rejected", "danger"],
 };

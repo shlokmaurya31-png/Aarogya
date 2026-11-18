@@ -34,7 +34,7 @@ test("knowledge documents: upload, approve by a second person, supersede; identi
   await admin.waitForURL((u) => !u.pathname.startsWith("/login"));
   await admin.goto("/hospital-os/knowledge");
   await expect(admin.getByRole("heading", { name: "Knowledge documents" })).toBeVisible();
-  await axe(admin, "admin, empty");
+  await axe(admin, "admin, before uploading");
 
   // A file that names a patient is refused, with nothing kept.
   await uploadFile(admin, `case-${f.tag}.md`, "# Case\n\nMr. Ramesh Kumar, 45 years, phone 9876543210.\n", `Case example ${f.tag}`);

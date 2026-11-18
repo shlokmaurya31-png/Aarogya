@@ -187,6 +187,34 @@ No ingestion, no new mode, no screen. No embedding model is adopted.
 | Live-lane delay while ingesting 1,000 chunks | None measurable against the import-lane gate's limit |
 | Everything in Phase 1 | Unchanged |
 
+### 4.5 As built (2026-11-18)
+
+| Step | Built | Gate |
+|---|---|---|
+| 2.1 | Eleven catalogued events on a new `KNOWLEDGE_DOCUMENT` aggregate (identifiers and counts only); `KnowledgeDocumentVersionUploaded` is a bulk contract, so ingestion runs on the import lane. | Emit-coverage test; catalogue regenerated; consumer registry (25 consumers); the core journey now includes an SOP |
+| 2.2 | Roles `MEDICAL_SUPERINTENDENT`, `QUALITY_LEAD` (`knowledge:approve`); `HOSPITAL_ADMIN` holds `knowledge:manage`; no role holds both. Routes: `GET/POST /api/hospital/knowledge`, `POST …/versions/[versionId]/{approve,reject,withdraw,retry}`. Organisation-wide documents are managed by organisation administrators only. | `verify-postgres-knowledge-access` (38 checks, HTTP); tenancy sweep with both roles |
+| 2.3 | `src/lib/knowledge/formats.ts`, `parse.ts`: PDF (pdf.js text layer), text, Markdown, HTML, CSV, JSON; bytes, name and declared type must agree; 20 MB; DOCX refused asking for a PDF export. | `parse.test.ts` per format |
+| 2.4 | Normalisation that loses no number or unit (property test); running headers, footers and page numbers removed **by position** (top or bottom 7% of the page), so a body line repeated on every page is kept; hierarchical chunks with section paths and pages; tables whole with their header (split between rows, header repeated, above 1,200 tokens). | `parse.test.ts`; fidelity in the ingest gate: **94/94** numbers, units and medicine names kept across six formats |
+| 2.5 | `src/lib/knowledge/identifiers.ts`: ABHA (number or address), Aadhaar-like, Indian mobile, UHID/MRN/IP/OP numbers, names with ages (English and Devanagari titles). Checked on the text, the file name, the title and the description **before anything is stored**; again at ingestion. The audit records the kinds only. | `identifiers.test.ts` (27 cases: one per pattern, clean text, 112/108/1800 numbers); both gates; e2e |
+| 2.6 | `knowledge-ingest` consumer: embeds through the cache with a knowledge permit, writes the RagDocument, chunks and embeddings **PENDING with INDEXED in one transaction**; retries outages (dispatcher backoff), `FAILED` with a closed code after five attempts; re-run. Knowledge chunks are embedded by section path, heading and text, **not the title**, so the same text under another document is one cached vector. | `verify-postgres-knowledge-ingest` (62 checks) |
+| 2.7 | Publish at approval or at the effective date (runner sweep); supersede in the same transaction under a lock on the document; expiry and withdrawal take the version's rows out of the index; an older version can't be published over a newer one. The knowledge search (`src/lib/rag/knowledgeSearch.ts`) admits only a version in force, checked against the version row in SQL. | The same gate |
+| 2.8 | `/hospital-os/knowledge`: upload, a new version, status, re-run, withdraw; approve and reject for approvers (never their own upload). Status only: no contents, hash or storage reference. | `e2e/knowledge.spec.ts` with axe (WCAG 2.2 AA) on both screens |
+
+**Measured (mock embeddings, local Postgres):** a 50-page text-layer PDF indexed in **one** runner tick (~0.2 s, 100 chunks); a 1,000-chunk document indexed in ~0.5 s while a live event emitted after it was delivered first; the same document under a second document **100% cache hits** (100/100); over all of the gate's documents the hit rate is 8.7% (108 of 1,239 chunks), since most of them are distinct.
+
+**Migrations:** `20261118100000_knowledge_enum_values` (two roles, three withdraw reasons), `20261118100100_knowledge_ingestion` (file name, format, counts and times on a version; five CHECKs added NOT VALID then validated; two indexes). Phase 1's `knowledge_ingestion_indexes` placeholder wasn't needed beyond these two indexes.
+
+**Found and fixed on the way:**
+- The re-embed runner would have treated a knowledge chunk as a patient chunk with no patient (and could have called the owner-removal path for it); knowledge chunks now go through the knowledge permit and the cache, and PENDING knowledge chunks are re-embedded too.
+- Embedding the title made identical text under two documents two vectors (cache hits 0); now title-free.
+
+**Decisions taken while building** (each the more conservative option):
+- **A scanned (image-only) PDF page is refused** (`NO_TEXT_LAYER`) instead of going to the OCR provider: no provider sees a knowledge page, and the document permit is person-bound. OCR for knowledge waits for a decision.
+- A withdrawn or expired current version leaves the document with **no current version**; the superseded one is not restored.
+- An approver may reject any waiting version; only approval is barred to the uploader.
+- Every version shows "Not virus-scanned" (T-R23, no scanner procured).
+- The knowledge search exists for the gates and Phase 3; no route or AI mode reads it yet, so no answer can cite a knowledge document in this phase.
+
 ## 5. Phase 3: retrieval intelligence
 
 **Goal:** the right channel for each question; knowledge answers; honest Indic keyword search.
