@@ -42,6 +42,8 @@ const MAX_DEPTH = 8;
 const INERT: Record<string, Record<string, unknown>> = {
   // A cleared hold: Discharge has no tenant column, so every tenant's fixture
   // shares a discharge, and only active holds are unique per reason.
+  // RAG Phase 2: a knowledge version's hash is sha-256 hex (CHECK); withdrawn, so it is never approved or searched.
+  KnowledgeDocumentVersion: { sha256: "0".repeat(64), withdrawnAt: new Date() },
   DischargeHold: { clearedAt: new Date(), clearedByUserId: "tsw-fixture" },
   WorkflowInstance: { status: "COMPLETED" },
   WorkflowStep: { status: "COMPLETED" },

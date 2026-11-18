@@ -38,7 +38,8 @@ async function loadPdfJs(): Promise<PdfJs> {
 const pdfjs = () => (lib ??= loadPdfJs());
 const STANDARD_FONTS = path.join(process.cwd(), "node_modules", "pdfjs-dist", "standard_fonts") + path.sep;
 
-async function open(bytes: Buffer) {
+/** Opens a PDF with pdf.js (RAG Phase 2: knowledge PDFs read every page's text layer through this). */
+export async function openPdf(bytes: Buffer) {
   const { getDocument } = await pdfjs();
   const task = getDocument({ data: new Uint8Array(bytes), disableFontFace: true, useSystemFonts: false, standardFontDataUrl: STANDARD_FONTS, verbosity: 0 });
   return { doc: await task.promise, destroy: () => task.destroy() };
@@ -68,7 +69,7 @@ export function textLayerVerdict(text: string): TextLayerVerdict {
 
 /** The text layer of a single-page PDF as lines in reading order (top to bottom, left to right), with normalized boxes. */
 export async function pdfTextLayer(bytes: Buffer): Promise<{ verdict: TextLayerVerdict; lines: Line[] }> {
-  const { doc, destroy } = await open(bytes);
+  const { doc, destroy } = await openPdf(bytes);
   try {
     const page = await doc.getPage(1);
     const vp = page.getViewport({ scale: 1 });
@@ -105,7 +106,7 @@ export async function pdfTextLayer(bytes: Buffer): Promise<{ verdict: TextLayerV
 /** A single-page PDF rendered to an image (long edge ~2,400 px) and normalized like a photo. */
 export async function rasterizePdfPage(bytes: Buffer): Promise<NormalizedPage | "UNREADABLE" | "TOO_LARGE"> {
   let opened;
-  try { opened = await open(bytes); } catch { return "UNREADABLE"; }
+  try { opened = await openPdf(bytes); } catch { return "UNREADABLE"; }
   const { doc, destroy } = opened;
   try {
     const page = await doc.getPage(1);

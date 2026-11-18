@@ -3,10 +3,11 @@ import { prisma } from "@/lib/db";
 import { ConflictError, BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
 import { emitDomainEvent } from "@/lib/events/emit";
-import { aiAssistancePermit } from "@/lib/ai/realData";
+import { aiAssistancePermit, knowledgePermit } from "@/lib/ai/realData";
 import { embeddingProviderFor } from "@/lib/ai/embeddings";
-import { chunkEmbeddingText, computeEmbeddings, writeEmbeddings, type EmbeddingRow } from "./embed";
+import { chunkEmbeddingText, computeEmbeddings, knowledgeEmbeddingText, writeEmbeddings, type EmbeddingRow } from "./embed";
 import { removeOwnerIndex } from "./remove";
+import { cachedKnowledgeEmbeddings } from "./embedCache";
 
 /**
  * Week 4b — re-embedding is a background job, not a schema migration
@@ -49,25 +50,34 @@ export async function startReembed(input: { embeddingModel: string; embeddingVer
   });
 }
 
-/** One batch: ACTIVE chunks still missing from the space, embedded and written. */
+/** Chunks a new space must hold: every ACTIVE one, and (RAG Phase 2) knowledge chunks written but not yet published, so a version approved after the switch is in the new space too. */
+const REEMBED_STATUS = { OR: [{ status: "ACTIVE" as const }, { status: "PENDING" as const, ownerType: "KNOWLEDGE" as const }] };
+
+/** One batch: chunks still missing from the space (REEMBED_STATUS), embedded and written. */
 export async function reembedBatch(input: { spaceId: string; batchSize?: number }): Promise<{ embedded: number; removed: number; remaining: number }> {
   const space = await prisma.ragEmbeddingSpace.findUnique({ where: { id: input.spaceId } });
   if (!space) throw new NotFoundError("Embedding space not found.");
   if (space.status === "RETIRED") return { embedded: 0, removed: 0, remaining: 0 };
   const chunks = await prisma.ragChunk.findMany({
-    where: { status: "ACTIVE", embeddings: { none: { embeddingModel: space.embeddingModel, embeddingVersion: space.embeddingVersion } } },
+    where: { ...REEMBED_STATUS, embeddings: { none: { embeddingModel: space.embeddingModel, embeddingVersion: space.embeddingVersion } } },
     orderBy: { id: "asc" }, take: input.batchSize ?? 200,
-    select: { id: true, context: true, heading: true, text: true, ownerType: true, facilityId: true, patientId: true, personId: true },
+    select: { id: true, context: true, heading: true, text: true, ownerType: true, facilityId: true, patientId: true, personId: true, organizationId: true, sectionPath: true },
   });
   let embedded = 0, removed = 0;
   // One permit per owner: the real-data switch and the person's AI consent decide, as when indexing.
   const owners = new Map<string, typeof chunks>();
   for (const c of chunks) {
-    const key = c.ownerType === "PERSON" ? `P:${c.personId}` : `F:${c.facilityId}:${c.patientId}`;
+    const key = c.ownerType === "KNOWLEDGE" ? `K:${c.organizationId}` : c.ownerType === "PERSON" ? `P:${c.personId}` : `F:${c.facilityId}:${c.patientId}`;
     owners.set(key, [...(owners.get(key) ?? []), c]);
   }
   for (const group of owners.values()) {
     const c0 = group[0];
+    // RAG Phase 2: a knowledge document has no person: its chunks go through the knowledge permit and the embedding cache.
+    if (c0.ownerType === "KNOWLEDGE") {
+      const { vectors } = await cachedKnowledgeEmbeddings(space, group.map(knowledgeEmbeddingText), knowledgePermit(c0.organizationId!));
+      embedded += await writeEmbeddings(prisma, space, group.map((c, i) => ({ chunkId: c.id, vector: vectors[i], ownerType: c.ownerType, facilityId: c.facilityId, patientId: null, personId: null })));
+      continue;
+    }
     const gate = await aiAssistancePermit(c0.ownerType === "PERSON" ? { personId: c0.personId! } : { facilityId: c0.facilityId!, patientId: c0.patientId! });
     // An owner the AI may not use has no place in the index: removed, not skipped (so it can't block coverage).
     if (!gate.allowed) { removed += await removeOwnerIndex(prisma, c0.ownerType === "PERSON" ? { personId: c0.personId! } : { facilityId: c0.facilityId!, patientId: c0.patientId! }); continue; }
@@ -75,7 +85,7 @@ export async function reembedBatch(input: { spaceId: string; batchSize?: number 
     const rows: EmbeddingRow[] = group.map((c, i) => ({ chunkId: c.id, vector: vectors[i], ownerType: c.ownerType, facilityId: c.facilityId, patientId: c.patientId, personId: c.personId }));
     embedded += await writeEmbeddings(prisma, space, rows);
   }
-  const remaining = await prisma.ragChunk.count({ where: { status: "ACTIVE", embeddings: { none: { embeddingModel: space.embeddingModel, embeddingVersion: space.embeddingVersion } } } });
+  const remaining = await prisma.ragChunk.count({ where: { ...REEMBED_STATUS, embeddings: { none: { embeddingModel: space.embeddingModel, embeddingVersion: space.embeddingVersion } } } });
   return { embedded, removed, remaining };
 }
 

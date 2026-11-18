@@ -26,7 +26,7 @@ import { chatAboutRecord, chatGeneral, CHAT_LIMITS, type ChatActor } from "@/lib
  * (400, 401, 403, 404, 413, 429, 503).
  */
 const MAX_BODY_BYTES = 64 * 1024;
-const HOSPITAL_ROLES = new Set(["DOCTOR", "NURSE", "LAB_TECHNICIAN", "RADIOLOGY_TECH", "PHARMACIST", "BILLING_STAFF", "FRONT_DESK", "HOSPITAL_ADMIN", "PROCUREMENT_OFFICER"]);
+const HOSPITAL_ROLES = new Set(["DOCTOR", "NURSE", "LAB_TECHNICIAN", "RADIOLOGY_TECH", "PHARMACIST", "BILLING_STAFF", "FRONT_DESK", "HOSPITAL_ADMIN", "PROCUREMENT_OFFICER", "MEDICAL_SUPERINTENDENT", "QUALITY_LEAD"]);
 
 function errorResponse(err: unknown): NextResponse {
   if (err instanceof AskError) return NextResponse.json({ error: err.code }, { status: err.status });

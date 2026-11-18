@@ -55,6 +55,11 @@ const householdMemberStatus = z.enum(["INVITED", "PENDING_CONSENT", "ACTIVE", "A
 const proxyGrantStatus = z.enum(["PENDING_CONFIRMATION", "ACTIVE", "REVOKED", "LAPSED"]);
 const doctorStatus = z.enum(["UNVERIFIED", "PENDING", "VERIFIED", "SUSPENDED", "REJECTED"]);
 const accessRequestStatus = z.enum(["REQUESTED", "APPROVED", "DECLINED", "CANCELLED", "EXPIRED"]);
+// RAG Phase 2 — knowledge documents (mirrors the Prisma enums and src/lib/knowledge).
+const knowledgeType = z.enum(["SOP", "POLICY", "CLINICAL_REFERENCE", "FORMULARY", "ADMIN", "EDUCATIONAL"]);
+const knowledgeClass = z.enum(["ALL_STAFF", "CLINICAL", "PHARMACY", "BILLING", "ADMIN"]);
+const knowledgeFormat = z.enum(["PDF", "TEXT", "MARKDOWN", "HTML", "CSV", "JSON"]);
+const knowledgeIngestionError = z.enum(["UNREADABLE", "NO_TEXT_LAYER", "NO_TEXT", "TOO_MANY_PAGES", "CONTAINS_IDENTIFIERS", "PROVIDER_UNAVAILABLE", "STORAGE_UNAVAILABLE"]);
 const sensitiveCategory = z.enum(["MENTAL_HEALTH", "SEXUAL_HEALTH", "HIV", "SUBSTANCE_USE", "REPRODUCTIVE_HEALTH"]);
 const resuscitationStatus = z.enum(["ACTIVATED", "ACTIVE", "STABILIZED", "HANDED_OVER", "DISPOSITION_PENDING", "CLOSED"]);
 const surgeryStatus = z.enum(["REQUESTED", "REVIEWED", "APPROVED", "SCHEDULED", "IN_PROGRESS", "COMPLETED", "CANCELLED"]);
@@ -2017,6 +2022,62 @@ export const EVENT_CONTRACTS: EventContract[] = [
     type: "ChartPreferenceChanged", version: 1, aggregateType: "CHART_PREFERENCE", scope: "FACILITY",
     sensitivity: "LOW", producer: "chart preferences (setShowImportedResults: a staff member turns \"show imported\" on or off for themselves; aggregate = the user)",
     payload: z.object({ userId: id, showImportedResults: z.boolean() }).strict(),
+  }),
+  // ── RAG Phase 2 — knowledge documents (docs/RAG_IMPLEMENTATION_PLAN.md §4): identifiers and counts only, never a title, file name or text ──
+  contract({
+    type: "KnowledgeDocumentCreated", version: 1, aggregateType: "KNOWLEDGE_DOCUMENT", scope: "ORGANIZATION",
+    sensitivity: "LOW", producer: "knowledge (uploadKnowledge: a hospital administrator's first upload of a document)",
+    payload: z.object({ documentId: id, documentType: knowledgeType, accessClass: knowledgeClass, scope: z.enum(["FACILITY", "ORGANIZATION"]) }).strict(),
+  }),
+  contract({
+    type: "KnowledgeDocumentVersionUploaded", version: 1, bulk: true, aggregateType: "KNOWLEDGE_DOCUMENT", scope: "ORGANIZATION",
+    sensitivity: "LOW", producer: "knowledge (uploadKnowledge: a version received and stored; retryIngestion: a failed version queued again). The knowledge-ingest consumer reads it, on the bulk lane",
+    payload: z.object({ documentId: id, versionId: id, version: count, format: knowledgeFormat, attempt: count }).strict(),
+  }),
+  contract({
+    type: "KnowledgeDocumentVersionParsed", version: 1, aggregateType: "KNOWLEDGE_DOCUMENT", scope: "ORGANIZATION",
+    sensitivity: "LOW", producer: "knowledge-ingest (the file read, normalised and chunked; nothing indexed yet)",
+    payload: z.object({ documentId: id, versionId: id, pages: count.optional(), chunks: count }).strict(),
+  }),
+  contract({
+    type: "KnowledgeDocumentVersionIndexed", version: 1, aggregateType: "KNOWLEDGE_DOCUMENT", scope: "ORGANIZATION",
+    sensitivity: "LOW", producer: "knowledge-ingest (chunks and embeddings written PENDING in one transaction: never a retrieval candidate until published)",
+    payload: z.object({ documentId: id, versionId: id, chunks: count, cacheHits: count, embedded: count }).strict(),
+  }),
+  contract({
+    type: "KnowledgeDocumentIngestionFailed", version: 1, aggregateType: "KNOWLEDGE_DOCUMENT", scope: "ORGANIZATION",
+    sensitivity: "LOW", producer: "knowledge-ingest (a closed code; nothing of the version is indexed; a hospital administrator can re-run it)",
+    payload: z.object({ documentId: id, versionId: id, code: knowledgeIngestionError, attempts: count }).strict(),
+  }),
+  contract({
+    type: "KnowledgeDocumentApproved", version: 1, aggregateType: "KNOWLEDGE_DOCUMENT", scope: "ORGANIZATION",
+    sensitivity: "LOW", producer: "knowledge (approveKnowledgeVersion: a second person, never the uploader)",
+    payload: z.object({ documentId: id, versionId: id, effectiveAt: iso.optional(), expiresAt: iso.optional() }).strict(),
+  }),
+  contract({
+    type: "KnowledgeDocumentRejected", version: 1, aggregateType: "KNOWLEDGE_DOCUMENT", scope: "ORGANIZATION",
+    sensitivity: "LOW", producer: "knowledge (rejectKnowledgeVersion: the reason is audited, never in the event)",
+    payload: z.object({ documentId: id, versionId: id }).strict(),
+  }),
+  contract({
+    type: "KnowledgeDocumentPublished", version: 1, aggregateType: "KNOWLEDGE_DOCUMENT", scope: "ORGANIZATION",
+    sensitivity: "LOW", producer: "knowledge (an approved version in force: at approval, or by the runner at its effective date; the one before it superseded in the same transaction)",
+    payload: z.object({ documentId: id, versionId: id, version: count, supersededVersionId: optId }).strict(),
+  }),
+  contract({
+    type: "KnowledgeDocumentSuperseded", version: 1, aggregateType: "KNOWLEDGE_DOCUMENT", scope: "ORGANIZATION",
+    sensitivity: "LOW", producer: "knowledge (a newer version published: the older one leaves the search in the same transaction)",
+    payload: z.object({ documentId: id, versionId: id, byVersionId: id }).strict(),
+  }),
+  contract({
+    type: "KnowledgeDocumentWithdrawn", version: 1, aggregateType: "KNOWLEDGE_DOCUMENT", scope: "ORGANIZATION",
+    sensitivity: "LOW", producer: "knowledge (withdrawKnowledgeVersion: a hospital administrator takes a version out of use; the reason is audited)",
+    payload: z.object({ documentId: id, versionId: id, wasPublished: z.boolean() }).strict(),
+  }),
+  contract({
+    type: "KnowledgeDocumentExpired", version: 1, aggregateType: "KNOWLEDGE_DOCUMENT", scope: "ORGANIZATION",
+    sensitivity: "LOW", producer: "knowledge (the runner: a published version past its expiry date leaves the search)",
+    payload: z.object({ documentId: id, versionId: id }).strict(),
   }),
 ];
 
