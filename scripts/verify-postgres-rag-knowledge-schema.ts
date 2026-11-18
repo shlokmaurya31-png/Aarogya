@@ -55,18 +55,31 @@ async function main() {
   report("Knowledge: a facility outside the organisation is refused", await refused(prisma.knowledgeDocument.create({ data: { ...docData, organizationId: otherOrg.id, facilityId: pune.id } })));
   const doc = await prisma.knowledgeDocument.create({ data: { ...docData, facilityId: pune.id } });
   report("Knowledge: control — the facility's own organisation is accepted", !!doc.id);
-  const v = { documentId: doc.id, storageRef: `knowledge/${tag}/v1.pdf`, contentType: "application/pdf", byteSize: 1000, uploadedByUserId: admin.id };
+  // RAG Phase 2: only an indexed version can be approved (a CHECK), so the fixtures are indexed; each refusal below keeps its one cause.
+  const v = { documentId: doc.id, storageRef: `knowledge/${tag}/v1.pdf`, contentType: "application/pdf", byteSize: 1000, uploadedByUserId: admin.id, ingestionStatus: "INDEXED" as const, indexedAt: new Date(), chunkCount: 1 };
   report("Knowledge: the approver can never be the uploader", await refused(prisma.knowledgeDocumentVersion.create({ data: { ...v, version: 1, sha256: sha("a"), approvalStatus: "APPROVED", approvedByUserId: admin.id, approvedAt: new Date() } })));
   report("Knowledge: an approval names its approver and time", await refused(prisma.knowledgeDocumentVersion.create({ data: { ...v, version: 1, sha256: sha("a"), approvalStatus: "APPROVED" } })));
   report("Knowledge: a DRAFT can't be published", await refused(prisma.knowledgeDocumentVersion.create({ data: { ...v, version: 1, sha256: sha("a"), publishedAt: new Date() } })));
   report("Knowledge: the effective window must be ordered", await refused(prisma.knowledgeDocumentVersion.create({ data: { ...v, version: 1, sha256: sha("a"), effectiveAt: new Date("2027-01-02"), expiresAt: new Date("2027-01-01") } })));
   report("Knowledge: the hash must be sha-256 hex", await refused(prisma.knowledgeDocumentVersion.create({ data: { ...v, version: 1, sha256: "not-a-hash" } })));
-  report("Knowledge: a failed ingestion says why", await refused(prisma.knowledgeDocumentVersion.create({ data: { ...v, version: 1, sha256: sha("a"), ingestionStatus: "FAILED" } })));
+  report("Knowledge: a failed ingestion says why", await refused(prisma.knowledgeDocumentVersion.create({ data: { ...v, version: 1, sha256: sha("a"), ingestionStatus: "FAILED", indexedAt: null, chunkCount: null } })));
   const v1 = await prisma.knowledgeDocumentVersion.create({ data: { ...v, version: 1, sha256: sha("a"), approvalStatus: "APPROVED", approvedByUserId: approver.id, approvedAt: new Date(), publishedAt: new Date() } });
   report("Knowledge: control — approved by someone else, published", !!v1.id);
   report("Knowledge: the same bytes twice for one document are refused", await refused(prisma.knowledgeDocumentVersion.create({ data: { ...v, version: 2, sha256: sha("a") } })));
   const v2 = await prisma.knowledgeDocumentVersion.create({ data: { ...v, version: 2, sha256: sha("b") } });
   report("Knowledge: control — new bytes are a new version", v2.version === 2);
+  // RAG Phase 2 (migration knowledge_ingestion): each new CHECK refuses, beside the controls above.
+  const unindexed = { ...v, ingestionStatus: "EMBEDDING" as const, indexedAt: null, chunkCount: null };
+  report("Knowledge: a version not yet indexed can't be approved", await refused(prisma.knowledgeDocumentVersion.create({ data: { ...unindexed, version: 3, sha256: sha("c"), approvalStatus: "APPROVED", approvedByUserId: approver.id, approvedAt: new Date() } })));
+  report("Knowledge: an INDEXED version says when and how many chunks", await refused(prisma.knowledgeDocumentVersion.create({ data: { ...v, version: 3, sha256: sha("c"), indexedAt: null } })));
+  report("Knowledge: only an indexed version claims an index time", await refused(prisma.knowledgeDocumentVersion.create({ data: { ...unindexed, version: 3, sha256: sha("c"), indexedAt: new Date(), chunkCount: 2 } })));
+  report("Knowledge: a version superseded before it was published is refused", await refused(prisma.knowledgeDocumentVersion.update({ where: { id: v2.id }, data: { supersededByVersionId: v1.id } })));
+  report("Knowledge: an unknown format is refused", await refused(prisma.knowledgeDocumentVersion.create({ data: { ...v, version: 3, sha256: sha("c"), format: "DOCX" } })));
+  const v3 = await prisma.knowledgeDocumentVersion.create({ data: { ...unindexed, version: 3, sha256: sha("c"), format: "PDF" } });
+  report("Knowledge: control — a version still processing, PDF, is accepted", !!v3.id);
+  await prisma.knowledgeDocumentVersion.update({ where: { id: v1.id }, data: { supersededByVersionId: v2.id } });
+  report("Knowledge: control — a published version can be superseded", true);
+  await prisma.knowledgeDocumentVersion.update({ where: { id: v1.id }, data: { supersededByVersionId: null } });
 
   // ── 2. The index ──
   const space = await activeSpace();

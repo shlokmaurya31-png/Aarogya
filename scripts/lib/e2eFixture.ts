@@ -56,6 +56,8 @@ export interface E2eFixture {
   nurse: { email: string; name: string };
   pharmacist: { email: string };
   frontDesk: { email: string };
+  /** RAG Phase 2: approves knowledge documents. */
+  superintendent: { email: string };
   appointmentId: string;
   gatewaySecretRef: string;
   shareId: string;
@@ -137,7 +139,7 @@ export async function buildE2eFixture(outDir: string): Promise<E2eFixture> {
   await drain();
 
   // Week 5 final: the lab, the ward and the pharmacy; the doctor's clinic all day (the desk books it).
-  const login = async (role: "LAB_TECHNICIAN" | "NURSE" | "PHARMACIST" | "FRONT_DESK", label: string) => {
+  const login = async (role: "LAB_TECHNICIAN" | "NURSE" | "PHARMACIST" | "FRONT_DESK" | "MEDICAL_SUPERINTENDENT", label: string) => {
     const u = await prisma.user.create({ data: { email: `e2e-${role.toLowerCase()}-${tag}@verify.aarogya`, passwordHash: hash, role, displayName: `Smoke ${label} ${tag}` } });
     await prisma.hospitalStaffProfile.create({ data: { userId: u.id, departmentId: dept.id, displayRole: label } });
     await ensurePrimaryMembership(prisma, u.id, PUNE, { isAdmin: false });
@@ -147,6 +149,8 @@ export async function buildE2eFixture(outDir: string): Promise<E2eFixture> {
   const nurseUser = await login("NURSE", "Nurse");
   const pharmacistUser = await login("PHARMACIST", "Pharmacist");
   const frontDeskUser = await login("FRONT_DESK", "Front desk");
+  // RAG Phase 2: the knowledge approver (the admin uploads, the superintendent approves).
+  const superintendentUser = await login("MEDICAL_SUPERINTENDENT", "Medical superintendent");
   for (let dow = 0; dow < 7; dow++) await prisma.doctorScheduleBlock.create({ data: { staffId: staff.id, facilityId: PUNE, dayOfWeek: dow, startMinute: 0, endMinute: 1440, slotDurationMinutes: 15 } });
   // The demo licensure (synthetic): the doctor may prescribe, the pharmacist dispense, the lab verify.
   await seedDemoLicensure(prisma as never);
@@ -175,7 +179,7 @@ export async function buildE2eFixture(outDir: string): Promise<E2eFixture> {
   const fixture: E2eFixture = {
     tag, password, patient: { email, patientId, name, verifiedPhone }, doctor: { email: doctorUser.email, name: doctorName }, networkDoctor: { email: netUser.email, name: netName },
     desk: { email: adminUser.email }, appointmentId: appointment.id, gatewaySecretRef: E2E_GATEWAY_REF,
-    labTech: { email: labUser.email }, nurse: { email: nurseUser.email, name: nurseUser.displayName }, pharmacist: { email: pharmacistUser.email }, frontDesk: { email: frontDeskUser.email },
+    labTech: { email: labUser.email }, nurse: { email: nurseUser.email, name: nurseUser.displayName }, pharmacist: { email: pharmacistUser.email }, frontDesk: { email: frontDeskUser.email }, superintendent: { email: superintendentUser.email },
     shareId: redeemed.id, samplePdf, sampleTitle: `Blood count ${tag}`,
     importReview: { renamedFrom: `Imported Person ${tag}`, renamedTo: reviewNames[0], phoneChanged: reviewNames[1] },
   };

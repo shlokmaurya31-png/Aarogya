@@ -21,6 +21,7 @@ import { sweepCheckInOpen } from "@/lib/insurance/notify";
 import { registerAllConsumers } from "./consumers";
 import { sweepExpiredLeases } from "@/lib/hospital/offline/service";
 import { escalateOfflineConflicts } from "@/lib/hospital/offline/queue";
+import { sweepKnowledgeSchedule } from "@/lib/knowledge/publish";
 
 /**
  * Workflow spine §3.1 — one bounded unit of background work, used by the local
@@ -76,6 +77,8 @@ export interface RunTickResult {
   insurance: { cardSharesEnded: number; checkInsLapsed: number; checkInNotices: number };
   /** Flagship 2, step 5: ward devices' dose leases past their expiry. Flagship 4b: CRITICAL conflicts open 15 minutes, escalated to the pharmacists. */
   offline: { leasesExpired: number; conflictsEscalated: number };
+  /** RAG Phase 2: approved knowledge versions published at their effective date; published ones expired at their expiry date. */
+  knowledge: { published: number; expired: number };
   durationMs: number;
   /** True when a batch limit was hit, i.e. there may be more work now. */
   moreWork: boolean;
@@ -126,6 +129,7 @@ export async function runTick(opts: RunTickOptions = {}): Promise<RunTickResult>
   const offline = Date.now() - started < budgetMs
     ? { leasesExpired: (await sweepExpiredLeases({ now: opts.now })).expired, conflictsEscalated: (await escalateOfflineConflicts({ now: opts.now })).escalated }
     : { leasesExpired: 0, conflictsEscalated: 0 };
+  const knowledge = Date.now() - started < budgetMs ? await sweepKnowledgeSchedule({ now: opts.now }) : { published: 0, expired: 0 };
 
   return {
     consumers,
@@ -143,6 +147,7 @@ export async function runTick(opts: RunTickOptions = {}): Promise<RunTickResult>
     households,
     insurance,
     offline,
+    knowledge,
     durationMs: Date.now() - started,
     moreWork: events.claimed >= eventBatchSize || workflows.timersFired >= workflowBatchSize || workflows.instancesRun >= workflowBatchSize || mar.missed >= marBatchSize,
   };

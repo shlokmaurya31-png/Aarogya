@@ -54,6 +54,8 @@ import { linkExternalIdentifier } from "../src/lib/hospital/interoperability/ext
 import { IDENTIFIER_SYSTEMS } from "../src/lib/hospital/interoperability/shared";
 import { EXPECTED_CONSUMERS } from "../src/lib/runner/consumers";
 import { implantSku } from "../prisma/seedData/clinicalCatalogue";
+import { uploadKnowledge, approveKnowledgeVersion } from "../src/lib/knowledge/service";
+import { staffUser } from "./lib/knowledgeGate";
 import { registerBloodUnit, releaseUnit, recordPatientTyping, requestBlood, transitionRequest, recordCompatibility, verifyCompatibility, issueUnit } from "../src/lib/hospital/blood";
 import { createPayer, addPatientCoverage } from "../src/lib/hospital/billing/coverage";
 import { requestPreAuth, decidePreAuth } from "../src/lib/hospital/billing/preauth";
@@ -620,6 +622,19 @@ async function main() {
         && (await prisma.recordShare.findUniqueOrThrow({ where: { id: kReqRow.shareId! } })).endedReason === "CLAIM_CLOSED"
         && (await prisma.personNotification.count({ where: { personId: kPerson, kind: { in: ["INSURANCE_UPDATE", "BILL_READY", "DOCUMENTS_REQUESTED"] } } })) >= 5);
     directoryEventIds.push(...(await prisma.domainEventOutbox.findMany({ where: { aggregateId: { in: [ci.id, card.id, kInv.id, kClaim.id, kReq.id, kOrder.orderId, pre.id, kReqRow.shareId!, visitAppt.id] } }, select: { eventId: true } })).map((e) => e.eventId));
+  }
+
+  // RAG Phase 2: the hospital's SOP for the ward the patient was on — uploaded, ingested on the bulk lane, approved by a second person.
+  {
+    const kt = Date.now().toString(36);
+    const kAdmin = await staffUser(`journey-knowledge-admin-${kt}@verify.aarogya`, "HOSPITAL_ADMIN", "fac-amc-pune");
+    const kSuper = await staffUser(`journey-knowledge-super-${kt}@verify.aarogya`, "MEDICAL_SUPERINTENDENT", "fac-amc-pune");
+    const sop = await uploadKnowledge(kAdmin, { title: `Ward handover SOP ${kt}`, documentType: "SOP", accessClass: "CLINICAL", fileName: `handover-${kt}.md`, declaredType: "text/markdown", bytes: Buffer.from("# Handover\n\nHand over every patient at the bedside, with the drug chart.\n") });
+    await drain();
+    const kv = await prisma.knowledgeDocumentVersion.findUniqueOrThrow({ where: { id: sop.versionId } });
+    const ap = kv.ingestionStatus === "INDEXED" ? await approveKnowledgeVersion(kSuper, sop.versionId) : { published: false };
+    report("RAG Phase 2: an SOP is ingested by the knowledge-ingest consumer and published by a second person", kv.ingestionStatus === "INDEXED" && ap.published === true, kv.ingestionStatus);
+    directoryEventIds.push(...(await prisma.domainEventOutbox.findMany({ where: { aggregateId: sop.documentId }, select: { eventId: true } })).map((e) => e.eventId));
   }
 
   // Every consumer took part in the journey (the directory booking and the 5c insurance story included).

@@ -1,6 +1,6 @@
 # RAG implementation plan: phases 1–8
 
-- **Status:** Accepted (Phase 0, 2026-11-17; the twelve questions of §13 were decided the same day). Each phase starts only after the one before it is merged.
+- **Status:** Accepted (Phase 0, 2026-11-17; the twelve questions of §13 were decided the same day; §13.3 on 2026-11-18). Each phase starts only after the one before it is merged.
 - **Architecture:** [`RAG_ARCHITECTURE.md`](RAG_ARCHITECTURE.md). **Audit:** [`RAG_AUDIT.md`](RAG_AUDIT.md). **Threats:** [`RAG_THREAT_MODEL.md`](RAG_THREAT_MODEL.md). **Decisions:** [`adr/0005`](adr/0005-rag-embeddings-providers-and-tables.md).
 
 ## Contents
@@ -17,7 +17,7 @@
 10. Phase 8: evaluation and production readiness
 11. The evaluation set and how thresholds are set
 12. Definition of done, mapped to phases
-13. Decisions before Phase 1 (decided 2026-11-17)
+13. Decisions before Phase 1 (2026-11-17) and Phase 2 (2026-11-18)
 
 ---
 
@@ -187,6 +187,34 @@ No ingestion, no new mode, no screen. No embedding model is adopted.
 | Live-lane delay while ingesting 1,000 chunks | None measurable against the import-lane gate's limit |
 | Everything in Phase 1 | Unchanged |
 
+### 4.5 As built (2026-11-18)
+
+| Step | Built | Gate |
+|---|---|---|
+| 2.1 | Eleven catalogued events on a new `KNOWLEDGE_DOCUMENT` aggregate (identifiers and counts only); `KnowledgeDocumentVersionUploaded` is a bulk contract, so ingestion runs on the import lane. | Emit-coverage test; catalogue regenerated; consumer registry (25 consumers); the core journey now includes an SOP |
+| 2.2 | Roles `MEDICAL_SUPERINTENDENT`, `QUALITY_LEAD` (`knowledge:approve`); `HOSPITAL_ADMIN` holds `knowledge:manage`; no role holds both. Routes: `GET/POST /api/hospital/knowledge`, `POST …/versions/[versionId]/{approve,reject,withdraw,retry}`. Organisation-wide documents are managed by organisation administrators only. | `verify-postgres-knowledge-access` (38 checks, HTTP); tenancy sweep with both roles |
+| 2.3 | `src/lib/knowledge/formats.ts`, `parse.ts`: PDF (pdf.js text layer), text, Markdown, HTML, CSV, JSON; bytes, name and declared type must agree; 20 MB; DOCX refused asking for a PDF export. | `parse.test.ts` per format |
+| 2.4 | Normalisation that loses no number or unit (property test); running headers, footers and page numbers removed **by position** (top or bottom 7% of the page), so a body line repeated on every page is kept; hierarchical chunks with section paths and pages; tables whole with their header (split between rows, header repeated, above 1,200 tokens). | `parse.test.ts`; fidelity in the ingest gate: **94/94** numbers, units and medicine names kept across six formats |
+| 2.5 | `src/lib/knowledge/identifiers.ts`: ABHA (number or address), Aadhaar-like, Indian mobile, UHID/MRN/IP/OP numbers, names with ages (English and Devanagari titles). Checked on the text, the file name, the title and the description **before anything is stored**; again at ingestion. The audit records the kinds only. | `identifiers.test.ts` (27 cases: one per pattern, clean text, 112/108/1800 numbers); both gates; e2e |
+| 2.6 | `knowledge-ingest` consumer: embeds through the cache with a knowledge permit, writes the RagDocument, chunks and embeddings **PENDING with INDEXED in one transaction**; retries outages (dispatcher backoff), `FAILED` with a closed code after five attempts; re-run. Knowledge chunks are embedded by section path, heading and text, **not the title**, so the same text under another document is one cached vector. | `verify-postgres-knowledge-ingest` (62 checks) |
+| 2.7 | Publish at approval or at the effective date (runner sweep); supersede in the same transaction under a lock on the document; expiry and withdrawal take the version's rows out of the index; an older version can't be published over a newer one. The knowledge search (`src/lib/rag/knowledgeSearch.ts`) admits only a version in force, checked against the version row in SQL. | The same gate |
+| 2.8 | `/hospital-os/knowledge`: upload, a new version, status, re-run, withdraw; approve and reject for approvers (never their own upload). Status only: no contents, hash or storage reference. | `e2e/knowledge.spec.ts` with axe (WCAG 2.2 AA) on both screens |
+
+**Measured (mock embeddings, local Postgres):** a 50-page text-layer PDF indexed in **one** runner tick (~0.2 s, 100 chunks); a 1,000-chunk document indexed in ~0.5 s while a live event emitted after it was delivered first; the same document under a second document **100% cache hits** (100/100); over all of the gate's documents the hit rate is 8.7% (108 of 1,239 chunks), since most of them are distinct.
+
+**Migrations:** `20261118100000_knowledge_enum_values` (two roles, three withdraw reasons), `20261118100100_knowledge_ingestion` (file name, format, counts and times on a version; five CHECKs added NOT VALID then validated; two indexes). Phase 1's `knowledge_ingestion_indexes` placeholder wasn't needed beyond these two indexes.
+
+**Found and fixed on the way:**
+- The re-embed runner would have treated a knowledge chunk as a patient chunk with no patient (and could have called the owner-removal path for it); knowledge chunks now go through the knowledge permit and the cache, and PENDING knowledge chunks are re-embedded too.
+- Embedding the title made identical text under two documents two vectors (cache hits 0); now title-free.
+
+**Decisions taken while building** (each the more conservative option):
+- **A scanned (image-only) PDF page is refused** (`NO_TEXT_LAYER`) instead of going to the OCR provider: no provider sees a knowledge page, and the document permit is person-bound. OCR for knowledge waits for a decision.
+- A withdrawn or expired current version leaves the document with **no current version**; the superseded one is not restored.
+- An approver may reject any waiting version; only approval is barred to the uploader.
+- Every version shows "Not virus-scanned" (T-R23, no scanner procured).
+- The knowledge search exists for the gates and Phase 3; no route or AI mode reads it yet, so no answer can cite a knowledge document in this phase.
+
 ## 5. Phase 3: retrieval intelligence
 
 **Goal:** the right channel for each question; knowledge answers; honest Indic keyword search.
@@ -203,6 +231,8 @@ No ingestion, no new mode, no screen. No embedding model is adopted.
 | 3.6 | **Imported results** (§13 decision 6): `LEGACY_LAB_RESULT` indexed with origin `IMPORTED`, `STAFF_ONLY` audience; the label; ranking below verified. | `verify-postgres-ai-ask` extended: an imported value is labelled; it never appears as the "latest" value when a verified one exists; a disagreement is stated. |
 | 3.7 | **Context building:** passage deduplication; neighbours; structured facts first. | Unit tests; the evaluation's citation checks. |
 | 3.8 | **The evaluation set grows** to the composition in §11. | `verify-postgres-rag-eval`. |
+| 3.9 | **Romanised shadow text** (§13.3 decision C, a): every Indic chunk gets a deterministic romanisation (ISO 15919 or a close scheme, rule-based, no model), indexed with pg_trgm beside the original; a Latin-script query is transliterated into each Indic script at query time and matched against the original text too. | Unit tests per script (round trips on the benchmark vocabulary); `eval:rag:indic` before and after, against the Phase 1 numbers and BGE-M3. |
+| 3.10 | **A multilingual medical concept lexicon** (§13.3 decision C, b): common conditions, symptoms, tests and NLEM / WHO INN medicines, each a concept ID with its names in the eleven languages, marked **pending native-speaker and clinical review**; used only to expand a query with the same concept's other names. | Unit tests (every entry has a concept ID, a review status and no dose); `eval:rag:indic` before and after, cross-script cases included, against the Phase 1 numbers and BGE-M3. |
 
 ### 5.2 Migration
 
@@ -221,6 +251,7 @@ No ingestion, no new mode, no screen. No embedding model is adopted.
 | Exact medicine lookup, any script | 100% |
 | Inflected and transliterated Indic keyword cases | ≥ 80% |
 | Cross-script cases, beyond medicine names | **Reported, no threshold** until a multilingual model is adopted |
+| Steps 3.9 and 3.10, measured separately and together in `eval:rag:indic` | Reported against the Phase 1 keyword numbers and BGE-M3; neither may lower any Phase 1 number |
 | "Not in the record" correctly refused | 100% |
 | Superseded or expired document retrieved | 0 |
 | Leak gate | 0 |
@@ -468,6 +499,14 @@ The twelve questions Phase 0 raised, each as decided by the product owner on 202
 
 ### 13.2 Still open
 
-1. **The approver roles do not exist.** The `Role` enum has `HOSPITAL_ADMIN` and no medical superintendent or quality lead. Phase 2 needs either two new roles, or a named existing role to hold `knowledge:approve`. Until one holds it, nothing can be published, which is the safe default.
-2. **The embedding model for real data** (decision 2), after the benchmark.
+1. ~~**The approver roles do not exist.**~~ Decided 2026-11-18 (§13.3, A).
+2. **The embedding model for real data** (decision 2): not decided; §13.3, B sets what comes first.
 3. **The clinical advisor** (decision 11) and **the real-provider budget** (decision 12). Both block only the real-data switch, which stays off.
+
+### 13.3 Decisions before Phase 2 (decided 2026-11-18)
+
+| # | Question | Decision |
+|---|---|---|
+| A | Who holds `knowledge:approve` | **Two new staff roles, `MEDICAL_SUPERINTENDENT` and `QUALITY_LEAD`, hold `knowledge:approve` by default; `HOSPITAL_ADMIN` holds `knowledge:manage`.** The approver can never be the uploader: the database CHECK of Phase 1 (`KnowledgeDocumentVersion_approver_check`) stays, and the service refuses first with a readable message. |
+| B | The embedding service | **Not decided.** First, measure the deterministic cross-script improvements of Phase 3 (C below); then latency on Mumbai hardware once staging exists; a native-speaker review of the benchmark dataset when reviewers are available. **No model service is added until then**; the mock stays active. |
+| C | Cross-script retrieval without a model | Added to Phase 3 as steps 3.9 and 3.10: (a) a **romanised shadow text** per Indic chunk (ISO 15919 or similar, deterministic), indexed with pg_trgm, plus transliteration of Latin-script queries into each Indic script at query time; (b) a **curated multilingual medical concept lexicon** (common conditions, symptoms, tests and NLEM / WHO INN medicines mapped to concept IDs across the eleven languages, marked "pending native-speaker and clinical review") used for query expansion. Both are measured in `eval:rag:indic` against the current numbers and BGE-M3. |

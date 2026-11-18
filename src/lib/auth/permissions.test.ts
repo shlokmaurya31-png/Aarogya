@@ -424,4 +424,18 @@ describe("roleHasPermission — Phase B9 Hospital Operations boundary", () => {
       expect(roleHasPermission("PHARMACIST", p)).toBe(false);
     }
   });
+
+  it("RAG Phase 2: knowledge:manage is the hospital administrator's; knowledge:approve the approvers'; no role holds both", () => {
+    expect(roleHasPermission("HOSPITAL_ADMIN", "knowledge:manage")).toBe(true);
+    expect(roleHasPermission("HOSPITAL_ADMIN", "knowledge:approve")).toBe(false);
+    for (const r of ["MEDICAL_SUPERINTENDENT", "QUALITY_LEAD"] as const) {
+      expect(roleHasPermission(r, "knowledge:approve")).toBe(true);
+      expect(roleHasPermission(r, "knowledge:manage")).toBe(false);
+      expect(roleHasPermission(r, "clinical:chart:read")).toBe(false);
+      expect(roleHasPermission(r, "patient:read")).toBe(false);
+    }
+    for (const r of ["DOCTOR", "NURSE", "PHARMACIST", "STUDENT", "PATIENT", "AAROGYA_ADMIN"] as const) {
+      expect(roleHasPermission(r, "knowledge:manage") || roleHasPermission(r, "knowledge:approve")).toBe(false);
+    }
+  });
 });

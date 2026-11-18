@@ -30,6 +30,8 @@ export const STORAGE_BUCKETS = [
   "reports",
   "patient-uploads",
   "generated-pdf",
+  // RAG Phase 2 — knowledge documents (SOPs, policies, formularies); never patient data.
+  "knowledge-documents",
 ] as const;
 export type StorageBucket = (typeof STORAGE_BUCKETS)[number];
 

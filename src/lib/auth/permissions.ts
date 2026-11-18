@@ -486,6 +486,12 @@ export const PERMISSIONS = [
   "doctor:verify",
   // …and a doctor manages their own directory profile, verification case and locations.
   "doctor:profile:manage",
+  // RAG Phase 2 (docs/RAG_IMPLEMENTATION_PLAN.md §13.3 A) — knowledge documents:
+  // upload, supersede, withdraw and re-run ingestion (hospital administrator);
+  // approve or reject a version (medical superintendent, quality lead). Two
+  // people publish: the approver is never the uploader (a database CHECK).
+  "knowledge:manage",
+  "knowledge:approve",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -852,6 +858,8 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "inventory:request:fulfill",
   ],
   HOSPITAL_ADMIN: [
+    // RAG Phase 2 — uploads, supersedes and withdraws knowledge documents; never approves them.
+    "knowledge:manage",
     // Flagship 2, step 5 — the facility's ward devices and charge nurses.
     "nursing:offline:manage",
     // Flagship 2, step 6 — the legacy import, behind the hospital admin role.
@@ -1218,6 +1226,9 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
   // Week 4b — platform reviewers of retained AI text (decision 7): nothing clinical, no facility.
   CLINICAL_ADVISOR: ["ai:interaction:review", "ai:interaction:text:read"],
   SAFETY_OFFICER: ["ai:interaction:review", "ai:interaction:text:read"],
+  // RAG Phase 2 — facility staff who approve knowledge documents; nothing clinical.
+  MEDICAL_SUPERINTENDENT: ["knowledge:approve"],
+  QUALITY_LEAD: ["knowledge:approve"],
 };
 
 export function roleHasPermission(role: Role, permission: Permission): boolean {
