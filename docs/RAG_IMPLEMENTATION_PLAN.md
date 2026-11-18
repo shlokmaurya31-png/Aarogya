@@ -1,6 +1,6 @@
 # RAG implementation plan: phases 1–8
 
-- **Status:** Accepted (Phase 0, 2026-11-17; the twelve questions of §13 were decided the same day). Each phase starts only after the one before it is merged.
+- **Status:** Accepted (Phase 0, 2026-11-17; the twelve questions of §13 were decided the same day; §13.3 on 2026-11-18). Each phase starts only after the one before it is merged.
 - **Architecture:** [`RAG_ARCHITECTURE.md`](RAG_ARCHITECTURE.md). **Audit:** [`RAG_AUDIT.md`](RAG_AUDIT.md). **Threats:** [`RAG_THREAT_MODEL.md`](RAG_THREAT_MODEL.md). **Decisions:** [`adr/0005`](adr/0005-rag-embeddings-providers-and-tables.md).
 
 ## Contents
@@ -17,7 +17,7 @@
 10. Phase 8: evaluation and production readiness
 11. The evaluation set and how thresholds are set
 12. Definition of done, mapped to phases
-13. Decisions before Phase 1 (decided 2026-11-17)
+13. Decisions before Phase 1 (2026-11-17) and Phase 2 (2026-11-18)
 
 ---
 
@@ -203,6 +203,8 @@ No ingestion, no new mode, no screen. No embedding model is adopted.
 | 3.6 | **Imported results** (§13 decision 6): `LEGACY_LAB_RESULT` indexed with origin `IMPORTED`, `STAFF_ONLY` audience; the label; ranking below verified. | `verify-postgres-ai-ask` extended: an imported value is labelled; it never appears as the "latest" value when a verified one exists; a disagreement is stated. |
 | 3.7 | **Context building:** passage deduplication; neighbours; structured facts first. | Unit tests; the evaluation's citation checks. |
 | 3.8 | **The evaluation set grows** to the composition in §11. | `verify-postgres-rag-eval`. |
+| 3.9 | **Romanised shadow text** (§13.3 decision C, a): every Indic chunk gets a deterministic romanisation (ISO 15919 or a close scheme, rule-based, no model), indexed with pg_trgm beside the original; a Latin-script query is transliterated into each Indic script at query time and matched against the original text too. | Unit tests per script (round trips on the benchmark vocabulary); `eval:rag:indic` before and after, against the Phase 1 numbers and BGE-M3. |
+| 3.10 | **A multilingual medical concept lexicon** (§13.3 decision C, b): common conditions, symptoms, tests and NLEM / WHO INN medicines, each a concept ID with its names in the eleven languages, marked **pending native-speaker and clinical review**; used only to expand a query with the same concept's other names. | Unit tests (every entry has a concept ID, a review status and no dose); `eval:rag:indic` before and after, cross-script cases included, against the Phase 1 numbers and BGE-M3. |
 
 ### 5.2 Migration
 
@@ -221,6 +223,7 @@ No ingestion, no new mode, no screen. No embedding model is adopted.
 | Exact medicine lookup, any script | 100% |
 | Inflected and transliterated Indic keyword cases | ≥ 80% |
 | Cross-script cases, beyond medicine names | **Reported, no threshold** until a multilingual model is adopted |
+| Steps 3.9 and 3.10, measured separately and together in `eval:rag:indic` | Reported against the Phase 1 keyword numbers and BGE-M3; neither may lower any Phase 1 number |
 | "Not in the record" correctly refused | 100% |
 | Superseded or expired document retrieved | 0 |
 | Leak gate | 0 |
@@ -468,6 +471,14 @@ The twelve questions Phase 0 raised, each as decided by the product owner on 202
 
 ### 13.2 Still open
 
-1. **The approver roles do not exist.** The `Role` enum has `HOSPITAL_ADMIN` and no medical superintendent or quality lead. Phase 2 needs either two new roles, or a named existing role to hold `knowledge:approve`. Until one holds it, nothing can be published, which is the safe default.
-2. **The embedding model for real data** (decision 2), after the benchmark.
+1. ~~**The approver roles do not exist.**~~ Decided 2026-11-18 (§13.3, A).
+2. **The embedding model for real data** (decision 2): not decided; §13.3, B sets what comes first.
 3. **The clinical advisor** (decision 11) and **the real-provider budget** (decision 12). Both block only the real-data switch, which stays off.
+
+### 13.3 Decisions before Phase 2 (decided 2026-11-18)
+
+| # | Question | Decision |
+|---|---|---|
+| A | Who holds `knowledge:approve` | **Two new staff roles, `MEDICAL_SUPERINTENDENT` and `QUALITY_LEAD`, hold `knowledge:approve` by default; `HOSPITAL_ADMIN` holds `knowledge:manage`.** The approver can never be the uploader: the database CHECK of Phase 1 (`KnowledgeDocumentVersion_approver_check`) stays, and the service refuses first with a readable message. |
+| B | The embedding service | **Not decided.** First, measure the deterministic cross-script improvements of Phase 3 (C below); then latency on Mumbai hardware once staging exists; a native-speaker review of the benchmark dataset when reviewers are available. **No model service is added until then**; the mock stays active. |
+| C | Cross-script retrieval without a model | Added to Phase 3 as steps 3.9 and 3.10: (a) a **romanised shadow text** per Indic chunk (ISO 15919 or similar, deterministic), indexed with pg_trgm, plus transliteration of Latin-script queries into each Indic script at query time; (b) a **curated multilingual medical concept lexicon** (common conditions, symptoms, tests and NLEM / WHO INN medicines mapped to concept IDs across the eleven languages, marked "pending native-speaker and clinical review") used for query expansion. Both are measured in `eval:rag:indic` against the current numbers and BGE-M3. |
