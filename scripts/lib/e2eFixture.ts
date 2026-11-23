@@ -23,6 +23,7 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { prisma } from "../../src/lib/db";
+import { appNow } from "../../src/lib/time/clock";
 import { hashPassword } from "../../src/lib/auth/password";
 import { registerPatientAccount } from "../../src/lib/patient/selfRegistration";
 import { dispatchPendingDomainEvents } from "../../src/lib/events/dispatcher";
@@ -37,7 +38,6 @@ import { registerDoctor, updateOwnProfile } from "../../src/lib/doctors/profile"
 import { decideVerification, submitVerification } from "../../src/lib/doctors/verification";
 import { addHospitalLocation, claimStaffProfile, decideStaffLink } from "../../src/lib/doctors/locations";
 import { refreshNextSlot } from "../../src/lib/doctors/slots";
-import { gateClock } from "./testClock";
 
 export const PUNE = "fac-amc-pune";
 /** Week 5c: the smoke run's gateway secrets live under this reference (scripts/e2e-smoke.ts sets them). */
@@ -107,8 +107,9 @@ export async function buildE2eFixture(outDir: string): Promise<E2eFixture> {
   const hb = await prisma.labResult.create({ data: { labOrderId: order.id, value: "10.4", unit: "g/dL", referenceRange: "12.0 - 15.5", abnormalFlag: "LOW", status: "VERIFIED", resultedAt: new Date(Date.now() - 3 * 86_400_000) } });
   await prisma.$transaction((tx) => emitFacilityEvent(tx, { type: "LabResultReleased", aggregateId: hb.id, facilityId: PUNE, payload: { resultId: hb.id, orderId: order.id, patientId } }));
   await recordAllergy({ patientId, facilityId: PUNE, substance: "Penicillin", reaction: "rash", severity: "severe", byUserId: doctorUser.id });
-  // Today (India) whatever the time: two hours ahead, or earlier today when that would cross midnight.
-  const start = gateClock.sameIndiaDay(120, 15);
+  // Two hours ahead on the app's clock, frozen at 12:00 IST of the run's day (scripts/lib/testClock.ts):
+  // the check-in window is open and the visit is upcoming whatever the real time.
+  const start = new Date(appNow().getTime() + 120 * 60_000);
   const appointment = await prisma.appointment.create({ data: { facilityId: PUNE, doctorStaffId: staff.id, patientId, scheduledStart: start, scheduledEnd: new Date(start.getTime() + 900_000), createdByStaffId: staff.id, reason: "Follow-up for low hemoglobin" } });
 
   // The share: the patient's visit code, redeemed by the doctor.
