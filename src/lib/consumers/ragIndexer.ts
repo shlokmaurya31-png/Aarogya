@@ -37,6 +37,8 @@ async function sourceOf(type: string, p: P): Promise<SourceRef | null> {
   switch (type) {
     case "ClinicalNoteSigned": return ref("CLINICAL_NOTE", str(p, "entryId"));
     case "LabResultReleased": return ref("LAB_RESULT", str(p, "resultId"));
+    // RAG Phase 3, step 3.6: imported results, on the bulk lane like their import.
+    case "LegacyResultImported": return ref("LEGACY_LAB_RESULT", str(p, "resultId"));
     case "ImagingReportReleased": return ref("IMAGING_REPORT", str(p, "reportId"));
     case "DiagnosticReportAmended": return ref(p.reportKind === "LAB" ? "LAB_RESULT" : "IMAGING_REPORT", str(p, "amendedId"));
     case "DocumentGenerated": return p.isDraft ? null : ref("GENERATED_DOCUMENT", str(p, "documentId"));
@@ -61,7 +63,7 @@ async function sourceOf(type: string, p: P): Promise<SourceRef | null> {
 }
 
 export const RAG_INDEXER_EVENTS = [
-  "ClinicalNoteSigned", "LabResultReleased", "ImagingReportReleased", "DiagnosticReportAmended", "DocumentGenerated", "ClinicalDocumentRecorded",
+  "ClinicalNoteSigned", "LabResultReleased", "LegacyResultImported", "ImagingReportReleased", "DiagnosticReportAmended", "DocumentGenerated", "ClinicalDocumentRecorded",
   "ObservationRecorded", "DiagnosisRecorded", "ProblemListUpdated", "AllergyListUpdated", "AllergyStatusRecorded", "ReferralStatusChanged", "PatientDischarged",
   "PatientProvidedRecordAdded", "PatientProvidedRecordUpdated", "DocumentTranslated", "PersonDocumentUploaded", "PersonDocumentWithdrawn",
   "PersonPatientLinked", "PersonPatientUnlinked", "PersonPatientLinkSuperseded", "PersonMerged",

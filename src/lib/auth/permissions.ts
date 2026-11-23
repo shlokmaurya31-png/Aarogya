@@ -477,6 +477,10 @@ export const PERMISSIONS = [
   // interaction metadata, and decrypting retained text (every read audited).
   // `ai:embedding:manage` switches the active embedding space (platform).
   "ai:record:ask",
+  // RAG Phase 3, step 3.4 — knowledge Q&A over the organisation's approved
+  // documents in force; which documents is decided by the role's access
+  // classes (src/lib/rag/knowledgeAccess.ts). Every facility staff role.
+  "ai:knowledge:ask",
   "ai:interaction:review",
   "ai:interaction:text:read",
   "ai:embedding:manage",
@@ -513,6 +517,7 @@ export const OPERATIONAL_ONLY_ACTIONS = [
 const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
   PATIENT: ["patient:self:read", "patient:self:manage"],
   DOCTOR: [
+    "ai:knowledge:ask",
     // Week 5a — their own directory profile, verification and practice locations.
     "doctor:profile:manage",
     // Phase C1 — a treating clinician sees interoperability state for their
@@ -631,6 +636,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "privilege:read",
   ],
   NURSE: [
+    "ai:knowledge:ask",
     "hospital:command-center:view",
     "patient:read",
     "clinical:chart:read",
@@ -707,6 +713,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "privilege:read",
   ],
   LAB_TECHNICIAN: [
+    "ai:knowledge:ask",
     "hospital:command-center:view",
     "patient:read",
     "clinical:chart:read",
@@ -747,6 +754,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "privilege:read",
   ],
   RADIOLOGY_TECH: [
+    "ai:knowledge:ask",
     "hospital:command-center:view",
     "patient:read",
     "clinical:chart:read",
@@ -767,6 +775,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "procurement:requisition:create",
   ],
   PHARMACIST: [
+    "ai:knowledge:ask",
     "hospital:command-center:view",
     "patient:read",
     "clinical:chart:read",
@@ -809,6 +818,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "privilege:read",
   ],
   BILLING_STAFF: [
+    "ai:knowledge:ask",
     "hospital:command-center:view",
     "patient:read",
     "encounter:read",
@@ -837,6 +847,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
   // the RFQ->PO->receipt procurement pipeline + supplier/contract/invoice depth.
   // Separation of duties is preserved by the existing same-actor approval guards.
   PROCUREMENT_OFFICER: [
+    "ai:knowledge:ask",
     "hospital:command-center:view",
     "inventory:item:view",
     "inventory:stock:view",
@@ -858,6 +869,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "inventory:request:fulfill",
   ],
   HOSPITAL_ADMIN: [
+    "ai:knowledge:ask",
     // RAG Phase 2 — uploads, supersedes and withdraws knowledge documents; never approves them.
     "knowledge:manage",
     // Flagship 2, step 5 — the facility's ward devices and charge nurses.
@@ -1097,6 +1109,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "privilege:revoke",
   ],
   FRONT_DESK: [
+    "ai:knowledge:ask",
     // Phase C1 — the registration desk is where an ABHA is captured and a
     // sharing consent is recorded. No export, no exchange authorisation.
     "interop:overview:view",
@@ -1227,8 +1240,8 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
   CLINICAL_ADVISOR: ["ai:interaction:review", "ai:interaction:text:read"],
   SAFETY_OFFICER: ["ai:interaction:review", "ai:interaction:text:read"],
   // RAG Phase 2 — facility staff who approve knowledge documents; nothing clinical.
-  MEDICAL_SUPERINTENDENT: ["knowledge:approve"],
-  QUALITY_LEAD: ["knowledge:approve"],
+  MEDICAL_SUPERINTENDENT: ["knowledge:approve", "ai:knowledge:ask"],
+  QUALITY_LEAD: ["knowledge:approve", "ai:knowledge:ask"],
 };
 
 export function roleHasPermission(role: Role, permission: Permission): boolean {

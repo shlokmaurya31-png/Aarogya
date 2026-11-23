@@ -138,7 +138,9 @@ export async function dispatchPendingDomainEvents(opts: DispatchOptions = {}): P
   // before; only a round with no live event takes a slice of the import lane,
   // concurrently. The round cap counts live rounds; import slices are bounded
   // by the deadline.
-  for (let liveRounds = 0; liveRounds < MAX_ROUNDS && Date.now() <= deadline;) {
+  // The first round always runs: the deadline is checked between rounds, so a small budget still makes progress
+  // even when reaping stale claims took longer than it (found with a large outbox, RAG Phase 3).
+  for (let liveRounds = 0, first = true; liveRounds < MAX_ROUNDS && (first || Date.now() <= deadline); first = false) {
     const token = randomUUID();
     const live = await claimBatch(token, now, batchSize, "LIVE");
     if (live.length > 0) {

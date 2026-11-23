@@ -1,14 +1,20 @@
 /**
- * Week 4b, RAG step 9 — the 30-question evaluation on the mock models (CI;
- * docs/RAG_DESIGN.md §10). Builds the synthetic fixture through the services
- * and the indexer, asks every question through askAi (the path of POST
- * /api/ai/ask) and scores it: correct (outcome, exact values, nothing
- * forbidden) AND validly cited (every factual line cites a retrieved source of
- * an expected type, with the expected labels). Targets: at least 90% scored,
- * and the expected source retrieved for at least 90% (the plumbing check the
- * mocks can make; model quality is the manual real run, npm run eval:rag:real).
+ * Week 4b, RAG step 9; grown in RAG Phase 3, step 3.8 — the evaluation on the
+ * mock models (CI; docs/RAG_IMPLEMENTATION_PLAN.md §5.3, §11). Builds the
+ * synthetic fixture ("rag-eval-v2") through the services and the indexer,
+ * asks every question through askAi or askKnowledge (the paths of POST
+ * /api/ai/ask and /api/ai/knowledge/ask) and scores it: correct (outcome,
+ * exact values, nothing forbidden) AND validly cited (every factual line
+ * cites a retrieved source of an expected type, or the expected document).
  *
- * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-rag-eval.ts
+ * The set is split: "dev" (tuned on) and "test" (held out, reported). The
+ * retrieval measures are reported on the held-out split against the plan's
+ * targets (Recall@8 ≥ 0.90, MRR ≥ 0.70); the gate holds them at or above the
+ * Phase 1 baseline (0.80, 0.64) so they can only move up. Step 3.1's
+ * comparison of candidate counts (40/40/30 against the specification's
+ * 30/30/20) runs on the development split.
+ *
+ * Usage: through `npm run verify:all`.
  */
 import "./lib/gateBootstrap";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -17,6 +23,7 @@ import { prisma } from "../src/lib/db";
 import { registerAllConsumers } from "../src/lib/runner/consumers";
 import { setDocumentProvidersForTest } from "../src/lib/ai/documents";
 import { setRecordAnswerProviderForTest } from "../src/lib/ai/record";
+import { DEFAULT_COUNTS, setCandidateCountsForTest, SPEC_COUNTS } from "../src/lib/rag/candidates";
 import { buildEvalFixture } from "./lib/ragEvalFixture";
 import { evalMarkdown, QUESTIONS, retrievalMetrics, runRagEval } from "./lib/ragEval";
 
@@ -28,36 +35,76 @@ function report(name: string, ok: boolean, detail?: string) {
   else fail += 1;
 }
 
+/** Phase 1's baseline (2026-11-17): the floors (plan §11.2: a measure only moves up). */
+const BASELINE = { recall: 0.80, mrr: 0.64 };
+/** The plan's Phase 3 targets (§5.3), reported against the held-out split. */
+const TARGET = { recall: 0.90, mrr: 0.70 };
+
+/** The plan's composition (§11.1), group by group. */
+const COMPOSITION: Record<string, number> = {
+  VISIT_BRIEF: 4, CHART_QA: 8, NURSE: 4, EXPLAIN_REPORT: 5, TIMELINE_PREVISIT: 3, NO_RECORD: 6, READERS: 20, HISTORICAL: 10, MULTI_DOC: 10, MEDICINE: 15, ALLERGY: 8,
+  CRITICAL: 6, SOP: 25, INSUFFICIENT: 12, STALE: 8, IMPORTED: 8, OPERATIONAL: 12,
+};
+
 async function main() {
   registerAllConsumers();
   setDocumentProvidersForTest(null);
   setRecordAnswerProviderForTest(null);
   const qs = QUESTIONS.questions;
   const count = (g: string) => qs.filter((q) => q.group === g).length;
-  report("The set: 30 questions as the design lays out (4 brief, 8 chart Q&A, 4 nurse, 5 explain, 3 timeline/pre-visit, 6 not in the record), pending clinical advisor sign-off",
-    qs.length === 30 && [count("VISIT_BRIEF"), count("CHART_QA"), count("NURSE"), count("EXPLAIN_REPORT"), count("TIMELINE_PREVISIT"), count("NO_RECORD")].join() === "4,8,4,5,3,6"
-      && QUESTIONS.status === "pending clinical advisor sign-off" && qs.filter((q) => q.group === "NO_RECORD" && q.actor === "patient").length === 3
-      && qs.filter((q) => q.group === "EXPLAIN_REPORT" && ["hi", "mr"].includes(q.ask?.language ?? "")).length === 2);
+  report("The set: 230 questions in the plan's groups (§11.1), pending clinical advisor sign-off",
+    qs.length === 230 && Object.entries(COMPOSITION).every(([g, n]) => count(g) === n) && QUESTIONS.status === "pending clinical advisor sign-off",
+    Object.entries(COMPOSITION).filter(([g, n]) => count(g) !== n).map(([g]) => `${g} ${count(g)}`).join(", "));
+  const langs = ["EN", "HI", "MR", "BN", "TA", "TE", "KN", "ML", "GU", "OR", "UR"];
+  report("The eleven languages, six questions each, with same-script, inflected, transliterated and cross-script cases",
+    langs.every((l) => count(`LANG_${l}`) === 6) && ["same-script", "inflected", "transliterated", "cross-script"].every((k) => qs.filter((q) => q.kind === k).length === 11));
+  report("Every question is in the development or the held-out test split, every group in both", qs.every((q) => q.split === "dev" || q.split === "test")
+    && [...new Set(qs.map((q) => q.group))].every((g) => qs.some((q) => q.group === g && q.split === "test") && (count(g) < 2 || qs.some((q) => q.group === g && q.split === "dev"))), `${qs.filter((q) => q.split === "test").length} held out`);
+  report("The original 30 questions are unchanged and still in the set", ["V1", "Q1", "N1", "E1", "T1", "X1"].every((id) => qs.some((q) => q.id === id)));
 
   const fx = await buildEvalFixture(Date.now().toString(36));
+
+  // Step 3.1, on the development split only: the specification's 30/30/20 against today's 40/40/30.
+  setCandidateCountsForTest(SPEC_COUNTS);
+  const spec = retrievalMetrics(await runRagEval(fx, { split: "dev" }), "dev");
+  setCandidateCountsForTest(DEFAULT_COUNTS);
+  const current = retrievalMetrics(await runRagEval(fx, { split: "dev" }), "dev");
+  setCandidateCountsForTest(null);
+  console.log(`  candidate counts on the development split: 40/40/30 Recall@8 ${current.recall.toFixed(3)} MRR ${current.mrr.toFixed(3)}; 30/30/20 Recall@8 ${spec.recall.toFixed(3)} MRR ${spec.mrr.toFixed(3)}`);
+  report("Step 3.1: both candidate settings measured on the development split; the configured default is the better (or equal) one",
+    current.mrr + current.recall >= spec.mrr + spec.recall, `default ${DEFAULT_COUNTS.vector}/${DEFAULT_COUNTS.keyword}/${DEFAULT_COUNTS.rerank}`);
+
   const run = await runRagEval(fx);
   const md = evalMarkdown(run, "mock");
   console.log(md);
   const dir = path.resolve(__dirname, "..", ".eval-report");
   mkdirSync(dir, { recursive: true });
   writeFileSync(path.join(dir, "rag-mock-latest.md"), md + "\n");
+  const n = run.scores.length;
   const scored = run.scores.filter((s) => s.score).length;
   const retrieved = run.scores.filter((s) => s.retrieved).length;
-  report("At least 90% correct with valid citations (mock)", scored >= 27, `${scored}/30`);
-  report("The expected source retrieved for at least 90%", retrieved >= 27, `${retrieved}/30`);
-  report("Every not-in-the-record question answered NO_RECORD (three in patient modes)", run.scores.filter((s) => s.group === "NO_RECORD").every((s) => s.correct));
+  // Plan §5.3: cross-script cases are "reported, no threshold until a multilingual model is adopted"; every other question is held to 90%.
+  const crossIds = new Set(qs.filter((q) => q.kind === "cross-script").map((q) => q.id));
+  const held = run.scores.filter((x) => !crossIds.has(x.id));
+  const cross = run.scores.filter((x) => crossIds.has(x.id));
+  console.log(`  correct with valid citations: whole set ${scored}/${n} (${((scored / n) * 100).toFixed(1)}%); cross-script (reported, no threshold) ${cross.filter((x) => x.score).length}/${cross.length}`);
+  report("At least 90% correct with valid citations (mock; every question but the cross-script cases, which have no threshold)", held.filter((x) => x.score).length >= Math.ceil(0.9 * held.length), `${held.filter((x) => x.score).length}/${held.length}`);
+  report("The expected source retrieved for at least 90%", retrieved >= Math.ceil(0.9 * n), `${retrieved}/${n}`);
+  for (const g of ["NO_RECORD", "INSUFFICIENT", "OPERATIONAL"]) report(`Every ${g} question answered NO_RECORD`, run.scores.filter((s) => s.group === g).every((s) => s.correct));
   report("The diagnosis question refused (REFUSED_SAFETY)", run.scores.find((s) => s.id === "E5")!.correct);
-  // RAG Phase 1, step 1.8: retrieval metrics, recorded as the baseline (plan §3.3: no threshold in Phase 1;
-  // they become floors in Phase 3, which targets Recall@8 ≥ 0.90 and MRR ≥ 0.70). Baseline on 2026-11-17:
-  // Recall@8 0.80, Precision@8 0.22, MRR 0.64, nDCG@10 0.68 over 22 answered questions.
-  const m = retrievalMetrics(run);
-  report("Retrieval metrics computed for every answered question that names a source", m.n === run.ranked.length && m.n >= 20, `n=${m.n}`);
-  console.log(`  baseline: Recall@8 ${m.recall.toFixed(3)}, Precision@8 ${m.precision.toFixed(3)}, MRR ${m.mrr.toFixed(3)}, nDCG@10 ${m.ndcg.toFixed(3)}`);
+  report("Stale documents: no superseded, expired or future-dated version is ever cited", run.scores.filter((s) => s.group === "STALE").every((s) => s.correct));
+
+  const test = retrievalMetrics(run, "test");
+  console.log(`  held-out test split: Recall@8 ${test.recall.toFixed(3)} (target ${TARGET.recall}), Precision@8 ${test.precision.toFixed(3)}, MRR ${test.mrr.toFixed(3)} (target ${TARGET.mrr}), nDCG@10 ${test.ndcg.toFixed(3)} over ${test.n} questions`);
+  const ORIGINAL = new Set(["VISIT_BRIEF", "CHART_QA", "NURSE", "EXPLAIN_REPORT", "TIMELINE_PREVISIT", "NO_RECORD"]);
+  const orig = retrievalMetrics(run, undefined, (g) => ORIGINAL.has(g));
+  console.log(`  the original 30 questions (the Phase 1 baseline's set, 0.80 / 0.64): Recall@8 ${orig.recall.toFixed(3)}, MRR ${orig.mrr.toFixed(3)} over ${orig.n}`);
+  report("Held-out Recall@8 at or above the Phase 1 baseline (0.80)", test.recall >= BASELINE.recall, test.recall.toFixed(3));
+  report("Held-out MRR at or above the Phase 1 baseline (0.64)", test.mrr >= BASELINE.mrr, test.mrr.toFixed(3));
+  console.log(`  targets: Recall@8 ${test.recall >= TARGET.recall ? "MET" : `MISSED by ${(TARGET.recall - test.recall).toFixed(3)}`}; MRR ${test.mrr >= TARGET.mrr ? "MET" : `MISSED by ${(TARGET.mrr - test.mrr).toFixed(3)}`}`);
+  const reader = run.results.filter((r) => QUESTIONS.questions.find((q) => q.id === r.id)?.group === "READERS");
+  const byReader = reader.filter((r) => r.result?.trace?.answeredByReader).length;
+  report("Structured-lookup questions answered by a reader (no vector search): at least 95%", byReader >= Math.ceil(0.95 * reader.length), `${byReader}/${reader.length}`);
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();

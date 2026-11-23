@@ -35,3 +35,12 @@ export function sensitiveCategoryOf(input: { code?: string | null; texts?: (stri
   for (const [re, cat] of WORD_RULES) if (re.test(text)) return cat;
   return null;
 }
+
+/**
+ * RAG Phase 3, step 3.3 — the same rules as Postgres regular expressions, so
+ * a structured reader excludes a sensitive row inside its SQL. A row is
+ * excluded if ANY rule of a category not opted in matches (sensitiveCategoryOf
+ * takes only the first match), so SQL is never looser than the index.
+ */
+export const SENSITIVE_WORD_PATTERNS: { category: RagSensitiveCategory; pattern: string }[] = WORD_RULES.map(([re, category]) => ({ category, pattern: re.source.replace(/\\b/g, "\\y") }));
+export const SENSITIVE_CODE_PATTERNS: { category: RagSensitiveCategory; pattern: string }[] = CODE_RULES.map(([re, category]) => ({ category, pattern: re.source }));

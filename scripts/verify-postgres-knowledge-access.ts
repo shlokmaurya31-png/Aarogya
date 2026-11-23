@@ -108,6 +108,45 @@ async function main() {
     report("Re-run: only a failed version (409)", (await call("admin", "POST", `/api/hospital/knowledge/versions/${versionId}/retry`)).status === 409);
     report("Withdraw: the hospital administrator withdraws with a reason", (await call("admin", "POST", `/api/hospital/knowledge/versions/${versionId}/withdraw`, { reason: "Superseded by the gas pipeline" })).status === 200);
 
+    // ── 3b. Plan §13.4 B: proposing an older version again ──
+    for (const who of ["superintendent", "quality", "doctor", "nurse"] as const) report(`Re-propose: ${who} 403`, (await call(who, "POST", `/api/hospital/knowledge/versions/${versionId}/repropose`, {})).status === 403);
+    report("Re-propose: another facility's administrator 404", (await call("noidaAdmin", "POST", `/api/hospital/knowledge/versions/${versionId}/repropose`, {})).status === 404);
+    const rp = await call("admin", "POST", `/api/hospital/knowledge/versions/${versionId}/repropose`, {});
+    const rpId = String((rp.json.version as { id?: string } | undefined)?.id ?? "");
+    report("Re-propose: the hospital administrator proposes the withdrawn version again, as version 3", rp.status === 200 && (rp.json.version as { version?: number }).version === 3, rp.text.slice(0, 120));
+    await ingestKnowledgeVersion(rpId);
+    report("Re-propose: the proposer can't approve it (403)", (await call("admin", "POST", `/api/hospital/knowledge/versions/${rpId}/approve`, {})).status === 403);
+    const rpList = await call("quality", "GET", "/api/hospital/knowledge");
+    const rpVersion = (rpList.json.documents as { versions: { id: string; state: string; reproposedFrom: number | null }[] }[]).flatMap((d) => d.versions).find((v) => v.id === rpId);
+    report("Re-propose: listed as awaiting approval, proposed again from version 1", rpVersion?.state === "AWAITING_APPROVAL" && rpVersion.reproposedFrom === 1);
+    report("Re-propose: a second person approves it", (await call("quality", "POST", `/api/hospital/knowledge/versions/${rpId}/approve`, {})).json.published === true);
+
+    // ── 3c. Plan §13.4 C: the published contact list, and highlights by HTTP ──
+    const mobile = `97${String(Date.now() % 100000).padStart(5, "0")}444`;
+    for (const who of ["superintendent", "quality"] as const) report(`Contacts: ${who} reads 200`, (await call(who, "GET", "/api/hospital/knowledge/contacts")).status === 200);
+    for (const who of ["doctor", "nurse"] as const) report(`Contacts: ${who} reads 403`, (await call(who, "GET", "/api/hospital/knowledge/contacts")).status === 403);
+    for (const who of ["superintendent", "quality", "doctor", "nurse"] as const) report(`Contacts: ${who} adds 403`, (await call(who, "POST", "/api/hospital/knowledge/contacts", { kind: "HELPLINE", label: "Helpline", number: mobile })).status === 403);
+    const hl = await call("admin", "POST", "/api/hospital/knowledge", form(`helpline-${tag}.md`, "text/markdown", `# Helpline\n\nCall ${mobile} for oxygen supply. Ref ${tag}.\n`, { title: `Helpline SOP ${tag}` }));
+    const hlId = String((hl.json.version as { id?: string } | undefined)?.id ?? "");
+    report("Highlights: an unlisted mobile is accepted, not refused", hl.status === 200 && !!hlId, hl.text.slice(0, 120));
+    await ingestKnowledgeVersion(hlId);
+    const hlList = await call("superintendent", "GET", "/api/hospital/knowledge");
+    const hlVersion = (hlList.json.documents as { versions: { id: string; highlights: { id: string; kind: string; excerpt: string }[] }[] }[]).flatMap((d) => d.versions).find((v) => v.id === hlId);
+    report("Highlights: the approver's list shows it, masked to its last four digits", hlVersion?.highlights.length === 1 && hlVersion.highlights[0].kind === "MOBILE_NUMBER" && hlVersion.highlights[0].excerpt.includes(`[••••••${mobile.slice(-4)}]`) && !hlList.text.includes(mobile));
+    const noAck = await call("superintendent", "POST", `/api/hospital/knowledge/versions/${hlId}/approve`, {});
+    report("Highlights: approval without acknowledging it is 409 HIGHLIGHTS_NOT_ACKNOWLEDGED", noAck.status === 409 && noAck.json.code === "HIGHLIGHTS_NOT_ACKNOWLEDGED");
+    const ack = await call("superintendent", "POST", `/api/hospital/knowledge/versions/${hlId}/approve`, { acknowledgedHighlightIds: hlVersion?.highlights.map((h) => h.id) });
+    report("Highlights: approved once acknowledged", ack.status === 200 && ack.json.published === true, ack.text.slice(0, 120));
+    const added = await call("admin", "POST", "/api/hospital/knowledge/contacts", { kind: "HELPLINE", label: `Oxygen helpline ${tag}`, number: mobile });
+    const contactId = String((added.json.contact as { id?: string } | undefined)?.id ?? "");
+    report("Contacts: the hospital administrator adds a number", added.status === 200 && !!contactId);
+    report("Contacts: another facility can't see or remove it", !(await call("noidaAdmin", "GET", "/api/hospital/knowledge/contacts")).text.includes(contactId) && (await call("noidaAdmin", "DELETE", `/api/hospital/knowledge/contacts/${contactId}`)).status === 404);
+    const hl2 = await call("admin", "POST", "/api/hospital/knowledge", form(`helpline2-${tag}.md`, "text/markdown", `# Helpline\n\nCall ${mobile} for oxygen. Version two. Ref ${tag}.\n`, { title: `Helpline SOP two ${tag}` }));
+    const hl2Version = ((await call("admin", "GET", "/api/hospital/knowledge")).json.documents as { versions: { id: string; highlights: unknown[] }[] }[]).flatMap((d) => d.versions).find((v) => v.id === (hl2.json.version as { id: string }).id);
+    report("Contacts: once listed, the number is no longer highlighted", hl2.status === 200 && hl2Version?.highlights.length === 0);
+    for (const who of ["superintendent", "doctor"] as const) report(`Contacts: ${who} removes 403`, (await call(who, "DELETE", `/api/hospital/knowledge/contacts/${contactId}`)).status === 403);
+    report("Contacts: the hospital administrator removes it", (await call("admin", "DELETE", `/api/hospital/knowledge/contacts/${contactId}`)).status === 200);
+
     // ── 4. Refused uploads, nothing kept ──
     const before = await prisma.knowledgeDocumentVersion.count();
     const docsBefore = await prisma.knowledgeDocument.count();

@@ -105,7 +105,7 @@ export const INDIC: Record<Exclude<Lang, "en">, Record<Topic, Term>> = {
 };
 
 /** A short connective per language ("for … give …"), so a document is a line, not a word list. */
-const LINE: Record<Exclude<Lang, "en">, (cond: string, med: string, dose: string) => string> = {
+export const LINE: Record<Exclude<Lang, "en">, (cond: string, med: string, dose: string) => string> = {
   hi: (c, m, d) => `${c} के लिए ${m} ${d} दिन में दो बार दी गई।`,
   mr: (c, m, d) => `${c} ${m} ${d} दिवसातून दोनदा दिले.`,
   bn: (c, m, d) => `${c} জন্য ${m} ${d} দিনে দুবার দেওয়া হয়েছে।`,

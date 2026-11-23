@@ -6,10 +6,19 @@ import { contentWords } from "@/lib/ai/record/mock";
 import { activeSpace } from "./embed";
 import { AI_MODES, MODES, type AiMode } from "./modes";
 import { candidateSearch, scopeSql } from "./search";
+import { candidateCounts } from "./candidates";
+import { queryTerms } from "./queryTerms";
 import type { AiAccess } from "./access";
 import type { RetrievalScope } from "./scope";
 import { isoDay } from "./render";
 import { sensitiveCategoryOf } from "./sensitivity";
+import { routeQuestion, type RetrievalPlan } from "./router";
+import { settle } from "./intentModel";
+import { runReaders } from "./readers";
+import { dedupePassages, dropCoveredByFacts } from "./context";
+import { nlemNames } from "@/lib/medicines/reference";
+import { canonicalMedicine, MEDICINE_VARIANTS } from "./medicineNames";
+import { LEXICON } from "./lexicon";
 
 /**
  * Week 4b — retrieval (docs/RAG_DESIGN.md §7). Filters first, in SQL (the
@@ -29,6 +38,16 @@ import { sensitiveCategoryOf } from "./sensitivity";
  *        covered the question — the model is then not asked;
  *   7.4  live facts: active medicines (and, for a nurse, doses due or missed)
  *        and the active allergy list, read now, cited by id.
+ *
+ * RAG Phase 3 (docs/RAG_IMPLEMENTATION_PLAN.md §5): a question in chart Q&A
+ * is routed first (router.ts). A structured lookup that its readers answer
+ * in full (readers.ts) is answered from the authoritative tables with no
+ * vector or keyword search; a mixed question gets the readers' facts first
+ * and the passages after, minus any passage about the same row; anything
+ * else, and any lookup a reader can't answer, gets the full hybrid search as
+ * before. Passages are deduplicated, and a kept passage brings its
+ * neighbours under the same heading (context.ts). An imported passage never
+ * gets the "latest" boost and ranks below a verified one.
  */
 export interface RetrievedChunk {
   chunkId: string; documentId: string; context: string; heading: string | null; text: string;
@@ -39,12 +58,19 @@ export interface RetrievedChunk {
 
 export interface LiveFact {
   /** "live:<kind>:<id>" — cited like a chunk. */
-  chunkId: string; context: string; text: string; origin: RagOrigin; sourceType: "MEDICATION_ORDER" | "MEDICATION_DOSE" | "ALLERGY"; sourceId: string; recordedAt: Date;
+  chunkId: string; context: string; text: string; origin: RagOrigin; sourceType: string; sourceId: string; recordedAt: Date;
 }
 
 export interface Retrieval {
+  /** RAG Phase 3: the readers' facts and the live facts the question asked for, given to the model first. */
+  structured: LiveFact[];
   chunks: RetrievedChunk[];
   live: LiveFact[];
+  plan: RetrievalPlan | null;
+  /** A structured lookup answered by its readers: no vector or keyword search ran. */
+  answeredByReader: boolean;
+  /** OPERATIONAL or UNSUPPORTED: not answered in this mode (operational readers come later). */
+  unsupported: boolean;
   topScore: number | null;
   threshold: number;
   noRecord: boolean;
@@ -61,6 +87,7 @@ const DEFAULT_QUERY: Record<AiMode, string> = {
   EXPLAIN_REPORT: "report result value reference range findings impression",
   HEALTH_TIMELINE: "visits diagnoses results procedures medicines discharge",
   PREVISIT_QUESTIONS: "diagnoses results medicines follow up",
+  KNOWLEDGE_QA: "",
 };
 
 /** Reciprocal-rank fusion (k = 60) of the vector and keyword ranks, best first (§7.2 step 3). */
@@ -83,6 +110,42 @@ export async function modeThreshold(mode: AiMode, organizationId: string | null,
 }
 
 type ChunkRow = Omit<RetrievedChunk, "score">;
+
+let medicineWords: Set<string> | null = null;
+/**
+ * The router's medicine entity: one-word NLEM names, their other names (3.5),
+ * and the lexicon's medicine names in every script (3.10), lower case.
+ */
+function medicines(): Set<string> {
+  medicineWords ??= new Set([
+    ...nlemNames().map((n) => n.toLowerCase()).filter((n) => /^[a-z][a-z-]+$/.test(n)),
+    ...Object.entries(MEDICINE_VARIANTS).flatMap(([k, vs]) => [k, ...vs]).filter((n) => !n.includes(" ")),
+    ...LEXICON.filter((c) => c.kind === "MEDICINE").flatMap((c) => Object.values(c.names).flat()).map((n) => n!.toLowerCase().normalize("NFC")).filter((n) => !n.includes(" ")),
+  ]);
+  return medicineWords;
+}
+
+/** A medicine word as the name the record writes (the INN): a variant's INN, or the lexicon concept's English name. */
+function medicineName(word: string): string {
+  const w = word.toLowerCase().normalize("NFC");
+  const concept = LEXICON.find((c) => c.kind === "MEDICINE" && Object.values(c.names).some((ns) => ns!.some((n) => n.toLowerCase().normalize("NFC") === w)));
+  return canonicalMedicine(w) ?? concept?.names.en?.[0] ?? w;
+}
+
+/** The plan for a chart question (null for every other request: those keep their whole-record retrieval). */
+async function planFor(access: AiAccess, question: string | undefined): Promise<RetrievalPlan | null> {
+  if (!question || access.mode !== "CHART_QA") return null;
+  const p = await settle(routeQuestion(question, access.mode, { medicines: medicines() }), { question, mode: access.mode }, access.permit);
+  // Knowledge isn't searched from a chart in this phase (plan step 6.1): the record's passages answer.
+  return p.intent === "KNOWLEDGE" ? { ...p, intent: "NARRATIVE", semantic: true, keyword: true, readers: [] } : p;
+}
+
+/** The live facts a plan asked for: allergies; medicines (only the one named, if any). */
+function askedLive(live: LiveFact[], plan: RetrievalPlan): LiveFact[] {
+  const med = plan.entities.medicine ? medicineName(plan.entities.medicine) : undefined;
+  return live.filter((l) => (plan.readers.includes("ALLERGIES") && l.sourceType === "ALLERGY")
+    || (plan.readers.includes("MEDICINES") && (l.sourceType === "MEDICATION_ORDER" || l.sourceType === "MEDICATION_DOSE") && (!med || l.text.toLowerCase().includes(med))));
+}
 const CHUNK_SELECT = { id: true, documentId: true, context: true, heading: true, text: true, origin: true, sourceType: true, sourceId: true, recordedAt: true, handwritten: true, translatedText: true, translationLanguage: true } as const;
 const toRow = (c: { id: string } & Omit<ChunkRow, "chunkId">): ChunkRow => ({ chunkId: c.id, documentId: c.documentId, context: c.context, heading: c.heading, text: c.text, origin: c.origin, sourceType: c.sourceType, sourceId: c.sourceId, recordedAt: c.recordedAt, handwritten: c.handwritten, translatedText: c.translatedText, translationLanguage: c.translationLanguage });
 
@@ -156,13 +219,39 @@ async function liveFacts(access: AiAccess): Promise<LiveFact[]> {
 export async function retrieve(access: AiAccess, input: { question?: string; visitReason?: string; reportSourceIds?: string[] } = {}): Promise<Retrieval> {
   const spec = MODES[access.mode];
   const space = await activeSpace();
+  const threshold0 = () => modeThreshold(access.mode, access.callerOrganizationId ?? access.subject.organizationId, access.callerFacilityId ?? access.subject.facilityId);
+  const spaceRef = { model: space.embeddingModel, version: space.embeddingVersion };
+
+  // RAG Phase 3: route the question; a lookup its readers answer in full needs no search.
+  const plan = input.reportSourceIds ? null : await planFor(access, input.question);
+  if (plan && (plan.intent === "OPERATIONAL" || plan.intent === "UNSUPPORTED")) {
+    return { structured: [], chunks: [], live: [], plan, answeredByReader: false, unsupported: true, topScore: null, threshold: await threshold0(), noRecord: true, space: spaceRef, candidateIds: [] };
+  }
+  const allLive = access.mode === "EXPLAIN_REPORT" ? [] : await liveFacts(access);
+  let structured: LiveFact[] = [];
+  if (plan && plan.readers.length) {
+    const facts = await runReaders(access, plan);
+    const asked = askedLive(allLive, plan);
+    const answered = plan.readers.every((r) => (r === "ALLERGIES" || r === "MEDICINES" ? asked.length > 0 : facts.some((f) => f.reader === r)));
+    structured = [...facts.map(({ reader: _r, ...f }) => f), ...asked];
+    if (plan.intent === "STRUCTURED_LOOKUP" && answered) {
+      return { structured, chunks: [], live: [], plan, answeredByReader: true, unsupported: false, topScore: null, threshold: await threshold0(), noRecord: false, space: spaceRef, candidateIds: [] };
+    }
+  }
   const provider = embeddingProviderFor(space);
-  const scope: RetrievalScope = input.reportSourceIds ? { segments: access.scope.segments.map((s) => ({ ...s, sourceIds: input.reportSourceIds })) } : access.scope;
+  // RAG Phase 3: a period the question names narrows every segment (never widens it: the later start, the earlier end).
+  const asked = plan?.entities.period;
+  const later = (a?: Date, b?: Date) => (a && b ? (a > b ? a : b) : a ?? b);
+  const earlier = (a?: Date, b?: Date) => (a && b ? (a < b ? a : b) : a ?? b);
+  const scope: RetrievalScope = input.reportSourceIds ? { segments: access.scope.segments.map((s) => ({ ...s, sourceIds: input.reportSourceIds })) }
+    : asked ? { segments: access.scope.segments.map((s) => ({ ...s, recordedFrom: later(s.recordedFrom, asked.from), recordedTo: earlier(s.recordedTo, asked.to) })) } : access.scope;
   const query = [input.question, input.visitReason].filter(Boolean).join(" ") || DEFAULT_QUERY[access.mode];
   const terms = contentWords(query);
+  // RAG Phase 3, step 3.1: the candidate counts from the configuration.
+  const counts = await candidateCounts(access.callerOrganizationId ?? access.subject.organizationId, access.callerFacilityId ?? access.subject.facilityId);
   const [qv] = await provider.embed([query], "query", access.permit);
-  const candidates = await candidateSearch({ scope, space: { model: space.embeddingModel, version: space.embeddingVersion }, queryVector: qv, terms });
-  const fused = fuse(candidates).slice(0, 30);
+  const candidates = await candidateSearch({ scope, space: { model: space.embeddingModel, version: space.embeddingVersion }, queryVector: qv, terms, keyword: queryTerms(query), vectorLimit: counts.vector, keywordLimit: counts.keyword });
+  const fused = fuse(candidates).slice(0, counts.rerank);
   const rows = new Map((await prisma.ragChunk.findMany({ where: { id: { in: fused.map((f) => f.chunkId) } }, select: CHUNK_SELECT })).map((c) => [c.id, toRow(c)]));
   const top = fused.map((f) => rows.get(f.chunkId)).filter((c): c is ChunkRow => !!c);
   const reranked = provider.rerank ? await provider.rerank(query, top.map((c) => `${c.context}\n${c.text}`), access.permit) : top.map((_, index) => ({ index, score: fused[index].rrf * RRF_K / 2 }));
@@ -172,12 +261,15 @@ export async function retrieve(access: AiAccess, input: { question?: string; vis
   const scored: RetrievedChunk[] = reranked.map(({ index, score }) => {
     const c = top[index];
     const recency = newest === oldest ? 1 : (c.recordedAt.getTime() - oldest) / (newest - oldest);
-    return { ...c, score: score + (latestIntent ? 0.15 * recency : 0) - (c.origin === "PATIENT_PROVIDED" ? 0.02 : 0) };
+    // Step 3.6: an imported value never gets the "latest" boost, and ranks below a verified one on the same footing.
+    return { ...c, score: score + (latestIntent && c.origin !== "IMPORTED" ? 0.15 * recency : 0) - (c.origin === "PATIENT_PROVIDED" ? 0.02 : c.origin === "IMPORTED" ? 0.04 : 0) };
   });
-  // A verified entry beats a patient-provided one on the same footing; then the newer.
-  scored.sort((a, b) => b.score - a.score || (a.origin === b.origin ? 0 : a.origin === "VERIFIED" ? -1 : 1) || b.recordedAt.getTime() - a.recordedAt.getTime() || a.chunkId.localeCompare(b.chunkId));
+  // Verified above imported above patient-provided on the same footing; then the newer.
+  const ORIGIN_RANK = { VERIFIED: 0, IMPORTED: 1, PATIENT_PROVIDED: 2 } as const;
+  scored.sort((a, b) => b.score - a.score || ORIGIN_RANK[a.origin] - ORIGIN_RANK[b.origin] || b.recordedAt.getTime() - a.recordedAt.getTime() || a.chunkId.localeCompare(b.chunkId));
   const topScore = reranked.length ? Math.max(...reranked.map((r) => r.score)) : null;
-  let chunks = scored.slice(0, spec.keep);
+  // Step 3.7: a passage about a row a reader already gave is dropped; the same words twice are one passage.
+  let chunks = dedupePassages(dropCoveredByFacts(scored, structured)).slice(0, spec.context ? counts.keepContext : counts.keep);
 
   if (input.reportSourceIds) {
     // The one report, whole, in order.
@@ -192,16 +284,49 @@ export async function retrieve(access: AiAccess, input: { question?: string; vis
     const results = access.mode === "HEALTH_TIMELINE" ? [] : latestPerTitle(await contextChunks(scope, ["LAB_RESULT", "IMAGING_REPORT"], 40), 8);
     for (const c of [...vitals, ...lists, ...results]) if (!have.has(c.chunkId)) { chunks.push({ ...c, score: 0 }); have.add(c.chunkId); }
   }
+  if (!input.reportSourceIds) chunks = await withNeighbours(scope, chunks);
   if (access.mode === "HEALTH_TIMELINE") chunks.sort((a, b) => a.recordedAt.getTime() - b.recordedAt.getTime() || a.chunkId.localeCompare(b.chunkId));
-  const live = access.mode === "EXPLAIN_REPORT" ? [] : await liveFacts(access);
+  const given = new Set(structured.map((f) => f.chunkId));
+  const live = allLive.filter((l) => !given.has(l.chunkId));
   // Live facts are evidence too ("Is she on warfarin?" never depends on the index, §7.4): scored by the same reranker.
   const liveScores = input.question && live.length && provider.rerank ? await provider.rerank(query, live.map((l) => `${l.context}\n${l.text}`), access.permit) : [];
   const best = Math.max(topScore ?? -1, ...liveScores.map((x) => x.score));
 
-  const threshold = await modeThreshold(access.mode, access.callerOrganizationId ?? access.subject.organizationId, access.callerFacilityId ?? access.subject.facilityId);
+  const threshold = await threshold0();
   const covered = terms.length > 0 && candidates.some((c) => c.matchedTerms >= terms.length);
+  // A reader's fact is evidence of its own: a mixed question with facts is never "no record".
   const noRecord = input.question
-    ? (best < threshold) && !covered
+    ? (best < threshold) && !covered && structured.length === 0
     : chunks.length === 0 && live.length === 0;
-  return { chunks: noRecord ? [] : chunks, live: noRecord ? [] : live, topScore: best >= 0 ? best : null, threshold, noRecord, space: { model: space.embeddingModel, version: space.embeddingVersion }, candidateIds: candidates.map((c) => c.chunkId) };
+  return {
+    structured: noRecord ? [] : structured, chunks: noRecord ? [] : chunks, live: noRecord ? [] : live, plan, answeredByReader: false, unsupported: false,
+    topScore: best >= 0 ? best : null, threshold, noRecord, space: spaceRef, candidateIds: fuse(candidates).map((c) => c.chunkId),
+  };
+}
+
+/**
+ * Step 3.7 (3): a kept passage that continues under the same heading brings
+ * its neighbours (chunk ±1 of the same document), inside the same scope
+ * filter, right after it; at most four are added.
+ */
+async function withNeighbours(scope: RetrievalScope, chunks: RetrievedChunk[]): Promise<RetrievedChunk[]> {
+  if (!chunks.length) return chunks;
+  const kept = await prisma.ragChunk.findMany({ where: { id: { in: chunks.map((c) => c.chunkId) } }, select: { id: true, documentId: true, chunkNo: true, heading: true } });
+  const wanted = kept.filter((k) => k.heading).flatMap((k) => [k.chunkNo - 1, k.chunkNo + 1].filter((n) => n >= 0).map((n) => ({ anchor: k, n })));
+  if (!wanted.length) return chunks;
+  const pairs = Prisma.join(wanted.map((w) => Prisma.sql`(${w.anchor.documentId}, ${w.n}::int)`), ", ");
+  const rows = await prisma.$queryRaw<{ id: string; documentId: string; chunkNo: number; heading: string | null }[]>(Prisma.sql`
+    SELECT c."id", c."documentId", c."chunkNo", c."heading" FROM "RagChunk" c
+    WHERE ${scopeSql(scope)} AND (c."documentId", c."chunkNo") IN (${pairs})`);
+  const have = new Set(chunks.map((c) => c.chunkId));
+  const add = rows.filter((r) => !have.has(r.id) && wanted.some((w) => w.anchor.documentId === r.documentId && w.anchor.heading === r.heading && Math.abs(w.anchor.chunkNo - r.chunkNo) === 1)).slice(0, 4);
+  if (!add.length) return chunks;
+  const full = new Map((await prisma.ragChunk.findMany({ where: { id: { in: add.map((a) => a.id) } }, select: CHUNK_SELECT })).map((c) => [c.id, toRow(c)]));
+  const out: RetrievedChunk[] = [];
+  for (const c of chunks) {
+    out.push(c);
+    const anchor = kept.find((k) => k.id === c.chunkId);
+    for (const a of add) if (anchor && a.documentId === anchor.documentId && full.has(a.id) && !out.some((o) => o.chunkId === a.id)) out.push({ ...full.get(a.id)!, score: c.score - 0.001 });
+  }
+  return out;
 }

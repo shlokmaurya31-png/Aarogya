@@ -20,6 +20,8 @@ export const AI_MODEL_DEFAULTS = {
   explain_report: "claude-sonnet-5-5",
   health_timeline: "claude-sonnet-5-5",
   previsit_questions: "claude-sonnet-5-5",
+  // RAG Phase 3: knowledge Q&A over approved hospital documents (no patient data).
+  knowledge_qa: "claude-sonnet-5-5",
 } as const;
 export type AiModelKey = keyof typeof AI_MODEL_DEFAULTS;
 

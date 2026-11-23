@@ -1978,7 +1978,7 @@ export const EVENT_CONTRACTS: EventContract[] = [
   }),
   contract({
     type: "LegacyResultImported", version: 1, bulk: true, aggregateType: "LEGACY_LAB_RESULT", scope: "FACILITY",
-    sensitivity: "INTERNAL", producer: "legacy import (confirmImport: one HL7 ORU result, kept apart from the live results; no live consumer listens)",
+    sensitivity: "INTERNAL", producer: "legacy import (confirmImport: one HL7 ORU result, kept apart from the live results). The rag-indexer indexes it for staff only, labelled imported (RAG Phase 3, step 3.6)",
     payload: z.object({ resultId: id, patientId: id, batchId: id, converted: z.boolean() }).strict(),
   }),
   contract({
@@ -2078,6 +2078,22 @@ export const EVENT_CONTRACTS: EventContract[] = [
     type: "KnowledgeDocumentExpired", version: 1, aggregateType: "KNOWLEDGE_DOCUMENT", scope: "ORGANIZATION",
     sensitivity: "LOW", producer: "knowledge (the runner: a published version past its expiry date leaves the search)",
     payload: z.object({ documentId: id, versionId: id }).strict(),
+  }),
+  // ── Decisions before Phase 3 (plan §13.4 B, C) ──
+  contract({
+    type: "KnowledgeDocumentVersionReproposed", version: 1, aggregateType: "KNOWLEDGE_DOCUMENT", scope: "ORGANIZATION",
+    sensitivity: "LOW", producer: "knowledge (reproposeKnowledgeVersion: a hospital administrator proposes an older version again, as a new version number under the same two-person approval; never restored automatically)",
+    payload: z.object({ documentId: id, versionId: id, fromVersionId: id, version: count }).strict(),
+  }),
+  contract({
+    type: "FacilityContactPublished", version: 1, aggregateType: "FACILITY", scope: "FACILITY",
+    sensitivity: "LOW", producer: "knowledge contacts (addFacilityContact: a hospital administrator adds a published number — switchboard, helpline, ambulance — that knowledge documents may print; the number is never in the event)",
+    payload: z.object({ contactId: id, kind: z.enum(["SWITCHBOARD", "HELPLINE", "AMBULANCE", "OTHER"]) }).strict(),
+  }),
+  contract({
+    type: "FacilityContactRemoved", version: 1, aggregateType: "FACILITY", scope: "FACILITY",
+    sensitivity: "LOW", producer: "knowledge contacts (removeFacilityContact: the number leaves the published list; the row is kept with who removed it)",
+    payload: z.object({ contactId: id }).strict(),
   }),
 ];
 

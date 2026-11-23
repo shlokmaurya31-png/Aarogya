@@ -22,6 +22,10 @@ import { retrieve } from "../src/lib/rag/retrieve";
 import { activeSpace } from "../src/lib/rag/embed";
 import { aiAssistancePermit } from "../src/lib/ai/realData";
 import type { AiAccess } from "../src/lib/rag/access";
+import { approveKnowledgeVersion, uploadKnowledge } from "../src/lib/knowledge/service";
+import { ingestKnowledgeVersion } from "../src/lib/knowledge/ingest";
+import { searchKnowledge } from "../src/lib/rag/knowledgeSearch";
+import { staffUser } from "./lib/knowledgeGate";
 
 let pass = 0;
 let fail = 0;
@@ -74,8 +78,10 @@ async function main() {
   await generate(a, `lat-${tag}-a`, 2000);
   await generate(b, `lat-${tag}-b`, 500);
   await prisma.$executeRawUnsafe(`DROP TABLE rag_latency_base`);
-  await prisma.$executeRawUnsafe(`ANALYZE "RagChunk"`);
-  await prisma.$executeRawUnsafe(`ANALYZE "RagEmbedding"`);
+  // The tables as autovacuum leaves them (statistics current, visibility map set), so autovacuum doesn't
+  // run during the measurement (RAG Phase 3: in CI it doubled the p95 of the first measurement only).
+  await prisma.$executeRawUnsafe(`VACUUM (ANALYZE, PARALLEL 0) "RagChunk"`);
+  await prisma.$executeRawUnsafe(`VACUUM (ANALYZE, PARALLEL 0) "RagEmbedding"`);
   const count = await prisma.ragEmbedding.count({ where: { patientId: a.patientId } });
   report("One patient with 20,000 indexed chunks, each embedded (1024 dimensions)", count === 20_000 && (await prisma.ragChunk.count({ where: { patientId: a.patientId } })) === 20_000, `${count} in ${Math.round((Date.now() - started) / 1000)} s`);
 
@@ -114,6 +120,42 @@ async function main() {
     }
     console.log(`  full retrieval: p50 ${pct(full, 50).toFixed(1)} ms, p95 ${pct(full, 95).toFixed(1)} ms (100 questions)`);
     report(`The whole retrieval for a question, p95 under ${P95_BUDGET_MS} ms`, pct(full, 95) < P95_BUDGET_MS, `p95 ${pct(full, 95).toFixed(1)} ms`);
+  }
+
+  // RAG Phase 3 (plan §5.3): knowledge retrieval over a 20,000-chunk organisation — 20 approved
+  // documents of 1,000 sections each, uploaded, ingested and approved through the services.
+  {
+    // An organisation of its own, so it holds exactly these 20,000 chunks whatever ran before.
+    const org = await prisma.organization.create({ data: { name: `Latency network ${tag}` } });
+    const fac = await prisma.facility.create({ data: { name: `Latency hospital ${tag}`, organizationId: org.id, dataClassification: "SYNTHETIC" } });
+    const admin = await staffUser(`lat-kadmin-${tag}@verify.aarogya`, "HOSPITAL_ADMIN", fac.id, { orgAdmin: true });
+    const sup = await staffUser(`lat-ksuper-${tag}@verify.aarogya`, "MEDICAL_SUPERINTENDENT", fac.id);
+    const topics = ["hand hygiene", "oxygen cylinders", "sepsis bundle", "blood transfusion", "falls prevention", "pressure injury", "fire safety", "needle-stick injury", "discharge process", "isolation precautions"];
+    const t0 = Date.now();
+    for (let d = 0; d < 20; d++) {
+      const body = Array.from({ length: 1000 }, (_, i) => `## ${topics[(d + i) % topics.length]} ${d}.${i + 1}\n\nStep ${i + 1}: check ${topics[(d * 3 + i) % topics.length]} every ${1 + (i % 8)} hours and record it in register ${d}-${i}.`).join("\n\n");
+      const u = await uploadKnowledge(admin, { title: `Latency SOP ${d} ${tag}`, documentType: "SOP", accessClass: "CLINICAL", fileName: `lat-${d}-${tag}.md`, declaredType: "text/markdown", bytes: Buffer.from(body, "utf8") });
+      await ingestKnowledgeVersion(u.versionId);
+      await approveKnowledgeVersion(sup, u.versionId);
+    }
+    // A library is searched long after it is written: the tables as autovacuum leaves them (visibility map set, statistics current).
+    await prisma.$executeRawUnsafe(`VACUUM (ANALYZE, PARALLEL 0) "RagChunk"`);
+    await prisma.$executeRawUnsafe(`VACUUM (ANALYZE, PARALLEL 0) "RagEmbedding"`);
+    const kChunks = await prisma.ragChunk.count({ where: { organizationId: org.id, ownerType: "KNOWLEDGE", status: "ACTIVE" } });
+    report("A 20,000-chunk organisation: twenty approved documents of 1,000 sections, through upload, ingestion and approval", kChunks >= 20_000, `${kChunks} chunks in ${Math.round((Date.now() - t0) / 1000)} s`);
+    const kScope = { organizationId: org.id, facilityId: fac.id, accessClasses: ["ALL_STAFF", "CLINICAL"] as const };
+    const kq = ["how often to check oxygen cylinders", "sepsis bundle step", "hand hygene register", "blood transfusion record", "falls prevention every hours", "isolation precautions"];
+    for (let i = 0; i < 5; i++) await searchKnowledge({ ...kScope, accessClasses: [...kScope.accessClasses] }, kq[i % kq.length]);
+    const kt: number[] = [];
+    let kFound = 0;
+    for (let i = 0; i < 100; i++) {
+      const t = performance.now();
+      const hits = await searchKnowledge({ ...kScope, accessClasses: [...kScope.accessClasses] }, kq[i % kq.length], { limit: 30 });
+      kt.push(performance.now() - t);
+      if (hits.length) kFound += 1;
+    }
+    console.log(`  knowledge retrieval over a 20,000-chunk organisation: p50 ${pct(kt, 50).toFixed(1)} ms, p95 ${pct(kt, 95).toFixed(1)} ms (100 questions)`);
+    report(`Knowledge retrieval, p95 under ${P95_BUDGET_MS} ms`, pct(kt, 95) < P95_BUDGET_MS && kFound === 100, `p95 ${pct(kt, 95).toFixed(1)} ms; ${kFound}/100 found passages`);
   }
 
   // The real query's plan, for the other (smaller) patient: reached through an index on the

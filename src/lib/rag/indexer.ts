@@ -7,6 +7,7 @@ import { chunkSections } from "./chunk";
 import { chunkEmbeddingText, computeEmbeddings, writableSpaces, writeEmbeddings } from "./embed";
 import { removeOwnerIndex } from "./remove";
 import { loadSource, vitalsDaySource, type SourceRef } from "./sources";
+import { shadowTextFor } from "./shadow";
 
 type Tx = Prisma.TransactionClient;
 
@@ -62,6 +63,8 @@ export async function indexSource(ref: SourceRef, opts: { eventId?: string } = {
 
   const r = renderSource(loaded.input);
   const chunks = chunkSections(r.sections);
+  // RAG Phase 3: each chunk's index-only terms, computed before the write transaction.
+  const shadows = chunks.map((c) => shadowTextFor(c));
   const hash = sha(JSON.stringify({ context: r.context, sections: r.sections, categories: r.categories, sensitive: r.sensitiveCategory, audience: r.audience, handwritten: r.handwritten }));
   const latest = await prisma.ragDocument.findFirst({ where: { sourceType: ref.sourceType, sourceId: ref.sourceId }, orderBy: { sourceVersion: "desc" }, select: { id: true, sourceVersion: true, contentHash: true, status: true } });
   const supersedeOthers = async () => {
@@ -101,7 +104,7 @@ export async function indexSource(ref: SourceRef, opts: { eventId?: string } = {
     const created = await tx.ragChunk.createManyAndReturn({
       data: chunks.map((c, i) => ({
         documentId: doc.id, chunkNo: i, ...ownerCols, categories: r.categories, sensitiveCategory: r.sensitiveCategory, origin: r.origin, audience: r.audience,
-        sourceType: ref.sourceType, sourceId: ref.sourceId, recordedAt: r.recordedAt, handwritten: r.handwritten, context: r.context, heading: c.heading ?? null, text: c.text, tokenCount: c.tokenCount,
+        sourceType: ref.sourceType, sourceId: ref.sourceId, recordedAt: r.recordedAt, handwritten: r.handwritten, context: r.context, heading: c.heading ?? null, text: c.text, tokenCount: c.tokenCount, shadowText: shadows[i],
       })),
       select: { id: true, chunkNo: true },
     });

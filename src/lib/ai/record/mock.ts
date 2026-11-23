@@ -10,9 +10,14 @@ import type { AnswerRequest, AnswerSentence, RecordAnswer, RecordAnswerProvider 
  * copied verbatim and cited, so it echoes what it was given (the leak gate
  * relies on that: anything retrieved would surface) and never invents a value.
  *
- *   CHART_QA, EXPLAIN_REPORT follow-ups   the lines sharing the most (stemmed)
+ *   CHART_QA, EXPLAIN_REPORT follow-ups,  the lines sharing the most (stemmed)
+ *   KNOWLEDGE_QA
  *                                         words with the question, counting
- *                                         their entry's context line (at most 3)
+ *                                         their entry's context line (at most 5;
+ *                                         RAG Phase 3: a list question — diagnoses,
+ *                                         medicines — has more than three lines;
+ *                                         British and US spellings fold:
+ *                                         haemoglobin, hemoglobin)
  *   VISIT_BRIEF, NURSE_HANDOFF,           every line, in the order given
  *   HEALTH_TIMELINE, EXPLAIN_REPORT
  *   PREVISIT_QUESTIONS                    one question per source, naming it
@@ -43,12 +48,14 @@ export const mockRecordAnswer: RecordAnswerProvider = {
     if (req.mode === "PREVISIT_QUESTIONS") {
       out.push({ text: phrase(req.language, "youCouldAsk"), citations: [], kind: "GUIDANCE" });
       for (const s of req.sources.slice(0, 5)) out.push({ text: `${s.context.replace(/^\[|\]$/g, "")}?`, citations: [s.n], kind: "FACT" });
-    } else if (req.question && (req.mode === "CHART_QA" || req.mode === "EXPLAIN_REPORT")) {
+    } else if (req.question && (req.mode === "CHART_QA" || req.mode === "EXPLAIN_REPORT" || req.mode === "KNOWLEDGE_QA")) {
       // A line's words, and those of the entry it belongs to (its context line: "Imaging report · X-ray Chest PA view").
-      const terms = new Set(contentWords(req.question).map(stem));
-      const scored = all.map((l, i) => ({ ...l, i, score: new Set([...contentWords(l.text), ...contentWords(l.context)].map(stem)).size === 0 ? 0 : [...new Set([...contentWords(l.text), ...contentWords(l.context)].map(stem))].filter((w) => terms.has(w)).length })).filter((l) => l.score > 0);
+      const fold = (w: string) => stem(w.replace(/ae/g, "e").replace(/oe/g, "e"));
+      const terms = new Set(contentWords(req.question).map(fold));
+      const scored = all.map((l, i) => ({ ...l, i, score: [...new Set([...contentWords(l.text), ...contentWords(l.context)].map(fold))].filter((w) => terms.has(w)).length })).filter((l) => l.score > 0);
       scored.sort((a, b) => b.score - a.score || a.i - b.i);
-      const top = (scored.length ? scored : all.slice(0, 1).map((x, i) => ({ ...x, i, score: 0 }))).slice(0, 3);
+      // No line shares a word with the question: the sources retrieval chose are the answer (RAG Phase 3: a reader's facts).
+      const top = (scored.length ? scored : all.slice(0, 5).map((x, i) => ({ ...x, i, score: 0 }))).slice(0, 5);
       // Disagreements are shown (§2): a patient-provided line brings the verified line on the same subject, first.
       const subject = (ctx: string) => ctx.split(" · ")[1]?.toLowerCase().split(/\s+/).map(stem) ?? [];
       const picked: typeof top = [];

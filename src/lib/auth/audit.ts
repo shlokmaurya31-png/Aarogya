@@ -724,7 +724,10 @@ export type AuditEventType =
   | "knowledge.version.approved"
   | "knowledge.version.rejected"
   | "knowledge.version.withdrawn"
-  | "knowledge.ingestion.requeued";
+  | "knowledge.ingestion.requeued"
+  | "knowledge.version.reproposed"
+  | "knowledge.contact.added"
+  | "knowledge.contact.removed";
 
 export interface AuditEventContext {
   facilityId?: string;

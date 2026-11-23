@@ -1,6 +1,6 @@
 # RAG implementation plan: phases 1–8
 
-- **Status:** Accepted (Phase 0, 2026-11-17; the twelve questions of §13 were decided the same day; §13.3 on 2026-11-18). Each phase starts only after the one before it is merged.
+- **Status:** Accepted (Phase 0, 2026-11-17; the twelve questions of §13 were decided the same day; §13.3 on 2026-11-18; §13.4 on 2026-11-23). Each phase starts only after the one before it is merged.
 - **Architecture:** [`RAG_ARCHITECTURE.md`](RAG_ARCHITECTURE.md). **Audit:** [`RAG_AUDIT.md`](RAG_AUDIT.md). **Threats:** [`RAG_THREAT_MODEL.md`](RAG_THREAT_MODEL.md). **Decisions:** [`adr/0005`](adr/0005-rag-embeddings-providers-and-tables.md).
 
 ## Contents
@@ -17,7 +17,7 @@
 10. Phase 8: evaluation and production readiness
 11. The evaluation set and how thresholds are set
 12. Definition of done, mapped to phases
-13. Decisions before Phase 1 (2026-11-17) and Phase 2 (2026-11-18)
+13. Decisions before Phase 1 (2026-11-17), Phase 2 (2026-11-18) and Phase 3 (2026-11-23)
 
 ---
 
@@ -257,6 +257,43 @@ No ingestion, no new mode, no screen. No embedding model is adopted.
 | Leak gate | 0 |
 | Retrieval latency: patient (20,000 chunks); knowledge (20,000-chunk organisation) | p95 < 150 ms each |
 
+### 5.4 As built (2026-11-23)
+
+| Step | Built | Gate |
+|---|---|---|
+| 3.1 | `ai.retrieval.{vector,keyword,rerank}_candidates`, `ai.retrieval.keep`, `ai.retrieval.keep_context` (defaults 40/40/30, 8, 12); `src/lib/rag/candidates.ts`. | `candidates.test.ts`; the evaluation compares 40/40/30 with 30/30/20 on the development split: 40/40/30 Recall@8 0.884, MRR 0.845; 30/30/20 Recall@8 0.870, MRR 0.844 — 40/40/30 kept |
+| 3.2 | `src/lib/rag/router.ts`: rules in the eleven languages (pending native-speaker and clinical review) choose structured readers, narrative, mixed, knowledge or operational; an unmatched question gets the full hybrid plan. Only when two families conflict (a bed in the chart and beds in the hospital; a protocol and this patient's value) may a classifier choose, and only among the rules' candidates (`intentModel.ts`; the deterministic mock — no provider or budget). | `router.test.ts` (171 phrasings) |
+| 3.3 | `src/lib/rag/readers.ts`: latest and trend per analyte, vitals, pending lab and imaging orders, the current encounter (treating team only), problems and diagnoses, from the authoritative tables. Every access condition in the SQL, sensitive categories included (the sensitivity rules as Postgres patterns). A lookup its readers fully answer skips the vector and keyword search. The NEWS2 score is not read (clinical sign-off pending). | `verify-postgres-rag-readers` (37); leak and sensitive-category gates now check readers' facts |
+| 3.4 | `KNOWLEDGE_QA`: `ai:knowledge:ask` for facility staff; access classes by role (`knowledgeAccess.ts`); `POST /api/ai/knowledge/ask` through `knowledgeAsk.ts`, a reviewed provider gateway. Answers cite approved documents in force, labelled "approved document"; extractive (no model) while `ai.knowledge.external_providers` is off. | `verify-postgres-knowledge-qa` (24): another organisation, another facility, a class the role lacks, unpublished and superseded versions, patient and knowledge worlds never meet |
+| 3.5 | The keyword channel (`search.ts` `keywordSql`): exact ('simple'), English stems, the shadow text, and trigram word similarity (threshold 0.4, GIN-indexed), fused by reciprocal rank; abbreviations (`abbreviations.ts`) and medicine names' variants (`medicineNames.ts`) expand the query; canonical medicine names are index terms in the shadow text. The "no record" rule still counts only the question's own words. | Unit tests; the evaluation; the Indic gate |
+| 3.6 | Imported results indexed (IMPORTED, STAFF_ONLY) by the rag-indexer; the treating team reads them; never the latest when a verified value exists; a disagreement stated. | `verify-postgres-ai-ask` (52) |
+| 3.7 | Structured facts first (a passage about the same row dropped); passages deduplicated; neighbours under the same heading. | `context.test.ts`; the evaluation |
+| 3.8 | 230 questions (§11.1), each in the development or the held-out test split; a fixture with readers' data, imported values, three patients and a knowledge library (14 English documents with stale versions, one per Indic language). | `verify-postgres-rag-eval` |
+| 3.9 | `romanize.ts` (a simplified ISO 15919 skeleton, rule-based, per script; Latin → Indic transliteration); `RagChunk.shadowText` filled by the indexer, ingestion and a bounded runner backfill. | `romanize.test.ts` (development words only); `eval:rag:indic` |
+| 3.10 | `lexicon.ts`: 38 concepts (conditions, symptoms, tests, medicines) in the eleven languages, each "pending native-speaker and clinical review", no dose; used only to expand a query, matched exactly and weighted below the question's own words. | `lexicon.test.ts`; `eval:rag:indic` |
+
+**Migrations:** `20261123100000_knowledge_identifier_rules` (§13.4), `20261123100100_rag_shadow_text`. The planned `legacy_result_index_support` was not needed.
+
+**The evaluation** (`verify-postgres-rag-eval`, mock models, 2026-11-23; 230 questions, 117 development, 113 held out):
+
+| Split | Recall@8 | MRR | nDCG@10 | Correct with valid citations |
+|---|---|---|---|---|
+| **Held-out test** (94 with a retrieval judgement) | **0.959** (target 0.90) | **0.898** (target 0.70) | 0.918 | 98/113 |
+| Development (98) | 0.884 | 0.845 | 0.85 | 107/117 |
+| Whole set | 0.92 | 0.87 | 0.89 | 205/230; **204/219 (93.2%) outside the cross-script cases**, which have no threshold (§5.3) |
+
+Before and after on the same questions: the Phase 1 baseline was Recall@8 0.80 and MRR 0.64 on the 30 questions of that time (no held-out split existed); those 30 questions now score **0.847 and 0.645** (most of them are whole-record modes whose ranking Phase 3 does not change). The held-out split is new, so it has no "before". Structured lookups answered by a reader with no search: 19 of 20. Not in the record, insufficient evidence, operational and stale-document groups: all correct. What fails: the 11 cross-script knowledge questions (the mock reranker cannot relate an English question to an Indic document, so they are refused as "not in the documents"; retrieval finds them), the 10 transliterated knowledge questions (the same, for romanised Latin), and 5 others below the "no record" threshold. A real reranker is the open question; the plan's targets are unchanged.
+
+**Settings chosen on the development split only:** the trigram threshold (0.4), the lexicon expansion's weight (0.5), the knowledge "not in the documents" threshold (0.55: answerable questions scored ≥ 0.618, unanswerable ≤ 0.504), and the candidate counts (40/40/30 kept).
+
+**Retrieval latency** (`verify-postgres-rag-latency`, p95, 20,000 chunks): in a fresh verify:all run, patient candidate search 55 ms and the whole retrieval 63 ms (Phase 1: 59.6 ms); on this loaded laptop 95–103 ms and 114–123 ms. Knowledge retrieval over a 20,000-chunk organisation (new): 84 ms. All under 150 ms.
+
+**Found and fixed on the way:** the knowledge search was planned generically after five runs (~230 ms; now planned per call, as the record's search has been since Phase 1); the dispatcher could skip its first round when reaping stale claims outlasted a tiny budget (its comment already said the deadline is checked between rounds); the NEWS2 score must not be read by any server code until its clinical sign-off (the vitals reader no longer reads it); the knowledge search's per-chunk in-force check cost ~0.3 s at 20,000 chunks (now applied to an oversampled candidate set, the vector and keyword branches in parallel); the leak and sensitive-category gates now check the readers' facts; a lab fixture's phone numbers repeated across runs.
+
+**Decisions taken while building** (each the more conservative option): imported results are read by the treating team only, not through a share or organisation consent; operational questions are recognised and answered "not in the record" until operational readers exist; knowledge answers are extractive (no model) while the organisation's external-provider setting is off; the knowledge mode is not reached from chart Q&A in this phase (step 6.1); a hospital administrator reads only ALL_STAFF, BILLING and ADMIN documents through knowledge Q&A; a typing error re-ranks the exact matcher's candidates rather than searching the whole table.
+
+**The Indic benchmark** (held-out split; `docs/RAG_INDIC_BENCHMARK.md`, Phase 3): same-script 1.00, inflected 0.97, transliterated **0.80** (from 0.00), mixed-script 0.88, cross-script 0.25 @5 / 0.28 @10, medicine in Latin 0.40; BGE-M3 1.00 / 1.00 / 0.80 / 1.00 / 0.38 @5 / 0.42. One design change was made after seeing the test split (lexicon expansions matched exactly only); it is described there with both sets of numbers.
+
 ## 6. Phase 4: token economy
 
 **Goal:** send less, measure everything, cache only what is safe.
@@ -397,6 +434,7 @@ Before any screen is written, the relevant guide under `node_modules/next/dist/d
 | 8.7 | **Recovery drill:** the index dropped and rebuilt from the record and the stored knowledge files; time recorded. | A runbook. |
 | 8.8 | **Runbooks:** provider outage, dead letters, a failed ingestion, a re-embed, a suspected leak, turning the assistant off per facility. | `docs/RAG_OPERATIONS.md`. |
 | 8.9 | **`PRE_LAUNCH_CHECKLIST.md` updated** with what still blocks real data. | The checklist. |
+| 8.10 | **Local OCR for scanned knowledge pages** (§13.4 A): Tesseract with the Indic language packs (Hindi, Marathi, Bengali, Tamil, Telugu, Kannada, Malayalam, Gujarati, Odia, Urdu) running on our own server; no page leaves it. An external OCR provider for knowledge stays behind the per-organisation setting of §13 decision 8, **default off**. Until this step, an image-only page is refused (`NO_TEXT_LAYER`). | A gate: a scanned synthetic SOP in English and in two Indic scripts reaches the same identifier check and fidelity bar as a text-layer PDF; no network call is made during OCR. |
 
 ### 10.2 Thresholds
 
@@ -496,6 +534,7 @@ The twelve questions Phase 0 raised, each as decided by the product owner on 202
 - **Decision 6:** an imported result is indexed for the `STAFF_ONLY` audience, so no patient or proxy mode can retrieve it. The per-user "show imported results" chart preference is not consulted by the AI: the label and the ranking rule apply to every staff member alike.
 - **Decision 8:** an Indian-mobile-shaped number counts as "looks like a patient identifier", so a document that prints one is refused, and the uploader removes it or replaces it with a short code or a toll-free number. This is stricter than Phase 0 proposed (flag for the approver).
 - **Decision 11:** where a rule has a stricter and a looser reading, the stricter one is built. Patient-facing modes stay on the strongest tier, refuse diagnosis and dosing, and withhold a whole answer on any validation failure.
+- **Decision 8, revised by §13.4 C (2026-11-23):** a mobile number and a 12-digit number no longer refuse a file by their shape alone. See §13.4.
 
 ### 13.2 Still open
 
@@ -510,3 +549,20 @@ The twelve questions Phase 0 raised, each as decided by the product owner on 202
 | A | Who holds `knowledge:approve` | **Two new staff roles, `MEDICAL_SUPERINTENDENT` and `QUALITY_LEAD`, hold `knowledge:approve` by default; `HOSPITAL_ADMIN` holds `knowledge:manage`.** The approver can never be the uploader: the database CHECK of Phase 1 (`KnowledgeDocumentVersion_approver_check`) stays, and the service refuses first with a readable message. |
 | B | The embedding service | **Not decided.** First, measure the deterministic cross-script improvements of Phase 3 (C below); then latency on Mumbai hardware once staging exists; a native-speaker review of the benchmark dataset when reviewers are available. **No model service is added until then**; the mock stays active. |
 | C | Cross-script retrieval without a model | Added to Phase 3 as steps 3.9 and 3.10: (a) a **romanised shadow text** per Indic chunk (ISO 15919 or similar, deterministic), indexed with pg_trgm, plus transliteration of Latin-script queries into each Indic script at query time; (b) a **curated multilingual medical concept lexicon** (common conditions, symptoms, tests and NLEM / WHO INN medicines mapped to concept IDs across the eleven languages, marked "pending native-speaker and clinical review") used for query expansion. Both are measured in `eval:rag:indic` against the current numbers and BGE-M3. |
+
+### 13.4 Decisions before Phase 3 (decided 2026-11-23)
+
+| # | Question | Decision |
+|---|---|---|
+| A | OCR for scanned knowledge pages | **Still refused for now** (`NO_TEXT_LAYER`). A later step, **8.10**, adds local OCR: Tesseract with Indic language packs on our own server, no external provider. The per-organisation external-provider setting (§13 decision 8) stays, **default off**. |
+| B | Withdrawing the version in force | **Never restores the previous version automatically.** The document then has no version in force. An administrator may **re-propose** an older version that was in force once (superseded, expired or withdrawn): the same stored file becomes the next version number, checked again under today's identifier rules, and needs the same two-person approval (the proposer cannot approve it). |
+| C | The identifier check | **Refused outright:** ABHA numbers and addresses; UHID/MRN patterns; names with ages; a 12-digit number **only if it passes the Aadhaar Verhoeff checksum and does not start with 0 or 1**. Nothing of a refused file is kept. **Highlighted for the approver:** any other 12-digit number; a mobile number **not** on the facility's published contact list (switchboard, helplines, ambulance; edited by the hospital administrator, every change audited and emitted). A number on that list is allowed. The approver sees every highlight (masked to its last four digits, with its page and an excerpt) and must acknowledge each before approving; the approval records who acknowledged them and when. |
+
+**As built (2026-11-23, the first Phase 3 commit):**
+
+- `src/lib/knowledge/identifiers.ts`: `scanIdentifiers` returns refusals and highlights; `verhoeffValid`, `looksLikeAadhaar`; excerpts masked to the last four digits (a CHECK refuses any excerpt with seven digits in a row).
+- `src/lib/knowledge/contacts.ts` and `/api/hospital/knowledge/contacts` (GET, POST; DELETE by id): the facility's published list. A facility document may print its own facility's numbers; an organisation-wide document any facility's of the organisation.
+- `reproposeKnowledgeVersion` and `POST /api/hospital/knowledge/versions/[versionId]/repropose`. The rule "the same bytes once per document" now applies to uploads; a re-proposal carries a number (`reproposalSeq`), so the unique index became `(documentId, sha256, reproposalSeq)`, identical for every existing row.
+- Approval takes `acknowledgedHighlightIds`, which must be exactly the version's highlights; a CHECK refuses an approved version with highlights and no acknowledgement.
+- Migration `20261123100000_knowledge_identifier_rules`. Gate `verify-postgres-knowledge-identifier-rules` (54 checks); the access gate covers the new routes by role (65 checks).
+

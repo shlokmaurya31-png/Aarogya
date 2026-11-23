@@ -253,7 +253,7 @@ Severity is the harm if the mitigation fails: **Critical** (patient data to the 
 
 | # | Threat | Severity | Mitigated today | Gate |
 |---|---|---|---|---|
-| T-R01 | Cross-tenant retrieval | Critical | Yes, for patients | Leak gate; extended in 3, 5, 7 |
+| T-R01 | Cross-tenant retrieval | Critical | Yes, for patients; **for knowledge since Phase 3** (KNOWLEDGE_QA: the organisation, the facility or organisation-wide, the role's access classes and the version in force, all in SQL; a knowledge request reads only knowledge rows, a record request never a knowledge row); structured readers apply the scope segment's patients, facilities, period, categories and sensitive opt-ins in SQL | Leak gate; `verify-postgres-knowledge-qa` (another organisation, another facility, a class the role lacks, an unpublished and a superseded version, both directions between patient and knowledge); `verify-postgres-rag-readers`; extended in 5, 7 |
 | T-R02 | Patient IDOR | Critical | Yes, except `/api/chat` | Leak gate; 5 |
 | T-R03 | `/api/chat` bypass | Critical before real data | **Yes, since Phase 1** (a gateway; record-free, record questions to askAi) | `verify-postgres-ai-assistant`, `providerRoutes.test.ts` |
 | T-R04 | Real data to an unapproved provider | Critical | **Yes, since Phase 1** (per-provider flags, default off) | `dataPolicy.test.ts`, `verify-postgres-ai-assistant` |
@@ -262,17 +262,17 @@ Severity is the harm if the mitigation fails: **Critical** (patient data to the 
 | T-R07 | Prompt injection | Critical | Partly; **a knowledge document's instructions are stored and searched as plain text, change nothing, and HTML scripts are dropped (Phase 2)** | `verify-postgres-knowledge-ingest`; 5, 7 |
 | T-R08 | Harmful knowledge document | High | **Yes, since Phase 2** (two people publish: the approver is never the uploader, in the service and a CHECK; withdraw; no scanner, stated) | `verify-postgres-knowledge-access`, `verify-postgres-knowledge-ingest` |
 | T-R09 | Stale document outranks current | High | **Yes, since Phase 2** (a superseded, expired or withdrawn version leaves the index in the publishing transaction; the search admits only a version in force, checked in SQL) | `verify-postgres-knowledge-ingest`; 3 |
-| T-R10 | Patient data in a knowledge document | High | **Yes, since Phase 2** (ABHA-, Aadhaar-, mobile- and UHID/MRN-shaped values and names with ages refuse the upload before anything is stored; checked again at ingestion) | `identifiers.test.ts`, both knowledge gates, e2e |
+| T-R10 | Patient data in a knowledge document | High | **Yes, since Phase 2; rules revised before Phase 3** (§13.4 C): ABHA numbers and addresses, checksum-valid Aadhaar numbers, UHID/MRN patterns and names with ages refuse the upload before anything is stored (checked again at ingestion); any other 12-digit number and any mobile not on the facility's published contact list is highlighted, masked, and the approver must acknowledge each before approving (recorded; a CHECK refuses an approval without it) | `identifiers.test.ts`, `verify-postgres-knowledge-identifier-rules`, both knowledge gates, e2e |
 | T-R11 | Cache after an access change | Critical | Yes (no cache) | 4, 7 |
 | T-R12 | Embedding leakage | Medium | Yes | 1 |
 | T-R13 | Text in logs and errors | High | Yes, except `/api/chat` | 5, 7 |
-| T-R14 | Imported or patient-provided shown as verified | Critical | Yes for patient-provided | 3 |
+| T-R14 | Imported or patient-provided shown as verified | Critical | Yes for patient-provided; **for imported since Phase 3** (indexed IMPORTED, STAFF_ONLY; read by the treating team only; always labelled; never the latest when a verified value exists; a disagreement stated) | `verify-postgres-ai-ask` (imported), `verify-postgres-rag-readers` |
 | T-R15 | Unsafe clinical statement | Critical | Partly; advisor pending | 5, 8 |
 | T-R16 | Scholar isolation | Critical | Yes | 7 |
 | T-R17 | Cost and availability | Medium | Partly | 4 |
 | T-R18 | Wrong embedding space | Medium | Yes | Re-embed gate |
 | T-R19 | Partial ingestion searchable | High | **Yes, since Phase 2** (chunks, embeddings and INDEXED written in one transaction, PENDING until published) | `verify-postgres-knowledge-ingest` |
-| T-R20 | Operational answers reveal patients | High | Not applicable yet | 5 |
+| T-R20 | Operational answers reveal patients | High | Not applicable yet: the router recognises operational questions and Phase 3 answers them "not in the record" with no source (operational readers come later) | Router tests; the evaluation's OPERATIONAL group; 5 |
 | T-R21 | Forged conversation context | High | Not applicable yet | 4, 7 |
 | T-R22 | Secrets in responses | High | Yes | Route tests; 7 |
 | T-R23 | Malware in uploads | Medium | **No** | Deferred, stated |

@@ -14,15 +14,18 @@ import type { AskResult } from "./ask";
  */
 export interface EvalQuestion {
   id: string; group: string; actor: string; mode: string;
+  /** RAG Phase 3 (rag-eval-v2): the fixture patient (default "main"); the split ("dev" for tuning, "test" held out); the language questions' kind. */
+  patient?: string; split?: "dev" | "test"; kind?: string;
   ask?: { question?: string; document?: string; language?: string; appointment?: string };
-  expect: { outcome: string; required?: string[]; forbidden?: string[]; sources?: string[]; labels?: string[]; questionsOnly?: boolean };
+  /** `documents`: the knowledge documents (fixture keys) a knowledge answer must cite and retrieve. */
+  expect: { outcome: string; required?: string[]; forbidden?: string[]; sources?: string[]; documents?: string[]; labels?: string[]; questionsOnly?: boolean };
 }
 
 export interface QuestionScore { id: string; group: string; correct: boolean; cited: boolean; retrieved: boolean; score: boolean; why: string[] }
 
 const norm = (s: string) => s.normalize("NFC").replace(/\s+/g, " ").trim();
 
-export function scoreQuestion(q: EvalQuestion, r: AskResult, interaction: { retrievedChunkIds: string[]; citedChunkIds: string[] }, retrievedSourceTypes: string[]): QuestionScore {
+export function scoreQuestion(q: EvalQuestion, r: AskResult, interaction: { retrievedChunkIds: string[]; citedChunkIds: string[] }, retrievedSourceTypes: string[], documentIds: Record<string, readonly string[]> = {}): QuestionScore {
   const why: string[] = [];
   const answer = norm(r.sentences.map((s) => s.text).join("\n"));
   if (r.outcome !== q.expect.outcome) why.push(`outcome ${r.outcome}, expected ${q.expect.outcome}`);
@@ -36,9 +39,12 @@ export function scoreQuestion(q: EvalQuestion, r: AskResult, interaction: { retr
   if (!interaction.citedChunkIds.every((id) => interaction.retrievedChunkIds.includes(id))) why.push("a citation that wasn't retrieved");
   const citedTypes = new Set(r.citations.map((c) => c.sourceType));
   if (q.expect.sources?.length && !q.expect.sources.some((t) => citedTypes.has(t))) why.push(`no citation of ${q.expect.sources.join("/")}`);
+  // RAG Phase 3: a knowledge answer must cite the right document, not just any document.
+  if (q.expect.documents?.length && !r.citations.some((c) => q.expect.documents!.some((k) => (documentIds[k] ?? []).includes(c.sourceId)))) why.push(`no citation of ${q.expect.documents.join("/")}`);
   const labels = new Set(facts.flatMap((s) => s.labels));
   for (const l of q.expect.labels ?? []) if (!labels.has(l as never)) why.push(`label "${l}" missing`);
   const cited = why.length === before;
-  const retrieved = q.expect.outcome !== "ANSWERED" || !q.expect.sources?.length || q.expect.sources.some((t) => retrievedSourceTypes.includes(t));
+  const wanted = q.expect.documents?.length ? q.expect.documents.map((k) => `KD:${k}`) : q.expect.sources ?? [];
+  const retrieved = q.expect.outcome !== "ANSWERED" || !wanted.length || wanted.some((t) => retrievedSourceTypes.includes(t));
   return { id: q.id, group: q.group, correct, cited, retrieved, score: correct && cited, why };
 }

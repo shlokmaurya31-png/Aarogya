@@ -208,7 +208,8 @@ export async function resolveAiAccess(actor: AiActor, req: AccessRequest): Promi
   const g = await recordGate();
   const segments: ScopeSegment[] = [
     // The chart permission already shows the treating team every category, sensitive ones included.
-    { path: actor.role === "NURSE" ? "NURSE_ASSIGNED" : "TREATING", facility: { patientIds, facilityIds: [actor.facilityId] }, categories: ALL_CATEGORIES, sensitive: ALL_SENSITIVE, audiences: ["STAFF_ONLY", "PATIENT_VISIBLE"], origins: ["VERIFIED"], ...period },
+    // RAG Phase 3, step 3.6 (§13 decision 6): the treating team also reads imported results, always labelled, never above a verified one.
+    { path: actor.role === "NURSE" ? "NURSE_ASSIGNED" : "TREATING", facility: { patientIds, facilityIds: [actor.facilityId] }, categories: ALL_CATEGORIES, sensitive: ALL_SENSITIVE, audiences: ["STAFF_ONLY", "PATIENT_VISIBLE"], origins: ["VERIFIED", "IMPORTED"], ...period },
   ];
   const personGrant = subject.personId ? await personAccess({ kind: "STAFF", userId: actor.userId, facilityId: actor.facilityId }, subject.personId, "UPLOADS") : null;
   if (personGrant) segments.push({ path: "TREATING_UPLOADS", personId: subject.personId!, categories: ALL_CATEGORIES, sensitive: ALL_SENSITIVE, audiences: ["PATIENT_VISIBLE"], origins: ["PATIENT_PROVIDED"], ...period });

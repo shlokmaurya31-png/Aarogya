@@ -25,8 +25,11 @@ import type { AiMode } from "./modes";
 const DAY = 86_400_000;
 const METADATA_DAYS = 365;
 
+/** Who and what the request was about: an AI access (a patient's record), or (RAG Phase 3) knowledge Q&A, which has no patient. */
+export type LoggedAccess = Pick<AiAccess, "callerOrganizationId" | "callerFacilityId" | "shareId" | "consentId"> & { subject: { patientId: string | null; personId: string | null } };
+
 export interface LogInput {
-  id: string; actor: AiActor; access: AiAccess; mode: AiMode; language: string; question: string | null; answerText: string;
+  id: string; actor: AiActor; access: LoggedAccess; mode: AiMode; language: string; question: string | null; answerText: string;
   space: { model: string; version: number }; started: number;
   outcome: "ANSWERED" | "NO_RECORD" | "REFUSED_SAFETY" | "CITATION_INVALID" | "RATE_LIMITED" | "ERROR";
   retrievedChunkIds: string[]; citedChunkIds: string[]; topScore: number | null; threshold: number | null; model: string; inputTokens: number; outputTokens: number;
@@ -36,7 +39,7 @@ export interface LogInput {
   accounting?: { module: string; intent: string; tier: number; provider: string | null; retrievalMs: number | null; generationMs: number | null };
 }
 
-export interface LoggedSource { rank: number; cited: boolean; chunkId: string; ragDocumentId: string | null; sourceType: string; sourceId: string; origin: RagOrigin; recordedAt: Date }
+export interface LoggedSource { rank: number; cited: boolean; chunkId: string; ragDocumentId: string | null; sourceType: string; sourceId: string; origin: RagOrigin; recordedAt: Date; pageNumber?: number | null; sectionPath?: string | null }
 
 /** live:<kind>:<id> is a structured reader's fact; upload:<doc>:<page> an unconfirmed upload read directly; anything else an index chunk. */
 const sourceKind = (chunkId: string) => (chunkId.startsWith("live:") ? "LIVE" : chunkId.startsWith("upload:") ? "UPLOAD" : "CHUNK");
@@ -72,7 +75,7 @@ export async function logInteraction(input: LogInput): Promise<string> {
       sources: { create: (input.sources ?? []).map((s) => {
         const kind = sourceKind(s.chunkId);
         const d = s.ragDocumentId ? versions.get(s.ragDocumentId) : undefined;
-        return { rank: s.rank, cited: s.cited, sourceKind: kind, sourceType: s.sourceType, sourceId: s.sourceId, chunkId: kind === "CHUNK" ? s.chunkId : null, ragDocumentId: s.ragDocumentId, sourceVersion: d?.sourceVersion ?? null, knowledgeVersionId: d?.knowledgeVersionId ?? null, origin: s.origin, recordedAt: s.recordedAt };
+        return { rank: s.rank, cited: s.cited, sourceKind: kind, sourceType: s.sourceType, sourceId: s.sourceId, chunkId: kind === "CHUNK" ? s.chunkId : null, ragDocumentId: s.ragDocumentId, sourceVersion: d?.sourceVersion ?? null, knowledgeVersionId: d?.knowledgeVersionId ?? null, pageNumber: s.pageNumber ?? null, sectionPath: s.sectionPath ?? null, origin: s.origin, recordedAt: s.recordedAt };
       }) },
       id: input.id, organizationId: a.callerOrganizationId ?? null, facilityId: a.callerFacilityId ?? null, userId: input.actor.userId, role: input.actor.kind === "STAFF" ? input.actor.role : "PATIENT",
       patientId: a.subject.patientId, personId: a.subject.personId, shareId: a.shareId ?? null, consentId: a.consentId ?? null,

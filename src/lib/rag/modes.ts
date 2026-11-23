@@ -6,7 +6,8 @@ import type { AiModelKey } from "@/lib/ai/models";
  * "no record found" threshold applies (§7.3). Pending clinical advisor: each
  * mode's prompt and refusal rules (§9.9).
  */
-export const AI_MODES = ["VISIT_BRIEF", "CHART_QA", "NURSE_HANDOFF", "EXPLAIN_REPORT", "HEALTH_TIMELINE", "PREVISIT_QUESTIONS"] as const;
+/** RAG Phase 3, step 3.4: KNOWLEDGE_QA answers from the organisation's approved documents in force (knowledgeAsk.ts), never about a patient. */
+export const AI_MODES = ["VISIT_BRIEF", "CHART_QA", "NURSE_HANDOFF", "EXPLAIN_REPORT", "HEALTH_TIMELINE", "PREVISIT_QUESTIONS", "KNOWLEDGE_QA"] as const;
 export type AiMode = (typeof AI_MODES)[number];
 
 export type AiAudience = "STAFF" | "PATIENT";
@@ -37,6 +38,7 @@ export const MODES: Record<AiMode, ModeSpec> = {
   NURSE_HANDOFF: { audience: "STAFF", keep: 12, context: true, model: "nurse_handoff", threshold: "ai.threshold.nurse_handoff", defaultThreshold: 500, maxWords: 400 },
   EXPLAIN_REPORT: { audience: "PATIENT", keep: 8, context: false, model: "explain_report", threshold: "ai.threshold.explain_report", defaultThreshold: 550, maxWords: 350 },
   HEALTH_TIMELINE: { audience: "PATIENT", keep: 12, context: true, model: "health_timeline", threshold: "ai.threshold.health_timeline", defaultThreshold: 550, maxWords: 450 },
+  KNOWLEDGE_QA: { audience: "STAFF", keep: 8, context: false, model: "knowledge_qa", threshold: "ai.threshold.knowledge_qa", defaultThreshold: 550, maxWords: 200 },
   PREVISIT_QUESTIONS: { audience: "PATIENT", keep: 8, context: false, model: "previsit_questions", threshold: "ai.threshold.previsit_questions", defaultThreshold: 550, maxWords: 200 },
 };
 

@@ -46,7 +46,8 @@ async function main() {
     const access = await resolveAiAccess({ kind: "STAFF", userId: doc.userId, role: "DOCTOR", facilityId: PUNE }, { mode: "CHART_QA", patientId: P.pune, ...(ref ? { shareId: ref } : {}) });
     // With the question (the threshold applies) and without (everything in scope, live facts included).
     const [r, r2] = [await retrieve(access, { question }), await retrieve(access, {})];
-    return JSON.stringify([r.chunks, r.live, r2.chunks, r2.live]);
+    // RAG Phase 3: a structured reader's facts are checked too.
+    return JSON.stringify([r.structured, r.chunks, r.live, r2.structured, r2.chunks, r2.live]);
   };
 
   const none = await open();
