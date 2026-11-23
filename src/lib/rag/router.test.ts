@@ -239,6 +239,7 @@ describe("routeQuestion", () => {
     expect(extractPeriod("on 2026-09-20")?.from).toEqual(new Date("2026-09-20T00:00:00Z"));
     expect(extractPeriod("over the last 2 weeks", new Date("2026-11-23T00:00:00Z"))?.from).toEqual(new Date("2026-11-09T00:00:00Z"));
     expect(extractPeriod("latest")).toBeUndefined();
+    expect(extractPeriod("HbA1c in 2024")).toEqual({ from: new Date("2024-01-01T00:00:00Z"), to: new Date(Date.UTC(2025, 0, 1) - 1) });
   });
 });
 

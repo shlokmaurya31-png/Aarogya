@@ -11233,6 +11233,10 @@ model RagChunk {
   accessClass         KnowledgeAccessClass?
   pageNumber          Int?
   sectionPath         String?
+  /// RAG Phase 3, steps 3.5 and 3.9: index-only terms — the chunk's Indic words romanised and the canonical names of the medicines it names. Never shown or sent anywhere.
+  shadowText          String?
+  /// Generated: to_tsvector('simple', shadowText) (GIN-indexed).
+  tsvShadow           Unsupported("tsvector")? @default(dbgenerated("to_tsvector('simple'::regconfig, COALESCE(\"shadowText\", ''::text))"))
   embeddings          RagEmbedding[]
 
   @@unique([documentId, chunkNo])
@@ -11240,6 +11244,8 @@ model RagChunk {
   @@index([tsvEnglish], type: Gin)
   /// Trigram word similarity for Indic inflection and transliterated spellings (docs/RAG_AUDIT.md §11).
   @@index([text(ops: raw("gin_trgm_ops"))], type: Gin, map: "RagChunk_text_trgm_idx")
+  @@index([tsvShadow], type: Gin)
+  @@index([shadowText(ops: raw("gin_trgm_ops"))], type: Gin, map: "RagChunk_shadowText_trgm_idx")
   @@index([organizationId, status, accessClass])
   @@index([facilityId, patientId, status, audience])
   @@index([personId, status, audience])

@@ -11,6 +11,7 @@ import { cachedKnowledgeEmbeddings } from "@/lib/rag/embedCache";
 import { parseKnowledgeFile, documentText, KnowledgeParseError } from "./parse";
 import { chunkKnowledge } from "./chunk";
 import { scanIdentifiers } from "./identifiers";
+import { shadowTextFor } from "@/lib/rag/shadow";
 import type { KnowledgeFormat } from "./formats";
 
 type Tx = Prisma.TransactionClient;
@@ -84,6 +85,8 @@ export async function ingestKnowledgeVersion(versionId: string, opts: { eventId?
   if (scanIdentifiers(documentText(parsed)).refused.length) return fail(v.id, "CONTAINS_IDENTIFIERS");
   const chunks = chunkKnowledge(parsed);
   if (!chunks.length) return fail(v.id, "NO_TEXT");
+  // The shadow text (romanised words, canonical medicine names) is computed before any transaction.
+  const shadows = chunks.map((c) => shadowTextFor(c));
   await prisma.$transaction(async (tx) => {
     await tx.knowledgeDocumentVersion.updateMany({ where: { id: v.id, ingestionStatus: "PARSING" }, data: { ingestionStatus: "EMBEDDING", pageCount: parsed.pageCount ?? undefined } });
     await emitDomainEvent(tx, {
@@ -134,7 +137,7 @@ export async function ingestKnowledgeVersion(versionId: string, opts: { eventId?
     const created = await tx.ragChunk.createManyAndReturn({
       data: chunks.map((c, i) => ({
         documentId: rd.id, chunkNo: i, ...common, context: context(c.sectionPath), heading: c.heading, text: c.text, tokenCount: c.tokenCount,
-        language: v.language, pageNumber: c.pageNumber, sectionPath: c.sectionPath,
+        language: v.language, pageNumber: c.pageNumber, sectionPath: c.sectionPath, shadowText: shadows[i],
       })),
       select: { id: true, chunkNo: true },
     });

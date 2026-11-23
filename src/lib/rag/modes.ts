@@ -38,7 +38,7 @@ export const MODES: Record<AiMode, ModeSpec> = {
   NURSE_HANDOFF: { audience: "STAFF", keep: 12, context: true, model: "nurse_handoff", threshold: "ai.threshold.nurse_handoff", defaultThreshold: 500, maxWords: 400 },
   EXPLAIN_REPORT: { audience: "PATIENT", keep: 8, context: false, model: "explain_report", threshold: "ai.threshold.explain_report", defaultThreshold: 550, maxWords: 350 },
   HEALTH_TIMELINE: { audience: "PATIENT", keep: 12, context: true, model: "health_timeline", threshold: "ai.threshold.health_timeline", defaultThreshold: 550, maxWords: 450 },
-  KNOWLEDGE_QA: { audience: "STAFF", keep: 8, context: false, model: "knowledge_qa", threshold: "ai.threshold.knowledge_qa", defaultThreshold: 500, maxWords: 200 },
+  KNOWLEDGE_QA: { audience: "STAFF", keep: 8, context: false, model: "knowledge_qa", threshold: "ai.threshold.knowledge_qa", defaultThreshold: 550, maxWords: 200 },
   PREVISIT_QUESTIONS: { audience: "PATIENT", keep: 8, context: false, model: "previsit_questions", threshold: "ai.threshold.previsit_questions", defaultThreshold: 550, maxWords: 200 },
 };
 

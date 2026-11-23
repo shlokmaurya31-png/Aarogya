@@ -7,6 +7,7 @@ import { activeSpace } from "./embed";
 import { AI_MODES, MODES, type AiMode } from "./modes";
 import { candidateSearch, scopeSql } from "./search";
 import { candidateCounts } from "./candidates";
+import { queryTerms } from "./queryTerms";
 import type { AiAccess } from "./access";
 import type { RetrievalScope } from "./scope";
 import { isoDay } from "./render";
@@ -16,6 +17,8 @@ import { settle } from "./intentModel";
 import { runReaders } from "./readers";
 import { dedupePassages, dropCoveredByFacts } from "./context";
 import { nlemNames } from "@/lib/medicines/reference";
+import { canonicalMedicine, MEDICINE_VARIANTS } from "./medicineNames";
+import { LEXICON } from "./lexicon";
 
 /**
  * Week 4b — retrieval (docs/RAG_DESIGN.md §7). Filters first, in SQL (the
@@ -109,10 +112,24 @@ export async function modeThreshold(mode: AiMode, organizationId: string | null,
 type ChunkRow = Omit<RetrievedChunk, "score">;
 
 let medicineWords: Set<string> | null = null;
-/** NLEM medicine names that are one word, lower case: the router's medicine entity. */
+/**
+ * The router's medicine entity: one-word NLEM names, their other names (3.5),
+ * and the lexicon's medicine names in every script (3.10), lower case.
+ */
 function medicines(): Set<string> {
-  medicineWords ??= new Set(nlemNames().map((n) => n.toLowerCase()).filter((n) => /^[a-z][a-z-]+$/.test(n)));
+  medicineWords ??= new Set([
+    ...nlemNames().map((n) => n.toLowerCase()).filter((n) => /^[a-z][a-z-]+$/.test(n)),
+    ...Object.entries(MEDICINE_VARIANTS).flatMap(([k, vs]) => [k, ...vs]).filter((n) => !n.includes(" ")),
+    ...LEXICON.filter((c) => c.kind === "MEDICINE").flatMap((c) => Object.values(c.names).flat()).map((n) => n!.toLowerCase().normalize("NFC")).filter((n) => !n.includes(" ")),
+  ]);
   return medicineWords;
+}
+
+/** A medicine word as the name the record writes (the INN): a variant's INN, or the lexicon concept's English name. */
+function medicineName(word: string): string {
+  const w = word.toLowerCase().normalize("NFC");
+  const concept = LEXICON.find((c) => c.kind === "MEDICINE" && Object.values(c.names).some((ns) => ns!.some((n) => n.toLowerCase().normalize("NFC") === w)));
+  return canonicalMedicine(w) ?? concept?.names.en?.[0] ?? w;
 }
 
 /** The plan for a chart question (null for every other request: those keep their whole-record retrieval). */
@@ -125,7 +142,7 @@ async function planFor(access: AiAccess, question: string | undefined): Promise<
 
 /** The live facts a plan asked for: allergies; medicines (only the one named, if any). */
 function askedLive(live: LiveFact[], plan: RetrievalPlan): LiveFact[] {
-  const med = plan.entities.medicine?.toLowerCase();
+  const med = plan.entities.medicine ? medicineName(plan.entities.medicine) : undefined;
   return live.filter((l) => (plan.readers.includes("ALLERGIES") && l.sourceType === "ALLERGY")
     || (plan.readers.includes("MEDICINES") && (l.sourceType === "MEDICATION_ORDER" || l.sourceType === "MEDICATION_DOSE") && (!med || l.text.toLowerCase().includes(med))));
 }
@@ -222,13 +239,18 @@ export async function retrieve(access: AiAccess, input: { question?: string; vis
     }
   }
   const provider = embeddingProviderFor(space);
-  const scope: RetrievalScope = input.reportSourceIds ? { segments: access.scope.segments.map((s) => ({ ...s, sourceIds: input.reportSourceIds })) } : access.scope;
+  // RAG Phase 3: a period the question names narrows every segment (never widens it: the later start, the earlier end).
+  const asked = plan?.entities.period;
+  const later = (a?: Date, b?: Date) => (a && b ? (a > b ? a : b) : a ?? b);
+  const earlier = (a?: Date, b?: Date) => (a && b ? (a < b ? a : b) : a ?? b);
+  const scope: RetrievalScope = input.reportSourceIds ? { segments: access.scope.segments.map((s) => ({ ...s, sourceIds: input.reportSourceIds })) }
+    : asked ? { segments: access.scope.segments.map((s) => ({ ...s, recordedFrom: later(s.recordedFrom, asked.from), recordedTo: earlier(s.recordedTo, asked.to) })) } : access.scope;
   const query = [input.question, input.visitReason].filter(Boolean).join(" ") || DEFAULT_QUERY[access.mode];
   const terms = contentWords(query);
   // RAG Phase 3, step 3.1: the candidate counts from the configuration.
   const counts = await candidateCounts(access.callerOrganizationId ?? access.subject.organizationId, access.callerFacilityId ?? access.subject.facilityId);
   const [qv] = await provider.embed([query], "query", access.permit);
-  const candidates = await candidateSearch({ scope, space: { model: space.embeddingModel, version: space.embeddingVersion }, queryVector: qv, terms, vectorLimit: counts.vector, keywordLimit: counts.keyword });
+  const candidates = await candidateSearch({ scope, space: { model: space.embeddingModel, version: space.embeddingVersion }, queryVector: qv, terms, keyword: queryTerms(query), vectorLimit: counts.vector, keywordLimit: counts.keyword });
   const fused = fuse(candidates).slice(0, counts.rerank);
   const rows = new Map((await prisma.ragChunk.findMany({ where: { id: { in: fused.map((f) => f.chunkId) } }, select: CHUNK_SELECT })).map((c) => [c.id, toRow(c)]));
   const top = fused.map((f) => rows.get(f.chunkId)).filter((c): c is ChunkRow => !!c);
@@ -278,7 +300,7 @@ export async function retrieve(access: AiAccess, input: { question?: string; vis
     : chunks.length === 0 && live.length === 0;
   return {
     structured: noRecord ? [] : structured, chunks: noRecord ? [] : chunks, live: noRecord ? [] : live, plan, answeredByReader: false, unsupported: false,
-    topScore: best >= 0 ? best : null, threshold, noRecord, space: spaceRef, candidateIds: candidates.map((c) => c.chunkId),
+    topScore: best >= 0 ? best : null, threshold, noRecord, space: spaceRef, candidateIds: fuse(candidates).map((c) => c.chunkId),
   };
 }
 

@@ -17,11 +17,20 @@ import { uploadPersonDocument } from "../../src/lib/person/documents";
 import { fixtureById, fixturePdf } from "../../src/lib/documents/fixtures";
 import { bulkReview, listOwnFacts } from "../../src/lib/documents/review";
 import type { AiActor } from "../../src/lib/rag/access";
+import { recordAllergyStatus, recordVitalsTx } from "../../src/lib/hospital/clinicalRecords";
+import { approveKnowledgeVersion, uploadKnowledge } from "../../src/lib/knowledge/service";
+import { ingestKnowledgeVersion } from "../../src/lib/knowledge/ingest";
+import { staffUser } from "./knowledgeGate";
+import { KNOWLEDGE_DOCS } from "../../eval/rag/knowledgeDocs";
 
 export const EVAL_FACILITY = "fac-amc-pune";
 
 export interface EvalFixture {
   patientId: string;
+  /** RAG Phase 3 (rag-eval-v2): the other patients ("nka": no known allergies recorded; "none": nothing about allergies). */
+  patients: Record<string, string>;
+  /** Knowledge documents by the questions' keys (eval/rag/knowledgeDocs.ts). */
+  knowledge: Record<string, string>;
   actors: { doctor: AiActor; nurse: AiActor; patient: AiActor; doctorShare: AiActor };
   shareId: string;
   documents: Record<string, string>;
@@ -105,7 +114,72 @@ export async function buildEvalFixture(tag: string): Promise<EvalFixture> {
   const shareDoc = await mkStaff("DOCTOR");
   const share = await prisma.patientAccessSession.create({ data: { patientId, codeHash: `rag-eval-${tag}`, status: "ACTIVE", doctorUserId: shareDoc.userId, doctorStaffId: shareDoc.staffId, facilityId: F, expiresAt: new Date(Date.now() + 3_600_000), activeExpiresAt: new Date(Date.now() + 3_600_000), redeemedAt: new Date() } });
   await drainEvents();
+
+  // ── RAG Phase 3 (rag-eval-v2): what the readers, the knowledge mode and the larger set ask about ──
+  await prisma.$transaction((tx) => recordVitalsTx(tx, { encounterId: enc.id, facilityId: F, staffId: nurse.staffId, vitals: { hr: 98, sbp: 138, dbp: 88, rr: 18, spo2: 95, tempC: 37.6 }, byUserId: by, recordedAt: new Date("2026-11-20T06:00:00Z") }, []));
+  await prisma.$transaction((tx) => recordVitalsTx(tx, { encounterId: enc.id, facilityId: F, staffId: nurse.staffId, vitals: { hr: 104, sbp: 142, dbp: 90, rr: 20, spo2: 94, tempC: 37.9 }, byUserId: by, recordedAt: new Date("2026-11-21T06:00:00Z") }, []));
+  await lab("Serum sodium", "136", "mEq/L", "135 - 145", "NORMAL", "2026-08-03T08:00:00Z");
+  await lab("Serum sodium", "131", "mEq/L", "135 - 145", "LOW", "2026-10-01T08:00:00Z");
+  const critical = async (testName: string, value: string, unit: string, range: string) => {
+    const order = await prisma.labOrder.create({ data: { encounterId: enc.id, patientId, testName, category: "Biochemistry", orderedByStaffId: doctor.staffId } });
+    const r = await prisma.labResult.create({ data: { labOrderId: order.id, value, unit, referenceRange: range, abnormalFlag: "HIGH", isCritical: true, status: "VERIFIED", resultedAt: new Date("2026-10-02T06:00:00Z") } });
+    await prisma.$transaction((tx) => emitFacilityEvent(tx, { type: "LabResultReleased", aggregateId: r.id, facilityId: F, payload: { resultId: r.id, orderId: order.id, patientId } }));
+  };
+  await critical("Troponin I", "2.4", "ng/mL", "0.00 - 0.04");
+  await critical("Lactate", "4.6", "mmol/L", "0.5 - 2.2");
+  await prisma.labOrder.create({ data: { encounterId: enc.id, patientId, testName: "Lipid profile", category: "Biochemistry", orderedByStaffId: doctor.staffId, status: "ORDERED" } });
+  await prisma.imagingOrder.create({ data: { encounterId: enc.id, patientId, modality: "USG", studyDescription: "USG abdomen", orderedByStaffId: doctor.staffId } });
+  await prisma.problem.create({ data: { patientId, diagnosis: "Obesity", status: "ACTIVE" } });
+  await prisma.medicationOrder.create({ data: { encounterId: enc.id, patientId, drugName: "Atorvastatin", dose: "10 mg", route: "ORAL", frequency: "HS", orderedByStaffId: doctor.staffId, status: "ACTIVE" } });
+  await prisma.medicationOrder.create({ data: { encounterId: enc.id, patientId, drugName: "Salbutamol inhaler", genericName: "Salbutamol", dose: "100 mcg", route: "INHALATION", frequency: "SOS", orderedByStaffId: doctor.staffId, status: "ACTIVE" } });
+  const ipd = await prisma.encounter.create({ data: { patientId, facilityId: F, type: "IPD", status: "ADMITTED", chiefComplaint: "Breathlessness" } });
+  const bed = await prisma.bed.findFirstOrThrow({ where: { facilityId: F }, select: { id: true } });
+  await prisma.admission.create({ data: { encounterId: ipd.id, bedId: bed.id, reason: "Community acquired pneumonia", admittingStaffId: doctor.staffId, admittedAt: new Date("2026-11-20T04:00:00Z") } });
+  for (const [testName, value, unit, at] of [["Hemoglobin", "9.9", "g/dL", "2026-11-01T08:00:00Z"], ["Vitamin D", "18", "ng/mL", "2025-12-01T08:00:00Z"]] as const) {
+    const l = await prisma.legacyLabResult.create({ data: { facilityId: F, patientId, batchId: `rag-eval-${tag}`, sourceSystem: "OldHIS", testCode: testName, testName, value, unit, observedAt: new Date(at) } });
+    await prisma.$transaction((tx) => emitFacilityEvent(tx, { type: "LegacyResultImported", aggregateId: l.id, facilityId: F, payload: { resultId: l.id, patientId, batchId: `rag-eval-${tag}`, converted: false } }));
+  }
+  // Two more patients the doctor treats: one with "no known allergies" recorded, one with nothing about allergies.
+  const other = async (name: string) => {
+    const r = await registerPatientAccount({ facilityId: F, fullName: `${name} ${tag}`, email: `rag-eval-${name.split(" ")[0].toLowerCase()}-${tag}@verify.aarogya`, passwordHash: "x", sex: "M", dob: new Date("1979-03-03") });
+    if (r.status !== "LINKED_NEW") throw new Error("eval fixture patient");
+    const pid = (await prisma.personAccount.findUniqueOrThrow({ where: { userId: r.userId } })).personId;
+    await prisma.person.update({ where: { id: pid }, data: { dataClassification: "SYNTHETIC" } });
+    const id = (await prisma.personPatientLink.findFirstOrThrow({ where: { personId: pid, status: "ACTIVE" } })).patientId;
+    await prisma.encounter.create({ data: { patientId: id, facilityId: F, type: "OPD", status: "IN_CONSULTATION", chiefComplaint: "Review" } });
+    return id;
+  };
+  const nka = await other("Ravi Kulkarni");
+  await recordAllergyStatus({ patientId: nka, facilityId: F, status: "NO_KNOWN_ALLERGIES", byUserId: by });
+  const none = await other("Asha Patil");
+
+  // The knowledge library: approved SOPs in force, one per Indic language, and stale versions.
+  const kAdmin = await staffUser(`rag-eval-kadmin-${tag}@verify.aarogya`, "HOSPITAL_ADMIN", F, { orgAdmin: true });
+  const kSuper = await staffUser(`rag-eval-ksuper-${tag}@verify.aarogya`, "MEDICAL_SUPERINTENDENT", F);
+  const knowledge: Record<string, string> = {};
+  const day = 86_400_000;
+  for (const d of KNOWLEDGE_DOCS) {
+    const versions = d.versions ?? [{ body: d.body! }];
+    let documentId: string | undefined;
+    for (const [i, v] of versions.entries()) {
+      const u = await uploadKnowledge(kAdmin, {
+        documentId, title: `${d.title} ${tag}`, documentType: d.type, accessClass: d.accessClass, scope: d.scope ?? "FACILITY", language: d.language ?? "en",
+        fileName: `${d.key.toLowerCase()}-${i + 1}-${tag}.md`, declaredType: "text/markdown", bytes: Buffer.from(v.body, "utf8"),
+        expiresAt: d.state === "EXPIRED" ? new Date(Date.now() + day) : null,
+      });
+      documentId = u.documentId;
+      await ingestKnowledgeVersion(u.versionId);
+      await approveKnowledgeVersion(kSuper, u.versionId, d.state === "FUTURE" ? { effectiveAt: new Date(Date.now() + 30 * day) } : {});
+      // Expired: in force once, its expiry now past (the search checks the version itself, before any sweep).
+      if (d.state === "EXPIRED") await prisma.knowledgeDocumentVersion.update({ where: { id: u.versionId }, data: { expiresAt: new Date(Date.now() - 60_000) } });
+    }
+    knowledge[d.key] = documentId!;
+  }
+  // The events of everything above (imported results, critical results, the allergy status) reach the indexer.
+  await drainEvents();
+
   return {
+    patients: { main: patientId, nka, none }, knowledge,
     patientId, shareId: share.id, appointments,
     actors: {
       doctor: { kind: "STAFF", userId: doctor.userId, role: "DOCTOR", facilityId: F },

@@ -157,6 +157,7 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/person/merge.ts#startPersonMerge": { category: "PROCESS_STEP", reason: "the other account's password checked and a code sent to each account; the outcome is the merge", boundary: ["PersonMerged"] },
   // Week 4b — the AI index is derived data, rebuilt from the record (docs/RAG_DESIGN.md §4.1).
   "src/lib/knowledge/publish.ts#retireKnowledgeIndex": { category: "BOOKKEEPING", reason: "a knowledge version's index rows leaving the search (RAG Phase 2); every caller (publish, reject, withdraw, expire) emits its knowledge event in the same transaction" },
+  "src/lib/rag/shadow.ts#backfillShadowText": { category: "BOOKKEEPING", reason: "a chunk's index-only terms (RAG Phase 3, step 3.9): derived from its own text, idempotent; no record changes and nothing reads it but the search" },
   "src/lib/rag/embedCache.ts#cachedKnowledgeEmbeddings": { category: "BOOKKEEPING", reason: "a content-hash cache of knowledge-text vectors (RAG Phase 1): derived, idempotent, holds no text; no record changes" },
   "src/lib/rag/embed.ts#writeEmbeddings": { category: "CONSUMER_OUTPUT", reason: "embeddings of indexed chunks, derived data written by the rag-indexer and the re-embed job (idempotent)" },
   "src/lib/rag/indexer.ts#indexSource": { category: "CONSUMER_OUTPUT", reason: "the rag-indexer's derived index (documents, chunks, embeddings) of a source whose own change emitted its event" },

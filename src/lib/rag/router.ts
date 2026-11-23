@@ -121,6 +121,8 @@ export function extractPeriod(question: string, now = new Date()): { from?: Date
   if (iso) { const d = new Date(`${iso[0]}T00:00:00Z`); return { from: d, to: new Date(d.getTime() + 86_400_000 - 1) }; }
   const my = q.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec)\.?\s+(20\d{2})\b/);
   if (my) { const m = MONTHS[my[1]], y = Number(my[2]); return { from: new Date(Date.UTC(y, m, 1)), to: new Date(Date.UTC(y, m + 1, 1) - 1) }; }
+  const year = q.match(/\b(?:in|during|for|of)\s+(20\d{2})\b/);
+  if (year) { const y = Number(year[1]); return { from: new Date(Date.UTC(y, 0, 1)), to: new Date(Date.UTC(y + 1, 0, 1) - 1) }; }
   const lastN = q.match(/\b(?:last|past|previous)\s+(\d{1,3})\s+(day|days|week|weeks|month|months)\b/);
   if (lastN) { const n = Number(lastN[1]), unit = lastN[2].startsWith("day") ? 1 : lastN[2].startsWith("week") ? 7 : 30; return { from: new Date(now.getTime() - n * unit * 86_400_000), to: now }; }
   if (/\byesterday\b/.test(q)) { const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1)); return { from: d, to: new Date(d.getTime() + 86_400_000 - 1) }; }

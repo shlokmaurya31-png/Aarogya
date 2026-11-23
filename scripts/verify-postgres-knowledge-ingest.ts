@@ -245,8 +245,9 @@ async function main() {
   const rec = await candidateSearch({ scope: recordScope, space: { model: space.embeddingModel, version: space.embeddingVersion }, queryVector: hashEmbed(`${fa} oxygen cylinders`, space.dims), terms: [fa, "oxygen", "cylinders"] });
   const recChunks = rec.length ? await prisma.ragChunk.findMany({ where: { id: { in: rec.map((r) => r.chunkId) } }, select: { ownerType: true } }) : [];
   report("Isolation: a record retrieval (the source of every citation) never returns a knowledge chunk", recChunks.every((c) => c.ownerType !== "KNOWLEDGE"));
-  const citedKnowledge = await prisma.aiInteractionSource.count({ where: { OR: [{ knowledgeVersionId: { not: null } }, { sourceType: "KNOWLEDGE_DOCUMENT" }] } });
-  report("Isolation: no AI answer has ever cited a knowledge chunk (Phase 3 adds the knowledge mode)", citedKnowledge === 0);
+  // Phase 3 added KNOWLEDGE_QA, whose answers cite knowledge documents; no other mode (a record answer) ever may.
+  const citedKnowledge = await prisma.aiInteractionSource.count({ where: { OR: [{ knowledgeVersionId: { not: null } }, { sourceType: "KNOWLEDGE_DOCUMENT" }], interaction: { mode: { not: "KNOWLEDGE_QA" } } } });
+  report("Isolation: no record-mode AI answer has ever cited a knowledge chunk (only KNOWLEDGE_QA cites them)", citedKnowledge === 0);
 
   // ── An instruction inside a document is text only ──
   const inj = word("canaryinjection");

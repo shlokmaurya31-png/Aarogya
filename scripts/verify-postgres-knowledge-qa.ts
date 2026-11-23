@@ -121,7 +121,10 @@ async function main() {
   const row = await prisma.aiInteraction.findUniqueOrThrow({ where: { id: ok.meta.interactionId }, include: { sources: true } });
   report("Interaction: mode KNOWLEDGE_QA, no patient or person, sources record the version and section",
     row.mode === "KNOWLEDGE_QA" && row.patientId === null && row.personId === null && row.sources.length > 0 && row.sources.every((s) => s.sourceType === "KNOWLEDGE_DOCUMENT" && s.knowledgeVersionId && s.sourceKind === "CHUNK") && row.sources.some((s) => s.sectionPath));
-  report("Interaction: the cited version is the published one", row.sources.filter((s) => s.cited).every((s) => s.knowledgeVersionId === sepsis.versionId));
+  // Other gates' documents may share the organisation: what matters is that every cited version is in force, and this SOP's is among them.
+  const citedVersions = await prisma.knowledgeDocumentVersion.findMany({ where: { id: { in: row.sources.filter((s) => s.cited).map((s) => s.knowledgeVersionId!) } }, select: { id: true, publishedAt: true, supersededByVersionId: true, withdrawnAt: true, expiresAt: true } });
+  report("Interaction: every cited version is published and in force, this SOP's among them",
+    citedVersions.length > 0 && citedVersions.some((v) => v.id === sepsis.versionId) && citedVersions.every((v) => v.publishedAt && !v.supersededByVersionId && !v.withdrawnAt && (!v.expiresAt || v.expiresAt > new Date())));
 
   // ── L1–L5 ──
   report("L1: another organisation's document never appears", !(await sees(doctor, "org")) && !(await sees(superintendent, "org")));
