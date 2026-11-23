@@ -7,7 +7,7 @@ import { emitDomainEvent } from "@/lib/events/emit";
 import { getStorageAdapter } from "@/lib/storage";
 import { detectFormat, FORMAT_MESSAGES, type KnowledgeFormat } from "./formats";
 import { documentText, KnowledgeParseError, parseKnowledgeFile, type ParseRefusal } from "./parse";
-import { findPatientIdentifiers } from "./identifiers";
+import { highlightExcerpt, scanIdentifiers, type HighlightKind } from "./identifiers";
 import { KnowledgeError } from "./errors";
 import { publishKnowledgeVersion, retireKnowledgeIndex } from "./publish";
 
@@ -30,6 +30,14 @@ type Tx = Prisma.TransactionClient;
  *   reject     the approver turns a version down, with a reason (audited)
  *   withdraw   a hospital administrator takes a version out of use
  *   re-run     a FAILED ingestion is queued again
+ *   re-propose an administrator proposes an older, once-published version
+ *              again: the same file as a new version number, under the same
+ *              two-person approval (§13.4 B). Withdrawing the version in
+ *              force never brings the one before it back by itself.
+ * Identifiers (§13.4 C): ABHA, checksum-valid Aadhaar, UHID/MRN and names
+ * with ages refuse the file; other 12-digit numbers and mobiles not on the
+ * facility's published contact list are highlighted, and an approver must
+ * acknowledge every highlight to approve.
  * Every read and write is scoped in SQL: the actor's organisation, and their
  * facility or the organisation as a whole. Another facility's document is
  * a 404, never a 403. Responses carry no hash, no storage reference and no
@@ -86,18 +94,34 @@ function checkWindow(effectiveAt: Date | null | undefined, expiresAt: Date | nul
   if (effectiveAt && expiresAt && effectiveAt >= expiresAt) throw new KnowledgeError(400, "WINDOW", "The effective date must be before the expiry date.");
 }
 
+/** At most this many highlights per version: an approver acknowledges each one. */
+export const MAX_HIGHLIGHTS = 100;
+
+export interface FoundHighlight { kind: HighlightKind; location: "TEXT" | "DETAILS"; pageNumber: number | null; excerpt: string }
+
+/**
+ * The published mobiles a document may print: the facility's list, or for an
+ * organisation-wide document every facility's list in the organisation.
+ */
+export async function allowedMobiles(organizationId: string, facilityId: string | null): Promise<Set<string>> {
+  const rows = await prisma.facilityPublishedContact.findMany({ where: { organizationId, removedAt: null, ...(facilityId ? { facilityId } : {}) }, select: { number: true } });
+  return new Set(rows.map((r) => r.number));
+}
+
 async function refuseIdentifiers(actor: KnowledgeActor, kinds: string[]) {
   // Nothing of the file is kept: the audit names the refusal and the kinds found, no value and no file name.
   await recordAuditEvent("knowledge.upload.refused", actor.userId, { code: "CONTAINS_IDENTIFIERS", kinds }, { facilityId: actor.facilityId, organizationId: actor.organizationId });
   throw new KnowledgeError(400, "CONTAINS_IDENTIFIERS", `This file looks like it contains patient identifiers (${kinds.map((k) => KIND_TEXT[k] ?? k).join(", ")}). Knowledge documents must not name patients. Remove them and upload again.`, kinds);
 }
 
-/** Checks a file without storing anything: its format, then its text, then patient identifiers. */
-export async function checkKnowledgeFile(actor: KnowledgeActor, input: { fileName: string; declaredType?: string | null; bytes: Buffer; title?: string; description?: string | null }): Promise<{ format: KnowledgeFormat; contentType: string; pageCount: number | null }> {
+/** Checks a file without storing anything: its format, then its text, then patient identifiers (refusals) and the numbers to highlight. */
+export async function checkKnowledgeFile(actor: KnowledgeActor, input: { fileName: string; declaredType?: string | null; bytes: Buffer; title?: string; description?: string | null; allowed?: ReadonlySet<string> }): Promise<{ format: KnowledgeFormat; contentType: string; pageCount: number | null; highlights: FoundHighlight[] }> {
   const det = detectFormat(input);
   if (!det.ok) throw new KnowledgeError(400, det.code, FORMAT_MESSAGES[det.code]);
-  const metaKinds = findPatientIdentifiers([input.fileName, input.title ?? "", input.description ?? ""].join("\n"));
-  if (metaKinds.length) await refuseIdentifiers(actor, metaKinds);
+  const allowed = input.allowed ?? new Set<string>();
+  const details = [input.fileName, input.title ?? "", input.description ?? ""].join("\n");
+  const meta = scanIdentifiers(details, { allowedMobiles: allowed });
+  if (meta.refused.length) await refuseIdentifiers(actor, meta.refused);
   let parsed;
   try {
     parsed = await parseKnowledgeFile(det.format, input.bytes);
@@ -106,9 +130,25 @@ export async function checkKnowledgeFile(actor: KnowledgeActor, input: { fileNam
     if (err instanceof SyntaxError) throw new KnowledgeError(400, "TYPE_MISMATCH", FORMAT_MESSAGES.TYPE_MISMATCH);
     throw err;
   }
-  const kinds = findPatientIdentifiers(documentText(parsed));
-  if (kinds.length) await refuseIdentifiers(actor, kinds);
-  return { format: det.format, contentType: det.contentType, pageCount: parsed.pageCount };
+  const refused = scanIdentifiers(documentText(parsed)).refused;
+  if (refused.length) await refuseIdentifiers(actor, refused);
+  // Highlights, page by page, so the approver is told where each one is.
+  const highlights: FoundHighlight[] = meta.highlights.map((h) => ({ kind: h.kind, location: "DETAILS", pageNumber: null, excerpt: highlightExcerpt(details.normalize("NFKC"), h) }));
+  for (const page of parsed.pages) {
+    const text = documentText({ pages: [page], pageCount: null }).normalize("NFKC");
+    for (const h of scanIdentifiers(text, { allowedMobiles: allowed }).highlights) highlights.push({ kind: h.kind, location: "TEXT", pageNumber: page.pageNumber, excerpt: highlightExcerpt(text, h) });
+  }
+  if (highlights.length > MAX_HIGHLIGHTS) {
+    await recordAuditEvent("knowledge.upload.refused", actor.userId, { code: "TOO_MANY_HIGHLIGHTS", count: highlights.length }, { facilityId: actor.facilityId, organizationId: actor.organizationId });
+    throw new KnowledgeError(400, "TOO_MANY_HIGHLIGHTS", `This file has ${highlights.length} numbers an approver would have to check one by one (at most ${MAX_HIGHLIGHTS}). Remove numbers that aren't needed, or add the facility's own numbers to its published contact list.`);
+  }
+  return { format: det.format, contentType: det.contentType, pageCount: parsed.pageCount, highlights };
+}
+
+/** The highlight rows of a new version, in the transaction that creates it. */
+async function writeHighlights(tx: Tx, versionId: string, highlights: readonly FoundHighlight[]) {
+  if (!highlights.length) return;
+  await tx.knowledgeIdentifierHighlight.createMany({ data: highlights.map((h, i) => ({ versionId, ordinal: i + 1, kind: h.kind, location: h.location, pageNumber: h.pageNumber, excerpt: h.excerpt.slice(0, 400) })) });
 }
 
 export async function uploadKnowledge(actor: KnowledgeActor, input: UploadInput, now = new Date()): Promise<{ documentId: string; versionId: string; version: number }> {
@@ -129,9 +169,10 @@ export async function uploadKnowledge(actor: KnowledgeActor, input: UploadInput,
     if (input.scope === "ORGANIZATION" && !actor.orgAdmin) throw new KnowledgeError(403, "ORGANIZATION_ADMIN_ONLY", "Only an organisation administrator uploads an organisation-wide document.");
   }
 
-  const checked = await checkKnowledgeFile(actor, { ...input, title: existing?.title ?? input.title, description: existing ? existing.description : input.description });
+  const docFacilityId = existing ? existing.facilityId : input.scope === "ORGANIZATION" ? null : actor.facilityId;
+  const checked = await checkKnowledgeFile(actor, { ...input, title: existing?.title ?? input.title, description: existing ? existing.description : input.description, allowed: await allowedMobiles(actor.organizationId, docFacilityId) });
   const hash = sha256(input.bytes);
-  if (existing && (await prisma.knowledgeDocumentVersion.findFirst({ where: { documentId: existing.id, sha256: hash }, select: { id: true } }))) {
+  if (existing && (await prisma.knowledgeDocumentVersion.findFirst({ where: { documentId: existing.id, sha256: hash, reproposalSeq: 0 }, select: { id: true } }))) {
     throw new KnowledgeError(409, "DUPLICATE", "This exact file is already a version of this document.");
   }
 
@@ -155,22 +196,23 @@ export async function uploadKnowledge(actor: KnowledgeActor, input: UploadInput,
       }
       // Serialise versions of one document (the version number), with the duplicate re-checked under the lock.
       await tx.$queryRaw`SELECT "id" FROM "KnowledgeDocument" WHERE "id" = ${documentId} FOR UPDATE`;
-      if (await tx.knowledgeDocumentVersion.findFirst({ where: { documentId, sha256: hash }, select: { id: true } })) throw new KnowledgeError(409, "DUPLICATE", "This exact file is already a version of this document.");
+      if (await tx.knowledgeDocumentVersion.findFirst({ where: { documentId, sha256: hash, reproposalSeq: 0 }, select: { id: true } })) throw new KnowledgeError(409, "DUPLICATE", "This exact file is already a version of this document.");
       const last = await tx.knowledgeDocumentVersion.findFirst({ where: { documentId }, orderBy: { version: "desc" }, select: { version: true } });
       const version = (last?.version ?? 0) + 1;
       const v = await tx.knowledgeDocumentVersion.create({
         data: {
           documentId, version, storageRef: stored.storageRef, sha256: hash, contentType: checked.contentType, format: checked.format, fileName: cleanName(input.fileName),
           language, byteSize: input.bytes.length, pageCount: checked.pageCount, uploadedByUserId: actor.userId,
-          approvalStatus: "SUBMITTED", submittedAt: now, effectiveAt: input.effectiveAt ?? null, expiresAt: input.expiresAt ?? null,
+          approvalStatus: "SUBMITTED", submittedAt: now, effectiveAt: input.effectiveAt ?? null, expiresAt: input.expiresAt ?? null, highlightCount: checked.highlights.length,
         },
       });
+      await writeHighlights(tx, v.id, checked.highlights);
       const doc = await tx.knowledgeDocument.findUniqueOrThrow({ where: { id: documentId }, select: { facilityId: true } });
       await emitDomainEvent(tx, {
         type: "KnowledgeDocumentVersionUploaded", aggregateId: documentId, organizationId: actor.organizationId, facilityId: doc.facilityId ?? undefined, actorUserId: actor.userId,
         payload: { documentId, versionId: v.id, version, format: checked.format, attempt: 1 },
       });
-      await recordAuditEvent("knowledge.version.uploaded", actor.userId, { documentId, versionId: v.id, version, format: checked.format, byteSize: v.byteSize }, { facilityId: actor.facilityId, organizationId: actor.organizationId }, tx);
+      await recordAuditEvent("knowledge.version.uploaded", actor.userId, { documentId, versionId: v.id, version, format: checked.format, byteSize: v.byteSize, highlights: checked.highlights.length }, { facilityId: actor.facilityId, organizationId: actor.organizationId }, tx);
       return { documentId, versionId: v.id, version };
     });
   } catch (err) {
@@ -190,7 +232,7 @@ async function versionInScope(db: Tx | typeof prisma, actor: KnowledgeActor, ver
 
 const tenant = (doc: { organizationId: string; facilityId: string | null }) => ({ organizationId: doc.organizationId, facilityId: doc.facilityId ?? undefined });
 
-export async function approveKnowledgeVersion(actor: KnowledgeActor, versionId: string, input: { effectiveAt?: Date | null; expiresAt?: Date | null } = {}, now = new Date()) {
+export async function approveKnowledgeVersion(actor: KnowledgeActor, versionId: string, input: { effectiveAt?: Date | null; expiresAt?: Date | null; acknowledgedHighlightIds?: readonly string[] } = {}, now = new Date()) {
   return prisma.$transaction(async (tx) => {
     const v = await versionInScope(tx, actor, versionId, true);
     if (v.uploadedByUserId === actor.userId) throw new KnowledgeError(403, "SELF_APPROVAL", "You uploaded this version, so someone else must approve it.");
@@ -202,12 +244,19 @@ export async function approveKnowledgeVersion(actor: KnowledgeActor, versionId: 
     const effectiveAt = input.effectiveAt !== undefined ? input.effectiveAt : v.effectiveAt;
     const expiresAt = input.expiresAt !== undefined ? input.expiresAt : v.expiresAt;
     checkWindow(effectiveAt, expiresAt, now);
-    await tx.knowledgeDocumentVersion.update({ where: { id: v.id }, data: { approvalStatus: "APPROVED", approvedByUserId: actor.userId, approvedAt: now, effectiveAt, expiresAt } });
+    // §13.4 C: every highlight seen. The request names each one; any missing (or any not of this version) refuses the approval.
+    const highlights = await tx.knowledgeIdentifierHighlight.findMany({ where: { versionId: v.id }, select: { id: true } });
+    const acked = new Set(input.acknowledgedHighlightIds ?? []);
+    if (highlights.some((h) => !acked.has(h.id)) || acked.size !== highlights.length) {
+      throw new KnowledgeError(409, "HIGHLIGHTS_NOT_ACKNOWLEDGED", `This version has ${highlights.length} highlighted number${highlights.length === 1 ? "" : "s"}. Check each one and confirm before approving.`);
+    }
+    if (highlights.length) await tx.knowledgeIdentifierHighlight.updateMany({ where: { versionId: v.id }, data: { acknowledgedByUserId: actor.userId, acknowledgedAt: now } });
+    await tx.knowledgeDocumentVersion.update({ where: { id: v.id }, data: { approvalStatus: "APPROVED", approvedByUserId: actor.userId, approvedAt: now, effectiveAt, expiresAt, ...(highlights.length ? { highlightsAcknowledgedAt: now } : {}) } });
     await emitDomainEvent(tx, {
       type: "KnowledgeDocumentApproved", aggregateId: v.documentId, ...tenant(v.document), actorUserId: actor.userId,
       payload: { documentId: v.documentId, versionId: v.id, ...(effectiveAt ? { effectiveAt: effectiveAt.toISOString() } : {}), ...(expiresAt ? { expiresAt: expiresAt.toISOString() } : {}) },
     });
-    await recordAuditEvent("knowledge.version.approved", actor.userId, { documentId: v.documentId, versionId: v.id, version: v.version }, { facilityId: actor.facilityId, organizationId: actor.organizationId }, tx);
+    await recordAuditEvent("knowledge.version.approved", actor.userId, { documentId: v.documentId, versionId: v.id, version: v.version, highlightsAcknowledged: highlights.map((h) => h.id) }, { facilityId: actor.facilityId, organizationId: actor.organizationId }, tx);
     const published = !effectiveAt || effectiveAt <= now ? await publishKnowledgeVersion(tx, v.id, now, actor.userId) : false;
     return { versionId: v.id, published };
   });
@@ -242,6 +291,50 @@ export async function withdrawKnowledgeVersion(actor: KnowledgeActor, versionId:
     await emitDomainEvent(tx, { type: "KnowledgeDocumentWithdrawn", aggregateId: v.documentId, ...tenant(v.document), actorUserId: actor.userId, payload: { documentId: v.documentId, versionId: v.id, wasPublished } });
     await recordAuditEvent("knowledge.version.withdrawn", actor.userId, { documentId: v.documentId, versionId: v.id, reason: why, wasPublished }, { facilityId: actor.facilityId, organizationId: actor.organizationId }, tx);
     return { versionId: v.id, wasPublished };
+  });
+}
+
+/**
+ * §13.4 B — an older version proposed again: one that was in force once and
+ * is not now (superseded, expired or withdrawn). Its stored file is checked
+ * again under today's rules and contact list, then recorded as the next
+ * version number, SUBMITTED, with the proposer as its uploader, so a second
+ * person must approve it. Ingestion runs as for an upload (every chunk is
+ * found in the embedding cache).
+ */
+export async function reproposeKnowledgeVersion(actor: KnowledgeActor, versionId: string, input: { effectiveAt?: Date | null; expiresAt?: Date | null } = {}, now = new Date()) {
+  checkWindow(input.effectiveAt, input.expiresAt, now);
+  const source = await versionInScope(prisma, actor, versionId);
+  if (source.document.facilityId === null && !actor.orgAdmin) throw new KnowledgeError(403, "ORGANIZATION_ADMIN_ONLY", "Only an organisation administrator manages an organisation-wide document.");
+  if (!source.publishedAt || source.document.currentVersionId === source.id) throw new KnowledgeError(409, "NOT_REPROPOSABLE", "Only a version that was in force before, and isn't now, can be proposed again.");
+  const bytes = (await getStorageAdapter().get(source.storageRef)).bytes;
+  const checked = await checkKnowledgeFile(actor, {
+    fileName: source.fileName ?? "file", declaredType: source.contentType, bytes, title: source.document.title, description: source.document.description,
+    allowed: await allowedMobiles(source.document.organizationId, source.document.facilityId),
+  });
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "KnowledgeDocument" WHERE "id" = ${source.documentId} FOR UPDATE`;
+    const open = await tx.knowledgeDocumentVersion.findFirst({ where: { documentId: source.documentId, reproposedFromVersionId: source.id, approvalStatus: "SUBMITTED", withdrawnAt: null }, select: { id: true } });
+    if (open) throw new KnowledgeError(409, "REPROPOSAL_PENDING", "This version was already proposed again and is waiting for approval.");
+    const last = await tx.knowledgeDocumentVersion.findFirst({ where: { documentId: source.documentId }, orderBy: { version: "desc" }, select: { version: true } });
+    const seq = await tx.knowledgeDocumentVersion.aggregate({ where: { documentId: source.documentId, sha256: source.sha256 }, _max: { reproposalSeq: true } });
+    const version = (last?.version ?? 0) + 1;
+    const v = await tx.knowledgeDocumentVersion.create({
+      data: {
+        documentId: source.documentId, version, storageRef: source.storageRef, sha256: source.sha256, contentType: source.contentType, format: checked.format, fileName: source.fileName,
+        language: source.language, byteSize: source.byteSize, pageCount: checked.pageCount, uploadedByUserId: actor.userId,
+        approvalStatus: "SUBMITTED", submittedAt: now, effectiveAt: input.effectiveAt ?? null, expiresAt: input.expiresAt ?? null,
+        reproposedFromVersionId: source.id, reproposalSeq: (seq._max.reproposalSeq ?? 0) + 1, highlightCount: checked.highlights.length,
+      },
+    });
+    await writeHighlights(tx, v.id, checked.highlights);
+    await emitDomainEvent(tx, { type: "KnowledgeDocumentVersionReproposed", aggregateId: source.documentId, ...tenant(source.document), actorUserId: actor.userId, payload: { documentId: source.documentId, versionId: v.id, fromVersionId: source.id, version } });
+    await emitDomainEvent(tx, {
+      type: "KnowledgeDocumentVersionUploaded", aggregateId: source.documentId, ...tenant(source.document), actorUserId: actor.userId,
+      payload: { documentId: source.documentId, versionId: v.id, version, format: checked.format, attempt: 1 },
+    });
+    await recordAuditEvent("knowledge.version.reproposed", actor.userId, { documentId: source.documentId, versionId: v.id, fromVersionId: source.id, version, highlights: checked.highlights.length }, { facilityId: actor.facilityId, organizationId: actor.organizationId }, tx);
+    return { documentId: source.documentId, versionId: v.id, version };
   });
 }
 
@@ -291,7 +384,8 @@ export async function listKnowledge(actor: KnowledgeActor, now = new Date()) {
           id: true, version: true, fileName: true, format: true, language: true, byteSize: true, pageCount: true, uploadedByUserId: true, uploadedAt: true,
           approvalStatus: true, approvedByUserId: true, approvedAt: true, rejectedReason: true, effectiveAt: true, expiresAt: true, publishedAt: true,
           supersededByVersionId: true, withdrawnAt: true, ingestionStatus: true, ingestionAttempts: true, ingestionError: true, scanStatus: true,
-          chunkCount: true, cacheHitCount: true, embeddedCount: true, indexedAt: true,
+          chunkCount: true, cacheHitCount: true, embeddedCount: true, indexedAt: true, reproposedFromVersionId: true, highlightsAcknowledgedAt: true,
+          highlights: { orderBy: { ordinal: "asc" }, select: { id: true, ordinal: true, kind: true, location: true, pageNumber: true, excerpt: true, acknowledgedAt: true } },
         },
       },
     },
@@ -300,8 +394,9 @@ export async function listKnowledge(actor: KnowledgeActor, now = new Date()) {
   const names = new Map((await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, displayName: true } })).map((u) => [u.id, u.displayName]));
   return docs.map((d) => ({
     id: d.id, title: d.title, description: d.description, type: d.type, accessClass: d.accessClass, scope: d.facilityId ? "FACILITY" : "ORGANIZATION", createdAt: d.createdAt,
-    versions: d.versions.map(({ uploadedByUserId, approvedByUserId, ...v }) => ({
+    versions: d.versions.map(({ uploadedByUserId, approvedByUserId, reproposedFromVersionId, ...v }) => ({
       ...v,
+      reproposedFrom: reproposedFromVersionId ? d.versions.find((x) => x.id === reproposedFromVersionId)?.version ?? null : null,
       state: versionState(v, d.currentVersionId, now),
       uploadedBy: names.get(uploadedByUserId) ?? null,
       uploadedByMe: uploadedByUserId === actor.userId,

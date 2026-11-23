@@ -10,10 +10,11 @@ export type KnowledgeErrorCode =
   | "EMPTY" | "TOO_LARGE" | "DOCX_DEFERRED" | "UNSUPPORTED_TYPE" | "TYPE_MISMATCH" | "NOT_UTF8"
   | "UNREADABLE" | "NO_TEXT_LAYER" | "NO_TEXT" | "TOO_MANY_PAGES"
   | "CONTAINS_IDENTIFIERS" | "DUPLICATE" | "INVALID" | "SELF_APPROVAL" | "NOT_SUBMITTED" | "NOT_INDEXED"
-  | "OLDER_THAN_CURRENT" | "ALREADY_WITHDRAWN" | "NOT_FAILED" | "ORGANIZATION_ADMIN_ONLY" | "WINDOW";
+  | "OLDER_THAN_CURRENT" | "ALREADY_WITHDRAWN" | "NOT_FAILED" | "ORGANIZATION_ADMIN_ONLY" | "WINDOW"
+  | "TOO_MANY_HIGHLIGHTS" | "HIGHLIGHTS_NOT_ACKNOWLEDGED" | "NOT_REPROPOSABLE" | "REPROPOSAL_PENDING" | "CONTACT_EXISTS";
 
 export class KnowledgeError extends Error {
-  constructor(readonly status: 400 | 403 | 409, readonly code: KnowledgeErrorCode, message: string, readonly kinds?: readonly string[]) {
+  constructor(readonly status: 400 | 403 | 404 | 409, readonly code: KnowledgeErrorCode, message: string, readonly kinds?: readonly string[]) {
     super(message);
     this.name = "KnowledgeError";
   }

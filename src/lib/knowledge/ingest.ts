@@ -10,7 +10,7 @@ import { knowledgeEmbeddingText, writableSpaces, writeEmbeddings } from "@/lib/r
 import { cachedKnowledgeEmbeddings } from "@/lib/rag/embedCache";
 import { parseKnowledgeFile, documentText, KnowledgeParseError } from "./parse";
 import { chunkKnowledge } from "./chunk";
-import { findPatientIdentifiers } from "./identifiers";
+import { scanIdentifiers } from "./identifiers";
 import type { KnowledgeFormat } from "./formats";
 
 type Tx = Prisma.TransactionClient;
@@ -81,7 +81,7 @@ export async function ingestKnowledgeVersion(versionId: string, opts: { eventId?
     throw err;
   }
   // Checked at upload; checked again here, so no path indexes an identifier-bearing file.
-  if (findPatientIdentifiers(documentText(parsed)).length) return fail(v.id, "CONTAINS_IDENTIFIERS");
+  if (scanIdentifiers(documentText(parsed)).refused.length) return fail(v.id, "CONTAINS_IDENTIFIERS");
   const chunks = chunkKnowledge(parsed);
   if (!chunks.length) return fail(v.id, "NO_TEXT");
   await prisma.$transaction(async (tx) => {

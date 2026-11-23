@@ -1108,6 +1108,7 @@ model Facility {
 
   /// RAG Phase 1.
   knowledgeDocuments KnowledgeDocument[]
+  publishedContacts  FacilityPublishedContact[]
 
   @@unique([organizationId, slug])
   @@index([organizationId])
@@ -11486,6 +11487,59 @@ enum KnowledgeIngestionStatus {
 }
 
 /// No scanner is procured: every version is NOT_SCANNED, and the admin view says so.
+/// Plan §13.4 C: a number in a knowledge upload the approver must see before approving.
+enum KnowledgeHighlightKind {
+  TWELVE_DIGIT_NUMBER
+  MOBILE_NUMBER
+}
+
+/// Plan §13.4 C: a number shown to the approver: where it is and a masked excerpt, never the number itself.
+model KnowledgeIdentifierHighlight {
+  id                   String                   @id @default(cuid())
+  version              KnowledgeDocumentVersion @relation(fields: [versionId], references: [id])
+  versionId            String
+  /// 1, 2, … in the order found.
+  ordinal              Int
+  kind                 KnowledgeHighlightKind
+  /// TEXT (the file's text) or DETAILS (its name, title or description).
+  location             String
+  pageNumber           Int?
+  /// Up to 60 characters either side, the number masked to its last four digits.
+  excerpt              String
+  acknowledgedByUserId String?
+  acknowledgedAt       DateTime?
+  createdAt            DateTime                 @default(now())
+
+  @@unique([versionId, ordinal])
+}
+
+/// Plan §13.4 C: a facility's published contact numbers (switchboard, helplines, ambulance), allowed in its knowledge documents.
+enum FacilityContactKind {
+  SWITCHBOARD
+  HELPLINE
+  AMBULANCE
+  OTHER
+}
+
+/// Plan §13.4 C: one published mobile number of a facility; removal is recorded, never deleted (audited).
+model FacilityPublishedContact {
+  id              String              @id @default(cuid())
+  organizationId  String
+  facility        Facility            @relation(fields: [facilityId], references: [id])
+  facilityId      String
+  kind            FacilityContactKind
+  label           String
+  /// Ten digits, no prefix (CHECK).
+  number          String
+  addedByUserId   String
+  addedAt         DateTime            @default(now())
+  removedAt       DateTime?
+  removedByUserId String?
+
+  @@index([facilityId, removedAt])
+  @@index([organizationId])
+}
+
 enum KnowledgeScanStatus {
   NOT_SCANNED
   CLEAN
@@ -11516,47 +11570,55 @@ model KnowledgeDocument {
 
 /// One uploaded file of a document. The approver is never the uploader (a CHECK).
 model KnowledgeDocumentVersion {
-  id                    String                   @id @default(cuid())
-  document              KnowledgeDocument        @relation(fields: [documentId], references: [id])
-  documentId            String
-  version               Int
-  storageRef            String
+  id                       String                         @id @default(cuid())
+  document                 KnowledgeDocument              @relation(fields: [documentId], references: [id])
+  documentId               String
+  version                  Int
+  storageRef               String
   /// sha-256 (hex) of the bytes: the same bytes twice for one document are refused.
-  sha256                String
-  contentType           String
-  language              String                   @default("en")
-  byteSize              Int
-  pageCount             Int?
-  uploadedByUserId      String
-  uploadedAt            DateTime                 @default(now())
-  approvalStatus        KnowledgeApprovalStatus  @default(DRAFT)
-  approvedByUserId      String?
-  approvedAt            DateTime?
-  rejectedReason        String?
-  effectiveAt           DateTime?
-  expiresAt             DateTime?
-  publishedAt           DateTime?
-  supersededByVersionId String?                  @unique
-  withdrawnAt           DateTime?
-  ingestionStatus       KnowledgeIngestionStatus @default(RECEIVED)
-  ingestionAttempts     Int                      @default(0)
+  sha256                   String
+  contentType              String
+  language                 String                         @default("en")
+  byteSize                 Int
+  pageCount                Int?
+  uploadedByUserId         String
+  uploadedAt               DateTime                       @default(now())
+  approvalStatus           KnowledgeApprovalStatus        @default(DRAFT)
+  approvedByUserId         String?
+  approvedAt               DateTime?
+  rejectedReason           String?
+  effectiveAt              DateTime?
+  expiresAt                DateTime?
+  publishedAt              DateTime?
+  supersededByVersionId    String?                        @unique
+  withdrawnAt              DateTime?
+  ingestionStatus          KnowledgeIngestionStatus       @default(RECEIVED)
+  ingestionAttempts        Int                            @default(0)
   /// A closed code, never provider or file text.
-  ingestionError        String?
-  scanStatus            KnowledgeScanStatus      @default(NOT_SCANNED)
-  createdAt             DateTime                 @default(now())
+  ingestionError           String?
+  scanStatus               KnowledgeScanStatus            @default(NOT_SCANNED)
+  createdAt                DateTime                       @default(now())
   /// RAG Phase 2: the uploaded file's name (checked for identifiers like the text) and format.
-  fileName              String?
-  format                String?
+  fileName                 String?
+  format                   String?
   /// RAG Phase 2: what ingestion did — chunks written, vectors found in the cache, vectors computed.
-  chunkCount            Int?
-  cacheHitCount         Int?
-  embeddedCount         Int?
-  ingestionStartedAt    DateTime?
-  indexedAt             DateTime?
-  submittedAt           DateTime?
+  chunkCount               Int?
+  cacheHitCount            Int?
+  embeddedCount            Int?
+  ingestionStartedAt       DateTime?
+  indexedAt                DateTime?
+  submittedAt              DateTime?
+  /// Plan §13.4 B: a re-proposal of an older version (the same file as a new version number, under the same two-person approval).
+  reproposedFromVersionId  String?
+  /// 0 for an upload; 1, 2, … for each re-proposal of the same bytes. The same bytes are refused twice only as uploads.
+  reproposalSeq            Int                            @default(0)
+  /// Plan §13.4 C: numbers highlighted for the approver; approval records that every one was acknowledged.
+  highlightCount           Int                            @default(0)
+  highlightsAcknowledgedAt DateTime?
+  highlights               KnowledgeIdentifierHighlight[]
 
   @@unique([documentId, version])
-  @@unique([documentId, sha256])
+  @@unique([documentId, sha256, reproposalSeq])
   @@index([documentId, approvalStatus])
   @@index([expiresAt])
   @@index([approvalStatus, effectiveAt])

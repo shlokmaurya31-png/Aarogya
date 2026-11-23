@@ -408,6 +408,8 @@ const SEGMENT_MODELS: Record<string, string> = {
   "cashless/[id]": "CashlessRequest",
   // RAG Phase 2: a knowledge document's version (the document is facility- or organisation-owned).
   "knowledge/versions/[versionId]": "KnowledgeDocumentVersion",
+  // Plan §13.4 C: a facility's published contact number.
+  "knowledge/contacts/[contactId]": "FacilityPublishedContact",
 };
 
 type SegmentTarget = { kind: "record"; model: string } | { kind: "static"; values: string[] } | { kind: "unmapped" };

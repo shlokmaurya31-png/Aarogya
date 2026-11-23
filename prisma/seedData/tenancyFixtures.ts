@@ -44,6 +44,9 @@ const INERT: Record<string, Record<string, unknown>> = {
   // shares a discharge, and only active holds are unique per reason.
   // RAG Phase 2: a knowledge version's hash is sha-256 hex (CHECK); withdrawn, so it is never approved or searched.
   KnowledgeDocumentVersion: { sha256: "0".repeat(64), withdrawnAt: new Date() },
+  // Plan §13.4 C: a highlight's location is TEXT or DETAILS (CHECK); a published contact is a ten-digit mobile with a label (CHECK), removed so no document relies on it.
+  KnowledgeIdentifierHighlight: { location: "TEXT", excerpt: "Tenancy fixture [••••0000]" },
+  FacilityPublishedContact: { number: "9000000000", label: "Tenancy fixture", removedAt: new Date(), removedByUserId: "tsw-fixture" },
   DischargeHold: { clearedAt: new Date(), clearedByUserId: "tsw-fixture" },
   WorkflowInstance: { status: "COMPLETED" },
   WorkflowStep: { status: "COMPLETED" },

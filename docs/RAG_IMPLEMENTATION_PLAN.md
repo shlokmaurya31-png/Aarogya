@@ -1,6 +1,6 @@
 # RAG implementation plan: phases 1–8
 
-- **Status:** Accepted (Phase 0, 2026-11-17; the twelve questions of §13 were decided the same day; §13.3 on 2026-11-18). Each phase starts only after the one before it is merged.
+- **Status:** Accepted (Phase 0, 2026-11-17; the twelve questions of §13 were decided the same day; §13.3 on 2026-11-18; §13.4 on 2026-11-23). Each phase starts only after the one before it is merged.
 - **Architecture:** [`RAG_ARCHITECTURE.md`](RAG_ARCHITECTURE.md). **Audit:** [`RAG_AUDIT.md`](RAG_AUDIT.md). **Threats:** [`RAG_THREAT_MODEL.md`](RAG_THREAT_MODEL.md). **Decisions:** [`adr/0005`](adr/0005-rag-embeddings-providers-and-tables.md).
 
 ## Contents
@@ -17,7 +17,7 @@
 10. Phase 8: evaluation and production readiness
 11. The evaluation set and how thresholds are set
 12. Definition of done, mapped to phases
-13. Decisions before Phase 1 (2026-11-17) and Phase 2 (2026-11-18)
+13. Decisions before Phase 1 (2026-11-17), Phase 2 (2026-11-18) and Phase 3 (2026-11-23)
 
 ---
 
@@ -397,6 +397,7 @@ Before any screen is written, the relevant guide under `node_modules/next/dist/d
 | 8.7 | **Recovery drill:** the index dropped and rebuilt from the record and the stored knowledge files; time recorded. | A runbook. |
 | 8.8 | **Runbooks:** provider outage, dead letters, a failed ingestion, a re-embed, a suspected leak, turning the assistant off per facility. | `docs/RAG_OPERATIONS.md`. |
 | 8.9 | **`PRE_LAUNCH_CHECKLIST.md` updated** with what still blocks real data. | The checklist. |
+| 8.10 | **Local OCR for scanned knowledge pages** (§13.4 A): Tesseract with the Indic language packs (Hindi, Marathi, Bengali, Tamil, Telugu, Kannada, Malayalam, Gujarati, Odia, Urdu) running on our own server; no page leaves it. An external OCR provider for knowledge stays behind the per-organisation setting of §13 decision 8, **default off**. Until this step, an image-only page is refused (`NO_TEXT_LAYER`). | A gate: a scanned synthetic SOP in English and in two Indic scripts reaches the same identifier check and fidelity bar as a text-layer PDF; no network call is made during OCR. |
 
 ### 10.2 Thresholds
 
@@ -496,6 +497,7 @@ The twelve questions Phase 0 raised, each as decided by the product owner on 202
 - **Decision 6:** an imported result is indexed for the `STAFF_ONLY` audience, so no patient or proxy mode can retrieve it. The per-user "show imported results" chart preference is not consulted by the AI: the label and the ranking rule apply to every staff member alike.
 - **Decision 8:** an Indian-mobile-shaped number counts as "looks like a patient identifier", so a document that prints one is refused, and the uploader removes it or replaces it with a short code or a toll-free number. This is stricter than Phase 0 proposed (flag for the approver).
 - **Decision 11:** where a rule has a stricter and a looser reading, the stricter one is built. Patient-facing modes stay on the strongest tier, refuse diagnosis and dosing, and withhold a whole answer on any validation failure.
+- **Decision 8, revised by §13.4 C (2026-11-23):** a mobile number and a 12-digit number no longer refuse a file by their shape alone. See §13.4.
 
 ### 13.2 Still open
 
@@ -510,3 +512,20 @@ The twelve questions Phase 0 raised, each as decided by the product owner on 202
 | A | Who holds `knowledge:approve` | **Two new staff roles, `MEDICAL_SUPERINTENDENT` and `QUALITY_LEAD`, hold `knowledge:approve` by default; `HOSPITAL_ADMIN` holds `knowledge:manage`.** The approver can never be the uploader: the database CHECK of Phase 1 (`KnowledgeDocumentVersion_approver_check`) stays, and the service refuses first with a readable message. |
 | B | The embedding service | **Not decided.** First, measure the deterministic cross-script improvements of Phase 3 (C below); then latency on Mumbai hardware once staging exists; a native-speaker review of the benchmark dataset when reviewers are available. **No model service is added until then**; the mock stays active. |
 | C | Cross-script retrieval without a model | Added to Phase 3 as steps 3.9 and 3.10: (a) a **romanised shadow text** per Indic chunk (ISO 15919 or similar, deterministic), indexed with pg_trgm, plus transliteration of Latin-script queries into each Indic script at query time; (b) a **curated multilingual medical concept lexicon** (common conditions, symptoms, tests and NLEM / WHO INN medicines mapped to concept IDs across the eleven languages, marked "pending native-speaker and clinical review") used for query expansion. Both are measured in `eval:rag:indic` against the current numbers and BGE-M3. |
+
+### 13.4 Decisions before Phase 3 (decided 2026-11-23)
+
+| # | Question | Decision |
+|---|---|---|
+| A | OCR for scanned knowledge pages | **Still refused for now** (`NO_TEXT_LAYER`). A later step, **8.10**, adds local OCR: Tesseract with Indic language packs on our own server, no external provider. The per-organisation external-provider setting (§13 decision 8) stays, **default off**. |
+| B | Withdrawing the version in force | **Never restores the previous version automatically.** The document then has no version in force. An administrator may **re-propose** an older version that was in force once (superseded, expired or withdrawn): the same stored file becomes the next version number, checked again under today's identifier rules, and needs the same two-person approval (the proposer cannot approve it). |
+| C | The identifier check | **Refused outright:** ABHA numbers and addresses; UHID/MRN patterns; names with ages; a 12-digit number **only if it passes the Aadhaar Verhoeff checksum and does not start with 0 or 1**. Nothing of a refused file is kept. **Highlighted for the approver:** any other 12-digit number; a mobile number **not** on the facility's published contact list (switchboard, helplines, ambulance; edited by the hospital administrator, every change audited and emitted). A number on that list is allowed. The approver sees every highlight (masked to its last four digits, with its page and an excerpt) and must acknowledge each before approving; the approval records who acknowledged them and when. |
+
+**As built (2026-11-23, the first Phase 3 commit):**
+
+- `src/lib/knowledge/identifiers.ts`: `scanIdentifiers` returns refusals and highlights; `verhoeffValid`, `looksLikeAadhaar`; excerpts masked to the last four digits (a CHECK refuses any excerpt with seven digits in a row).
+- `src/lib/knowledge/contacts.ts` and `/api/hospital/knowledge/contacts` (GET, POST; DELETE by id): the facility's published list. A facility document may print its own facility's numbers; an organisation-wide document any facility's of the organisation.
+- `reproposeKnowledgeVersion` and `POST /api/hospital/knowledge/versions/[versionId]/repropose`. The rule "the same bytes once per document" now applies to uploads; a re-proposal carries a number (`reproposalSeq`), so the unique index became `(documentId, sha256, reproposalSeq)`, identical for every existing row.
+- Approval takes `acknowledgedHighlightIds`, which must be exactly the version's highlights; a CHECK refuses an approved version with highlights and no acknowledgement.
+- Migration `20261123100000_knowledge_identifier_rules`. Gate `verify-postgres-knowledge-identifier-rules` (54 checks); the access gate covers the new routes by role (65 checks).
+
