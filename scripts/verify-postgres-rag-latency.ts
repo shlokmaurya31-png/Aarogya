@@ -78,8 +78,10 @@ async function main() {
   await generate(a, `lat-${tag}-a`, 2000);
   await generate(b, `lat-${tag}-b`, 500);
   await prisma.$executeRawUnsafe(`DROP TABLE rag_latency_base`);
-  await prisma.$executeRawUnsafe(`ANALYZE "RagChunk"`);
-  await prisma.$executeRawUnsafe(`ANALYZE "RagEmbedding"`);
+  // The tables as autovacuum leaves them (statistics current, visibility map set), so autovacuum doesn't
+  // run during the measurement (RAG Phase 3: in CI it doubled the p95 of the first measurement only).
+  await prisma.$executeRawUnsafe(`VACUUM (ANALYZE, PARALLEL 0) "RagChunk"`);
+  await prisma.$executeRawUnsafe(`VACUUM (ANALYZE, PARALLEL 0) "RagEmbedding"`);
   const count = await prisma.ragEmbedding.count({ where: { patientId: a.patientId } });
   report("One patient with 20,000 indexed chunks, each embedded (1024 dimensions)", count === 20_000 && (await prisma.ragChunk.count({ where: { patientId: a.patientId } })) === 20_000, `${count} in ${Math.round((Date.now() - started) / 1000)} s`);
 
