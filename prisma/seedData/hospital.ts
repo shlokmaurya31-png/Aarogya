@@ -284,6 +284,9 @@ export async function seedHospital(prisma: PrismaClient) {
   await upsertStaffUser("radtech@amc-demo.aarogya", "Meena Joshi", Role.RADIOLOGY_TECH, "Radiology Technician");
   await upsertStaffUser("pharmacist@amc-demo.aarogya", "Divya Iyer", Role.PHARMACIST, "Pharmacist");
   await upsertStaffUser("billing@amc-demo.aarogya", "Suresh Naik", Role.BILLING_STAFF, "Billing Officer");
+  // RAG Phase 2 — the knowledge approvers (decided 2026-11-18).
+  await upsertStaffUser("superintendent@amc-demo.aarogya", "Dr. Kavita Rao", Role.MEDICAL_SUPERINTENDENT, "Medical Superintendent");
+  await upsertStaffUser("quality@amc-demo.aarogya", "Anand Kulkarni", Role.QUALITY_LEAD, "Quality Lead");
 
   const doctorProfiles = await prisma.hospitalStaffProfile.findMany({ where: { userId: { in: doctorUsers.map((u) => u.id) } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
   const nurseProfiles = await prisma.hospitalStaffProfile.findMany({ where: { userId: { in: nurseUsers.map((u) => u.id) } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
@@ -739,7 +742,7 @@ export async function seedHospital(prisma: PrismaClient) {
   console.log(`  ${departments.size} departments, ${wardDefs.length} wards, ${beds.length} beds`);
   console.log(`  ${DOCTOR_NAMES.length} doctors, ${NURSE_NAMES.length} nurses, 1 lab tech, 1 radiology tech, 1 pharmacist, 1 billing officer, 1 hospital admin`);
   console.log(`  ${patients.length} patients, ${patients.length} encounters`);
-  console.log("  Demo logins (password Hospital@123): admin@amc-demo.aarogya, doctor1@amc-demo.aarogya, nurse1@amc-demo.aarogya, labtech@amc-demo.aarogya, radtech@amc-demo.aarogya, pharmacist@amc-demo.aarogya, billing@amc-demo.aarogya");
+  console.log("  Demo logins (password Hospital@123): admin@amc-demo.aarogya, doctor1@amc-demo.aarogya, nurse1@amc-demo.aarogya, labtech@amc-demo.aarogya, radtech@amc-demo.aarogya, pharmacist@amc-demo.aarogya, billing@amc-demo.aarogya, superintendent@amc-demo.aarogya, quality@amc-demo.aarogya");
 
   return { facility, hospitalAdmin };
 }

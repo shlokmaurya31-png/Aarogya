@@ -76,6 +76,8 @@ const MARKER = "Tenancysweep";
 const HOSPITAL_ROLES: Role[] = [
   Role.HOSPITAL_ADMIN, Role.DOCTOR, Role.NURSE, Role.LAB_TECHNICIAN, Role.RADIOLOGY_TECH,
   Role.PHARMACIST, Role.BILLING_STAFF, Role.PROCUREMENT_OFFICER, Role.FRONT_DESK,
+  // RAG Phase 2: the knowledge approvers.
+  Role.MEDICAL_SUPERINTENDENT, Role.QUALITY_LEAD,
 ];
 const SEARCH_PARAMS = /^(q|query|search|term|name|uhid|phone|mobile|mrn|invoiceNumber|sku|code|keyword)$/;
 
@@ -404,6 +406,8 @@ const SEGMENT_MODELS: Record<string, string> = {
   "time-zone-requests/[requestId]": "FacilityTimeZoneChange",
   // Flagship 5, step 5: cashless requests (facility-owned).
   "cashless/[id]": "CashlessRequest",
+  // RAG Phase 2: a knowledge document's version (the document is facility- or organisation-owned).
+  "knowledge/versions/[versionId]": "KnowledgeDocumentVersion",
 };
 
 type SegmentTarget = { kind: "record"; model: string } | { kind: "static"; values: string[] } | { kind: "unmapped" };

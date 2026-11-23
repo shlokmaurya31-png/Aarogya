@@ -25,6 +25,10 @@ export function resolveLoginDestination(role: Role): string {
     case "FRONT_DESK":
     case "HOSPITAL_ADMIN":
       return "/hospital-os";
+    // RAG Phase 2 — knowledge approvers land on the knowledge documents.
+    case "MEDICAL_SUPERINTENDENT":
+    case "QUALITY_LEAD":
+      return "/hospital-os/knowledge";
     case "AAROGYA_ADMIN":
       return "/select-app";
     default:

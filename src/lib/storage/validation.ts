@@ -23,6 +23,7 @@ const SIZE_LIMITS: Record<StorageBucket, number> = {
   // Patient uploads get the same ceiling as verification documents.
   "patient-uploads": 15 * MB,
   "generated-pdf": 25 * MB,
+  "knowledge-documents": 20 * MB,
 };
 
 /** Content types accepted in each bucket. */
@@ -32,7 +33,21 @@ const ALLOWED_TYPES: Record<StorageBucket, readonly string[]> = {
   reports: ["application/pdf"],
   "patient-uploads": ["application/pdf", "image/jpeg", "image/png", "image/webp"],
   "generated-pdf": ["application/pdf"],
+  // RAG Phase 2: the text formats have no signature; they are accepted only as valid UTF-8 with no binary signature (below).
+  "knowledge-documents": ["application/pdf", "text/plain", "text/markdown", "text/html", "text/csv", "application/json"],
 };
+
+/** Accepted types with no byte signature: checked by being text, never by a magic number. */
+const TEXT_TYPES = new Set(["text/plain", "text/markdown", "text/html", "text/csv", "application/json"]);
+
+function isPlainUtf8(bytes: Buffer): boolean {
+  try {
+    const s = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return !/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/u.test(s);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Sniff the leading bytes and return the content type they represent, or null if
@@ -84,6 +99,10 @@ export function validateUpload(bucket: StorageBucket, bytes: Buffer, declaredTyp
   }
 
   const sniffed = sniffContentType(bytes);
+  if (TEXT_TYPES.has(declared)) {
+    if (sniffed || !isPlainUtf8(bytes)) throw new StorageValidationError(`Declared type "${declared}" does not match the file's actual contents.`);
+    return declared;
+  }
   if (!sniffed) {
     throw new StorageValidationError("File type could not be recognised from its contents.");
   }

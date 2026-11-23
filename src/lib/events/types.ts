@@ -173,6 +173,8 @@ export const AGGREGATE_TYPES = [
   // Flagship 5, step 5 — cashless insurance (mock NHCX).
   "CASHLESS_REQUEST",
   "CASHLESS_ELIGIBILITY",
+  // RAG Phase 2 — a knowledge document (SOP, policy, formulary) and its versions.
+  "KNOWLEDGE_DOCUMENT",
 ] as const;
 export type AggregateType = (typeof AGGREGATE_TYPES)[number];
 

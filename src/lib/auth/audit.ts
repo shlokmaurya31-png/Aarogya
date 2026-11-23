@@ -716,7 +716,15 @@ export type AuditEventType =
   | "workflow.builder.imported"
   | "workflow.builder.exported"
   | "workflow.builder.templateCopied"
-  | "workflow.builder.simulated";
+  | "workflow.builder.simulated"
+  // RAG Phase 2 — knowledge documents. A refused upload records only the
+  // refusal code and the kinds of identifier found, never the file or a value.
+  | "knowledge.version.uploaded"
+  | "knowledge.upload.refused"
+  | "knowledge.version.approved"
+  | "knowledge.version.rejected"
+  | "knowledge.version.withdrawn"
+  | "knowledge.ingestion.requeued";
 
 export interface AuditEventContext {
   facilityId?: string;

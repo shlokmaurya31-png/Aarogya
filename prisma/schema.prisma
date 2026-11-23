@@ -67,6 +67,10 @@ enum Role {
   // retained question/answer text for safety review, every read audited.
   CLINICAL_ADVISOR
   SAFETY_OFFICER
+  // RAG Phase 2 (decided 2026-11-18): facility staff who approve knowledge
+  // documents (SOPs, policies, formularies). Nothing clinical; never the uploader.
+  MEDICAL_SUPERINTENDENT
+  QUALITY_LEAD
 }
 
 model User {
@@ -11139,6 +11143,10 @@ enum RagWithdrawReason {
   CONSENT_WITHDRAWN
   ERASURE
   REINDEX
+  /// RAG Phase 2: a knowledge version withdrawn, past its expiry, or rejected by its approver.
+  KNOWLEDGE_WITHDRAWN
+  KNOWLEDGE_EXPIRED
+  KNOWLEDGE_REJECTED
 }
 
 /// One indexed version of one source record.
@@ -11536,9 +11544,21 @@ model KnowledgeDocumentVersion {
   ingestionError        String?
   scanStatus            KnowledgeScanStatus      @default(NOT_SCANNED)
   createdAt             DateTime                 @default(now())
+  /// RAG Phase 2: the uploaded file's name (checked for identifiers like the text) and format.
+  fileName              String?
+  format                String?
+  /// RAG Phase 2: what ingestion did — chunks written, vectors found in the cache, vectors computed.
+  chunkCount            Int?
+  cacheHitCount         Int?
+  embeddedCount         Int?
+  ingestionStartedAt    DateTime?
+  indexedAt             DateTime?
+  submittedAt           DateTime?
 
   @@unique([documentId, version])
   @@unique([documentId, sha256])
+  @@index([documentId, approvalStatus])
+  @@index([expiresAt])
   @@index([approvalStatus, effectiveAt])
   @@index([ingestionStatus])
 }

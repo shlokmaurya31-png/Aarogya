@@ -8,7 +8,7 @@ import {
   ClipboardCheck, FlaskConical, ScanLine, Receipt, DoorOpen,
   UserPlus, Siren, ArrowRightLeft, Pill, Microscope,
   ShieldCheck, BarChart3, Settings2, Boxes, Truck, HeartPulse, Scissors, Droplet, Wrench, Network, ShieldAlert, Plug,
-  Menu, X, Sparkles, CalendarCheck, FileInput, BadgeIndianRupee } from "lucide-react";
+  Menu, X, Sparkles, CalendarCheck, FileInput, BadgeIndianRupee, LibraryBig } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/navigation/ThemeToggle";
 import { StatusPill } from "@/components/ui/StatusPill";
@@ -108,6 +108,8 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     { href: "/hospital-os/enterprise", label: "Enterprise", icon: Building2 },
     // Flagship 4a — re-imported patients whose details differ.
     { href: "/hospital-os/enterprise/import-reviews", label: "Import review", icon: FileInput },
+    // RAG Phase 2 — knowledge documents: upload, ingestion status, supersede, withdraw.
+    { href: "/hospital-os/knowledge", label: "Knowledge documents", icon: LibraryBig },
     // Phase D2 — the SaaS commercial control plane (plans/subscription/
     // entitlements/usage). Distinct from BILLING_GROUP_ADMIN, which is the
     // hospital patient revenue cycle.
@@ -169,6 +171,9 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
   // Phase B8 — the dedicated procurement role: inventory + procurement pipeline.
   PROCUREMENT_OFFICER: [{ href: "/hospital-os", label: "Command Center", icon: LayoutGrid }, INVENTORY_GROUP],
   BILLING_STAFF: [BILLING_GROUP_STAFF],
+  // RAG Phase 2 — knowledge approvers: the documents waiting for them, nothing else.
+  MEDICAL_SUPERINTENDENT: [{ href: "/hospital-os/knowledge", label: "Knowledge documents", icon: LibraryBig }],
+  QUALITY_LEAD: [{ href: "/hospital-os/knowledge", label: "Knowledge documents", icon: LibraryBig }],
   FRONT_DESK: [
     { href: "/hospital-os/front-desk", label: "Front Desk", icon: UserPlus },
     { href: "/hospital-os/ed", label: "ED Board", icon: Siren },

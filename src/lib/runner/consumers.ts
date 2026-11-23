@@ -14,6 +14,7 @@ import { shareLifecycle } from "@/lib/doctors/booking";
 import { checkInLifecycle } from "@/lib/insurance/checkin";
 import { claimDocumentsLifecycle } from "@/lib/insurance/claimDocuments";
 import { patientInsuranceNotify } from "@/lib/insurance/notify";
+import { knowledgeIngest } from "@/lib/consumers/knowledgeIngest";
 import { docAllergyBridge, docConflicts, docExtract, docMerge, docOcr, docPageSplit, docTranslate, docWithdrawal } from "@/lib/consumers/documentPipeline";
 
 /**
@@ -51,9 +52,10 @@ export const CONSUMER_REGISTRY: readonly DomainEventConsumer[] = [
   checkInLifecycle,
   claimDocumentsLifecycle,
   patientInsuranceNotify,
+  knowledgeIngest,
 ];
 
-export const EXPECTED_CONSUMERS = ["observability-projection", "workflow-engine", "task-generator", "mar-scheduler", "notification-dispatch", "charge-capture", "stock-movement", "claim-drafting", "discharge-readiness", "doc-page-split", "doc-ocr", "doc-translate", "doc-extract", "doc-merge", "doc-allergy-bridge", "doc-withdrawal", "doc-conflicts", "rag-indexer", "person-notifier", "directory-slots", "share-lifecycle", "checkin-lifecycle", "claim-documents-lifecycle", "patient-insurance-notify"] as const;
+export const EXPECTED_CONSUMERS = ["observability-projection", "workflow-engine", "task-generator", "mar-scheduler", "notification-dispatch", "charge-capture", "stock-movement", "claim-drafting", "discharge-readiness", "doc-page-split", "doc-ocr", "doc-translate", "doc-extract", "doc-merge", "doc-allergy-bridge", "doc-withdrawal", "doc-conflicts", "rag-indexer", "person-notifier", "directory-slots", "share-lifecycle", "checkin-lifecycle", "claim-documents-lifecycle", "patient-insurance-notify", "knowledge-ingest"] as const;
 
 declareConsumerRegistry(CONSUMER_REGISTRY);
 

@@ -17,6 +17,16 @@ export function chunkEmbeddingText(c: { context: string; heading?: string | null
   return [c.context, c.heading, c.text].filter(Boolean).join("\n");
 }
 
+/**
+ * RAG Phase 2 — a knowledge chunk is embedded by its section path, heading and
+ * text only, not its document's title or version (those are in its context
+ * line, for the keyword search and the citation): the same text under a second
+ * document, or in a new version, is then the same vector, found in the cache.
+ */
+export function knowledgeEmbeddingText(c: { sectionPath?: string | null; heading?: string | null; text: string }): string {
+  return [c.sectionPath ? `[Reference · ${c.sectionPath}]` : "[Reference]", c.heading, c.text].filter(Boolean).join("\n");
+}
+
 export async function activeSpace(db: Db = prisma): Promise<RagEmbeddingSpace> {
   return db.ragEmbeddingSpace.findFirstOrThrow({ where: { status: "ACTIVE" } });
 }

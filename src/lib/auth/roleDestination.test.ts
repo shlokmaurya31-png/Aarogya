@@ -28,6 +28,9 @@ describe("resolveLoginDestination — post-login role routing", () => {
     for (const role of hospitalRoles) {
       expect(resolveLoginDestination(role)).toBe("/hospital-os");
     }
+    // RAG Phase 2: the knowledge approvers land on the knowledge documents.
+    expect(resolveLoginDestination("MEDICAL_SUPERINTENDENT")).toBe("/hospital-os/knowledge");
+    expect(resolveLoginDestination("QUALITY_LEAD")).toBe("/hospital-os/knowledge");
   });
 
   it("sends AAROGYA_ADMIN to the cross-product app picker, not directly into either app", () => {
