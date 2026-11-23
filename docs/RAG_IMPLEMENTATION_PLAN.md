@@ -539,7 +539,7 @@ The twelve questions Phase 0 raised, each as decided by the product owner on 202
 ### 13.2 Still open
 
 1. ~~**The approver roles do not exist.**~~ Decided 2026-11-18 (§13.3, A).
-2. **The embedding model for real data** (decision 2): not decided; §13.3, B sets what comes first.
+2. **The embedding model for real data** (decision 2): not decided; §13.3 B and §13.5 D set what comes first.
 3. **The clinical advisor** (decision 11) and **the real-provider budget** (decision 12). Both block only the real-data switch, which stays off.
 
 ### 13.3 Decisions before Phase 2 (decided 2026-11-18)
@@ -570,5 +570,9 @@ The twelve questions Phase 0 raised, each as decided by the product owner on 202
 
 | # | Question | Decision |
 |---|---|---|
+| A | Knowledge Q&A inside chart Q&A | **Stays out until step 6.1.** Chart Q&A answers from the patient's record only; a knowledge question is asked in `KNOWLEDGE_QA` (`POST /api/ai/knowledge/ask`). No passage of either kind is ever given to the other mode's answer. |
+| B | Knowledge access classes by role | **The defaults stay** (`src/lib/rag/knowledgeAccess.ts`). Each hospital's **medical superintendent confirms them at onboarding**, and the **clinical advisor reviews** them; a change is a configuration change, audited. Onboarding checklist entry: `PRE_LAUNCH_CHECKLIST.md` item 30. |
+| C | Reviewers of the lexicon and the router vocabulary | **Pending, per language** (checklist item 29). Until a native speaker and a clinician have reviewed a language, its entries stay marked "pending native-speaker and clinical review". |
+| D | The embedding service | **Still undecided.** Measure latency on Mumbai hardware once staging exists. The Phase 0 audit and ADR 0005 found **no external embedding provider processing in India**, so for patient data the likely route is a **self-hosted model in Mumbai** (`ap-south-1`, BGE-M3 the leading candidate). No model service is added until then; the mock stays active. |
 | E | Evaluation hygiene: a sealed split | **A sealed held-out split** (`eval/rag/sealed/phase4.json`, 71 new questions over the same synthetic fixture), written before any Phase 4 tuning, its sha-256 recorded in `docs/RAG_INDIC_BENCHMARK.md`. **It is run once per phase, at the end, and never used for tuning**: `npm run eval:rag:sealed -- --phase <n>` refuses a file that doesn't match the recorded hash and a phase already in the ledger (`eval/rag/sealed/runs.json`, committed); no gate or tuning script reads it (`scripts/lib/sealedSplit.test.ts`). Its results are reported beside the development and test splits. A new phase that needs fresh held-out questions seals a new file the same way before it starts tuning. |
 
