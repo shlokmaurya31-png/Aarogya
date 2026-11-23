@@ -63,12 +63,14 @@ export function orTsQuery(terms: readonly string[]): string {
 
 export const vectorLiteral = (v: readonly number[]) => `[${v.map((x) => (Number.isFinite(x) ? x : 0)).join(",")}]`;
 
-export interface CandidateQuery { scope: RetrievalScope; space: EmbeddingSpaceRef; queryVector: number[]; terms: string[]; limit?: number }
+export interface CandidateQuery { scope: RetrievalScope; space: EmbeddingSpaceRef; queryVector: number[]; terms: string[]; limit?: number; vectorLimit?: number; keywordLimit?: number }
 
 /** The candidate query itself (exported for EXPLAIN in the latency gate). */
 export function candidateSql(input: CandidateQuery): Prisma.Sql {
   const where = scopeSql(input.scope);
-  const limit = input.limit ?? 40;
+  // RAG Phase 3, step 3.1: each search's count from the configuration (src/lib/rag/candidates.ts).
+  const vectorLimit = input.vectorLimit ?? input.limit ?? 40;
+  const keywordLimit = input.keywordLimit ?? input.limit ?? 40;
   const tsq = orTsQuery(input.terms);
   const vec = vectorLiteral(input.queryVector);
   return Prisma.sql`
@@ -77,7 +79,7 @@ export function candidateSql(input: CandidateQuery): Prisma.Sql {
       FROM "RagEmbedding" e
       WHERE e."embeddingModel" = ${input.space.model} AND e."embeddingVersion" = ${input.space.version} AND ${scopeSql(input.scope, "e")}
       ORDER BY distance, e."chunkId"
-      LIMIT ${limit}
+      LIMIT ${vectorLimit}
     ), vec AS (
       SELECT "chunkId", 1 - distance AS similarity, row_number() OVER (ORDER BY distance, "chunkId") AS rank FROM vec0
     ), kw0 AS (
@@ -86,7 +88,7 @@ export function candidateSql(input: CandidateQuery): Prisma.Sql {
       FROM "RagChunk" c, to_tsquery('simple', ${tsq || "x"}) q
       WHERE ${tsq !== ""} AND c."tsv" @@ q AND ${where}
       ORDER BY score DESC, c."id"
-      LIMIT ${limit}
+      LIMIT ${keywordLimit}
     ), kw AS (
       SELECT kw0."chunkId", kw0.score, kw0.rank,
              (SELECT count(*)::int FROM unnest(string_to_array(${tsq}, ' | ')) w WHERE w <> '' AND kw0."tsv" @@ to_tsquery('simple', w)) AS matched

@@ -6,6 +6,7 @@ import { contentWords } from "@/lib/ai/record/mock";
 import { activeSpace } from "./embed";
 import { AI_MODES, MODES, type AiMode } from "./modes";
 import { candidateSearch, scopeSql } from "./search";
+import { candidateCounts } from "./candidates";
 import type { AiAccess } from "./access";
 import type { RetrievalScope } from "./scope";
 import { isoDay } from "./render";
@@ -160,9 +161,11 @@ export async function retrieve(access: AiAccess, input: { question?: string; vis
   const scope: RetrievalScope = input.reportSourceIds ? { segments: access.scope.segments.map((s) => ({ ...s, sourceIds: input.reportSourceIds })) } : access.scope;
   const query = [input.question, input.visitReason].filter(Boolean).join(" ") || DEFAULT_QUERY[access.mode];
   const terms = contentWords(query);
+  // RAG Phase 3, step 3.1: the candidate counts from the configuration.
+  const counts = await candidateCounts(access.callerOrganizationId ?? access.subject.organizationId, access.callerFacilityId ?? access.subject.facilityId);
   const [qv] = await provider.embed([query], "query", access.permit);
-  const candidates = await candidateSearch({ scope, space: { model: space.embeddingModel, version: space.embeddingVersion }, queryVector: qv, terms });
-  const fused = fuse(candidates).slice(0, 30);
+  const candidates = await candidateSearch({ scope, space: { model: space.embeddingModel, version: space.embeddingVersion }, queryVector: qv, terms, vectorLimit: counts.vector, keywordLimit: counts.keyword });
+  const fused = fuse(candidates).slice(0, counts.rerank);
   const rows = new Map((await prisma.ragChunk.findMany({ where: { id: { in: fused.map((f) => f.chunkId) } }, select: CHUNK_SELECT })).map((c) => [c.id, toRow(c)]));
   const top = fused.map((f) => rows.get(f.chunkId)).filter((c): c is ChunkRow => !!c);
   const reranked = provider.rerank ? await provider.rerank(query, top.map((c) => `${c.context}\n${c.text}`), access.permit) : top.map((_, index) => ({ index, score: fused[index].rrf * RRF_K / 2 }));
@@ -177,7 +180,7 @@ export async function retrieve(access: AiAccess, input: { question?: string; vis
   // A verified entry beats a patient-provided one on the same footing; then the newer.
   scored.sort((a, b) => b.score - a.score || (a.origin === b.origin ? 0 : a.origin === "VERIFIED" ? -1 : 1) || b.recordedAt.getTime() - a.recordedAt.getTime() || a.chunkId.localeCompare(b.chunkId));
   const topScore = reranked.length ? Math.max(...reranked.map((r) => r.score)) : null;
-  let chunks = scored.slice(0, spec.keep);
+  let chunks = scored.slice(0, spec.context ? counts.keepContext : counts.keep);
 
   if (input.reportSourceIds) {
     // The one report, whole, in order.
