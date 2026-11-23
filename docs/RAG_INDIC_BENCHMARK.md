@@ -138,3 +138,12 @@ Recall@5 (cross-script also @10), production's keyword channel (`src/lib/rag/sea
 2. **Cross-script is capped near 0.4 at @5 by design of the set:** an English "diabetes" names the same condition in ten Indic lines, and only one counts as relevant; @10 is the fairer reading on the development split (0.90).
 3. **The lexicon was written by the team that wrote this set.** The four test conditions are among the commonest and are in the lexicon, written from general usage, not copied from the set; the test numbers for 3.10 are therefore an upper bound for unseen conditions.
 4. **The embedding decision (ADR 0005 part A) still stands open.** Without a model, keyword search now equals BGE-M3 on transliterated words and beats it on mixed script at @5 here; it still trails BGE-M3 on cross-script (0.25 against 0.38 @5, 0.28 against 0.60 @10).
+
+## The sealed held-out split (RAG Phase 4, sealed 2026-11-23)
+
+Plan §13.5 E. 71 new questions over the evaluation fixture (`rag-eval-v2`), in the plan's groups (readers, historical, medicines, allergy, critical, several documents, imported, no record, insufficient, operational, nurse, SOP, stale) and the language cases (record questions in six Indic languages; knowledge questions same-script, inflected, transliterated and cross-script). Written before any Phase 4 change was measured; no question repeats one of the 230.
+
+- File: `eval/rag/sealed/phase4.json`
+- sealed split sha-256: `c071b2e8f41e8b2ff1ae29b3b740b09cc7dd4f3cb211510a339b91a3df4ad4f9`
+- Run: `npm run eval:rag:sealed -- --phase <n>`, once per phase, at the end. Runs so far: `eval/rag/sealed/runs.json`.
+

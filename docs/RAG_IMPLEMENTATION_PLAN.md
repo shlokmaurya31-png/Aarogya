@@ -566,3 +566,9 @@ The twelve questions Phase 0 raised, each as decided by the product owner on 202
 - Approval takes `acknowledgedHighlightIds`, which must be exactly the version's highlights; a CHECK refuses an approved version with highlights and no acknowledgement.
 - Migration `20261123100000_knowledge_identifier_rules`. Gate `verify-postgres-knowledge-identifier-rules` (54 checks); the access gate covers the new routes by role (65 checks).
 
+### 13.5 Decisions before Phase 4 (decided 2026-11-23)
+
+| # | Question | Decision |
+|---|---|---|
+| E | Evaluation hygiene: a sealed split | **A sealed held-out split** (`eval/rag/sealed/phase4.json`, 71 new questions over the same synthetic fixture), written before any Phase 4 tuning, its sha-256 recorded in `docs/RAG_INDIC_BENCHMARK.md`. **It is run once per phase, at the end, and never used for tuning**: `npm run eval:rag:sealed -- --phase <n>` refuses a file that doesn't match the recorded hash and a phase already in the ledger (`eval/rag/sealed/runs.json`, committed); no gate or tuning script reads it (`scripts/lib/sealedSplit.test.ts`). Its results are reported beside the development and test splits. A new phase that needs fresh held-out questions seals a new file the same way before it starts tuning. |
+

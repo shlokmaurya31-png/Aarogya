@@ -14,8 +14,8 @@ import type { AskResult } from "./ask";
  */
 export interface EvalQuestion {
   id: string; group: string; actor: string; mode: string;
-  /** RAG Phase 3 (rag-eval-v2): the fixture patient (default "main"); the split ("dev" for tuning, "test" held out); the language questions' kind. */
-  patient?: string; split?: "dev" | "test"; kind?: string;
+  /** RAG Phase 3 (rag-eval-v2): the fixture patient (default "main"); the split ("dev" for tuning, "test" held out; RAG Phase 4: "sealed", run once per phase); the language questions' kind. */
+  patient?: string; split?: "dev" | "test" | "sealed"; kind?: string;
   ask?: { question?: string; document?: string; language?: string; appointment?: string };
   /** `documents`: the knowledge documents (fixture keys) a knowledge answer must cite and retrieve. */
   expect: { outcome: string; required?: string[]; forbidden?: string[]; sources?: string[]; documents?: string[]; labels?: string[]; questionsOnly?: boolean };
