@@ -22,7 +22,7 @@ import { contentWords } from "@/lib/ai/record/mock";
  */
 export type Intent = "STRUCTURED_LOOKUP" | "NARRATIVE" | "MIXED" | "KNOWLEDGE" | "OPERATIONAL" | "UNSUPPORTED";
 export type ReaderId = "VITALS" | "LAB_LATEST" | "LAB_TREND" | "ORDERS_PENDING" | "ENCOUNTER_CURRENT" | "PROBLEMS" | "ALLERGIES" | "MEDICINES";
-export type VitalKind = "BP" | "HR" | "SPO2" | "TEMP" | "RR" | "PAIN" | "NEWS2";
+export type VitalKind = "BP" | "HR" | "SPO2" | "TEMP" | "RR" | "PAIN";
 export type RouteMode = "VISIT_BRIEF" | "CHART_QA" | "NURSE_HANDOFF" | "EXPLAIN_REPORT" | "HEALTH_TIMELINE" | "PREVISIT_QUESTIONS" | "KNOWLEDGE_QA";
 
 export interface RetrievalPlan {
@@ -83,7 +83,7 @@ const VITAL_NAMES: Record<VitalKind, string[]> = {
   TEMP: ["temperature", "temp", "तापमान", "তাপমাত্রা", "வெப்பநிலை", "ఉష్ణోగ్రత", "ತಾಪಮಾನ", "താപനില", "તાપમાન", "ତାପମାତ୍ରା", "درجہ حرارت"],
   RR: ["respiratory rate", "breathing rate", "resp rate", "rr", "श्वसन दर", "শ্বাসের হার", "சுவாச விகிதம்", "శ్వాస రేటు", "ಉಸಿರಾಟದ ದರ", "ശ്വസന നിരക്ക്", "શ્વાસ દર", "ଶ୍ୱାସ ହାର", "سانس کی رفتار"],
   PAIN: ["pain score", "pain scale"],
-  NEWS2: ["news2", "news 2", "early warning score", "news score"],
+  // The NEWS2 score isn't routed to a reader: it awaits clinical sign-off and the AI doesn't read it.
 };
 const VITALS_GENERIC = ["vitals", "vital signs", "obs", "observations", "वाइटल्स", "जीवन संकेत", "ভাইটালস", "முக்கிய அறிகுறிகள்", "వైటల్స్", "ವೈಟಲ್ಸ್", "വൈറ്റൽസ്", "વાઇટલ્સ", "ଭାଇଟାଲ", "وائٹلز"];
 

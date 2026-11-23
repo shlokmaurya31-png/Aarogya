@@ -39,7 +39,7 @@ export interface AskRequest {
 }
 
 export type Outcome = "ANSWERED" | "NO_RECORD" | "REFUSED_SAFETY" | "CITATION_INVALID" | "RATE_LIMITED" | "ERROR";
-export type Label = "verified" | "patient-provided" | "imported" | "confirmed by proxy" | "translated" | "handwritten" | "not yet confirmed by you";
+export type Label = "verified" | "patient-provided" | "imported" | "confirmed by proxy" | "translated" | "handwritten" | "not yet confirmed by you" | "approved document";
 
 export interface Citation {
   n: number; chunkId: string; sourceType: string; sourceId: string; origin: "VERIFIED" | "PATIENT_PROVIDED" | "IMPORTED"; translated: boolean; handwritten: boolean;

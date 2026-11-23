@@ -132,7 +132,8 @@ async function labs(access: AiAccess, plan: RetrievalPlan, reader: "LAB_LATEST" 
 
 // ── vitals ──────────────────────────────────────────────────────────────────
 
-const VITAL_COLUMN: Record<VitalKind, string> = { BP: "sbp", HR: "hr", SPO2: "spo2", TEMP: "tempC", RR: "rr", PAIN: "painScore", NEWS2: "news2Score" };
+// The NEWS2 score is not read: it awaits clinical sign-off and nothing may act on it yet (the offline gate checks).
+const VITAL_COLUMN: Record<VitalKind, string> = { BP: "sbp", HR: "hr", SPO2: "spo2", TEMP: "tempC", RR: "rr", PAIN: "painScore" };
 
 async function vitals(access: AiAccess, plan: RetrievalPlan): Promise<ReaderFact[]> {
   const out: ReaderFact[] = [];
@@ -147,11 +148,10 @@ async function vitals(access: AiAccess, plan: RetrievalPlan): Promise<ReaderFact
         AND (${some}) AND ${periodSql(Prisma.sql`v."recordedAt"`, s, plan)}
       ORDER BY v."recordedAt" DESC, v."id" LIMIT ${take}`);
     if (!rows.length) continue;
-    const vs = await prisma.vital.findMany({ where: { id: { in: rows.map((r) => r.id) } }, orderBy: [{ recordedAt: "desc" }, { id: "asc" }] });
+    const vs = await prisma.vital.findMany({ where: { id: { in: rows.map((r) => r.id) } }, orderBy: [{ recordedAt: "desc" }, { id: "asc" }], select: { id: true, encounterId: true, recordedAt: true, hr: true, sbp: true, dbp: true, rr: true, spo2: true, tempC: true, painScore: true } });
     for (const v of vs) {
       const rd = renderSource({ sourceType: "OBSERVATION", day: v.recordedAt, rows: [{ at: v.recordedAt, hr: v.hr, sbp: v.sbp, dbp: v.dbp, rr: v.rr, spo2: v.spo2, tempC: v.tempC, painScore: v.painScore }] });
-      const news = v.news2Score != null ? `\nNEWS2 ${v.news2Score}${v.news2Status ? ` (${v.news2Status.toLowerCase().replace(/_/g, " ")})` : ""} at ${v.recordedAt.toISOString().slice(11, 16)} UTC on ${isoDay(v.recordedAt)}.` : "";
-      out.push({ chunkId: `live:vitals:${v.id}`, context: rd.context, text: `${rd.sections[0].text}${news}`, origin: "VERIFIED", sourceType: "OBSERVATION", sourceId: `${v.encounterId}:${isoDay(v.recordedAt)}`, recordedAt: v.recordedAt, reader: "VITALS" });
+      out.push({ chunkId: `live:vitals:${v.id}`, context: rd.context, text: rd.sections[0].text, origin: "VERIFIED", sourceType: "OBSERVATION", sourceId: `${v.encounterId}:${isoDay(v.recordedAt)}`, recordedAt: v.recordedAt, reader: "VITALS" });
     }
   }
   return out;

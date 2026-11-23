@@ -84,6 +84,7 @@ const DEFAULT_QUERY: Record<AiMode, string> = {
   EXPLAIN_REPORT: "report result value reference range findings impression",
   HEALTH_TIMELINE: "visits diagnoses results procedures medicines discharge",
   PREVISIT_QUESTIONS: "diagnoses results medicines follow up",
+  KNOWLEDGE_QA: "",
 };
 
 /** Reciprocal-rank fusion (k = 60) of the vector and keyword ranks, best first (§7.2 step 3). */

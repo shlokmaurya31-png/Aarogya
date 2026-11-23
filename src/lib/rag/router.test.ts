@@ -54,7 +54,8 @@ const CASES: [string, Want, RouteMode?][] = [
   ["respiratory rate", { intent: "STRUCTURED_LOOKUP", readers: ["VITALS"] }],
   ["oxygen saturation", { intent: "STRUCTURED_LOOKUP", readers: ["VITALS"] }],
   ["latest vitals", { intent: "STRUCTURED_LOOKUP", readers: ["VITALS"] }],
-  ["NEWS2 score", { intent: "STRUCTURED_LOOKUP", readers: ["VITALS"] }],
+  // The NEWS2 score awaits clinical sign-off: no reader serves it, so the full hybrid plan.
+  ["NEWS2 score", { intent: "NARRATIVE", confidence: "DEFAULT" }],
   ["BP trend", { intent: "STRUCTURED_LOOKUP", readers: ["VITALS"] }],
   ["vital signs this morning", { intent: "STRUCTURED_LOOKUP", readers: ["VITALS"] }],
   // ── English: orders, encounter, problems, allergies, medicines ──

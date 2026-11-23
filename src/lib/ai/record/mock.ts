@@ -10,7 +10,8 @@ import type { AnswerRequest, AnswerSentence, RecordAnswer, RecordAnswerProvider 
  * copied verbatim and cited, so it echoes what it was given (the leak gate
  * relies on that: anything retrieved would surface) and never invents a value.
  *
- *   CHART_QA, EXPLAIN_REPORT follow-ups   the lines sharing the most (stemmed)
+ *   CHART_QA, EXPLAIN_REPORT follow-ups,  the lines sharing the most (stemmed)
+ *   KNOWLEDGE_QA
  *                                         words with the question, counting
  *                                         their entry's context line (at most 3)
  *   VISIT_BRIEF, NURSE_HANDOFF,           every line, in the order given
@@ -43,7 +44,7 @@ export const mockRecordAnswer: RecordAnswerProvider = {
     if (req.mode === "PREVISIT_QUESTIONS") {
       out.push({ text: phrase(req.language, "youCouldAsk"), citations: [], kind: "GUIDANCE" });
       for (const s of req.sources.slice(0, 5)) out.push({ text: `${s.context.replace(/^\[|\]$/g, "")}?`, citations: [s.n], kind: "FACT" });
-    } else if (req.question && (req.mode === "CHART_QA" || req.mode === "EXPLAIN_REPORT")) {
+    } else if (req.question && (req.mode === "CHART_QA" || req.mode === "EXPLAIN_REPORT" || req.mode === "KNOWLEDGE_QA")) {
       // A line's words, and those of the entry it belongs to (its context line: "Imaging report · X-ray Chest PA view").
       const terms = new Set(contentWords(req.question).map(stem));
       const scored = all.map((l, i) => ({ ...l, i, score: new Set([...contentWords(l.text), ...contentWords(l.context)].map(stem)).size === 0 ? 0 : [...new Set([...contentWords(l.text), ...contentWords(l.context)].map(stem))].filter((w) => terms.has(w)).length })).filter((l) => l.score > 0);

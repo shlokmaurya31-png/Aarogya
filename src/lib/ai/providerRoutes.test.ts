@@ -22,6 +22,8 @@ const FACTORIES = ["src/lib/ai/getAIProvider.ts", "src/lib/ai/record/index.ts", 
 const GATEWAYS: Record<string, { why: string; mustContain: string[] }> = {
   "src/lib/rag/ask.ts": { why: "the record gateway (/api/ai/ask, and /api/chat's record questions)", mustContain: ["resolveAiAccess(", "checkLimits(", "logInteraction(", "subjectIdentifiers(", "checkSentence("] },
   "src/lib/rag/assistant.ts": { why: "the portal assistant's gateway (/api/chat)", mustContain: ["mayUseAiOver(", "realDataEnabled(", "checkLimits(", "patientSafety(", "personIdentifiers(", "issueAssistantPermit(", "logAssistantInteraction("] },
+  // RAG Phase 3, step 3.4: knowledge Q&A, no patient; the organisation's own setting decides whether its knowledge text may reach an external provider.
+  "src/lib/rag/knowledgeAsk.ts": { why: "the knowledge gateway (/api/ai/knowledge/ask)", mustContain: ["roleHasPermission(", "checkLimits(", "knowledgeClassesFor(", "knowledgePermit(", "ai.knowledge.external_providers", "logInteraction(", "checkSentence("] },
   "src/lib/rag/retrieve.ts": { why: "retrieval, reached only from ask.ts with a permit from resolveAiAccess", mustContain: ["access.permit"] },
   "src/lib/rag/embed.ts": { why: "the index writer (the rag-indexer and the re-embed job), with a permit", mustContain: ["permit: AiPermit"] },
   "src/lib/rag/reembed.ts": { why: "the re-embed job, with a permit per owner", mustContain: ["aiAssistancePermit("] },
@@ -36,6 +38,7 @@ const DISPATCH = ["src/lib/documents/pipeline.ts", "src/lib/rag/embed.ts"];
 /** Every route that can reach a provider, and the gateway it goes through. */
 const EXPECTED_ROUTES: Record<string, string[]> = {
   "src/app/api/ai/ask/route.ts": ["src/lib/rag/ask.ts"],
+  "src/app/api/ai/knowledge/ask/route.ts": ["src/lib/rag/knowledgeAsk.ts"],
   "src/app/api/chat/route.ts": ["src/lib/rag/assistant.ts", "src/lib/rag/ask.ts"],
   "src/app/api/student/viva/route.ts": ["src/lib/ai/scholar.ts"],
   // Background work (the runner's tick and event dispatch): the 4a pipeline and the rag-indexer, each with its permit.
