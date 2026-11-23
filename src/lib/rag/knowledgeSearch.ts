@@ -59,7 +59,8 @@ export async function searchKnowledge(scope: KnowledgeScope, question: string, o
   const vecBranch = async () => {
     const space = await activeSpace();
     const { vectors } = await cachedKnowledgeEmbeddings(space, [question], knowledgePermit(scope.organizationId));
-    return prisma.$queryRaw<{ chunkId: string; rank: bigint }[]>`
+    // Planned for its own parameters every time, as the record's search is (search.ts): after five runs a generic plan is far slower.
+    const [, rows] = await prisma.$transaction([prisma.$executeRaw`SET LOCAL plan_cache_mode = force_custom_plan`, prisma.$queryRaw<{ chunkId: string; rank: bigint }[]>`
       WITH vec0 AS (
         SELECT e."chunkId", e."embedding" <=> ${vectorLiteral(vectors[0])}::halfvec AS distance
         FROM "RagEmbedding" e
@@ -67,12 +68,13 @@ export async function searchKnowledge(scope: KnowledgeScope, question: string, o
         ORDER BY distance, e."chunkId" LIMIT ${vLimit * OVERSAMPLE}
       )
       SELECT v."chunkId", row_number() OVER (ORDER BY v.distance, v."chunkId") AS rank FROM vec0 v
-      WHERE ${inForceSql(Prisma.sql`v."chunkId"`, now)} ORDER BY v.distance, v."chunkId" LIMIT ${vLimit}`;
+      WHERE ${inForceSql(Prisma.sql`v."chunkId"`, now)} ORDER BY v.distance, v."chunkId" LIMIT ${vLimit}`]);
+    return rows;
   };
   const kwBranch = async () => {
     // RAG Phase 3, step 3.5: the same keyword matchers as the record's (exact, English stems, shadow text, trigram).
     const k = await withoutExactLatin(prisma, baseSql(scope, "c"), queryTerms(question));
-    const [, rows] = await prisma.$transaction([prisma.$queryRaw(trigramThresholdSql()), prisma.$queryRaw<{ chunkId: string; rank: bigint }[]>`
+    const [, , rows] = await prisma.$transaction([prisma.$executeRaw`SET LOCAL plan_cache_mode = force_custom_plan`, prisma.$queryRaw(trigramThresholdSql()), prisma.$queryRaw<{ chunkId: string; rank: bigint }[]>`
       WITH kw0 AS (${keywordSql(baseSql(scope, "c"), k, kLimit * OVERSAMPLE)})
       SELECT x."chunkId", row_number() OVER (ORDER BY x.rank) AS rank FROM kw0 x WHERE ${inForceSql(Prisma.sql`x."chunkId"`, now)} ORDER BY x.rank LIMIT ${kLimit}`]);
     return rows;

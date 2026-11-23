@@ -29,7 +29,7 @@ export const KNOWLEDGE_DOCS: EvalKnowledgeDoc[] = [
   { key: "K_BILLING", title: "Cashless claims", type: "ADMIN", accessClass: "BILLING", body: "# Cashless claims\n\nSend the pre-authorisation request within 24 hours of admission.\n" },
   // Stale: superseded (version 1 says every 4 hours), expired, and not yet in force.
   { key: "K_FALLS", title: "Falls prevention", type: "POLICY", accessClass: "CLINICAL", versions: [
-    { body: "# Falls prevention\n\nAssess falls risk on admission and every 4 hours.\n" },
+    { body: "# Falls prevention\n\nAssess falls risk on admission and every 4 hours on the paper falls checklist.\n" },
     { body: "# Falls prevention\n\nAssess falls risk on admission and every shift using the Morse scale.\n\nKeep the bed at its lowest height with the brakes on.\n" },
   ] },
   { key: "K_VISITORS", title: "Visitor policy", type: "POLICY", accessClass: "ALL_STAFF", state: "EXPIRED", body: "# Visitor policy\n\nVisiting hours are 4 pm to 7 pm, two visitors per patient.\n" },
