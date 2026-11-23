@@ -1978,7 +1978,7 @@ export const EVENT_CONTRACTS: EventContract[] = [
   }),
   contract({
     type: "LegacyResultImported", version: 1, bulk: true, aggregateType: "LEGACY_LAB_RESULT", scope: "FACILITY",
-    sensitivity: "INTERNAL", producer: "legacy import (confirmImport: one HL7 ORU result, kept apart from the live results; no live consumer listens)",
+    sensitivity: "INTERNAL", producer: "legacy import (confirmImport: one HL7 ORU result, kept apart from the live results). The rag-indexer indexes it for staff only, labelled imported (RAG Phase 3, step 3.6)",
     payload: z.object({ resultId: id, patientId: id, batchId: id, converted: z.boolean() }).strict(),
   }),
   contract({

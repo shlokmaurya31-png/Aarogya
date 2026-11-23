@@ -18,7 +18,9 @@
  *     readable by reviewers only with SAFETY_REVIEW; every read logged,
  *     audited and in the monthly report; others can't read it;
  *   - over HTTP: server-sent events in order (meta, sentences, citations,
- *     done), JSON on request, 401, 400 for an unknown key, 404, 413.
+ *     done), JSON on request, 401, 400 for an unknown key, 404, 413;
+ *   - RAG Phase 3, step 3.6: an imported value is labelled, never the latest
+ *     when a verified one exists, a disagreement is stated, staff only.
  *
  * Usage: DATABASE_URL=postgresql://... npx tsx scripts/verify-postgres-ai-ask.ts [--no-build]
  */
@@ -84,7 +86,7 @@ async function staff(role: "DOCTOR" | "NURSE") {
 async function patient(name: string) {
   seq += 1;
   const email = `ai-ask-pt-${tag}-${seq}@verify.aarogya`;
-  const a = await registerPatientAccount({ facilityId: PUNE, fullName: name, email, passwordHash: await hashPassword(PASSWORD), sex: "F", dob: new Date("1980-04-04"), phone: `98${String(10_000_000 + seq).slice(-8)}` });
+  const a = await registerPatientAccount({ facilityId: PUNE, fullName: name, email, passwordHash: await hashPassword(PASSWORD), sex: "F", dob: new Date("1980-04-04"), phone: `98${String(10_000_000 + ((parseInt(tag, 36) * 7 + seq) % 90_000_000)).slice(-8)}` });
   if (a.status !== "LINKED_NEW") throw new Error("fixture patient");
   const personId = (await prisma.personAccount.findUniqueOrThrow({ where: { userId: a.userId } })).personId;
   await prisma.person.update({ where: { id: personId }, data: { dataClassification: "SYNTHETIC" } });
@@ -271,6 +273,34 @@ async function main() {
     report("HTTP: the treating doctor's chart Q&A streams (200)", ds.status === 200 && (await ds.text()).includes("11.2 g/dL"));
   } finally {
     child.kill("SIGTERM");
+  }
+
+  // RAG Phase 3, step 3.6 (§13 decision 6) — imported results: labelled, never the latest when a verified one exists, a disagreement stated.
+  {
+    const I = await patient(`Imported ${tag}`);
+    const o = await prisma.labOrder.create({ data: { encounterId: I.encounterId, patientId: I.patientId, testName: "Hemoglobin", category: "Hematology", orderedByStaffId: doctor.staffId } });
+    const v = await prisma.labResult.create({ data: { labOrderId: o.id, value: "11.4", unit: "g/dL", referenceRange: "12.0 - 15.5", abnormalFlag: "LOW", status: "VERIFIED", resultedAt: new Date("2026-10-10T08:00:00Z") } });
+    await prisma.$transaction((tx) => emitFacilityEvent(tx, { type: "LabResultReleased", aggregateId: v.id, facilityId: PUNE, payload: { resultId: v.id, orderId: o.id, patientId: I.patientId } }));
+    for (const [testName, value, at] of [["Hemoglobin", "9.8", "2026-11-05T08:00:00Z"], ["TSH", "3.1", "2025-02-02T08:00:00Z"]] as const) {
+      const l = await prisma.legacyLabResult.create({ data: { facilityId: PUNE, patientId: I.patientId, batchId: `ask-${tag}`, sourceSystem: "OldHIS", testCode: testName, testName, value, unit: testName === "TSH" ? "µIU/mL" : "g/dL", observedAt: new Date(at) } });
+      await prisma.$transaction((tx) => emitFacilityEvent(tx, { type: "LegacyResultImported", aggregateId: l.id, facilityId: PUNE, payload: { resultId: l.id, patientId: I.patientId, batchId: `ask-${tag}`, converted: false } }));
+    }
+    await drain();
+    const askI = async (question: string) => { await cool(doctor.actor.userId); return askAi(doctor.actor, { mode: "CHART_QA", patientId: I.patientId, question }); };
+    const latest = await askI("What was the latest hemoglobin?");
+    const facts = latest.sentences.filter((x) => x.kind === "FACT");
+    report("Imported: the latest haemoglobin is the verified value, though the imported one is newer", facts[0]?.text.includes("11.4") && facts[0].labels.includes("verified") && !facts[0].labels.includes("imported"), facts[0]?.text);
+    report("Imported: every line with the imported value is labelled imported", facts.filter((x) => x.text.includes("9.8")).length > 0 && facts.filter((x) => x.text.includes("9.8")).every((x) => x.labels.includes("imported") && !x.labels.includes("verified")));
+    report("Imported: the disagreement is stated", facts.some((x) => /differs from the latest verified value 11\.4/.test(x.text)), facts.map((x) => x.text).join(" | "));
+    const tsh = await askI("What was the latest TSH?");
+    report("Imported: with no verified value, the imported one is given, labelled imported", tsh.outcome === "ANSWERED" && tsh.sentences.some((x) => x.kind === "FACT" && x.text.includes("3.1") && x.labels.includes("imported")) && tsh.citations.every((c) => c.origin === "IMPORTED"));
+    const indexed = await prisma.ragChunk.findMany({ where: { patientId: I.patientId, sourceType: "LEGACY_LAB_RESULT", status: "ACTIVE" }, select: { origin: true, audience: true } });
+    report("Imported: indexed by the rag-indexer as IMPORTED, staff only", indexed.length === 2 && indexed.every((c) => c.origin === "IMPORTED" && c.audience === "STAFF_ONLY"));
+    const narrative = await askI("imported result from OldHIS");
+    report("Imported: a narrative question finds the imported passages, labelled", narrative.sentences.some((x) => x.kind === "FACT" && /Imported result from OldHIS/.test(x.text) && x.labels.includes("imported")), narrative.sentences.map((x) => x.text).join(" | "));
+    await cool(I.userId);
+    const own = await askAi(I.actor, { mode: "HEALTH_TIMELINE", patientId: I.patientId });
+    report("Imported: never in the patient's own modes (staff only)", !own.sentences.some((x) => /OldHIS|9\.8/.test(x.text)) && !own.citations.some((c) => c.origin === "IMPORTED"));
   }
 
   // RAG Phase 1, step 1.7 — what every answer rested on, and what it cost.

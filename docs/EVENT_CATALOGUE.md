@@ -156,7 +156,7 @@ Payload fields: `?` optional, `∅` nullable. Payloads carry identifiers and clo
 | [LegacyPatientImported](#legacypatientimported) | v1 | PATIENT | FACILITY | INTERNAL | — |
 | [LegacyPatientReviewDecided](#legacypatientreviewdecided) | v1 | LEGACY_PATIENT_REVIEW | FACILITY | INTERNAL | — |
 | [LegacyPatientReviewQueued](#legacypatientreviewqueued) | v1 | LEGACY_PATIENT_REVIEW | FACILITY | INTERNAL | — |
-| [LegacyResultImported](#legacyresultimported) | v1 | LEGACY_LAB_RESULT | FACILITY | INTERNAL | — |
+| [LegacyResultImported](#legacyresultimported) | v1 | LEGACY_LAB_RESULT | FACILITY | INTERNAL | rag-indexer |
 | [LegalHoldSet](#legalholdset) | v1 | PRIVACY_REQUEST | FACILITY | SENSITIVE | — |
 | [MaintenanceRequestStatusChanged](#maintenancerequeststatuschanged) | v1 | MAINTENANCE_REQUEST | FACILITY | LOW | — |
 | [MedicationAdministered](#medicationadministered) | v1 | MEDICATION_ADMINISTRATION | FACILITY | INTERNAL | — |
@@ -2877,7 +2877,7 @@ Consumers: none beyond the `*` consumers
 
 **v1** (current) · aggregate LEGACY_LAB_RESULT · FACILITY · INTERNAL
 
-Producer: legacy import (confirmImport: one HL7 ORU result, kept apart from the live results; no live consumer listens)
+Producer: legacy import (confirmImport: one HL7 ORU result, kept apart from the live results). The rag-indexer indexes it for staff only, labelled imported (RAG Phase 3, step 3.6)
 
 | Field | Type |
 |---|---|
@@ -2888,7 +2888,7 @@ Producer: legacy import (confirmImport: one HL7 ORU result, kept apart from the 
 
 Emitted from: `src/lib/hospital/legacyImport/service.ts#confirmImport`
 
-Consumers: none beyond the `*` consumers
+Consumers: rag-indexer
 
 ### LegalHoldSet
 

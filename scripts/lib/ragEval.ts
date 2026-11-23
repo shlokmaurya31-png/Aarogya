@@ -47,11 +47,9 @@ export async function runRagEval(fx: EvalFixture): Promise<EvalRun> {
         ...(q.ask?.appointment ? { appointmentId: fx.appointments[q.ask.appointment] } : {}),
       });
       const row = await prisma.aiInteraction.findUniqueOrThrow({ where: { id: r.meta.interactionId } });
-      const ragIds = row.retrievedChunkIds.filter((id) => !id.startsWith("live:") && !id.startsWith("upload:"));
-      const typeOf = new Map((await prisma.ragChunk.findMany({ where: { id: { in: ragIds } }, select: { id: true, sourceType: true } })).map((c) => [c.id, c.sourceType as string]));
-      // In rank order (the order the sources were given to the model).
-      const types = row.retrievedChunkIds.map((id) => (id.startsWith("live:") ? ({ med: "MEDICATION_ORDER", dose: "MEDICATION_DOSE", allergy: "ALLERGY" }[id.split(":")[1]] ?? "LIVE") : id.startsWith("upload:") ? "PATIENT_DOCUMENT" : typeOf.get(id)))
-        .filter((t): t is string => !!t);
+      // In rank order (the order the sources were given to the model), as the interaction recorded them: index
+      // passages, live facts and (RAG Phase 3) structured readers' facts alike.
+      const types = (await prisma.aiInteractionSource.findMany({ where: { interactionId: r.meta.interactionId }, orderBy: { rank: "asc" }, select: { sourceType: true } })).map((x) => x.sourceType);
       if (q.expect.outcome === "ANSWERED" && q.expect.sources?.length) ranked.push({ id: q.id, types, expected: q.expect.sources });
       scores.push(scoreQuestion(q, r, row, types));
       results.push({ id: q.id, result: r, latencyMs: Date.now() - started, tokens: row.inputTokens + row.outputTokens });

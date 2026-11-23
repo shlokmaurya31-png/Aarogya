@@ -14,7 +14,7 @@ import { vitalsDaySource, type SourceRef } from "./sources";
  * Person-owned sources are indexed through their own events, a consent
  * re-grant or an account reopening (reindexPerson).
  */
-const TYPES: RagSourceType[] = ["CLINICAL_NOTE", "LAB_RESULT", "IMAGING_REPORT", "DIAGNOSIS", "PROBLEM", "ALLERGY", "ALLERGY_STATUS", "OBSERVATION", "REFERRAL", "DISCHARGE_SUMMARY", "CLINICAL_DOCUMENT"];
+const TYPES: RagSourceType[] = ["CLINICAL_NOTE", "LAB_RESULT", "LEGACY_LAB_RESULT", "IMAGING_REPORT", "DIAGNOSIS", "PROBLEM", "ALLERGY", "ALLERGY_STATUS", "OBSERVATION", "REFERRAL", "DISCHARGE_SUMMARY", "CLINICAL_DOCUMENT"];
 
 async function page(facilityId: string, type: RagSourceType, after: string, since: Date | undefined, take: number): Promise<SourceRef[]> {
   const gt = { gt: after };
@@ -23,6 +23,7 @@ async function page(facilityId: string, type: RagSourceType, after: string, sinc
   switch (type) {
     case "CLINICAL_NOTE": return ids(await prisma.clinicalNote.findMany({ where: { id: gt, encounter: { facilityId }, status: { in: ["SIGNED", "AMENDED"] }, ...(at ? { createdAt: at } : {}) }, orderBy: { id: "asc" }, take, select: { id: true } }));
     case "LAB_RESULT": return ids(await prisma.labResult.findMany({ where: { id: gt, labOrder: { patient: { facilityId } }, isCurrent: true, status: { in: ["VERIFIED", "AMENDED"] }, ...(at ? { resultedAt: at } : {}) }, orderBy: { id: "asc" }, take, select: { id: true } }));
+    case "LEGACY_LAB_RESULT": return ids(await prisma.legacyLabResult.findMany({ where: { id: gt, facilityId, ...(at ? { observedAt: at } : {}) }, orderBy: { id: "asc" }, take, select: { id: true } }));
     case "IMAGING_REPORT": return ids(await prisma.imagingReport.findMany({ where: { id: gt, imagingOrder: { patient: { facilityId } }, isCurrent: true, status: { in: ["VERIFIED", "AMENDED"] }, ...(at ? { reportedAt: at } : {}) }, orderBy: { id: "asc" }, take, select: { id: true } }));
     case "DIAGNOSIS": return ids(await prisma.diagnosis.findMany({ where: { id: gt, encounter: { facilityId }, status: { not: "ENTERED_IN_ERROR" }, ...(at ? { createdAt: at } : {}) }, orderBy: { id: "asc" }, take, select: { id: true } }));
     case "PROBLEM": return ids(await prisma.problem.findMany({ where: { id: gt, patient: { facilityId }, ...(at ? { createdAt: at } : {}) }, orderBy: { id: "asc" }, take, select: { id: true } }));

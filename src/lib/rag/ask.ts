@@ -47,7 +47,9 @@ export interface Citation {
 }
 export interface OutSentence { text: string; citations: number[]; labels: Label[]; kind: "FACT" | "GUIDANCE" }
 export interface AskMeta { interactionId: string; mode: AiMode; label: string; language: string }
-export interface AskResult { meta: AskMeta; sentences: OutSentence[]; citations: Citation[]; outcome: Outcome }
+/** RAG Phase 3: how the question was routed (for the interaction's accounting and the evaluation; no text). */
+export interface AskTrace { intent: string; readers: string[]; confidence: string; answeredByReader: boolean }
+export interface AskResult { meta: AskMeta; sentences: OutSentence[]; citations: Citation[]; outcome: Outcome; trace?: AskTrace }
 
 export class AskError extends Error {
   constructor(readonly status: 400 | 403 | 404 | 429 | 503, readonly code: string) {
@@ -196,6 +198,7 @@ async function run(actor: AiActor, req: AskRequest, hooks: AskHooks, started: nu
 
   // RAG Phase 1 accounting: how long retrieval and generation took, and which provider answered.
   const timing: { retrievalMs: number | null; generationMs: number | null; provider: string | null } = { retrievalMs: null, generationMs: null, provider: null };
+  let retrieval: Awaited<ReturnType<typeof retrieve>> | null = null;
   const finish = async (outcome: Outcome, sentences: OutSentence[], sources: Source[], extra: { topScore?: number | null; threshold?: number | null; model?: string; inputTokens?: number; outputTokens?: number; retrieved?: string[] } = {}): Promise<AskResult> => {
     const citedNs = new Set(sentences.flatMap((s) => s.citations));
     const cited = sources.filter((s) => citedNs.has(s.n));
@@ -204,12 +207,13 @@ async function run(actor: AiActor, req: AskRequest, hooks: AskHooks, started: nu
       topScore: extra.topScore ?? null, threshold: extra.threshold ?? null, model: extra.model ?? "none", inputTokens: extra.inputTokens ?? 0, outputTokens: extra.outputTokens ?? 0,
       // What the answer rested on: one row per source given to the model, cited or not; never text.
       sources: sources.map((s) => ({ rank: s.n, cited: citedNs.has(s.n), chunkId: s.chunkId, ragDocumentId: s.documentId ?? null, sourceType: s.sourceType, sourceId: s.sourceId, origin: s.origin, recordedAt: s.recordedAt })),
-      accounting: { module: hooks.module ?? "ASK", intent: req.mode, tier: timing.provider ? 2 : 0, provider: timing.provider, retrievalMs: timing.retrievalMs, generationMs: timing.generationMs },
+      accounting: { module: hooks.module ?? "ASK", intent: retrieval?.plan ? `${req.mode}:${retrieval.plan.intent}` : req.mode, tier: timing.provider ? 2 : 0, provider: timing.provider, retrievalMs: timing.retrievalMs, generationMs: timing.generationMs },
     });
     // Staff answers already streamed what passed; everything else is released now, whole.
     if (spec.audience === "PATIENT" || (outcome !== "ANSWERED" && outcome !== "CITATION_INVALID")) for (const s of sentences) await hooks.onSentence?.(s);
     return {
       meta: m, sentences, outcome,
+      ...(retrieval?.plan ? { trace: { intent: retrieval.plan.intent, readers: retrieval.plan.readers, confidence: retrieval.plan.confidence, answeredByReader: retrieval.answeredByReader } } : {}),
       citations: cited.map((s) => ({ n: s.n, chunkId: s.chunkId, sourceType: s.sourceType, sourceId: s.sourceId, origin: s.origin, translated: !!s.translation || language !== "en", handwritten: s.handwritten, recordedAt: s.recordedAt.toISOString(), title: s.context.replace(/^\[|\]$/g, ""), link: link(spec.audience, access.subject.patientId, s) })),
     };
   };
@@ -224,7 +228,6 @@ async function run(actor: AiActor, req: AskRequest, hooks: AskHooks, started: nu
 
   // The sources.
   let sources: Source[] = [];
-  let retrieval: Awaited<ReturnType<typeof retrieve>> | null = null;
   const upload = req.mode === "EXPLAIN_REPORT" && req.documentId ? await unconfirmedUpload(access, req.documentId) : null;
   try {
     if (upload) {
@@ -248,7 +251,8 @@ async function run(actor: AiActor, req: AskRequest, hooks: AskHooks, started: nu
       retrieval = await retrieve(access, { question: req.question, visitReason, reportSourceIds });
       timing.retrievalMs = Date.now() - r0;
       if (retrieval.noRecord) return finish("NO_RECORD", [guidance("noRecord")], [], { topScore: retrieval.topScore, threshold: retrieval.threshold, retrieved: retrieval.candidateIds });
-      const items: (RetrievedChunk | LiveFact)[] = [...retrieval.chunks, ...retrieval.live];
+      // RAG Phase 3, step 3.7: structured facts first, then passages, then the other live facts.
+      const items: (RetrievedChunk | LiveFact)[] = [...retrieval.structured, ...retrieval.chunks, ...retrieval.live];
       sources = items.map((c, i) => ({
         n: i + 1, chunkId: c.chunkId, ...("documentId" in c ? { documentId: c.documentId } : {}), context: c.context, text: c.text, origin: c.origin, sourceType: c.sourceType, sourceId: c.sourceId, recordedAt: c.recordedAt,
         handwritten: "handwritten" in c ? c.handwritten : false,

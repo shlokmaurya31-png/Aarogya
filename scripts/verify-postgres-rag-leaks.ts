@@ -156,7 +156,7 @@ async function ask(actor: AiActor, req: Omit<AccessRequest, "mode"> & { mode?: A
     const r = await retrieve(access, { question: `${word} details` });
     const r2 = await retrieve(access, {});
     const through = await askThrough(actor, { ...req, mode }, word);
-    const texts = [...r.chunks, ...r2.chunks].map((c) => `${c.context}\n${c.text}`).concat([...r.live, ...r2.live].map((l) => `${l.context}\n${l.text}`)).join("\n") + "\n" + through;
+    const texts = [...r.chunks, ...r2.chunks].map((c) => `${c.context}\n${c.text}`).concat([...r.structured, ...r2.structured, ...r.live, ...r2.live].map((l) => `${l.context}\n${l.text}`)).join("\n") + "\n" + through;
     const scopeRows = async (w: string) => Number((await prisma.$queryRaw<{ n: bigint }[]>(Prisma.sql`SELECT count(*) AS n FROM "RagChunk" c WHERE ${scopeSql(access.scope)} AND (c."text" ILIKE ${`%${w}%`} OR c."context" ILIKE ${`%${w}%`})`))[0].n);
     return { refused: null, texts, scopeRows };
   } catch (err) {
