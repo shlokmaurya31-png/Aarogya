@@ -79,7 +79,7 @@ export async function runRagEval(fx: EvalFixture, opts: { split?: "dev" | "test"
       scores.push(scoreQuestion(q, r, row, types, idsOf));
       results.push({ id: q.id, result: r, latencyMs: Date.now() - started, tokens: row.inputTokens + row.outputTokens, retrievalMs: row.retrievalMs });
     } catch (err) {
-      scores.push({ id: q.id, group: q.group, correct: false, cited: false, retrieved: false, score: false, why: [`error ${(err as { code?: string }).code ?? (err as Error).message}`] });
+      scores.push({ id: q.id, group: q.group, correct: false, cited: false, retrieved: false, score: false, confidentlyWrong: false, why: [`error ${(err as { code?: string }).code ?? (err as Error).message}`] });
       results.push({ id: q.id, result: null, error: (err as { code?: string }).code ?? "ERROR", latencyMs: Date.now() - started, tokens: 0 });
     }
   }
@@ -97,6 +97,7 @@ export function evalMarkdown(run: EvalRun, provider: string, questions: EvalQues
     `# RAG evaluation (${provider})`, "",
     `- Questions: ${n} (${QUESTIONS.status})`,
     `- **Correct with valid citations: ${scored}/${n} (${pct(scored)})** (target ≥ 90%)`,
+    `- **Confidently wrong (answered where "no record" or a refusal was right, or a forbidden value stated): ${run.scores.filter((s) => s.confidentlyWrong).length}/${n}**${run.scores.some((s) => s.confidentlyWrong) ? ` (${run.scores.filter((s) => s.confidentlyWrong).map((s) => s.id).join(", ")})` : ""}`,
     `- Correct: ${run.scores.filter((s) => s.correct).length}/${n}; cited validly: ${run.scores.filter((s) => s.cited).length}/${n}; expected source retrieved: ${run.scores.filter((s) => s.retrieved).length}/${n}`,
     `- Thresholds in force: ${Object.entries(run.thresholds).map(([m, t]) => `${m} ${t}`).join(", ")}`,
     ...(["test", "dev", undefined] as const).map((sp) => { const m = retrievalMetrics(run, sp); return `- Retrieval, ${sp === "test" ? "**held-out test split**" : sp === "dev" ? "development split" : "whole set"} (by expected source type or document, ${m.n} questions): Recall@8 ${m.recall.toFixed(2)}, Precision@8 ${m.precision.toFixed(2)}, MRR ${m.mrr.toFixed(2)}, nDCG@10 ${m.ndcg.toFixed(2)}`; }),
@@ -108,8 +109,8 @@ export function evalMarkdown(run: EvalRun, provider: string, questions: EvalQues
       const m = retrievalMetrics(run, "test", (x) => x === g);
       return `| ${g} | ${xs.filter((s) => s.score).length}/${xs.length} | ${ts.filter((s) => s.score).length}/${ts.length} | ${m.n ? `${m.recall.toFixed(2)} / ${m.mrr.toFixed(2)}` : "—"} |`;
     }), "",
-    "| Question | Split | Mode | Route | Outcome | Score | Why not |", "|---|---|---|---|---|---|---|",
-    ...run.scores.map((s) => { const q = questions.find((x) => x.id === s.id)!; const r = run.results.find((x) => x.id === s.id)!; const t = r.result?.trace; return `| ${s.id} | ${q.split ?? "dev"} | ${q.mode} | ${t ? `${t.intent}${t.answeredByReader ? " (reader)" : ""}` : "—"} | ${r.result?.outcome ?? r.error} | ${s.score ? "yes" : "no"} | ${s.why.join("; ").replace(/\|/g, "/")} |`; }),
+    "| Question | Split | Mode | Route | Outcome | Score | Confidently wrong | Why not |", "|---|---|---|---|---|---|---|---|",
+    ...run.scores.map((s) => { const q = questions.find((x) => x.id === s.id)!; const r = run.results.find((x) => x.id === s.id)!; const t = r.result?.trace; return `| ${s.id} | ${q.split ?? "dev"} | ${q.mode} | ${t ? `${t.intent}${t.answeredByReader ? " (reader)" : ""}` : "—"} | ${r.result?.outcome ?? r.error} | ${s.score ? "yes" : "no"} | ${s.confidentlyWrong ? "**yes**" : ""} | ${s.why.join("; ").replace(/\|/g, "/")} |`; }),
   ].join("\n");
 }
 

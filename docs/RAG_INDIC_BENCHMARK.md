@@ -145,7 +145,7 @@ Plan §13.5 E. 71 new questions over the evaluation fixture (`rag-eval-v2`), in 
 
 - File: `eval/rag/sealed/phase4.json`
 - sealed split sha-256: `c071b2e8f41e8b2ff1ae29b3b740b09cc7dd4f3cb211510a339b91a3df4ad4f9`
-- Run: `npm run eval:rag:sealed -- --phase <n>`, once per phase, at the end. Runs so far: `eval/rag/sealed/runs.json`.
+- Run: `npm run eval:rag:sealed -- --phase <n>` (this split is the default, `--split phase4`), once per phase, at the end. Runs so far: `eval/rag/sealed/runs.json`.
 
 ### Phase 4 run (2026-11-24, commit 1a69b59, the only run for phase 4)
 
@@ -156,4 +156,12 @@ Plan §13.5 E. 71 new questions over the evaluation fixture (`rag-eval-v2`), in 
 | Correct with valid citations | 205/230 on the whole set (89.1%) | **52/71 (73.2%)** |
 
 Reported, not tuned on. Where it falls short (for the next phase to work on, with new held-out questions): medicine questions by class or form ("a statin", "the antibiotic", "the inhaler", "an asthma reliever": 2 of 6 — the lexicon names medicines, not classes); imaging, referral and pending-scan questions in new words (routed as narrative, "no record"); "panic values" for critical values; two knowledge questions and four cross-script or transliterated ones ("no record"); three questions answered that should have been "no record" (HIV status, ECG, oxygen cylinder stock). The sealed questions' expected answers are as unreviewed as the rest of the set (pending clinical sign-off), so a few failures may be the expectation's, not the system's; none was changed after the run.
+
+## The phase 5 sealed split (RAG Phase 5, sealed 2026-11-24)
+
+Plan §13.5 E, a new file for a new phase. 94 new questions over the same fixture (`rag-eval-v2`), written and sealed on `rag/phase-5` before any Phase 5 change: every answer mode (chart Q&A, knowledge Q&A, visit brief, nurse handoff, explain report, health timeline, pre-visit questions), all eleven languages (record questions, knowledge questions same-script, inflected, transliterated and cross-script, and patient-mode answers requested in each language), 20 questions whose right answer is "no record", and new phrasings of each Phase 4 gap (medicine classes and forms, including classes she is **not** on; imaging, referral and pending-scan wording; "alarm", "phoned through" and "panic" for critical values). No question repeats one of the 230, or one of `phase4.json` (`scripts/lib/sealedSplit.test.ts`). Expected answers are the team's, pending clinical sign-off.
+
+- File: `eval/rag/sealed/phase5.json`
+- sealed split sha-256: `b063fd2bd3b47cc5a6728abc6a62170a37b2bd8ec190040a409715d576653091`
+- Run: `npm run eval:rag:sealed -- --phase <n> --split phase5`, once per phase, at the end. Every sealed report now also counts **confidently wrong** answers (answered where "no record" or a refusal was right, or a forbidden value stated) on their own: a false answer counts as worse than a refusal.
 

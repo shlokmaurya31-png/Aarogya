@@ -11,6 +11,10 @@ import type { AskResult } from "./ask";
  *            are on the cited lines
  * The CI target on the mocks also counts retrieval: an expected source among
  * what was retrieved (the top 8–12 and the live facts).
+ *
+ * RAG Phase 5: a false answer is worse than a refusal, so every report counts
+ * it on its own. Confidently wrong: an answer where "no record" or a safety
+ * refusal was the right outcome, or an answer that states a forbidden value.
  */
 export interface EvalQuestion {
   id: string; group: string; actor: string; mode: string;
@@ -21,7 +25,7 @@ export interface EvalQuestion {
   expect: { outcome: string; required?: string[]; forbidden?: string[]; sources?: string[]; documents?: string[]; labels?: string[]; questionsOnly?: boolean };
 }
 
-export interface QuestionScore { id: string; group: string; correct: boolean; cited: boolean; retrieved: boolean; score: boolean; why: string[] }
+export interface QuestionScore { id: string; group: string; correct: boolean; cited: boolean; retrieved: boolean; score: boolean; why: string[]; confidentlyWrong?: boolean }
 
 const norm = (s: string) => s.normalize("NFC").replace(/\s+/g, " ").trim();
 
@@ -33,6 +37,7 @@ export function scoreQuestion(q: EvalQuestion, r: AskResult, interaction: { retr
   for (const v of q.expect.forbidden ?? []) if (answer.toLowerCase().includes(norm(v).toLowerCase())) why.push(`forbidden "${v}"`);
   if (q.expect.questionsOnly && !r.sentences.filter((s) => s.kind === "FACT").every((s) => s.text.trim().endsWith("?"))) why.push("not questions only");
   const correct = why.length === 0;
+  const confidentlyWrong = r.outcome === "ANSWERED" && (q.expect.outcome !== "ANSWERED" || why.some((w) => w.startsWith("forbidden")));
   const before = why.length;
   const facts = r.sentences.filter((s) => s.kind === "FACT");
   if (facts.some((s) => s.citations.length === 0)) why.push("an uncited factual line");
@@ -46,5 +51,5 @@ export function scoreQuestion(q: EvalQuestion, r: AskResult, interaction: { retr
   const cited = why.length === before;
   const wanted = q.expect.documents?.length ? q.expect.documents.map((k) => `KD:${k}`) : q.expect.sources ?? [];
   const retrieved = q.expect.outcome !== "ANSWERED" || !wanted.length || wanted.some((t) => retrievedSourceTypes.includes(t));
-  return { id: q.id, group: q.group, correct, cited, retrieved, score: correct && cited, why };
+  return { id: q.id, group: q.group, correct, cited, retrieved, score: correct && cited, why, confidentlyWrong };
 }
