@@ -22,7 +22,8 @@ import path from "node:path";
 import { prisma } from "../src/lib/db";
 import { registerAllConsumers } from "../src/lib/runner/consumers";
 import { setDocumentProvidersForTest } from "../src/lib/ai/documents";
-import { setRecordAnswerProviderForTest } from "../src/lib/ai/record";
+import { getRecordAnswerProvider, setRecordAnswerProviderForTest, type RecordAnswerProvider } from "../src/lib/ai/record";
+import { setTokenEconomyForTest } from "../src/lib/rag/economy";
 import { DEFAULT_COUNTS, setCandidateCountsForTest, SPEC_COUNTS } from "../src/lib/rag/candidates";
 import { buildEvalFixture } from "./lib/ragEvalFixture";
 import { evalMarkdown, QUESTIONS, retrievalMetrics, runRagEval } from "./lib/ragEval";
@@ -121,6 +122,55 @@ async function main() {
   const structuredOrOperational = run.results.filter((r) => ["READERS", "OPERATIONAL"].includes(QUESTIONS.questions.find((q) => q.id === r.id)?.group ?? ""));
   const noModel = structuredOrOperational.filter((r) => r.result && (r.result.trace?.tier === 0 || (r.result.outcome === "NO_RECORD" && !r.result.trace?.inputTokens))).length;
   report("Phase 4: structured and operational questions answered without a model (Tier 0, or no record before the model): at least 90%", noModel >= Math.ceil(0.9 * structuredOrOperational.length), `${noModel}/${structuredOrOperational.length}`);
+
+  // RAG Phase 5, step 5.5: adversarial answers. Each development question the model answered is asked again with the
+  // provider's answer altered in one way (a wrong dose or value, a swapped unit, a renamed medicine); validation must
+  // stop every one of them (CITATION_INVALID). Tier 0 is off for this, so every question reaches the provider.
+  const mock = getRecordAnswerProvider({});
+  const UNIT_SWAP: Record<string, string> = { mg: "mcg", mcg: "mg", "g/dL": "mg/dL", "mg/dL": "mmol/L", "mEq/L": "mmol/L", "mmol/L": "mg/dL", "%": "mg/dL", "/min": "mmHg", mmHg: "kPa", "ng/mL": "pg/mL", "µIU/mL": "mIU/L" };
+  const RENAME: Record<string, string> = { Metformin: "Glimepiride", Azithromycin: "Amoxicillin", Atorvastatin: "Rosuvastatin", Salbutamol: "Budesonide", Paracetamol: "Ibuprofen", Penicillin: "Cefixime" };
+  type Mutation = "dose" | "unit" | "medicine";
+  const mutate = (text: string, m: Mutation): string | null => {
+    if (m === "dose") { const x = /(\d+(?:\.\d+)?)(\s*(?:mg|mcg|g\/dL|mg\/dL|mEq\/L|mmol\/L|%|ng\/mL|µIU\/mL|mmHg|\/min))/.exec(text); return x ? text.replace(x[0], `${Number(x[1]) * 2 + 1}${x[2]}`) : null; }
+    if (m === "unit") { const x = new RegExp(`(\\d)\\s*(${Object.keys(UNIT_SWAP).map((u) => u.replace(/[/%]/g, "\\$&")).join("|")})(?![\\p{L}])`, "u").exec(text); return x ? text.replace(x[0], `${x[1]} ${UNIT_SWAP[x[2]]}`) : null; }
+    const name = Object.keys(RENAME).find((n) => text.includes(n));
+    return name ? text.replace(name, RENAME[name]) : null;
+  };
+  let mutation: Mutation = "dose";
+  let altered = false;
+  const adversary: RecordAnswerProvider = {
+    id: "mock",
+    async answerFromRecord(req, permit) {
+      const a = await mock.answerFromRecord(req, permit);
+      altered = false;
+      const sentences = a.sentences.map((s) => {
+        if (altered || s.kind !== "FACT") return s;
+        const t = mutate(s.text, mutation);
+        if (t === null || t === s.text) return s;
+        altered = true;
+        return { ...s, text: t };
+      });
+      return { ...a, sentences };
+    },
+  };
+  setRecordAnswerProviderForTest(adversary);
+  setTokenEconomyForTest(false);
+  const adversarial: { id: string; m: Mutation; outcome: string }[] = [];
+  const answeredDev = run.results.filter((r) => devIds.has(r.id) && r.result?.outcome === "ANSWERED").map((r) => qs.find((q) => q.id === r.id)!).filter((q) => q.mode === "CHART_QA" || q.mode === "KNOWLEDGE_QA");
+  for (const m of ["dose", "unit", "medicine"] as Mutation[]) {
+    mutation = m;
+    for (const q of answeredDev) {
+      const one = await runRagEval(fx, { questions: [q] });
+      if (altered) adversarial.push({ id: q.id, m, outcome: one.results[0].result?.outcome ?? one.results[0].error ?? "ERROR" });
+    }
+  }
+  setTokenEconomyForTest(true);
+  setRecordAnswerProviderForTest(null);
+  const caught = adversarial.filter((a) => a.outcome === "CITATION_INVALID");
+  const byKind = (m: Mutation) => `${adversarial.filter((a) => a.m === m && a.outcome === "CITATION_INVALID").length}/${adversarial.filter((a) => a.m === m).length}`;
+  report("Phase 5 (5.5): every adversarial answer (a wrong dose or value, a swapped unit, a renamed medicine) ends CITATION_INVALID",
+    adversarial.filter((a) => a.m === "dose").length >= 10 && adversarial.filter((a) => a.m === "unit").length >= 10 && adversarial.filter((a) => a.m === "medicine").length >= 5 && caught.length === adversarial.length,
+    `wrong dose ${byKind("dose")}, swapped unit ${byKind("unit")}, renamed medicine ${byKind("medicine")}${caught.length < adversarial.length ? `; passed: ${adversarial.filter((a) => a.outcome !== "CITATION_INVALID").map((a) => `${a.id}/${a.m}`).join(", ")}` : ""}`);
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();
