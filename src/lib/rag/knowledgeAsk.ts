@@ -1,3 +1,4 @@
+import { subjectCovered } from "./abstain";
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { resolveEffectiveInternal } from "@/lib/config/resolver";
@@ -164,7 +165,9 @@ async function run(actor: Extract<AiActor, { kind: "STAFF" }>, req: KnowledgeAsk
   // "Covered": some passage holds every content word of the question (stemmed), as for the record's keyword match.
   const terms = contentWords(question).map(stem);
   const covered = terms.length > 0 && hits.some((h) => { const t = `${h.title} ${h.sectionPath ?? ""} ${h.text}`.toLowerCase(); return terms.every((w) => t.includes(w)); });
-  if (!hits.length || (best < threshold && !covered)) return finish("NO_RECORD", [guidance("noRecord")], [], { topScore: best >= 0 ? best : null, threshold, retrieved: hits.map((h) => h.chunkId) });
+  // RAG Phase 5, step 3b: the question's subject must be in the passages (abstain.ts), or "no record" before a wrong answer.
+  const subjectMissing = subjectCovered(question, hits.map((h) => `${h.title}\n${h.sectionPath ?? ""}\n${h.text}`)) === false;
+  if (!hits.length || (best < threshold && !covered) || subjectMissing) return finish("NO_RECORD", [guidance("noRecord")], [], { topScore: best >= 0 ? best : null, threshold, retrieved: hits.map((h) => h.chunkId) });
 
   // Context: the kept passages, deduplicated, each followed by its neighbours in the same section.
   let kept = dedupePassages(hits).slice(0, counts.keep);

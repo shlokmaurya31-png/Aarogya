@@ -97,6 +97,11 @@ const ALLERGY = ["allergy", "allergies", "allergic", "एलर्जी", "অ�
 const MEDICINE = ["medicine", "medicines", "medication", "medications", "drug", "drugs", "tablet", "tablets", "on any", "दवा", "दवाई", "दवाएँ", "औषध", "ওষুধ", "மருந்து", "மருந்துகள்", "మందు", "మందులు", "ಔಷಧ", "ಔಷಧಿ", "മരുന്ന്", "દવા", "ଔଷଧ", "دوا", "ادویات"];
 const KNOWLEDGE = ["policy", "policies", "protocol", "protocols", "sop", "sops", "guideline", "guidelines", "procedure for", "how do we", "how should we", "what is our", "formulary", "according to", "as per", "नीति", "प्रोटोकॉल", "दिशानिर्देश", "धोरण", "নীতি", "প্রোটোকল", "கொள்கை", "நெறிமுறை", "విధానం", "ప్రోటోకాల్", "ನೀತಿ", "ಶಿಷ್ಟಾಚಾರ", "നയം", "പ്രോട്ടോക്കോൾ", "નીતિ", "પ્રોટોકોલ", "ନୀତି", "ପ୍ରୋଟୋକଲ", "پالیسی", "پروٹوکول"];
 const OPERATIONAL = ["how many beds", "beds are free", "beds are available", "beds free", "beds available", "bed availability", "free beds", "available beds", "occupancy", "queue", "waiting list", "how many patients", "stock", "in stock", "inventory", "census", "discharges today", "admissions today", "bed occupancy", "खाली बिस्तर", "कतार", "स्टॉक", "রিক্ত শয্যা", "স্টক", "காலியான படுக்கைகள்", "ఖాళీ పడకలు", "ಖಾಲಿ ಹಾಸಿಗೆಗಳು", "ഒഴിവുള്ള കിടക്കകൾ", "ખાલી પથારી", "ଖାଲି ଶଯ୍ୟା", "خالی بستر"];
+/**
+ * RAG Phase 5, step 3b: a question about the hospital's supplies ("oxygen cylinders in stock", "ventilators free") is
+ * operational even when it names a vital or a medicine ("oxygen", "ceftriaxone"): the patient's chart has no stock.
+ */
+const SUPPLY = ["stock", "in stock", "inventory", "cylinder", "cylinders", "ventilators free", "ventilators available", "free ventilators", "any ventilators", "ventilator availability", "units in the blood bank", "supply of", "supplies", "स्टॉक", "সিলিন্ডার", "স্টক"];
 const NARRATIVE = ["upload", "uploaded", "outside report", "note", "notes", "discharge summary", "summary", "plan", "why", "reason", "compare", "agree", "agrees", "differ", "differs", "disagree", "told", "said", "advice", "impression", "findings", "x-ray show", "ct show", "mri", "ultrasound", "referral", "referred", "history of", "any history", "procedure", "surgery", "operation"];
 const HIGH_RISK = ["dose", "dosage", "how much", "should i give", "should we give", "can i give", "increase", "decrease", "stop", "start", "double", "मात्रा", "खुराक", "कितना दें", "ডোজ", "அளவு", "మోతాదు", "ಡೋಸ್", "ഡോസ്", "ડોઝ", "ମାତ୍ରା", "خوراک"];
 
@@ -159,6 +164,7 @@ export function routeQuestion(question: string | undefined, mode: RouteMode, opt
   const medicine = opts.medicines ? words.find((w) => opts.medicines!.has(w)) : undefined;
   const medicineWords = anyOf(q, MEDICINE).length > 0 || !!medicine;
   const knowledge = anyOf(q, KNOWLEDGE).length > 0;
+  const supply = anyOf(q, SUPPLY).length > 0;
   const operational = anyOf(q, OPERATIONAL).length > 0;
   const narrative = anyOf(q, NARRATIVE).length > 0;
   const risk: RetrievalPlan["risk"] = anyOf(q, HIGH_RISK).length ? "HIGH_RISK" : knowledge || operational ? "LOW" : "CLINICAL";
@@ -196,7 +202,8 @@ export function routeQuestion(question: string | undefined, mode: RouteMode, opt
     if (structured && !knowledge && (analyte || vitals.length) && /\b(her|his|this patient|the patient's|patient's)\b/i.test(question)) return { kind: "PLAN", plan: plan({ intent: "UNSUPPORTED", semantic: false, keyword: false }, base) };
     return { kind: "PLAN", plan: knowledge ? knowledgePlan() : { ...knowledgePlan(), confidence: "DEFAULT" } };
   }
-  // A record mode.
+  // A record mode. A supply question is about the hospital, never the patient's value.
+  if (supply) return { kind: "PLAN", plan: opsPlan() };
   if (operational && encounter) return { kind: "AMBIGUOUS", candidates: [patientPlan(), opsPlan()] };
   if (operational && !structured) return { kind: "PLAN", plan: opsPlan() };
   if (knowledge && structured) return { kind: "AMBIGUOUS", candidates: [patientPlan(), knowledgePlan()] };

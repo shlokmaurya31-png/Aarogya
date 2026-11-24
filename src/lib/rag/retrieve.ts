@@ -21,6 +21,7 @@ import { dedupePassages, dropCoveredByFacts } from "./context";
 import { nlemNames } from "@/lib/medicines/reference";
 import { canonicalMedicine, MEDICINE_VARIANTS } from "./medicineNames";
 import { LEXICON } from "./lexicon";
+import { subjectCovered } from "./abstain";
 
 /**
  * Week 4b — retrieval (docs/RAG_DESIGN.md §7). Filters first, in SQL (the
@@ -332,8 +333,12 @@ export async function retrieve(access: AiAccess, input: { question?: string; vis
 
   const covered = best0.covered;
   // A reader's fact is evidence of its own: a mixed question with facts is never "no record".
+  // RAG Phase 5, step 3b: no reader's fact and the subject isn't in the evidence ("HIV status?" over a diagnosis's status line):
+  // "no record", whatever the score (abstain.ts).
+  const subjectMissing = !!input.question && structured.length === 0
+    && subjectCovered(input.question, [...chunks.map((c) => `${c.context}\n${c.text}`), ...live.map((l) => `${l.context}\n${l.text}`)]) === false;
   const noRecord = input.question
-    ? (best < threshold) && !covered && structured.length === 0
+    ? ((best < threshold) && !covered && structured.length === 0) || subjectMissing
     : chunks.length === 0 && live.length === 0;
   return {
     structured: noRecord ? [] : structured, chunks: noRecord ? [] : chunks, live: noRecord ? [] : live, plan, answeredByReader: false, unsupported: false,
