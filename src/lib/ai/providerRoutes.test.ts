@@ -41,6 +41,11 @@ const EXPECTED_ROUTES: Record<string, string[]> = {
   "src/app/api/ai/knowledge/ask/route.ts": ["src/lib/rag/knowledgeAsk.ts"],
   "src/app/api/chat/route.ts": ["src/lib/rag/assistant.ts", "src/lib/rag/ask.ts"],
   "src/app/api/student/viva/route.ts": ["src/lib/ai/scholar.ts"],
+  // RAG Phase 5 (5.6), reviewed: OPS_QA calls no provider; the route reaches ask.ts only for its rate limits and AskError.
+  "src/app/api/ai/ops/ask/route.ts": ["src/lib/rag/ask.ts"],
+  // RAG Phase 5 (5.8), reviewed: opening a source calls no provider; it reaches ask.ts for AskError and embed.ts through
+  // the knowledge search's scope re-read (hitsFor, no embedding is made).
+  "src/app/api/ai/sources/[id]/route.ts": ["src/lib/rag/ask.ts", "src/lib/rag/embed.ts"],
   // Background work (the runner's tick and event dispatch): the 4a pipeline and the rag-indexer, each with its permit.
   "src/app/api/cron/tick/route.ts": BACKGROUND,
   "src/app/api/hospital/enterprise/events/dispatch/route.ts": DISPATCH,

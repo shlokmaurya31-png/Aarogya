@@ -182,6 +182,7 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   "src/lib/household/comingOfAge.ts#startClaimInPerson": { category: "PROCESS_STEP", reason: "Week 5b: an open claim after the in-person check (audited)", boundary: ["MemberAccountClaimed"] },
   "src/lib/sharing/accessLog.ts#logRecordAccess": { category: "BOOKKEEPING", reason: "a read of the person's record in their access log (docs/CONSENT_SHARING_DESIGN.md §7.1): part of the read, no record changes" },
   "src/lib/rag/interactions.ts#logAssistantInteraction": { category: "BOOKKEEPING", reason: "metadata of a portal-assistant request (RAG Phase 1), part of the interaction log; no text, no record changes" },
+  "src/lib/rag/opsAsk.ts#askOps": { category: "BOOKKEEPING", reason: "metadata of an OPS_QA request (RAG Phase 5): part of the interaction log; reads live state, changes nothing" },
   "src/lib/rag/interactions.ts#logRateLimited": { category: "BOOKKEEPING", reason: "metadata of a refused AI request (outcome RATE_LIMITED), part of the interaction log" },
   "src/lib/rag/interactions.ts#purgeExpiredAiInteractions": { category: "BOOKKEEPING", reason: "retention sweep of the AI interaction log (text at expiry, metadata after a year)" },
   "src/lib/rag/interactions.ts#readInteractionText": { category: "BOOKKEEPING", reason: "access log and audit of a reviewer's read of retained AI text; no state change" },

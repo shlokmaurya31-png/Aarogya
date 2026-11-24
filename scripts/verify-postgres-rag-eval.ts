@@ -123,6 +123,16 @@ async function main() {
   const noModel = structuredOrOperational.filter((r) => r.result && (r.result.trace?.tier === 0 || (r.result.outcome === "NO_RECORD" && !r.result.trace?.inputTokens))).length;
   report("Phase 4: structured and operational questions answered without a model (Tier 0, or no record before the model): at least 90%", noModel >= Math.ceil(0.9 * structuredOrOperational.length), `${noModel}/${structuredOrOperational.length}`);
 
+  // RAG Phase 5 thresholds (plan §7.2) on the whole set: no uncited factual sentence, no fabricated citation (a citation
+  // to a source not retrieved), and the end-to-end latency per mode with mocks (to the whole answer).
+  const uncited = run.scores.filter((x) => x.why.includes("an uncited factual line"));
+  const fabricated = run.scores.filter((x) => x.why.includes("a citation that wasn't retrieved"));
+  report("Phase 5: answers with an uncited factual sentence: 0; fabricated citations: 0", uncited.length === 0 && fabricated.length === 0, `${uncited.length} uncited, ${fabricated.length} fabricated`);
+  const p95 = (xs: number[]) => { const v = [...xs].sort((a, b) => a - b); return v.length ? v[Math.min(v.length - 1, Math.ceil(0.95 * v.length) - 1)] : 0; };
+  const byMode = [...new Set(qs.map((q) => q.mode))].map((mode) => ({ mode, p95: p95(run.results.filter((r) => qs.find((q) => q.id === r.id)?.mode === mode && r.result).map((r) => r.latencyMs)) }));
+  console.log(`  end-to-end latency p95 by mode (mocks, whole answer): ${byMode.map((m) => `${m.mode} ${m.p95} ms`).join(", ")}`);
+  report("Phase 5: end-to-end latency with mocks, each mode, p95 ≤ 300 ms", byMode.every((m) => m.p95 <= 300), byMode.filter((m) => m.p95 > 300).map((m) => `${m.mode} ${m.p95} ms`).join(", ") || "all within");
+
   // RAG Phase 5, step 5.5: adversarial answers. Each development question the model answered is asked again with the
   // provider's answer altered in one way (a wrong dose or value, a swapped unit, a renamed medicine); validation must
   // stop every one of them (CITATION_INVALID). Tier 0 is off for this, so every question reaches the provider.
