@@ -139,6 +139,9 @@ jobs:
       # (scripts/verify-all.ts); the job's DATABASE_URL is never reset. Exits
       # non-zero if any gate fails.
       - name: verify:all (main group)
+        # The HTTP gates build the app: the same heap as Test & Build (RAG Phase 4 outgrew the default ~2 GB).
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: npm run verify:all -- --group main
 
       - name: Upload gate report
