@@ -1,5 +1,5 @@
 import { aiModel } from "@/lib/ai/models";
-import { ANSWER_TOOL, buildRecordPrompt } from "@/lib/ai/record/claude";
+import { ANSWER_SCHEMA, buildRecordPrompt } from "@/lib/ai/record/claude";
 import type { AnswerRequest, AnswerSentence, RecordSource } from "@/lib/ai/record/types";
 import { fitSources, planBudget, type Budget } from "./budget";
 import { compressSources } from "./compress";
@@ -30,7 +30,7 @@ export interface Prepared {
 }
 
 export function systemPromptFor(req: Pick<AnswerRequest, "mode" | "language" | "conversation">): string {
-  return `${buildRecordPrompt({ ...req, audience: MODES[req.mode].audience, sources: [] }).system}\n${JSON.stringify(ANSWER_TOOL)}`;
+  return `${buildRecordPrompt({ ...req, audience: MODES[req.mode].audience, sources: [] }).system}\n${JSON.stringify(ANSWER_SCHEMA)}`;
 }
 
 export async function prepareSources(input: {
@@ -69,7 +69,7 @@ export function usageOf(req: AnswerRequest, answer: { inputTokens: number; outpu
   if (answer.inputTokens > 0) return { inputTokens: answer.inputTokens, outputTokens: answer.outputTokens };
   const { system, user } = buildRecordPrompt(req);
   return {
-    inputTokens: countTokens(`${system}\n${JSON.stringify(ANSWER_TOOL)}`, "anthropic") + countTokens(user, "anthropic"),
+    inputTokens: countTokens(`${system}\n${JSON.stringify(ANSWER_SCHEMA)}`, "anthropic") + countTokens(user, "anthropic"),
     outputTokens: countTokens(JSON.stringify({ outcome: answer.outcome, sentences: answer.sentences }), "anthropic"),
   };
 }

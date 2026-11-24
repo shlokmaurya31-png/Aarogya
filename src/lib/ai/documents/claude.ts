@@ -3,6 +3,7 @@ import { z } from "zod";
 import { aiModel } from "@/lib/ai/models";
 import { assertPermit } from "./permit";
 import { providerMayReceive } from "@/lib/ai/dataPolicy";
+import { capabilitiesOf } from "@/lib/ai/modelCapabilities";
 
 import { DocumentProviderError, type ProcessingPermit, type CandidateFact, type FactExtractor, type MedicineTagger, type TranslationProvider, type VisionOcrProvider } from "./types";
 
@@ -47,27 +48,48 @@ export function errorCode(err: unknown, onBadRequest: "UNREADABLE" | "INTERNAL")
 /** Tokens used per model since the process started (the manual evaluation reports them; never content). */
 export const claudeDocumentUsage = new Map<string, { calls: number; inputTokens: number; outputTokens: number }>();
 
+/** The Messages API request for one tool call (also what the contract test checks). */
+export function toolCallParams(args: { model: string; system: string; content: Anthropic.ContentBlockParam[]; tool: { name: string; description: string; input_schema: Anthropic.Tool.InputSchema }; maxTokens?: number }): Anthropic.MessageCreateParamsNonStreaming {
+  const forced = capabilitiesOf(args.model)?.forcedToolChoice ?? false;
+  return {
+    // Thinking (on by default) counts toward max_tokens where the call isn't forced.
+    model: args.model, max_tokens: (args.maxTokens ?? 4096) + (forced ? 0 : 4096),
+    system: forced ? args.system : `${args.system}\nGive your answer only by calling the ${args.tool.name} tool, once.`,
+    messages: [{ role: "user", content: args.content }],
+    tools: [args.tool], tool_choice: forced ? { type: "tool", name: args.tool.name } : { type: "auto", disable_parallel_tool_use: true },
+  };
+}
+
 export class ClaudeDocumentClient {
   private client: Anthropic;
-  constructor(apiKey: string) {
-    this.client = new Anthropic({ apiKey, maxRetries: 1, timeout: 120_000 });
+  constructor(apiKey: string, client?: Anthropic) {
+    this.client = client ?? new Anthropic({ apiKey, maxRetries: 1, timeout: 120_000 });
   }
 
-  /** One forced tool call; returns the tool input validated by `schema`. */
+  /**
+   * One tool call; returns the tool input validated by `schema`.
+   *
+   * RAG Phase 5, checklist item 31: a model that accepts forced tool use
+   * (Haiku 5.5, the helpers' default) is forced to the tool; one that rejects
+   * it with a 400 (Sonnet 5.5, the OCR retry model; modelCapabilities.ts,
+   * from Anthropic's documentation) gets tool_choice "auto" and an
+   * instruction to answer with the tool, and a reply without the call is
+   * asked once more, then treated as a provider error.
+   */
   async toolCall<T>(args: { model: string; system: string; content: Anthropic.ContentBlockParam[]; tool: { name: string; description: string; input_schema: Anthropic.Tool.InputSchema }; schema: z.ZodType<T>; maxTokens?: number; onBadRequest?: "UNREADABLE" | "INTERNAL" }): Promise<T> {
+    const params = toolCallParams(args);
     let res: Anthropic.Message;
-    try {
-      res = await this.client.messages.create({
-        model: args.model, max_tokens: args.maxTokens ?? 4096, system: args.system,
-        messages: [{ role: "user", content: args.content }],
-        tools: [args.tool], tool_choice: { type: "tool", name: args.tool.name },
-      });
-    } catch (err) {
-      throw errorCode(err, args.onBadRequest ?? "INTERNAL");
+    let block: Anthropic.ToolUseBlock | undefined;
+    for (let attempt = 0; attempt < (params.tool_choice?.type === "auto" ? 2 : 1) && !block; attempt++) {
+      try {
+        res = await this.client.messages.create(params);
+      } catch (err) {
+        throw errorCode(err, args.onBadRequest ?? "INTERNAL");
+      }
+      const u = claudeDocumentUsage.get(args.model) ?? { calls: 0, inputTokens: 0, outputTokens: 0 };
+      claudeDocumentUsage.set(args.model, { calls: u.calls + 1, inputTokens: u.inputTokens + (res.usage?.input_tokens ?? 0), outputTokens: u.outputTokens + (res.usage?.output_tokens ?? 0) });
+      block = res.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use" && b.name === args.tool.name);
     }
-    const u = claudeDocumentUsage.get(args.model) ?? { calls: 0, inputTokens: 0, outputTokens: 0 };
-    claudeDocumentUsage.set(args.model, { calls: u.calls + 1, inputTokens: u.inputTokens + (res.usage?.input_tokens ?? 0), outputTokens: u.outputTokens + (res.usage?.output_tokens ?? 0) });
-    const block = res.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use" && b.name === args.tool.name);
     const parsed = args.schema.safeParse(block?.input);
     if (!parsed.success) throw new DocumentProviderError("INTERNAL");
     return parsed.data;

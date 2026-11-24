@@ -222,3 +222,22 @@ Retrieved on 2026-11-17. Third-party price listings and partial benchmark tables
 | Voyage `rerank-2.5` | $0.05 / MTok | same page | **Corrected.** The table priced reranking per thousand documents; Voyage bills tokens: query tokens × documents + the documents' tokens. The estimate now counts each document scored as the query's tokens plus a 400-token chunk. 200 million free tokens may apply (the page contradicts itself). |
 
 The mock providers are priced as the model they stand in for, so the estimate shows what a request would cost on the configured provider. No real provider call was made (no credit, no Voyage key).
+
+## Addendum, 2026-11-24: the request shapes the current Claude models accept (RAG Phase 5, checklist item 31)
+
+Read on Anthropic's documentation on 2026-11-24 ([Define tools](https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools), [Thinking](https://platform.claude.com/docs/en/build-with-claude/thinking), [Structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs), [Tool use overview](https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview)):
+
+| Shape | Sonnet 5.5 | Haiku 5.5 | Opus 5.5 |
+|---|---|---|---|
+| `tool_choice` `any` / `tool` (forced tool use) | **400** | accepted (the forced call skips thinking) | **400** |
+| `tool_choice` `auto` / `none` | accepted | accepted | accepted |
+| Structured outputs, `output_config.format` (`json_schema`) | accepted | accepted | accepted |
+| `thinking` omitted / `adaptive` | adaptive (default) | adaptive (default) | adaptive (default) |
+| `thinking` `enabled` with `budget_tokens` | **400** | **400** | **400** |
+| `thinking` `disabled` | **400** (`between_tools` instead, effort ≤ high) | accepted at effort ≤ high | **400** |
+| `temperature`, `top_p`, `top_k` | **400** | **400** | **400** |
+| Prefilled final assistant turn | **400** | **400** | **400** |
+
+Schemas for structured outputs: `additionalProperties: false` on every object; no numerical, string-length or array-length constraints beyond `minItems` 0 or 1 (a 400). The old top-level `output_format` is deprecated. Thinking counts toward `max_tokens`. A `refusal` stop reason may not match the schema.
+
+What changed: the record answerer (`src/lib/ai/record/claude.ts`) asked every mode's model, Sonnet 5.5, for a forced tool call, a 400 on every request. It now asks for a structured output against a schema with no forbidden keyword (lengths and counts are checked after, by zod), with no tools, `max_tokens` 8,192 (room for thinking), a `refusal` stop as a refusal and a `max_tokens` stop as a provider error. The document helpers keep forced tool use on Haiku 5.5 (their default, which accepts it) and use `tool_choice: auto` with an instruction, and one retry, on a model that rejects it (Sonnet 5.5, the OCR retry). `src/lib/ai/modelCapabilities.ts` holds the table; `models.ts` accepts only a model in it; `src/lib/ai/claudeContract.test.ts` builds every request through the SDK (a recording fetch; no mock answerer, no network) for every mode, helper and allowed model, and fails on any shape above that the model rejects. Not yet confirmed by a real call (no credit).
