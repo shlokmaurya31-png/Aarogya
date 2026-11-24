@@ -82,8 +82,9 @@ async function main() {
     return u;
   };
   // Pharmacy text a doctor reads (PHARMACY) and a nurse doesn't, in an organisation-wide document every Pune and Noida doctor reads.
-  const insulin = await publish(admin, superintendent, "Insulin storage gate", `# Insulin storage\n\nStore unopened insulin pens at 2 to 8 °C. ${canary("pharm")}.\n`, { accessClass: "PHARMACY", scope: "ORGANIZATION" });
-  await publish(otherAdmin, otherSuper, "Insulin storage other", `# Insulin storage\n\nStore unopened insulin pens at 2 to 8 °C. ${canary("other")}.\n`, { accessClass: "PHARMACY" });
+  // It states the question's own words, so it is found on a fresh database as on a full one (no other document needed).
+  const insulin = await publish(admin, superintendent, "Insulin storage gate", `# Insulin storage\n\nHow should unopened insulin pens be stored? Store unopened insulin pens at 2 to 8 °C. ${canary("pharm")}.\n`, { accessClass: "PHARMACY", scope: "ORGANIZATION" });
+  await publish(otherAdmin, otherSuper, "Insulin storage other", `# Insulin storage\n\nHow should unopened insulin pens be stored? Store unopened insulin pens at 2 to 8 °C. ${canary("other")}.\n`, { accessClass: "PHARMACY" });
   // A patient whose doctor asks a chart question.
   const reg = await registerPatientAccount({ facilityId: PUNE, fullName: `Cache Gate ${tag}`, email: `cg-pt-${tag}@verify.aarogya`, passwordHash: "x", sex: "F", dob: new Date("1980-01-01") });
   if (reg.status !== "LINKED_NEW") throw new Error("fixture patient");
