@@ -142,7 +142,7 @@ async function main() {
   type Mutation = "dose" | "unit" | "medicine";
   const mutate = (text: string, m: Mutation): string | null => {
     if (m === "dose") { const x = /(\d+(?:\.\d+)?)(\s*(?:mg|mcg|g\/dL|mg\/dL|mEq\/L|mmol\/L|%|ng\/mL|µIU\/mL|mmHg|\/min))/.exec(text); return x ? text.replace(x[0], `${Number(x[1]) * 2 + 1}${x[2]}`) : null; }
-    if (m === "unit") { const x = new RegExp(`(\\d)\\s*(${Object.keys(UNIT_SWAP).map((u) => u.replace(/[/%]/g, "\\$&")).join("|")})(?![\\p{L}])`, "u").exec(text); return x ? text.replace(x[0], `${x[1]} ${UNIT_SWAP[x[2]]}`) : null; }
+    if (m === "unit") { const x = new RegExp(`(\\d)\\s*(${Object.keys(UNIT_SWAP).sort((a, b) => b.length - a.length).join("|")})(?![\\p{L}])`, "u").exec(text); return x ? text.replace(x[0], `${x[1]} ${UNIT_SWAP[x[2]]}`) : null; }
     const name = Object.keys(RENAME).find((n) => text.includes(n));
     return name ? text.replace(name, RENAME[name]) : null;
   };
