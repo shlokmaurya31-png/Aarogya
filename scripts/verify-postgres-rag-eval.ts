@@ -106,6 +106,14 @@ async function main() {
   const byReader = reader.filter((r) => r.result?.trace?.answeredByReader).length;
   report("Structured-lookup questions answered by a reader (no vector search): at least 95%", byReader >= Math.ceil(0.95 * reader.length), `${byReader}/${reader.length}`);
 
+  // RAG Phase 4 (plan §6.3): the token economy on the whole set.
+  const traced = run.results.filter((r) => r.result?.trace?.budget !== undefined);
+  const over = traced.filter((r) => r.result!.trace!.inputTokens! > r.result!.trace!.budget!);
+  report("Phase 4: no request over its budget (input tokens ≤ the mode's and model's maximum input)", traced.length > 0 && over.length === 0, `${traced.length} budgeted, ${over.length} over${over.length ? `: ${over.map((r) => r.id).join(", ")}` : ""}`);
+  const structuredOrOperational = run.results.filter((r) => ["READERS", "OPERATIONAL"].includes(QUESTIONS.questions.find((q) => q.id === r.id)?.group ?? ""));
+  const noModel = structuredOrOperational.filter((r) => r.result && (r.result.trace?.tier === 0 || (r.result.outcome === "NO_RECORD" && !r.result.trace?.inputTokens))).length;
+  report("Phase 4: structured and operational questions answered without a model (Tier 0, or no record before the model): at least 90%", noModel >= Math.ceil(0.9 * structuredOrOperational.length), `${noModel}/${structuredOrOperational.length}`);
+
   console.log(`\n${pass} passed, ${fail} failed.`);
   await prisma.$disconnect();
   process.exit(fail === 0 ? 0 : 1);

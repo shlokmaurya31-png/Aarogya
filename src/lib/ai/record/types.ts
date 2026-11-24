@@ -29,6 +29,12 @@ export interface AnswerRequest {
   /** VISIT_BRIEF / PREVISIT_QUESTIONS: the visit's reason, when known. */
   visitReason?: string;
   sources: RecordSource[];
+  /**
+   * RAG Phase 4, step 4.6: the screen's compact context (recent turns and a
+   * short summary), masked like the question. Shapes the wording only: never
+   * a source, never cited, and a number only in it fails validation.
+   */
+  conversation?: string;
 }
 
 /**

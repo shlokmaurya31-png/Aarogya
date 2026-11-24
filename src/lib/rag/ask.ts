@@ -14,6 +14,10 @@ import { scopeSql } from "./search";
 import { Prisma } from "@prisma/client";
 import { logInteraction, logRateLimited } from "./interactions";
 import { randomUUID } from "node:crypto";
+import { BudgetError, planBudget } from "./budget";
+import { tokenEconomy } from "./economy";
+import { prepareSources, systemPromptFor, usageOf, type Prepared } from "./prepare";
+import { estimateCostMicroUsd, priceTable } from "./prices";
 
 /**
  * Week 4b — one AI request, end to end (docs/RAG_DESIGN.md §8–§9):
@@ -36,6 +40,23 @@ export interface AskRequest {
   question?: string;
   period?: { from?: string; to?: string };
   language?: string;
+  /** RAG Phase 4, step 4.6: the screen's compact context (docs/RAG_ARCHITECTURE.md §11.4). Wording only. */
+  context?: CompactContext;
+}
+
+/** Recent turns and a short summary, kept by the screen (no server-side conversation). */
+export interface CompactContext { summary?: string; turns?: { question: string; answer: string }[] }
+
+/** The compact context as one text, or null; refuses anything but a few short strings (the budget then counts it). */
+export function compactContextText(ctx: unknown): string | null {
+  if (ctx == null) return null;
+  const c = ctx as CompactContext;
+  const turns = c.turns ?? [];
+  const short = (x: unknown, n: number) => typeof x === "string" && x.length <= n;
+  if (typeof ctx !== "object" || !Array.isArray(turns) || turns.length > 4 || (c.summary !== undefined && !short(c.summary, 1000))
+    || turns.some((t) => !t || !short(t.question, 600) || !short(t.answer, 1200))) throw new AskError(400, "CONTEXT_INVALID");
+  const text = [c.summary ? `Summary: ${c.summary.trim()}` : "", ...turns.map((t) => `Q: ${t.question.trim()}\nA: ${t.answer.trim()}`)].filter(Boolean).join("\n");
+  return text || null;
 }
 
 export type Outcome = "ANSWERED" | "NO_RECORD" | "REFUSED_SAFETY" | "CITATION_INVALID" | "RATE_LIMITED" | "ERROR";
@@ -48,7 +69,7 @@ export interface Citation {
 export interface OutSentence { text: string; citations: number[]; labels: Label[]; kind: "FACT" | "GUIDANCE" }
 export interface AskMeta { interactionId: string; mode: AiMode; label: string; language: string }
 /** RAG Phase 3: how the question was routed (for the interaction's accounting and the evaluation; no text). */
-export interface AskTrace { intent: string; readers: string[]; confidence: string; answeredByReader: boolean }
+export interface AskTrace { intent: string; readers: string[]; confidence: string; answeredByReader: boolean; tier?: number; iterations?: number; inputTokens?: number; budget?: number; dropped?: number }
 export interface AskResult { meta: AskMeta; sentences: OutSentence[]; citations: Citation[]; outcome: Outcome; trace?: AskTrace }
 
 export class AskError extends Error {
@@ -178,6 +199,9 @@ async function run(actor: AiActor, req: AskRequest, hooks: AskHooks, started: nu
   if (req.mode === "CHART_QA" && !req.question) throw new AskError(400, "QUESTION_REQUIRED");
   if (req.mode === "EXPLAIN_REPORT" && !req.documentId) throw new AskError(400, "DOCUMENT_REQUIRED");
   if (req.question && req.mode !== "CHART_QA" && req.mode !== "EXPLAIN_REPORT") throw new AskError(400, "QUESTION_NOT_ALLOWED");
+  // RAG Phase 4, step 4.6: the compact context, only where there is a question to word. Access runs again on every turn (above).
+  const conversationRaw = compactContextText(req.context);
+  if (conversationRaw && !req.question) throw new AskError(400, "CONTEXT_NOT_ALLOWED");
   // Week 4c: a staff request that reaches the person's data (a share, or their uploads through the treating hospital) is in their access log.
   if (actor.kind === "STAFF") {
     const personId = access.share?.personId ?? (access.scope.segments.some((g) => g.personId) ? access.subject.personId : null);
@@ -189,9 +213,24 @@ async function run(actor: AiActor, req: AskRequest, hooks: AskHooks, started: nu
     }
   }
   const language = req.language && /^[a-z]{2}$/.test(req.language) ? req.language : spec.audience === "PATIENT" ? (await preferredLanguage(access)) : "en";
+  // Minimum necessary: no name, UHID, phone or ABHA number reaches the provider (§9.7) — in the sources, the question, or the context.
+  const ids = await subjectIdentifiers(access);
+  const askedText = req.question ? mask(req.question, ids) : undefined;
+  const conversation = conversationRaw ? mask(conversationRaw, ids) : null;
+  const orgId = access.callerOrganizationId ?? access.subject.organizationId ?? null;
+  const facId = access.callerFacilityId ?? access.subject.facilityId ?? null;
+  // RAG Phase 4, step 4.1: a question or context over its budget is refused before any retrieval, never truncated.
+  try {
+    await planBudget({ mode: req.mode, model: "mock-record-1", language, system: systemPromptFor({ mode: req.mode, language, conversation: conversation ?? undefined }), question: askedText, history: conversation, organizationId: orgId, facilityId: facId });
+  } catch (err) {
+    if (err instanceof BudgetError) throw new AskError(400, err.code);
+    throw err;
+  }
   const space = await prisma.ragEmbeddingSpace.findFirstOrThrow({ where: { status: "ACTIVE" } });
   const interactionId = randomUUID();
-  const base = { id: interactionId, actor, access, mode: req.mode, language, question: req.question ?? null, space: { model: space.embeddingModel, version: space.embeddingVersion }, started };
+  // The context is stored only where the question's text is (same encryption, same retention), never on its own.
+  const storedQuestion = req.question ? (conversationRaw ? `${req.question}\n\n[Earlier turns, from the screen]\n${conversationRaw}` : req.question) : null;
+  const base = { id: interactionId, actor, access, mode: req.mode, language, question: storedQuestion, space: { model: space.embeddingModel, version: space.embeddingVersion }, started };
   const m: AskMeta = { interactionId, mode: req.mode, label: ADVISORY_LABEL, language };
   // The label and the interaction id go first (§8.2), before any sentence.
   await hooks.onMeta?.(m);
@@ -199,21 +238,26 @@ async function run(actor: AiActor, req: AskRequest, hooks: AskHooks, started: nu
   // RAG Phase 1 accounting: how long retrieval and generation took, and which provider answered.
   const timing: { retrievalMs: number | null; generationMs: number | null; provider: string | null } = { retrievalMs: null, generationMs: null, provider: null };
   let retrieval: Awaited<ReturnType<typeof retrieve>> | null = null;
+  let prepared: Prepared | null = null;
   const finish = async (outcome: Outcome, sentences: OutSentence[], sources: Source[], extra: { topScore?: number | null; threshold?: number | null; model?: string; inputTokens?: number; outputTokens?: number; retrieved?: string[] } = {}): Promise<AskResult> => {
     const citedNs = new Set(sentences.flatMap((s) => s.citations));
     const cited = sources.filter((s) => citedNs.has(s.n));
+    // RAG Phase 4, step 4.5: the request's cost, from the dated price table; the mock is priced as the model it stands in for.
+    const tier = timing.provider ? 2 : 0;
+    const usage = retrieval?.usage ?? { embeddingTokens: 0, rerankUnits: 0, iterations: 0 };
+    const cost = estimateCostMicroUsd(await priceTable(orgId), { model: extra.model ?? "none", pricedAs: tier ? prepared?.model : undefined, inputTokens: extra.inputTokens ?? 0, outputTokens: extra.outputTokens ?? 0, embeddingModel: space.embeddingModel, embeddingTokens: usage.embeddingTokens, rerankUnits: usage.rerankUnits });
     await logInteraction({
       ...base, outcome, answerText: sentences.map((s) => s.text).join("\n"), retrievedChunkIds: extra.retrieved ?? sources.map((s) => s.chunkId), citedChunkIds: cited.map((s) => s.chunkId),
       topScore: extra.topScore ?? null, threshold: extra.threshold ?? null, model: extra.model ?? "none", inputTokens: extra.inputTokens ?? 0, outputTokens: extra.outputTokens ?? 0,
       // What the answer rested on: one row per source given to the model, cited or not; never text.
       sources: sources.map((s) => ({ rank: s.n, cited: citedNs.has(s.n), chunkId: s.chunkId, ragDocumentId: s.documentId ?? null, sourceType: s.sourceType, sourceId: s.sourceId, origin: s.origin, recordedAt: s.recordedAt })),
-      accounting: { module: hooks.module ?? "ASK", intent: retrieval?.plan ? `${req.mode}:${retrieval.plan.intent}` : req.mode, tier: timing.provider ? 2 : 0, provider: timing.provider, retrievalMs: timing.retrievalMs, generationMs: timing.generationMs },
+      accounting: { module: hooks.module ?? "ASK", intent: retrieval?.plan ? `${req.mode}:${retrieval.plan.intent}` : req.mode, tier, provider: timing.provider, retrievalMs: timing.retrievalMs, generationMs: timing.generationMs, embeddingTokens: usage.embeddingTokens, rerankUnits: usage.rerankUnits, cacheHits: 0, estimatedCostMicroUsd: cost },
     });
     // Staff answers already streamed what passed; everything else is released now, whole.
     if (spec.audience === "PATIENT" || (outcome !== "ANSWERED" && outcome !== "CITATION_INVALID")) for (const s of sentences) await hooks.onSentence?.(s);
     return {
       meta: m, sentences, outcome,
-      ...(retrieval?.plan ? { trace: { intent: retrieval.plan.intent, readers: retrieval.plan.readers, confidence: retrieval.plan.confidence, answeredByReader: retrieval.answeredByReader } } : {}),
+      ...(retrieval?.plan || prepared ? { trace: { intent: retrieval?.plan?.intent ?? req.mode, readers: retrieval?.plan?.readers ?? [], confidence: retrieval?.plan?.confidence ?? "NONE", answeredByReader: !!retrieval?.answeredByReader, tier, iterations: usage.iterations, inputTokens: extra.inputTokens ?? 0, ...(prepared ? { budget: prepared.budget.maxInput, dropped: prepared.dropped } : {}) } } : {}),
       citations: cited.map((s) => ({ n: s.n, chunkId: s.chunkId, sourceType: s.sourceType, sourceId: s.sourceId, origin: s.origin, translated: !!s.translation || language !== "en", handwritten: s.handwritten, recordedAt: s.recordedAt.toISOString(), title: s.context.replace(/^\[|\]$/g, ""), link: link(spec.audience, access.subject.patientId, s) })),
     };
   };
@@ -264,15 +308,38 @@ async function run(actor: AiActor, req: AskRequest, hooks: AskHooks, started: nu
     throw err;
   }
 
-  // Minimum necessary: no name, UHID, phone or ABHA number reaches the provider (§9.7).
-  const ids = await subjectIdentifiers(access);
-  const provided: RecordSource[] = sources.map((s) => ({ n: s.n, chunkId: s.chunkId, context: mask(s.context, ids), text: mask(s.text, ids), ...(s.translation ? { translation: { language: s.translation.language, text: mask(s.translation.text, ids) } } : {}) }));
+  const masked: (RecordSource & { documentId?: string; structured: boolean })[] = sources.map((s, i) => ({ n: s.n, chunkId: s.chunkId, context: mask(s.context, ids), text: mask(s.text, ids), ...(s.translation ? { translation: { language: s.translation.language, text: mask(s.translation.text, ids) } } : {}), ...(s.documentId ? { documentId: s.documentId } : {}), structured: !upload && i < (retrieval?.structured.length ?? 0) }));
+  const srcOf = new Map(sources.map((s) => [s.n, s]));
+
+  // RAG Phase 4, Tier 0: a staff lookup its readers answered in full is answered from their facts, one cited line each, with no model.
+  if (tokenEconomy() && retrieval?.answeredByReader && spec.audience === "STAFF" && language === "en" && !conversation) {
+    const facts = masked.filter((m) => m.structured);
+    const lines: OutSentence[] = facts.map((f) => ({ text: f.text.replace(/\s*\n\s*/g, "; "), citations: [f.n], kind: "FACT", labels: labelsFor([srcOf.get(f.n)!], language) }));
+    const byN0 = new Map(facts.map((f) => [f.n, { n: f.n, text: f.text, context: f.context } as SourceText]));
+    if (lines.length && lines.every((l) => checkSentence({ text: l.text, citations: l.citations, kind: "FACT" }, byN0).ok)) {
+      for (const l of lines) await hooks.onSentence?.(l);
+      return finish("ANSWERED", lines, sources, { topScore: retrieval.topScore, threshold: retrieval.threshold, model: "none", retrieved: sources.map((s) => s.chunkId) });
+    }
+  }
+
   let answer;
   const provider = getRecordAnswerProvider();
+  try {
+    prepared = await prepareSources({ mode: req.mode, language, question: askedText, conversation, providerId: provider.id, organizationId: orgId, facilityId: facId, sources: masked });
+  } catch (err) {
+    if (err instanceof BudgetError) {
+      // The structured facts alone don't fit: refused, never answered from a part of them.
+      await finish("ERROR", [], sources, { retrieved: sources.map((s) => s.chunkId) });
+      throw new AskError(400, err.code);
+    }
+    throw err;
+  }
+  const provided = prepared.provided;
+  const answerReq = { mode: req.mode, audience: spec.audience, language, question: askedText, sources: provided, ...(conversation ? { conversation } : {}) };
   timing.provider = provider.id;
   const g0 = Date.now();
   try {
-    answer = await provider.answerFromRecord({ mode: req.mode, audience: spec.audience, language, question: req.question, sources: provided }, access.permit);
+    answer = await provider.answerFromRecord(answerReq, access.permit);
     timing.generationMs = Date.now() - g0;
   } catch (err) {
     timing.generationMs = Date.now() - g0;
@@ -282,14 +349,16 @@ async function run(actor: AiActor, req: AskRequest, hooks: AskHooks, started: nu
     }
     throw err;
   }
-  const extra = { topScore: retrieval?.topScore ?? null, threshold: retrieval?.threshold ?? null, model: answer.model, inputTokens: answer.inputTokens, outputTokens: answer.outputTokens, retrieved: sources.map((s) => s.chunkId) };
+  const used = usageOf(answerReq, answer);
+  const extra = { topScore: retrieval?.topScore ?? null, threshold: retrieval?.threshold ?? null, model: answer.model, inputTokens: used.inputTokens, outputTokens: used.outputTokens, retrieved: sources.map((s) => s.chunkId) };
   if (answer.outcome !== "ANSWERED") {
     const line = answer.outcome === "NO_RECORD" ? guidance("noRecord") : guidance("askCareTeam");
     return finish(answer.outcome, [line], sources, extra);
   }
 
-  // Validate, sentence by sentence; label each.
-  const byN = new Map(provided.map((p) => [p.n, { n: p.n, text: p.text, context: p.context } as SourceText]));
+  // Validate, sentence by sentence, against the original sources the provider was given (never a compressed copy); label each.
+  const givenNs = new Set(provided.map((p) => p.n));
+  const byN = new Map([...prepared.originals.values()].filter((p) => givenNs.has(p.n)).map((p) => [p.n, { n: p.n, text: p.text, context: p.context } as SourceText]));
   const srcByN = new Map(sources.map((s) => [s.n, s]));
   const released: OutSentence[] = [];
   const out: OutSentence[] = upload ? [guidance("unconfirmed")] : [];

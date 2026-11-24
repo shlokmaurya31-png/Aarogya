@@ -31,6 +31,12 @@ const BODY = z.object({
   question: z.string().trim().min(1).max(1000).optional(),
   period: z.object({ from: z.string().date().optional(), to: z.string().date().optional() }).strict().optional(),
   language: z.string().regex(/^[a-z]{2}$/).optional(),
+  // RAG Phase 4, step 4.6: the screen's compact context (a short summary and up to four recent turns). Wording only;
+  // the budget then counts it and refuses it over its cap (docs/RAG_ARCHITECTURE.md §11.4).
+  context: z.object({
+    summary: z.string().max(1000).optional(),
+    turns: z.array(z.object({ question: z.string().max(600), answer: z.string().max(1200) }).strict()).max(4).optional(),
+  }).strict().optional(),
 }).strict();
 
 function errorResponse(err: unknown): NextResponse {

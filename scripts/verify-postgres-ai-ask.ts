@@ -107,6 +107,12 @@ const cool = (userId: string) => prisma.$executeRaw`UPDATE "AiInteraction" SET "
 const refusedWith = async (p: Promise<unknown>, status: number) => p.then(() => false, (e) => e instanceof AskError && e.status === status);
 
 const gateStarted = new Date();
+/**
+ * RAG Phase 4: a lookup its readers answer in full ("What was the hemoglobin?") is answered at Tier 0, without the
+ * provider. The checks of the provider's path ask a question that also needs the note, so the provider answers it;
+ * the hemoglobin reader's fact is still its source [1] (structured facts first).
+ */
+const MODEL_Q = "What was the hemoglobin, and what does the progress note say about it?";
 
 async function main() {
   registerAllConsumers();
@@ -137,7 +143,7 @@ async function main() {
 
   // 1. Chart Q&A by the treating doctor.
   const streamed: string[] = [];
-  const qa = await askAi(doctor.actor, { mode: "CHART_QA", patientId: P.patientId, question: "What was the hemoglobin?" }, { onMeta: () => { streamed.push("meta"); }, onSentence: () => { streamed.push("sentence"); } });
+  const qa = await askAi(doctor.actor, { mode: "CHART_QA", patientId: P.patientId, question: MODEL_Q }, { onMeta: () => { streamed.push("meta"); }, onSentence: () => { streamed.push("sentence"); } });
   report("Chart Q&A: ANSWERED, the AI-generated label, the hemoglobin value cited", qa.outcome === "ANSWERED" && qa.meta.label === ADVISORY_LABEL && qa.sentences.some((s) => s.text.includes("11.2 g/dL") && s.citations.length > 0));
   report("…every factual line cites retrieved sources and is labelled verified; citations link into the record",
     qa.sentences.every((s) => s.kind !== "FACT" || (s.citations.length > 0 && s.labels.includes("verified"))) && qa.citations.every((c) => c.origin === "VERIFIED" && c.link.startsWith("/hospital-os/doctor/patients/")));
@@ -145,8 +151,19 @@ async function main() {
   const row = await prisma.aiInteraction.findUniqueOrThrow({ where: { id: qa.meta.interactionId } });
   report("The interaction: metadata (mode, path ids, scores, cited ⊆ retrieved, model, space), staff text encrypted for at most 90 days",
     row.outcome === "ANSWERED" && row.mode === "CHART_QA" && row.facilityId === PUNE && row.citedChunkIds.every((id) => row.retrievedChunkIds.includes(id)) && row.model === "mock-record-1" && !!row.embeddingModel
-      && row.textScope === "STAFF_SAFETY" && !!row.questionCiphertext && !row.questionCiphertext.includes("hemoglobin") && decryptText(row.questionCiphertext, row.keyVersion!) === "What was the hemoglobin?"
+      && row.textScope === "STAFF_SAFETY" && !!row.questionCiphertext && !row.questionCiphertext.includes("hemoglobin") && decryptText(row.questionCiphertext, row.keyVersion!) === MODEL_Q
       && row.textExpiresAt!.getTime() - row.createdAt.getTime() <= 90 * 86_400_000);
+
+  // RAG Phase 4, Tier 0: the same lookup, answered by its reader's fact, with no provider call.
+  const sentBefore = rec.sent.length;
+  const t0 = await ask(doctor.actor, { mode: "CHART_QA", question: "What was the hemoglobin?" });
+  const t0Row = await prisma.aiInteraction.findUniqueOrThrow({ where: { id: t0.meta.interactionId } });
+  report("Tier 0: a lookup its reader answers in full is answered from the reader's fact, cited and labelled, with no provider call",
+    t0.outcome === "ANSWERED" && rec.sent.length === sentBefore && t0.sentences.some((s) => s.text.includes("11.2 g/dL") && s.citations.length === 1 && s.labels.includes("verified"))
+      && t0Row.tier === 0 && t0Row.model === "none" && t0Row.inputTokens === 0 && t0Row.outputTokens === 0 && t0Row.embeddingTokens === 0, `tier ${t0Row.tier}, model ${t0Row.model}`);
+  const qaAcc = await prisma.aiInteraction.findUniqueOrThrow({ where: { id: qa.meta.interactionId } });
+  report("Accounting: the provider's request records tokens, the query embedding, the tier, and an estimated cost (never zero for work done)",
+    qaAcc.tier === 2 && qaAcc.inputTokens > 0 && qaAcc.outputTokens > 0 && qaAcc.embeddingTokens > 0 && qaAcc.estimatedCostMicroUsd > 0 && qaAcc.retrievalMs !== null, `in ${qaAcc.inputTokens}, out ${qaAcc.outputTokens}, emb ${qaAcc.embeddingTokens}, cost ${qaAcc.estimatedCostMicroUsd}`);
 
   // 2. Modes per role and path.
   report("The doctor's visit brief: answered, with the allergy and live medicine in it", await ask(doctor.actor, { mode: "VISIT_BRIEF" }).then((r) => r.outcome === "ANSWERED" && r.sentences.some((s) => s.text.includes("Penicillin")) && r.sentences.some((s) => s.text.includes("Amoxicillin"))));
@@ -185,21 +202,50 @@ async function main() {
   // 5. Invalid citations and numbers.
   const liar = (sentences: AnswerRequest extends never ? never : { text: string; citations: number[]; kind: "FACT" | "GUIDANCE" }[]): RecordAnswerProvider => ({ id: "mock", async answerFromRecord() { return { outcome: "ANSWERED", sentences, model: "liar", inputTokens: 0, outputTokens: 0 }; } });
   setRecordAnswerProviderForTest(liar([{ text: "Hemoglobin was 11.2 g/dL.", citations: [1], kind: "FACT" }, { text: "Hemoglobin was 12.4 g/dL.", citations: [1], kind: "FACT" }, { text: "It improved.", citations: [1], kind: "FACT" }]));
-  const staffBad = await ask(doctor.actor, { mode: "CHART_QA", question: "What was the hemoglobin?" });
+  const staffBad = await ask(doctor.actor, { mode: "CHART_QA", question: MODEL_Q });
   report("A number not in the cited source stops a staff answer there (CITATION_INVALID; the valid line before it stands)", staffBad.outcome === "CITATION_INVALID" && staffBad.sentences.length === 1 && staffBad.sentences[0].text === "Hemoglobin was 11.2 g/dL.");
   setRecordAnswerProviderForTest(liar([{ text: "Hemoglobin was 11.2 g/dL.", citations: [1], kind: "FACT" }, { text: "Your report is normal.", citations: [], kind: "FACT" }]));
   const patientBad = await ask(P.actor, { mode: "EXPLAIN_REPORT", documentId: hb.id });
   report("An uncited fact withholds a patient answer whole", patientBad.outcome === "CITATION_INVALID" && patientBad.sentences.length === 0);
   setRecordAnswerProviderForTest(liar([{ text: "See [9].", citations: [9], kind: "FACT" }]));
-  report("A citation to a source that wasn't retrieved is invalid", (await ask(doctor.actor, { mode: "CHART_QA", question: "What was the hemoglobin?" })).outcome === "CITATION_INVALID");
+  report("A citation to a source that wasn't retrieved is invalid", (await ask(doctor.actor, { mode: "CHART_QA", question: MODEL_Q })).outcome === "CITATION_INVALID");
   setRecordAnswerProviderForTest({ id: "mock", async answerFromRecord() { throw new RecordAiUnavailableError("PROVIDER_UNAVAILABLE"); } });
-  const down = await ask(doctor.actor, { mode: "CHART_QA", question: "What was the hemoglobin?" }).then(() => null, (e) => e);
+  const down = await ask(doctor.actor, { mode: "CHART_QA", question: MODEL_Q }).then(() => null, (e) => e);
   report("The provider down: 503 (never the mock), the interaction recorded as ERROR", down instanceof AskError && down.status === 503 && (await prisma.aiInteraction.findFirst({ where: { userId: doctor.userId, outcome: "ERROR" } })) !== null);
   setRecordAnswerProviderForTest(rec.p);
 
   // 6. Identifiers never reach the provider.
   const prompts = JSON.stringify(rec.sent);
   report("No name, UHID or phone in anything sent to the provider (masked)", !prompts.includes(`Anjali Deshmukh ${tag}`) && !prompts.includes(uhid.uhid) && !prompts.includes(uhid.phone!) && prompts.includes("[redacted]"));
+
+  // RAG Phase 4, step 4.6 — the compact context (§11.4).
+  {
+    const other = await patient(`Ravi Kulkarni ${tag}`);
+    const otherUhid = (await prisma.patient.findUniqueOrThrow({ where: { id: other.patientId }, select: { uhid: true } })).uhid;
+    const turns = [{ question: "Any recent labs?", answer: "Hemoglobin was checked." }];
+    report("K1: a context of more than four turns is refused (400)", await refusedWith(ask(doctor.actor, { mode: "CHART_QA", question: MODEL_Q, context: { turns: Array.from({ length: 5 }, () => turns[0]) } }), 400));
+    report("K1: a context over its token cap is refused, never truncated (400 CONTEXT_TOO_LONG)", await ask(doctor.actor, { mode: "CHART_QA", question: MODEL_Q, context: { turns: Array.from({ length: 4 }, () => ({ question: "What did we decide about the anaemia work-up?", answer: "We went over the anaemia work-up, the iron studies and the follow-up plan in detail. ".repeat(12) })) } }).then(() => "", (e) => (e instanceof AskError ? `${e.status} ${e.code}` : String(e))) === "400 CONTEXT_TOO_LONG");
+    report("K1: a context without a question is refused (400)", await refusedWith(ask(doctor.actor, { mode: "VISIT_BRIEF", context: { turns } }), 400));
+    rec.sent.length = 0;
+    const base = await ask(doctor.actor, { mode: "CHART_QA", question: MODEL_Q });
+    const withCtx = await ask(doctor.actor, { mode: "CHART_QA", question: MODEL_Q, context: { summary: `Earlier: Anjali Deshmukh ${tag} (phone ${uhid.phone}) and also ${`Ravi Kulkarni ${tag}`}, UHID ${otherUhid}; her hemoglobin was 9.1 g/dL.`, turns } });
+    const sent = rec.sent[rec.sent.length - 1];
+    report("K2: the context reaches the provider as earlier turns, masked like the question (no name or phone of the patient)", !!sent?.conversation && sent.conversation.includes("[redacted]") && !sent.conversation.includes(`Anjali Deshmukh ${tag}`) && !sent.conversation.includes(uhid.phone!));
+    report("K2: the context is never a source: no source the provider receives carries its text", !!sent && !JSON.stringify(sent.sources).includes("9.1 g/dL") && !JSON.stringify(sent.sources).includes("Kulkarni"));
+    const [b, c] = [await prisma.aiInteraction.findUniqueOrThrow({ where: { id: base.meta.interactionId } }), await prisma.aiInteraction.findUniqueOrThrow({ where: { id: withCtx.meta.interactionId } })];
+    report("K4: it never widens the scope: naming another patient retrieves exactly what the question alone retrieves, none of the other patient's record",
+      JSON.stringify([...c.retrievedChunkIds].sort()) === JSON.stringify([...b.retrievedChunkIds].sort()) && c.patientId === P.patientId
+        && (await prisma.ragChunk.count({ where: { id: { in: c.retrievedChunkIds }, patientId: other.patientId } })) === 0);
+    report("K5: stored only where the question's text is (encrypted with it), and nowhere else on the row",
+      !!c.questionCiphertext && decryptText(c.questionCiphertext, c.keyVersion!).includes("9.1 g/dL") && !JSON.stringify({ ...c, questionCiphertext: null, answerCiphertext: null }).includes("9.1"));
+    // A number only in the context fails validation.
+    setRecordAnswerProviderForTest(liar([{ text: "Her hemoglobin was 9.1 g/dL.", citations: [1], kind: "FACT" }]));
+    const fromCtx = await ask(doctor.actor, { mode: "CHART_QA", question: MODEL_Q, context: { summary: "her hemoglobin was 9.1 g/dL" } });
+    setRecordAnswerProviderForTest(rec.p);
+    report("K3: nothing in the context passes validation as a fact (a number only in it: CITATION_INVALID)", fromCtx.outcome === "CITATION_INVALID" && !fromCtx.sentences.some((s) => s.text.includes("9.1")));
+    const unassigned = await staff("NURSE");
+    report("K6: every turn re-runs access: an unassigned nurse with a context naming the patient is still refused (404)", await refusedWith(ask(unassigned.actor, { mode: "CHART_QA", question: "allergies?", context: { summary: `We were discussing Anjali Deshmukh ${tag}.` } }), 404));
+  }
 
   // 7. Patient-provided lines are labelled; nothing was written to the record.
   await decidePersonConsent({ userId: P.userId, purpose: "SHARE_UPLOADS_WITH_TREATING", decision: "GRANTED" });
@@ -229,7 +275,7 @@ async function main() {
       && (await prisma.auditEvent.count({ where: { type: "ai.interaction.text_read", userId: advisor.id } })) >= 1
       && (await monthlyReviewReport({ role: "SAFETY_OFFICER" }, new Date().toISOString().slice(0, 7))).reads.some((r) => r.ticketRef === `QA-${tag}`));
   report("Staff text is readable by a reviewer; a doctor can read none; a read without a ticket is refused",
-    (await readInteractionText({ interactionId: qa.meta.interactionId, reader: { userId: advisor.id, role: "SAFETY_OFFICER" }, reasonCode: "SAFETY_INCIDENT", ticketRef: "SI-77" })).question === "What was the hemoglobin?"
+    (await readInteractionText({ interactionId: qa.meta.interactionId, reader: { userId: advisor.id, role: "SAFETY_OFFICER" }, reasonCode: "SAFETY_INCIDENT", ticketRef: "SI-77" })).question === MODEL_Q
       && await readInteractionText({ interactionId: qa.meta.interactionId, reader: { userId: doctor.userId, role: "DOCTOR" }, reasonCode: "SAFETY_INCIDENT", ticketRef: "SI-77" }).then(() => false, () => true)
       && await readInteractionText({ interactionId: qa.meta.interactionId, reader: { userId: advisor.id, role: "SAFETY_OFFICER" }, reasonCode: "SAFETY_INCIDENT", ticketRef: " " }).then(() => false, () => true));
   await purgeExpiredAiInteractions({ now: new Date(Date.now() + 91 * 86_400_000) });
