@@ -23,7 +23,7 @@ async function uploadFile(page: Page, name: string, text: string, title?: string
   await form.getByRole("button", { name: "Upload", exact: true }).click();
 }
 
-test("knowledge documents: upload, approve by a second person, supersede; identifiers refused; axe on both screens", async ({ browser }) => {
+test("knowledge documents: upload, approve by a second person, supersede; identifiers refused; axe on both screens and on AI usage", async ({ browser }) => {
   test.setTimeout(180_000);
   const f = fixture();
   const title = `Oxygen cylinder SOP ${f.tag}`;
@@ -71,6 +71,15 @@ test("knowledge documents: upload, approve by a second person, supersede; identi
   await expect(supDoc.getByRole("row", { name: `Version 2 of ${title}` }).getByText("Published")).toBeVisible();
   await expect(supDoc.getByRole("row", { name: `Version 1 of ${title}` }).getByText("Superseded")).toBeVisible();
   await axe(sup, "superintendent, superseded");
+
+  // RAG Phase 4, step 4.5: the facility administrator's AI usage report — totals and a table, no patient data, axe clean.
+  await admin.goto("/hospital-os/ai-usage");
+  await expect(admin.getByRole("heading", { name: "AI usage" })).toBeVisible();
+  await expect(admin.getByText("Estimated cost").first()).toBeVisible({ timeout: 30_000 });
+  await admin.getByLabel("Group by").selectOption("requestType");
+  await admin.getByRole("button", { name: "Show" }).click();
+  await expect(admin.getByRole("table")).toBeVisible();
+  await axe(admin, "administrator, AI usage");
 
   await adminCtx.close();
   await superCtx.close();

@@ -484,6 +484,10 @@ export const PERMISSIONS = [
   "ai:interaction:review",
   "ai:interaction:text:read",
   "ai:embedding:manage",
+  // RAG Phase 4, step 4.5 — the AI usage report (tokens, estimated cost, cache
+  // hits, latency; metadata only). Hospital administrators; the membership then
+  // decides the organisation or facility (src/lib/rag/usage.ts).
+  "ai:usage:read",
   // Week 5a — the doctor network: the platform team verifies doctors against
   // the medical register (and suspends them). Platform admin only; never a
   // facility admin.
@@ -872,6 +876,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlyArray<Permission>> = {
     "ai:knowledge:ask",
     // RAG Phase 2 — uploads, supersedes and withdraws knowledge documents; never approves them.
     "knowledge:manage",
+    "ai:usage:read",
     // Flagship 2, step 5 — the facility's ward devices and charge nurses.
     "nursing:offline:manage",
     // Flagship 2, step 6 — the legacy import, behind the hospital admin role.

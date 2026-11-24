@@ -327,6 +327,39 @@ None.
 
 The 25% is a target set before measuring. If the baseline shows less room than that, the pull request says so with the numbers, and the threshold is set from them. It is not met by weakening a quality measure.
 
+### 6.4 As built (2026-11-24)
+
+| # | Step | As built |
+|---|---|---|
+| 4.1 | Budget | `src/lib/rag/budget.ts`: per mode (query, compact context and source caps; the source cap lowerable per organisation or facility, `ai.budget.<mode>.context_tokens`) and per model (context window, token family), before the call. The system prompt and the answer tool's schema are measured from the prompt itself (`prepare.ts`). A question or context over its cap: 400 before retrieval. Structured facts that don't fit: 400 `STRUCTURED_FACTS_DO_NOT_FIT`, logged ERROR, no provider call. Below that, the lowest-ranked passages are dropped. |
+| 4.2 | Compression, level 1 | `src/lib/rag/compress.ts`, on the provider's copy only; the validator checks the originals. Whitespace; repeated header and footer lines that carry no critical fact; a date the text already states, dropped from the context line (the title stays: the answerer pairs a patient-provided value with the verified one by it, measured). `criticalFacts` covers numbers, units, dates, medicines and allergens, routes, frequencies, allergy and contraindication words, abnormal findings, negations (11 languages), uncertainty and source numbers. Property test (`compress.test.ts`: rendered sources, the knowledge fixture, 400 generated passages) and `verify-postgres-ai-budget` B4 over every indexed chunk in the database (51,435 chunks, nothing lost). |
+| — | Compression, level 2 | `src/lib/rag/semanticCompress.ts`: off (`ai.compression.semantic`); only for a passage that doesn't fit after level 1, only with the in-process mock (every provider PHI flag stays off), only if every critical fact survives; the original stays the citation and the validator's text. |
+| — | Tier 0 | A staff lookup its readers answer in full (English, no compact context) is answered from the readers' facts, one cited line each, validated, with no model: tier 0, model `none`. |
+| — | Adaptive retrieval | `retrieve.ts`: a near miss (best score below the threshold but within 0.1 of it, no candidate with every term, no reader's fact, a full candidate pool) is retried over a wider pool (2×, never a wider scope), up to `ai.retrieval.max_iterations`; the better pass is kept, the query embedded once. **Default 1 (one pass)**: measured on the mock reranker, a second pass changed no evaluation answer and raised the whole-retrieval p95 from 119 to 184 ms (a broader trigger, to 220 ms). Turned on per organisation once a real reranker shows a gain. `verify-postgres-ai-budget` B6: never past the limit, never outside the scope. |
+| 4.3 | Estimator calibration | `src/lib/rag/tokens.ts`: per provider family (`anthropic`, `voyage`, `mock-hash`) and per script; `calibrate()` takes (text, reported) pairs. With mocks, the fixed reference table `tokenReference.ts` (7–8 texts per language, a byte-level proxy, **not provider counts**): within 15% on the held-out half for all eleven languages (`tokens.test.ts`). |
+| 4.4 | Caches | The query embedding (knowledge, by content hash: existing) now counted; a **knowledge retrieval cache** (`AiRetrievalCache`, `retrievalCache.ts`) keyed by organisation, facility, user, role, access classes, the versions in force, space, counts and the normalised question; ids and scores only, ten minutes, re-read through the scope SQL on a hit. None for patient or person data. `verify-postgres-ai-cache` (17). |
+| 4.5 | Accounting and usage | `AiInteraction` now records embedding tokens, rerank units, cache hits and the estimated cost (`prices.ts`, dated, unconfirmed; the mock priced as the model it stands in for; its tokens are the estimate of the exact prompt). `GET /api/ai/usage` and `/hospital-os/ai-usage` (`ai:usage:read`, hospital administrators; the organisation's administrator by facility, role, module, model, request type; per user for the facility's own administrator only). `verify-postgres-ai-usage` (17: roles, scope, per-user, totals reconcile, no patient data); axe in `e2e/knowledge.spec.ts`. |
+| 4.6 | Compact context | `context` on `/api/ai/ask` (≤ 4 turns, 300 tokens; questions only); masked like the question (the question now is masked too); `<earlier_turns>` in the prompt, never a source; never retrieval's input; stored inside the question's ciphertext. `verify-postgres-ai-ask` K1–K6. |
+
+**Migration.** §6.2 said none; one was needed, additive: `20261124100000_ai_retrieval_cache` (a new table, CHECKs on the key and the row's shape). No existing row is touched.
+
+**Thresholds (§6.3), measured** (`npm run bench:rag:tokens`, the 230 questions, mock providers, economy off = Phase 3 against on, one fixture):
+
+| Mode | Median input tokens, answered, before → after | Est. cost per 1,000 queries (unconfirmed prices) |
+|---|---|---|
+| CHART_QA | 469 → 0 (−100%; 84 of 104 answered at Tier 0) | $2.08 → $0.93 |
+| KNOWLEDGE_QA | 897 → 897 (0%) | $2.96 → $2.96 |
+| VISIT_BRIEF | 1,197 → 1,145 (−4%) | $10.44 → $10.34 |
+| NURSE_HANDOFF | 1,265 → 1,207 (−5%) | $12.10 → $11.98 |
+| EXPLAIN_REPORT | 498 → 495 (−1%) | $1.17 → $1.17 |
+| HEALTH_TIMELINE | 978 → 944 (−3%) | $8.81 → $8.74 |
+| PREVISIT_QUESTIONS | 865 → 834 (−4%) | $4.61 → $4.40 |
+
+- **The 25% target is met for CHART_QA only.** The other modes' prompts are 35–45% fixed instructions and answer schema (350–460 tokens) that compression does not touch, and their sources are already compact one-line facts; the only further saving would drop content. The threshold for those modes is therefore set from the numbers: **no increase, and no quality drop** (measured: none), until a real model's usage shows otherwise. Prompt caching at the provider would cut their cost, not their tokens, and needs a longer cacheable prefix than these prompts have.
+- Quality: every question scored the same before and after, on both splits.
+- Structured and operational questions answered without a model: 31 of 32 (≥ 90%).
+- Requests over budget: 0 (`verify-postgres-rag-eval`). Cache rows for patient-mode questions: 0 (`verify-postgres-ai-cache`).
+
 ## 7. Phase 5: gateway and generation
 
 **Goal:** one path for every AI answer, with tiers and a provider policy.

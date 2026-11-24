@@ -53,12 +53,15 @@ export async function startServer(env: Record<string, string> = {}, opts: { buil
 }
 
 let loginCount = 0;
+// Each process its own address range: with a shared limiter store, a later gate (or a rerun) reusing 10.77.0.x would
+// inherit the earlier logins' per-IP counts.
+const ADDRESS_BLOCK = 20 + Math.floor(Math.random() * 200);
 /** Logs in and returns the session cookie. A distinct client address per login keeps the per-IP limit out of the way. */
 export async function loginAs(base: string, email: string, password: string): Promise<string> {
   loginCount++;
   const res = await fetch(base + "/api/scholar-auth/login", {
     method: "POST",
-    headers: { "content-type": "application/json", "x-forwarded-for": `10.77.${Math.floor(loginCount / 250)}.${loginCount % 250}` },
+    headers: { "content-type": "application/json", "x-forwarded-for": `10.${ADDRESS_BLOCK}.${Math.floor(loginCount / 250)}.${loginCount % 250}` },
     body: JSON.stringify({ email, password }),
   });
   const cookies = res.headers.getSetCookie().map((c) => c.split(";")[0]);

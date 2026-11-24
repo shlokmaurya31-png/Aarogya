@@ -40,6 +40,7 @@
     "eval:rag:real": "tsx scripts/eval-rag.ts --provider real",
     "eval:rag:indic": "tsx scripts/eval-rag-indic.ts",
     "eval:rag:sealed": "tsx scripts/eval-rag-sealed.ts",
+    "bench:rag:tokens": "tsx scripts/bench-rag-tokens.ts",
     "e2e:smoke": "tsx scripts/e2e-smoke.ts",
     "e2e": "tsx scripts/e2e-smoke.ts",
     "perf:seed": "tsx scripts/perf-gate.ts --fresh --seed-only",
