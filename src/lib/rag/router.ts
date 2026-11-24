@@ -1,4 +1,5 @@
 import { contentWords } from "@/lib/ai/record/mock";
+import { classesIn } from "./medicineClasses";
 
 /**
  * RAG Phase 3, step 3.2 — the intent router (docs/RAG_ARCHITECTURE.md §5.2).
@@ -27,7 +28,7 @@ export type RouteMode = "VISIT_BRIEF" | "CHART_QA" | "NURSE_HANDOFF" | "EXPLAIN_
 
 export interface RetrievalPlan {
   intent: Intent;
-  entities: { analyte?: string; vitals?: VitalKind[]; medicine?: string; period?: { from?: Date; to?: Date }; latest: boolean; trend: boolean };
+  entities: { analyte?: string; vitals?: VitalKind[]; medicine?: string; /** RAG Phase 5, step 3c: an ATC class or form the question names (medicineClasses.ts), when it names no medicine. */ medicineClass?: string; period?: { from?: Date; to?: Date }; latest: boolean; trend: boolean };
   readers: ReaderId[];
   semantic: boolean;
   keyword: boolean;
@@ -162,13 +163,14 @@ export function routeQuestion(question: string | undefined, mode: RouteMode, opt
   const allergy = anyOf(q, ALLERGY).length > 0;
   const words = contentWords(question);
   const medicine = opts.medicines ? words.find((w) => opts.medicines!.has(w)) : undefined;
-  const medicineWords = anyOf(q, MEDICINE).length > 0 || !!medicine;
+  const medicineClass = medicine ? undefined : classesIn(question)[0]?.id;
+  const medicineWords = anyOf(q, MEDICINE).length > 0 || !!medicine || !!medicineClass;
   const knowledge = anyOf(q, KNOWLEDGE).length > 0;
   const supply = anyOf(q, SUPPLY).length > 0;
   const operational = anyOf(q, OPERATIONAL).length > 0;
   const narrative = anyOf(q, NARRATIVE).length > 0;
   const risk: RetrievalPlan["risk"] = anyOf(q, HIGH_RISK).length ? "HIGH_RISK" : knowledge || operational ? "LOW" : "CLINICAL";
-  const entities: RetrievalPlan["entities"] = { ...(analyte ? { analyte } : {}), ...(vitals.length ? { vitals } : {}), ...(medicine ? { medicine } : {}), ...(period ? { period } : {}), latest, trend };
+  const entities: RetrievalPlan["entities"] = { ...(analyte ? { analyte } : {}), ...(vitals.length ? { vitals } : {}), ...(medicine ? { medicine } : {}), ...(medicineClass ? { medicineClass } : {}), ...(period ? { period } : {}), latest, trend };
   const base = { entities, risk, matched };
 
   // Structured readers the question asks for.

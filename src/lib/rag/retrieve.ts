@@ -22,6 +22,7 @@ import { nlemNames } from "@/lib/medicines/reference";
 import { canonicalMedicine, MEDICINE_VARIANTS } from "./medicineNames";
 import { LEXICON } from "./lexicon";
 import { subjectCovered } from "./abstain";
+import { lineInClass, MEDICINE_CLASSES } from "./medicineClasses";
 
 /**
  * Week 4b — retrieval (docs/RAG_DESIGN.md §7). Filters first, in SQL (the
@@ -155,11 +156,12 @@ async function planFor(access: AiAccess, question: string | undefined): Promise<
   return p.intent === "KNOWLEDGE" ? { ...p, intent: "NARRATIVE", semantic: true, keyword: true, readers: [] } : p;
 }
 
-/** The live facts a plan asked for: allergies; medicines (only the one named, if any). */
+/** The live facts a plan asked for: allergies; medicines (only the one named, or (RAG Phase 5) the named class's members, if any). */
 function askedLive(live: LiveFact[], plan: RetrievalPlan): LiveFact[] {
   const med = plan.entities.medicine ? medicineName(plan.entities.medicine) : undefined;
+  const cls = plan.entities.medicineClass ? MEDICINE_CLASSES.find((c) => c.id === plan.entities.medicineClass) : undefined;
   return live.filter((l) => (plan.readers.includes("ALLERGIES") && l.sourceType === "ALLERGY")
-    || (plan.readers.includes("MEDICINES") && (l.sourceType === "MEDICATION_ORDER" || l.sourceType === "MEDICATION_DOSE") && (!med || l.text.toLowerCase().includes(med))));
+    || (plan.readers.includes("MEDICINES") && (l.sourceType === "MEDICATION_ORDER" || l.sourceType === "MEDICATION_DOSE") && (med ? l.text.toLowerCase().includes(med) : cls ? lineInClass(l.text, cls) : true)));
 }
 const CHUNK_SELECT = { id: true, documentId: true, context: true, heading: true, text: true, origin: true, sourceType: true, sourceId: true, recordedAt: true, handwritten: true, translatedText: true, translationLanguage: true } as const;
 const toRow = (c: { id: string } & Omit<ChunkRow, "chunkId">): ChunkRow => ({ chunkId: c.id, documentId: c.documentId, context: c.context, heading: c.heading, text: c.text, origin: c.origin, sourceType: c.sourceType, sourceId: c.sourceId, recordedAt: c.recordedAt, handwritten: c.handwritten, translatedText: c.translatedText, translationLanguage: c.translationLanguage });

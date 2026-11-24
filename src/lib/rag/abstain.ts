@@ -3,6 +3,7 @@ import { ABBREVIATIONS } from "./abbreviations";
 import { conceptsIn } from "./lexicon";
 import { MEDICINE_VARIANTS, canonicalMedicine } from "./medicineNames";
 import { stem } from "./stem";
+import { classesIn } from "./medicineClasses";
 
 /**
  * RAG Phase 5, step 3b — "no record" before a wrong answer
@@ -62,6 +63,9 @@ export function subjectForms(word: string, question: string): string[] {
   for (const f of extraExpanders) for (const x of f(word, question)) out.add(x.toLowerCase().normalize("NFC"));
   return [...out];
 }
+
+// RAG Phase 5, step 3c: a class word's members ("statin" is covered by atorvastatin in the sources).
+registerSubjectExpander((word, question) => classesIn(question).filter((c) => Object.values(c.names).some((ns) => ns.some((n) => n.toLowerCase().split(/[\s-]+/).includes(word)))).flatMap((c) => c.members));
 
 const fold = (w: string) => stem(w.replace(/ae/g, "e").replace(/oe/g, "e"));
 
