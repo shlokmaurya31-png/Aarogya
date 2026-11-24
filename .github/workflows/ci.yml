@@ -262,6 +262,9 @@ jobs:
       # Migrates and seeds aarogya_e2e, builds a synthetic fixture, builds and
       # starts the app and the worker on the mock providers, runs e2e/*.spec.ts.
       - name: e2e:smoke
+        # The smoke builds the app itself: the same heap as the Test & Build job's build (RAG Phase 4 outgrew the default).
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: npm run e2e:smoke
 
       - name: Upload smoke report

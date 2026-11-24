@@ -363,7 +363,13 @@ async function main() {
     const texts = (await prisma.ragChunk.findMany({ where: { id: { in: chunkRows.map((x) => x.chunkId!) } }, select: { text: true } })).map((c) => c.text);
     const asJson = JSON.stringify(rows.flatMap((r) => r.sources));
     report("Attribution: no source row holds text", texts.length > 0 && texts.every((t) => !asJson.includes(t)));
-    report("Accounting: answered requests record module, provider, tier 2 and timings", rows.every((r) => r.module && r.provider === "mock" && r.tier === 2 && r.retrievalMs !== null && r.generationMs !== null));
+    // RAG Phase 4: an answer is either the provider's (tier 2, with its generation time) or the readers' (tier 0: no model, no provider).
+    const viaModel = rows.filter((r) => r.provider !== null), tier0 = rows.filter((r) => r.provider === null);
+    report("Accounting: answered requests record module, provider, tier 2 and timings (tier 0 ones: no model, no provider, no generation time)",
+      // (Which tier-0 rows fall in the window varies: cool() moves a user's rows back. The Tier 0 check above proves one exists.)
+      viaModel.length > 0 && rows.every((r) => r.module && r.retrievalMs !== null)
+        && viaModel.every((r) => r.provider === "mock" && r.tier === 2 && r.generationMs !== null)
+        && tier0.every((r) => r.tier === 0 && r.model === "none" && r.generationMs === null && r.inputTokens === 0), `${viaModel.length} via the model, ${tier0.length} at tier 0`);
     const noModel = await prisma.aiInteraction.findMany({ where: { createdAt: { gte: gateStarted }, outcome: { in: ["NO_RECORD", "REFUSED_SAFETY"] }, provider: null }, select: { tier: true } });
     report("Accounting: an answer given without a model is tier 0", noModel.length > 0 && noModel.every((r) => r.tier === 0));
   }
