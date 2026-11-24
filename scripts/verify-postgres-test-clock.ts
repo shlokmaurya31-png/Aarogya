@@ -16,7 +16,9 @@
  * detects the failure.
  */
 import "./lib/gateBootstrap";
+import { randomBytes } from "node:crypto";
 import { prisma } from "../src/lib/db";
+import { registerPatientAccount } from "../src/lib/patient/selfRegistration";
 import { appNow } from "../src/lib/time/clock";
 import { dayKey, facilityTimeZone } from "../src/lib/time/zone";
 import { listAppointments, nextAppointment } from "../src/lib/patient/experience/appointments";
@@ -46,7 +48,13 @@ async function cleanup() {
 }
 
 async function main() {
-  const link = await prisma.personPatientLink.findFirstOrThrow({ where: { status: "ACTIVE", patient: { facilityId: PUNE } }, select: { personId: true, patientId: true } });
+  // Its own synthetic patient (a fresh verify database has no linked one in Pune yet), as the e2e fixture makes one.
+  const tag = `${Date.now().toString(36)}${randomBytes(2).toString("hex")}`;
+  const reg = await registerPatientAccount({ facilityId: PUNE, fullName: `Clock Gate ${tag}`, email: `gate-test-clock-${tag}@verify.aarogya`, passwordHash: "x", sex: "F", dob: new Date("1990-01-01"), phone: `9${String(parseInt(randomBytes(4).toString("hex"), 16) % 1_000_000_000).padStart(9, "0")}` });
+  if (reg.status !== "LINKED_NEW") throw new Error(`gate patient: ${reg.status}`);
+  const personId = (await prisma.personAccount.findUniqueOrThrow({ where: { userId: reg.userId } })).personId;
+  await prisma.person.update({ where: { id: personId }, data: { dataClassification: "SYNTHETIC" } });
+  const link = await prisma.personPatientLink.findFirstOrThrow({ where: { personId, status: "ACTIVE" }, select: { personId: true, patientId: true } });
   const doctor = await prisma.hospitalStaffProfile.findFirstOrThrow({ where: { department: { facilityId: PUNE } }, select: { id: true } });
   const scope: PatientAccessScope = { patientId: link.patientId, patientIds: [link.patientId], facilityId: PUNE, isSelf: true, allowedClasses: new Set(["APPOINTMENTS"]) as PatientAccessScope["allowedClasses"] };
   const tz = await facilityTimeZone(prisma, PUNE);
