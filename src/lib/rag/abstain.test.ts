@@ -17,12 +17,16 @@ describe("subjectCovered", () => {
     expect(subjectCovered("What did the chest film show?", XRAY)).toBe(true);
     expect(subjectCovered("Has she had pneumonia?", DIAGNOSES)).toBe(true);
     expect(subjectCovered("Is she on albuterol?", ["Active medicine: Salbutamol inhaler 100 mcg inhalation SOS."])).toBe(true);
-    expect(subjectCovered("Anaemia tablets?", ["రక్తహీనత ఉన్నవారికి ఐరన్ మాత్రలు ఇవ్వండి."])).toBe(true);
   });
   it("doesn't apply without a salient Latin word (an Indic question, or only generic words)", () => {
     expect(subjectCovered("मरीज़ का ब्लड ग्रुप क्या है?", DIAGNOSES)).toBeNull();
     expect(subjectCovered("Latest results?", DIAGNOSES)).toBeNull();
     expect(salientTerms("What is the status of the latest report?")).toEqual([]);
+    // Evidence in an Indic script (a transliterated or cross-script knowledge question): the threshold rule alone.
+    expect(subjectCovered("dast hone par kya dein", ["दस्त होने पर हर पतले मल के बाद ओआरएस का घोल दें।"])).toBeNull();
+    expect(subjectCovered("What tablets are given for anaemia?", ["రక్తహీనత ఉన్నవారికి ఐరన్ మాత్రలు ఇవ్వండి."])).toBeNull();
+    // An English chart with one Hindi upload among its sources: the rule still applies.
+    expect(subjectCovered("HIV status?", [...DIAGNOSES, "क्रिएटिनिन 1.42 mg/dL"])).toBe(false);
   });
 });
 

@@ -22,10 +22,11 @@ import { synonymForms } from "./synonyms";
  * other names (abbreviations, medicine variants, the lexicon's concept names
  * in every script, the synonyms and the medicine classes), must appear in the
  * sources retrieval chose, or the answer is "no record" without asking the
- * model. A question whose readers answered it has its evidence already, and
- * a question in an Indic script keeps the threshold rule alone (its words
- * reach English sources through the lexicon, which this check also uses, but
- * not every inflection does; recorded as a decision).
+ * model. A question whose readers answered it has its evidence already; a
+ * question in an Indic script, and a question whose best evidence is in an
+ * Indic script (a transliterated or cross-script question over an Indic
+ * document, matched by skeletons and trigrams, which an exact word check
+ * can't follow), keep the threshold rule alone (recorded as a decision).
  */
 const GENERIC = new Set([
   "status", "finding", "findings", "result", "results", "resulted", "value", "values", "level", "levels", "report", "reports", "reported",
@@ -43,6 +44,8 @@ const GENERIC = new Set([
   "years", "hours", "hour", "minutes", "morning", "evening", "night", "shift", "ward", "bed", "hospital", "doctor", "nurse", "team", "care",
 ]);
 const LATIN_WORD = /^[a-z][a-z0-9'-]*$/;
+/** Letters of the Indic scripts the app supports (Devanagari to Malayalam) and Urdu's Arabic script. */
+const INDIC = /[\u0900-\u0D7F\u0600-\u06FF]/u;
 
 /** The salient words of a question: Latin content words that name a subject (not generic, not a number). */
 export function salientTerms(question: string): string[] {
@@ -76,13 +79,16 @@ const fold = (w: string) => stem(w.replace(/ae/g, "e").replace(/oe/g, "e"));
 /**
  * Whether the evidence mentions the question's subject. Null when the rule
  * doesn't apply (no salient Latin word: an Indic-script question, or one made
- * only of generic words); otherwise true when some salient word or one of its
+ * only of generic words; or the best evidence in an Indic script). `evidence`
+ * is in rank order, best first; otherwise true when some salient word or one of its
  * forms is in the evidence (a Latin form by its words' stems, anything else
  * as written).
  */
 export function subjectCovered(question: string, evidence: readonly string[]): boolean | null {
   const salient = salientTerms(question);
   if (!salient.length) return null;
+  // Ranked best first: when the best evidence is in an Indic script, the question reached it across scripts.
+  if (evidence.length && INDIC.test(evidence[0])) return null;
   const text = ` ${evidence.join("\n").toLowerCase().normalize("NFC").replace(/\s+/g, " ")} `;
   const stems = new Set(contentWords(text).map(fold));
   return salient.some((w) => subjectForms(w, question).some((f) => {
