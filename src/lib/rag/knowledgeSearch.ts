@@ -50,7 +50,10 @@ function scopeSql(s: KnowledgeScope, alias: "c", now: Date): Prisma.Sql {
 /** Each search takes this many times its count under the cheap filters, then keeps only chunks of a version in force (RAG Phase 3: the per-row check over 20,000 chunks cost ~0.1 s). */
 const OVERSAMPLE = 4;
 
-export async function searchKnowledge(scope: KnowledgeScope, question: string, opts: { limit?: number; now?: Date; vectorLimit?: number; keywordLimit?: number } = {}): Promise<KnowledgeHit[]> {
+/** RAG Phase 4: what the search used (for the request's accounting): the question's embedding from the cache, or embedded now. */
+export interface KnowledgeSearchStats { embeddingHits: number; embedded: number }
+
+export async function searchKnowledge(scope: KnowledgeScope, question: string, opts: { limit?: number; now?: Date; vectorLimit?: number; keywordLimit?: number; stats?: KnowledgeSearchStats } = {}): Promise<KnowledgeHit[]> {
   if (!scope.accessClasses.length) return [];
   const now = opts.now ?? new Date();
   const limit = opts.limit ?? 8;
@@ -58,7 +61,8 @@ export async function searchKnowledge(scope: KnowledgeScope, question: string, o
   // The vector and keyword searches are independent: each branch runs in parallel, fused here by reciprocal rank (k = 60).
   const vecBranch = async () => {
     const space = await activeSpace();
-    const { vectors } = await cachedKnowledgeEmbeddings(space, [question], knowledgePermit(scope.organizationId));
+    const { vectors, hits, embedded } = await cachedKnowledgeEmbeddings(space, [question], knowledgePermit(scope.organizationId));
+    if (opts.stats) { opts.stats.embeddingHits += hits; opts.stats.embedded += embedded; }
     // Planned for its own parameters every time, as the record's search is (search.ts): after five runs a generic plan is far slower.
     const [, rows] = await prisma.$transaction([prisma.$executeRaw`SET LOCAL plan_cache_mode = force_custom_plan`, prisma.$queryRaw<{ chunkId: string; rank: bigint }[]>`
       WITH vec0 AS (
@@ -83,6 +87,20 @@ export async function searchKnowledge(scope: KnowledgeScope, question: string, o
   const fusedScore = new Map<string, number>();
   for (const r of [...vecRows, ...kwRows]) fusedScore.set(r.chunkId, (fusedScore.get(r.chunkId) ?? 0) + 1 / (60 + Number(r.rank)));
   const rows = [...fusedScore].map(([chunkId, score]) => ({ chunkId, score })).sort((a, b) => b.score - a.score || a.chunkId.localeCompare(b.chunkId)).slice(0, limit);
+  // Both branches already applied the scope and the in-force check.
+  return hitsFor(scope, rows, now, true);
+}
+
+/**
+ * The hits for these chunk ids, in the given order, under the scope and the in-force check (RAG Phase 4: also what a
+ * cached retrieval is re-read through, so a cached id that left the scope is never returned).
+ */
+export async function hitsFor(scope: KnowledgeScope, rows: { chunkId: string; score: number }[], now = new Date(), scoped = false): Promise<KnowledgeHit[]> {
+  if (!rows.length || !scope.accessClasses.length) return [];
+  if (!scoped) {
+    const allowed = new Set((await prisma.$queryRaw<{ id: string }[]>(Prisma.sql`SELECT c."id" FROM "RagChunk" c WHERE c."id" = ANY(${rows.map((r) => r.chunkId)}::text[]) AND ${scopeSql(scope, "c", now)}`)).map((r) => r.id));
+    rows = rows.filter((r) => allowed.has(r.chunkId));
+  }
   if (!rows.length) return [];
   const chunks = await prisma.ragChunk.findMany({
     where: { id: { in: rows.map((r) => r.chunkId) } },

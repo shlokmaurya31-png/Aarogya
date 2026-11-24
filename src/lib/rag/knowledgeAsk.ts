@@ -16,11 +16,17 @@ import { modeThreshold } from "./retrieve";
 import { routeQuestion } from "./router";
 import { settle } from "./intentModel";
 import { knowledgeClassesFor } from "./knowledgeAccess";
-import { knowledgeNeighbours, searchKnowledge, type KnowledgeHit, type KnowledgeScope } from "./knowledgeSearch";
+import { hitsFor, knowledgeNeighbours, searchKnowledge, type KnowledgeHit, type KnowledgeScope } from "./knowledgeSearch";
 import { dedupePassages } from "./context";
 import { checkSentence, type SourceText } from "./validate";
 import { stem } from "./stem";
 import { logInteraction, logRateLimited } from "./interactions";
+import { BudgetError } from "./budget";
+import { tokenEconomy } from "./economy";
+import { prepareSources, usageOf, type Prepared } from "./prepare";
+import { estimateCostMicroUsd, priceTable } from "./prices";
+import { dropRetrievalCache, readRetrievalCache, retrievalKey, writeRetrievalCache } from "./retrievalCache";
+import { countTokens, familyFor } from "./tokens";
 
 /**
  * RAG Phase 3, step 3.4 — KNOWLEDGE_QA (docs/RAG_ARCHITECTURE.md §5.1): a
@@ -87,20 +93,25 @@ async function run(actor: Extract<AiActor, { kind: "STAFF" }>, req: KnowledgeAsk
 
   const access = { callerOrganizationId: organizationId, callerFacilityId: actor.facilityId, subject: { patientId: null, personId: null } };
   const timing: { retrievalMs: number | null; generationMs: number | null; provider: string | null } = { retrievalMs: null, generationMs: null, provider: null };
+  // RAG Phase 4, step 4.5: what the request cost (no text).
+  const usage = { embeddingTokens: 0, rerankUnits: 0, cacheHits: 0 };
+  let prepared: Prepared | null = null;
   let intent = "KNOWLEDGE";
   const finish = async (outcome: Outcome, sentences: OutSentence[], sources: KSource[], extra: { topScore?: number | null; threshold?: number | null; model?: string; inputTokens?: number; outputTokens?: number; retrieved?: string[] } = {}): Promise<AskResult> => {
     const citedNs = new Set(sentences.flatMap((s) => s.citations));
     const cited = sources.filter((s) => citedNs.has(s.n));
+    const tier = timing.provider && timing.provider !== "extractive" ? 2 : 0;
+    const cost = estimateCostMicroUsd(await priceTable(organizationId), { model: extra.model ?? "none", pricedAs: tier ? prepared?.model : undefined, inputTokens: extra.inputTokens ?? 0, outputTokens: extra.outputTokens ?? 0, embeddingModel: space.embeddingModel, embeddingTokens: usage.embeddingTokens, rerankUnits: usage.rerankUnits });
     await logInteraction({
       id: interactionId, actor, access, mode: "KNOWLEDGE_QA", language, question, space: { model: space.embeddingModel, version: space.embeddingVersion }, started,
       outcome, answerText: sentences.map((s) => s.text).join("\n"), retrievedChunkIds: extra.retrieved ?? sources.map((s) => s.hit.chunkId), citedChunkIds: cited.map((s) => s.hit.chunkId),
       topScore: extra.topScore ?? null, threshold: extra.threshold ?? null, model: extra.model ?? "none", inputTokens: extra.inputTokens ?? 0, outputTokens: extra.outputTokens ?? 0,
       sources: sources.map((s) => ({ rank: s.n, cited: citedNs.has(s.n), chunkId: s.hit.chunkId, ragDocumentId: s.hit.ragDocumentId, sourceType: "KNOWLEDGE_DOCUMENT", sourceId: s.hit.knowledgeDocumentId, origin: "VERIFIED", recordedAt: s.hit.publishedAt ?? new Date(0), pageNumber: s.hit.pageNumber, sectionPath: s.hit.sectionPath })),
-      accounting: { module: hooks.module ?? "ASK", intent: `KNOWLEDGE_QA:${intent}`, tier: timing.provider && timing.provider !== "extractive" ? 2 : 0, provider: timing.provider, retrievalMs: timing.retrievalMs, generationMs: timing.generationMs },
+      accounting: { module: hooks.module ?? "ASK", intent: `KNOWLEDGE_QA:${intent}`, tier, provider: timing.provider, retrievalMs: timing.retrievalMs, generationMs: timing.generationMs, ...usage, estimatedCostMicroUsd: cost },
     });
     for (const s of sentences) await hooks.onSentence?.(s);
     return {
-      meta, sentences, outcome, trace: { intent, readers: [], confidence: "RULE", answeredByReader: false },
+      meta, sentences, outcome, trace: { intent, readers: [], confidence: "RULE", answeredByReader: false, tier, iterations: 1, inputTokens: extra.inputTokens ?? 0, ...(prepared ? { budget: prepared.budget.maxInput, dropped: prepared.dropped } : {}) },
       citations: cited.map((s): Citation => ({
         n: s.n, chunkId: s.hit.chunkId, sourceType: "KNOWLEDGE_DOCUMENT", sourceId: s.hit.knowledgeDocumentId, origin: "VERIFIED", translated: language !== "en", handwritten: false,
         recordedAt: (s.hit.publishedAt ?? new Date(0)).toISOString(), title: s.context.replace(/^\[|\]$/g, ""), link: `/hospital-os/knowledge?document=${s.hit.knowledgeDocumentId}`,
@@ -116,21 +127,39 @@ async function run(actor: Extract<AiActor, { kind: "STAFF" }>, req: KnowledgeAsk
 
   const scope: KnowledgeScope = { organizationId, facilityId: actor.facilityId, accessClasses: classes };
   const counts = await candidateCounts(organizationId, actor.facilityId);
-  let hits: KnowledgeHit[];
+  let hits: KnowledgeHit[] | null = null;
   let best = -1;
   const r0 = Date.now();
   try {
-    hits = await searchKnowledge(scope, question, { limit: counts.rerank, vectorLimit: counts.vector, keywordLimit: counts.keyword });
-    const provider = embeddingProviderFor(space);
-    const reranked = hits.length && provider.rerank ? await provider.rerank(question, hits.map((h) => `${h.title}\n${h.sectionPath ?? ""}\n${h.text}`), permit) : hits.map((h, index) => ({ index, score: h.score * 30 }));
-    best = reranked.length ? Math.max(...reranked.map((r) => r.score)) : -1;
-    hits = reranked.map(({ index, score }) => ({ ...hits[index], score: score + (hits[index].facilityWide ? 0 : 0.02) + (TYPE_AUTHORITY[hits[index].documentType] ?? 0) }))
-      .sort((a, b) => b.score - a.score || (a.facilityWide === b.facilityWide ? 0 : a.facilityWide ? 1 : -1) || a.chunkId.localeCompare(b.chunkId));
+    // RAG Phase 4, step 4.4: the retrieval cache, keyed by everything access depends on (retrievalCache.ts); a hit is
+    // re-read through the scope and in-force SQL, and one that no longer passes it whole is dropped and retrieved afresh.
+    const keyHash = tokenEconomy() ? await retrievalKey({ scope, userId: actor.userId, role: actor.role, space: { model: space.embeddingModel, version: space.embeddingVersion }, counts, question }) : null;
+    const cached = keyHash ? await readRetrievalCache(keyHash) : null;
+    if (cached && keyHash) {
+      const again = await hitsFor(scope, cached.chunkIds.map((chunkId, i) => ({ chunkId, score: cached.scores[i] })));
+      if (again.length === cached.chunkIds.length) { hits = again; best = cached.topScore; usage.cacheHits++; }
+      else await dropRetrievalCache(keyHash);
+    }
+    if (!hits) {
+      const stats = { embeddingHits: 0, embedded: 0 };
+      let found = await searchKnowledge(scope, question, { limit: counts.rerank, vectorLimit: counts.vector, keywordLimit: counts.keyword, stats });
+      usage.cacheHits += stats.embeddingHits;
+      usage.embeddingTokens = stats.embedded ? countTokens(question, familyFor(space.embeddingModel)) : 0;
+      const provider = embeddingProviderFor(space);
+      const reranked = found.length && provider.rerank ? await provider.rerank(question, found.map((h) => `${h.title}\n${h.sectionPath ?? ""}\n${h.text}`), permit) : found.map((h, index) => ({ index, score: h.score * 30 }));
+      usage.rerankUnits = provider.rerank ? found.length : 0;
+      best = reranked.length ? Math.max(...reranked.map((r) => r.score)) : -1;
+      found = reranked.map(({ index, score }) => ({ ...found[index], score: score + (found[index].facilityWide ? 0 : 0.02) + (TYPE_AUTHORITY[found[index].documentType] ?? 0) }))
+        .sort((a, b) => b.score - a.score || (a.facilityWide === b.facilityWide ? 0 : a.facilityWide ? 1 : -1) || a.chunkId.localeCompare(b.chunkId));
+      hits = found;
+      if (keyHash) await writeRetrievalCache(keyHash, { organizationId, facilityId: actor.facilityId, userId: actor.userId }, { chunkIds: found.map((h) => h.chunkId), scores: found.map((h) => h.score), topScore: best });
+    }
   } catch (err) {
     if (err instanceof EmbeddingUnavailableError) throw new AskError(503, "PROVIDER_UNAVAILABLE");
     throw err;
   }
   timing.retrievalMs = Date.now() - r0;
+  if (!hits) hits = [];
   const threshold = await modeThreshold("KNOWLEDGE_QA", organizationId, actor.facilityId);
   // "Covered": some passage holds every content word of the question (stemmed), as for the record's keyword match.
   const terms = contentWords(question).map(stem);
@@ -155,11 +184,19 @@ async function run(actor: Extract<AiActor, { kind: "STAFF" }>, req: KnowledgeAsk
   const configured = getRecordAnswerProvider();
   const provider = configured.id === "mock" || external.value === true ? configured : mockRecordAnswer;
   timing.provider = provider === mockRecordAnswer && configured.id !== "mock" ? "extractive" : provider.id;
-  const provided: RecordSource[] = sources.map((s) => ({ n: s.n, chunkId: s.hit.chunkId, context: s.context, text: s.hit.text }));
+  const all: (RecordSource & { documentId: string })[] = sources.map((s) => ({ n: s.n, chunkId: s.hit.chunkId, context: s.context, text: s.hit.text, documentId: s.hit.ragDocumentId }));
+  try {
+    prepared = await prepareSources({ mode: "KNOWLEDGE_QA", language, question, providerId: provider.id, organizationId, facilityId: actor.facilityId, sources: all });
+  } catch (err) {
+    if (err instanceof BudgetError) throw new AskError(400, err.code);
+    throw err;
+  }
+  const provided = prepared.provided;
+  const answerReq = { mode: "KNOWLEDGE_QA" as const, audience: "STAFF" as const, language, question, sources: provided };
   const g0 = Date.now();
   let answer;
   try {
-    answer = await provider.answerFromRecord({ mode: "KNOWLEDGE_QA", audience: "STAFF", language, question, sources: provided }, permit);
+    answer = await provider.answerFromRecord(answerReq, permit);
     timing.generationMs = Date.now() - g0;
   } catch (err) {
     timing.generationMs = Date.now() - g0;
@@ -169,9 +206,12 @@ async function run(actor: Extract<AiActor, { kind: "STAFF" }>, req: KnowledgeAsk
     }
     throw err;
   }
-  const extraLog = { topScore: best, threshold, model: answer.model, inputTokens: answer.inputTokens, outputTokens: answer.outputTokens };
+  const used = usageOf(answerReq, answer);
+  const extraLog = { topScore: best, threshold, model: answer.model, inputTokens: used.inputTokens, outputTokens: used.outputTokens };
   if (answer.outcome !== "ANSWERED") return finish(answer.outcome === "NO_RECORD" ? "NO_RECORD" : "REFUSED_SAFETY", [guidance(answer.outcome === "NO_RECORD" ? "noRecord" : "askCareTeam")], sources, extraLog);
-  const byN = new Map(provided.map((p) => [p.n, { n: p.n, text: p.text, context: p.context } as SourceText]));
+  // Validated against the original passages the provider was given, never a compressed copy.
+  const givenNs = new Set(provided.map((p) => p.n));
+  const byN = new Map([...prepared.originals.values()].filter((p) => givenNs.has(p.n)).map((p) => [p.n, { n: p.n, text: p.text, context: p.context } as SourceText]));
   const labels: Label[] = language === "en" ? ["approved document"] : ["approved document", "translated"];
   const out: OutSentence[] = [];
   for (const s of answer.sentences as AnswerSentence[]) {

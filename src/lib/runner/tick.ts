@@ -23,6 +23,7 @@ import { sweepExpiredLeases } from "@/lib/hospital/offline/service";
 import { escalateOfflineConflicts } from "@/lib/hospital/offline/queue";
 import { sweepKnowledgeSchedule } from "@/lib/knowledge/publish";
 import { backfillShadowText } from "@/lib/rag/shadow";
+import { sweepRetrievalCache } from "@/lib/rag/retrievalCache";
 
 /**
  * Workflow spine §3.1 — one bounded unit of background work, used by the local
@@ -82,6 +83,7 @@ export interface RunTickResult {
   knowledge: { published: number; expired: number };
   /** RAG Phase 3: chunks given their shadow text (romanised words, canonical medicine names) this tick. */
   shadowText: { updated: number };
+  retrievalCacheSwept: number;
   durationMs: number;
   /** True when a batch limit was hit, i.e. there may be more work now. */
   moreWork: boolean;
@@ -134,6 +136,8 @@ export async function runTick(opts: RunTickOptions = {}): Promise<RunTickResult>
     : { leasesExpired: 0, conflictsEscalated: 0 };
   const knowledge = Date.now() - started < budgetMs ? await sweepKnowledgeSchedule({ now: opts.now }) : { published: 0, expired: 0 };
   const shadowText = Date.now() - started < budgetMs ? await backfillShadowText() : { updated: 0 };
+  // RAG Phase 4: expired knowledge retrieval cache rows (a live row is never used past its expiry anyway).
+  const retrievalCacheSwept = Date.now() - started < budgetMs ? await sweepRetrievalCache(opts.now ?? new Date()) : 0;
 
   return {
     consumers,
@@ -153,6 +157,7 @@ export async function runTick(opts: RunTickOptions = {}): Promise<RunTickResult>
     offline,
     knowledge,
     shadowText,
+    retrievalCacheSwept,
     durationMs: Date.now() - started,
     moreWork: events.claimed >= eventBatchSize || workflows.timersFired >= workflowBatchSize || workflows.instancesRun >= workflowBatchSize || mar.missed >= marBatchSize,
   };

@@ -11453,6 +11453,29 @@ model AiEmbeddingCache {
   @@index([lastUsedAt])
 }
 
+/// RAG Phase 4, step 4.4 — cached knowledge retrieval (docs/RAG_ARCHITECTURE.md §14). KNOWLEDGE_QA only: no
+/// patient or person retrieval is ever cached. One row per access scope and question: the key is the sha-256 of
+/// the organisation, facility, user, role, access classes, the set of versions in force, the embedding space, the
+/// candidate counts and the normalised question, so another user, facility or organisation, a changed role or
+/// class, or any publish or withdrawal never hits it. Holds chunk ids and scores, never text; a hit is re-read
+/// through the same scope and in-force SQL, and a row past expiresAt is never used.
+model AiRetrievalCache {
+  id             String   @id @default(cuid())
+  keyHash        String   @unique
+  organizationId String
+  facilityId     String
+  userId         String
+  chunkIds       String[]
+  scores         Float[]
+  topScore       Float
+  hits           Int      @default(0)
+  createdAt      DateTime @default(now())
+  expiresAt      DateTime
+
+  @@index([expiresAt])
+  @@index([organizationId, facilityId, userId])
+}
+
 // ── RAG Phase 1 — knowledge documents (docs/RAG_ARCHITECTURE.md §8; ADR 0005 part B) ──
 // An organisation's (or one facility's) approved SOPs, policies and references.
 // No patient data: an upload that looks like it carries a patient identifier

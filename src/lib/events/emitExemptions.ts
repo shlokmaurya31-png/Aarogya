@@ -158,6 +158,10 @@ export const EMIT_EXEMPTIONS: Record<string, EmitExemption> = {
   // Week 4b — the AI index is derived data, rebuilt from the record (docs/RAG_DESIGN.md §4.1).
   "src/lib/knowledge/publish.ts#retireKnowledgeIndex": { category: "BOOKKEEPING", reason: "a knowledge version's index rows leaving the search (RAG Phase 2); every caller (publish, reject, withdraw, expire) emits its knowledge event in the same transaction" },
   "src/lib/rag/shadow.ts#backfillShadowText": { category: "BOOKKEEPING", reason: "a chunk's index-only terms (RAG Phase 3, step 3.9): derived from its own text, idempotent; no record changes and nothing reads it but the search" },
+  "src/lib/rag/retrievalCache.ts#readRetrievalCache": { category: "BOOKKEEPING", reason: "a hit counter on the knowledge retrieval cache (RAG Phase 4, step 4.4): ids and scores only, no text; no record changes" },
+  "src/lib/rag/retrievalCache.ts#writeRetrievalCache": { category: "BOOKKEEPING", reason: "the knowledge retrieval cache keyed by access scope (RAG Phase 4, step 4.4): derived, expires in ten minutes, holds no text; no record changes" },
+  "src/lib/rag/retrievalCache.ts#dropRetrievalCache": { category: "BOOKKEEPING", reason: "drops a knowledge retrieval cache row whose passages left the scope (RAG Phase 4); derived data only" },
+  "src/lib/rag/retrievalCache.ts#sweepRetrievalCache": { category: "BOOKKEEPING", reason: "the runner's sweep of expired knowledge retrieval cache rows (RAG Phase 4); derived data only" },
   "src/lib/rag/embedCache.ts#cachedKnowledgeEmbeddings": { category: "BOOKKEEPING", reason: "a content-hash cache of knowledge-text vectors (RAG Phase 1): derived, idempotent, holds no text; no record changes" },
   "src/lib/rag/embed.ts#writeEmbeddings": { category: "CONSUMER_OUTPUT", reason: "embeddings of indexed chunks, derived data written by the rag-indexer and the re-embed job (idempotent)" },
   "src/lib/rag/indexer.ts#indexSource": { category: "CONSUMER_OUTPUT", reason: "the rag-indexer's derived index (documents, chunks, embeddings) of a source whose own change emitted its event" },
