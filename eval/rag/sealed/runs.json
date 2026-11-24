@@ -1,1 +1,12 @@
-[]
+[
+ {
+  "phase": 4,
+  "commit": "1a69b59",
+  "ranAt": "2026-11-24T08:40:18.932Z",
+  "sha256": "c071b2e8f41e8b2ff1ae29b3b740b09cc7dd4f3cb211510a339b91a3df4ad4f9",
+  "questions": 71,
+  "scored": 52,
+  "recall8": 0.831,
+  "mrr": 0.795
+ }
+]

@@ -147,3 +147,13 @@ Plan §13.5 E. 71 new questions over the evaluation fixture (`rag-eval-v2`), in 
 - sealed split sha-256: `c071b2e8f41e8b2ff1ae29b3b740b09cc7dd4f3cb211510a339b91a3df4ad4f9`
 - Run: `npm run eval:rag:sealed -- --phase <n>`, once per phase, at the end. Runs so far: `eval/rag/sealed/runs.json`.
 
+### Phase 4 run (2026-11-24, commit 1a69b59, the only run for phase 4)
+
+| | Old held-out test split (113) | Sealed split (71) |
+|---|---|---|
+| Recall@8 | 0.96 | **0.831** |
+| MRR | 0.90 | **0.795** |
+| Correct with valid citations | 205/230 on the whole set (89.1%) | **52/71 (73.2%)** |
+
+Reported, not tuned on. Where it falls short (for the next phase to work on, with new held-out questions): medicine questions by class or form ("a statin", "the antibiotic", "the inhaler", "an asthma reliever": 2 of 6 — the lexicon names medicines, not classes); imaging, referral and pending-scan questions in new words (routed as narrative, "no record"); "panic values" for critical values; two knowledge questions and four cross-script or transliterated ones ("no record"); three questions answered that should have been "no record" (HIV status, ECG, oxygen cylinder stock). The sealed questions' expected answers are as unreviewed as the rest of the set (pending clinical sign-off), so a few failures may be the expectation's, not the system's; none was changed after the run.
+
