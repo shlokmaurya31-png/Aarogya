@@ -345,11 +345,14 @@ async function run(actor: AiActor, req: AskRequest, hooks: AskHooks, started: nu
   const srcOf = new Map(sources.map((s) => [s.n, s]));
 
   // ── Step 7, Tier 0: no model. RAG Phase 4: a staff lookup its readers answered in full is answered from their facts, one cited line each, with no model.
-  if (tokenEconomy() && retrieval?.answeredByReader && spec.audience === "STAFF" && language === "en" && !conversation) {
+  // RAG Phase 5, step 5.2: in any of the eleven languages, from a template: a fixed opening line in the reader's language
+  // (GUIDANCE, no fact), then the facts as recorded (values exactly as in the source, labelled translated).
+  if (tokenEconomy() && retrieval?.answeredByReader && spec.audience === "STAFF" && !conversation) {
     const facts = masked.filter((m) => m.structured);
     const lines: OutSentence[] = facts.map((f) => ({ text: f.text.replace(/\s*\n\s*/g, "; "), citations: [f.n], kind: "FACT", labels: labelsFor([srcOf.get(f.n)!], language) }));
+    if (lines.length && language !== "en") lines.unshift(guidance("fromRecords"));
     const byN0 = new Map(facts.map((f) => [f.n, { n: f.n, text: f.text, context: f.context } as SourceText]));
-    if (lines.length && lines.every((l) => checkSentence({ text: l.text, citations: l.citations, kind: "FACT" }, byN0).ok)) {
+    if (lines.length && lines.every((l) => checkSentence({ text: l.text, citations: l.citations, kind: l.kind }, byN0).ok)) {
       for (const l of lines) await hooks.onSentence?.(l);
       return finish("ANSWERED", lines, sources, { topScore: retrieval.topScore, threshold: retrieval.threshold, model: "none", retrieved: sources.map((s) => s.chunkId) });
     }
