@@ -28,6 +28,11 @@ export function getRecordAnswerProvider(env: Record<string, string | undefined> 
   return provider;
 }
 
+/** RAG Phase 5: the provider a test set, if any (the registry routes to it as it is). */
+export function overriddenRecordAnswerProvider(): RecordAnswerProvider | null {
+  return override;
+}
+
 /** Tests and gates only: replace the provider (null restores the configured one). */
 export function setRecordAnswerProviderForTest(p: RecordAnswerProvider | null): void {
   override = p;

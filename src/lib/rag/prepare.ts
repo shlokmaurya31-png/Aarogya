@@ -35,10 +35,12 @@ export function systemPromptFor(req: Pick<AnswerRequest, "mode" | "language" | "
 
 export async function prepareSources(input: {
   mode: AiMode; language: string; question?: string | null; conversation?: string | null; providerId: string;
+  /** RAG Phase 5: the model the gateway routed to (record/registry.ts); without it, the mode's configured model. */
+  model?: string;
   organizationId: string | null; facilityId: string | null;
   sources: (RecordSource & { documentId?: string; structured?: boolean })[];
 }): Promise<Prepared> {
-  const model = aiModel(MODES[input.mode].model);
+  const model = input.model ?? aiModel(MODES[input.mode].model);
   const budgetModel = input.providerId === "mock" ? "mock-record-1" : model;
   const budget = await planBudget({
     mode: input.mode, model: budgetModel, language: input.language, system: systemPromptFor({ mode: input.mode, language: input.language, conversation: input.conversation ?? undefined }),

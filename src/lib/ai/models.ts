@@ -24,7 +24,9 @@ export const AI_MODEL_DEFAULTS = {
   explain_report: "claude-sonnet-5-5",
   health_timeline: "claude-sonnet-5-5",
   previsit_questions: "claude-sonnet-5-5",
-  // RAG Phase 3: knowledge Q&A over approved hospital documents (no patient data).
+  // RAG Phase 3: knowledge Q&A over approved hospital documents (no patient data). RAG Phase 5: it may run on
+  // Tier 1 (§12.1) once a Tier 1 model is configured here; a high-risk question (a dose) still goes to Tier 2
+  // (record/registry.ts). Sonnet 5.5 until a real-provider evaluation shows Haiku holds the quality.
   knowledge_qa: "claude-sonnet-5-5",
 } as const;
 export type AiModelKey = keyof typeof AI_MODEL_DEFAULTS;
