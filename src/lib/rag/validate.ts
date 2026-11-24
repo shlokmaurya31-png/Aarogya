@@ -16,7 +16,8 @@ import { LEXICON } from "./lexicon";
  *     number 112 excepted).
  *   - RAG Phase 5, step 5.5: every unit written after a number in a FACT is
  *     the unit that number carries in a cited source ("11.2 mg/dL" against a
- *     source's "11.2 g/dL" fails; "500 mcg" against "500 mg" fails), and
+ *     source's "11.2 g/dL" fails; "500 mcg" against "500 mg" fails), or, for a
+ *     number written bare (a range's end), a unit on the same source line;
  *     every medicine a FACT names is named by a cited source (as its INN, a
  *     variant, or the lexicon concept's name in any script): a renamed
  *     medicine fails though its dose is in the source.
@@ -93,13 +94,17 @@ export function checkSentence(s: AnswerSentence, sources: Map<number, SourceText
   const citedText = cited.map((c) => `${c!.context}\n${c!.text}`).join("\n");
   const available = new Set(numbersIn(citedText));
   if (!numbersIn(s.text).every((n) => available.has(n))) return { ok: false, reason: "NUMBER_NOT_IN_SOURCE" };
-  // A unit after a number must be one that number carries in a cited source. A number the source writes without a
-  // unit (a reference range's end) may carry a unit the cited source uses elsewhere.
-  const sourceUnits = unitsIn(citedText);
-  const sourceUnitSet = new Set(sourceUnits.map(([, u]) => u));
+  // A unit after a number must be one that number carries in a cited source, or, for a number a source line writes
+  // without a unit (a reference range's end: "12.0 - 15.5"), a unit on that same line. Never a unit from another line:
+  // a number that only happens to occur elsewhere (a title's, a date's) can't lend a dose its unit.
+  const lines = citedText.split("\n");
   for (const [n, u] of unitsIn(s.text)) {
-    const withUnit = sourceUnits.filter(([sn]) => sn === n).map(([, su]) => su);
-    if (withUnit.length ? !withUnit.includes(u) : !sourceUnitSet.has(u)) return { ok: false, reason: "UNIT_NOT_IN_SOURCE" };
+    const ok = lines.some((line) => {
+      const withUnits = unitsIn(line);
+      if (withUnits.some(([sn, su]) => sn === n && su === u)) return true;
+      return !withUnits.some(([sn]) => sn === n) && numbersIn(line).includes(n) && withUnits.some(([, su]) => su === u);
+    });
+    if (!ok) return { ok: false, reason: "UNIT_NOT_IN_SOURCE" };
   }
   const named = medicinesIn(citedText);
   for (const med of medicinesIn(s.text)) if (!named.has(med)) return { ok: false, reason: "MEDICINE_NOT_IN_SOURCE" };

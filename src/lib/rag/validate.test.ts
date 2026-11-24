@@ -21,6 +21,11 @@ describe("units", () => {
     expect(checkSentence(fact("The reference range is 12.0 - 15.5 g/dL."), LAB)).toEqual({ ok: true });
     expect(checkSentence(fact("The reference range is 12.0 - 15.5 mmol/L."), LAB)).toEqual({ ok: false, reason: "UNIT_NOT_IN_SOURCE" });
   });
+  it("never lends a unit to a number that only occurs elsewhere (a title's digit): a wrong dose still fails", () => {
+    const sop = src("Give 30 mL/kg crystalloid for hypotension or a lactate of 4 mmol/L or more.", "[Reference · Sepsis bundle mwv9zk · version 1 · Fluids · approved]");
+    expect(checkSentence(fact("Give 30 mL/kg crystalloid for hypotension or a lactate of 4 mmol/L or more."), sop)).toEqual({ ok: true });
+    expect(checkSentence(fact("Give 30 mL/kg crystalloid for hypotension or a lactate of 9 mmol/L or more."), sop)).toEqual({ ok: false, reason: "UNIT_NOT_IN_SOURCE" });
+  });
 });
 
 describe("medicine names", () => {
