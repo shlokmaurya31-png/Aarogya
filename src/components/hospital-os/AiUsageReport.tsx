@@ -15,7 +15,7 @@ interface Figures {
   requests: number; answered: number; tier0: number; inputTokens: number; outputTokens: number; embeddingTokens: number;
   rerankUnits: number; cacheHits: number; estimatedCostMicroUsd: number; medianRetrievalMs: number | null; medianGenerationMs: number | null;
 }
-interface Report { organizationId: string; facilityId: string | null; from: string; to: string; groupBy: string; prices: { asOf: string; confirmed: boolean }; totals: Figures; rows: (Figures & { key: string; label: string })[] }
+interface Report { organizationId: string; facilityId: string | null; from: string; to: string; groupBy: string; prices: { asOf: string; confirmed: boolean; status: string | null }; totals: Figures; rows: (Figures & { key: string; label: string })[] }
 
 const GROUPS: [string, string][] = [["facility", "Facility"], ["role", "Role"], ["module", "Module"], ["model", "Model"], ["requestType", "Request type"], ["user", "Staff member (facility administrators)"]];
 const usd = (micro: number) => `$${(micro / 1e6).toFixed(micro >= 1e6 ? 2 : 4)}`;
@@ -74,7 +74,7 @@ export function AiUsageReport() {
                 <div key={k}><dt className="text-text-secondary">{k}</dt><dd className="font-medium text-text-primary">{v}</dd></div>
               ))}
             </dl>
-            <p className="mt-3 text-[12px] text-text-secondary">Cost is an estimate from list prices dated {data.prices.asOf}{data.prices.confirmed ? "" : ", not yet confirmed"}.</p>
+            <p className="mt-3 text-[12px] text-text-secondary">Cost is an estimate from list prices dated {data.prices.asOf}{data.prices.confirmed ? "" : data.prices.status ? ` (${data.prices.status})` : ", not yet confirmed"}.</p>
           </Card>
           <Card>
             <div className="overflow-x-auto">

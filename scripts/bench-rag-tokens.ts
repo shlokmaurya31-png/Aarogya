@@ -79,7 +79,7 @@ async function main() {
     const tier0 = after.run.results.filter((r) => structuredIds.has(r.id)).map((r) => after.rows.find((x) => x.id === r.result?.meta.interactionId)).filter(Boolean);
     const md = [
       "# Token economy on the evaluation set (RAG Phase 4)", "",
-      `- ${QUESTIONS.questions.length} questions, mock providers, usage estimated from the exact prompt the configured model would receive; prices ${DEFAULT_PRICES.asOf}, **unconfirmed**.`,
+      `- ${QUESTIONS.questions.length} questions, mock providers, usage estimated from the exact prompt the configured model would receive; prices ${DEFAULT_PRICES.asOf}, **${DEFAULT_PRICES.status ?? "unconfirmed"}**.`,
       `- Quality before: ${quality(before.run)}`, `- Quality after: ${quality(after.run)}`,
       `- Structured and operational questions answered without a model (Tier 0, or "no record" before the model): ${tier0.filter((r) => r!.tier === 0).length}/${tier0.length}`,
       `- Knowledge caches, first pass: query embedding from the cache ${hitRate(after.rows.filter((r) => r.mode === "KNOWLEDGE_QA" && r.embeddingTokens === 0 && r.cacheHits > 0))} of ${after.rows.filter((r) => r.mode === "KNOWLEDGE_QA").length} (the evaluation's questions were embedded by earlier runs); retrieval cache ${after.rows.filter((r) => r.mode === "KNOWLEDGE_QA" && r.cacheHits > 0 && r.embeddingTokens > 0).length} (none expected on a first ask)`,

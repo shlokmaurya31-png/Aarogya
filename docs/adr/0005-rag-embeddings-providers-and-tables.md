@@ -208,3 +208,17 @@ Retrieved on 2026-11-17. Third-party price listings and partial benchmark tables
 - Hindi-BEIR: [Hindi-BEIR: A Large Scale Retrieval Benchmark in Hindi](https://arxiv.org/pdf/2408.09437).
 - Vercel function size: [Vercel Functions limits](https://vercel.com/docs/functions/limitations).
 - Model sizes, input limits and licences: the models' own cards (BAAI/bge-m3, intfloat/multilingual-e5-large, intfloat/multilingual-e5-small). Not re-fetched in this audit.
+
+## Addendum, 2026-11-24: the price table, checked (RAG Phase 5, step 3e)
+
+**Status: checked, pending owner confirmation.** Every price in `src/lib/rag/prices.ts` (the per-request cost estimate and the usage report) was read on its provider's own pricing page on **2026-11-24**. They are list prices in US dollars; the account's actual rates (credits, discounts, the Haiku long-prompt band, data-residency multipliers) are for the product owner to confirm, and `confirmed` stays `false` until then.
+
+| Item | Price in the table | Source (checked 2026-11-24) | Finding |
+|---|---|---|---|
+| Claude Sonnet 5.5 (`claude-sonnet-5-5`), every record and knowledge mode | $2 / MTok input, $10 / MTok output | [platform.claude.com/docs/en/about-claude/pricing](https://platform.claude.com/docs/en/about-claude/pricing) | Matches. Cache hits $0.10 / MTok (0.05×) are not used: no prompt is long enough to cache. |
+| Claude Haiku 5.5 (`claude-haiku-5-5`), the document helpers | $0.10 / MTok input, $0.50 / MTok output | same page | Matches, for prompts up to 100,000 tokens ($0.50 / $2.50 above that; no AI request here comes near it). |
+| Claude Opus 5.5 (`claude-opus-5-5`) | $4 / MTok input, $20 / MTok output | same page | Matches. Not used by any mode. |
+| Voyage `voyage-multilingual-2` (embeddings) | $0.12 / MTok | [docs.voyageai.com/docs/pricing](https://docs.voyageai.com/docs/pricing) (page dated 2026-09-29) | Matches. The page lists it among older models, and contradicts itself on whether its 50 million free tokens apply. |
+| Voyage `rerank-2.5` | $0.05 / MTok | same page | **Corrected.** The table priced reranking per thousand documents; Voyage bills tokens: query tokens × documents + the documents' tokens. The estimate now counts each document scored as the query's tokens plus a 400-token chunk. 200 million free tokens may apply (the page contradicts itself). |
+
+The mock providers are priced as the model they stand in for, so the estimate shows what a request would cost on the configured provider. No real provider call was made (no credit, no Voyage key).

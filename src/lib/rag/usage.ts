@@ -32,7 +32,7 @@ export interface UsageFigures {
 }
 export interface UsageReport {
   organizationId: string; facilityId: string | null; from: string; to: string; groupBy: UsageGroup;
-  prices: { asOf: string; confirmed: boolean };
+  prices: { asOf: string; confirmed: boolean; status: string | null };
   totals: UsageFigures;
   rows: (UsageFigures & { key: string; label: string })[];
 }
@@ -105,7 +105,7 @@ export async function aiUsageReport(caller: { userId: string; role: Role }, q: {
   if (groupBy === "user") for (const u of await prisma.user.findMany({ where: { id: { in: keys } }, select: { id: true, displayName: true } })) labels.set(u.id, u.displayName ?? "Staff member");
   return {
     organizationId, facilityId, from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10), groupBy,
-    prices: { asOf: DEFAULT_PRICES.asOf, confirmed: DEFAULT_PRICES.confirmed },
+    prices: { asOf: DEFAULT_PRICES.asOf, confirmed: DEFAULT_PRICES.confirmed, status: DEFAULT_PRICES.status ?? null },
     totals: figures(total ?? {}),
     rows: grouped.map((g, i) => ({ key: keys[i] || "(none)", label: labels.get(keys[i]) ?? (keys[i] || "(none)"), ...figures(g) })),
   };
