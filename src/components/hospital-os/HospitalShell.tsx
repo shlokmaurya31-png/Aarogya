@@ -8,7 +8,7 @@ import {
   ClipboardCheck, FlaskConical, ScanLine, Receipt, DoorOpen,
   UserPlus, Siren, ArrowRightLeft, Pill, Microscope,
   ShieldCheck, BarChart3, Settings2, Boxes, Truck, HeartPulse, Scissors, Droplet, Wrench, Network, ShieldAlert, Plug,
-  Menu, X, Sparkles, CalendarCheck, FileInput, BadgeIndianRupee, LibraryBig } from "lucide-react";
+  Menu, X, Sparkles, CalendarCheck, FileInput, BadgeIndianRupee, LibraryBig, Gauge } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/navigation/ThemeToggle";
 import { StatusPill } from "@/components/ui/StatusPill";
@@ -110,6 +110,8 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
     { href: "/hospital-os/enterprise/import-reviews", label: "Import review", icon: FileInput },
     // RAG Phase 2 — knowledge documents: upload, ingestion status, supersede, withdraw.
     { href: "/hospital-os/knowledge", label: "Knowledge documents", icon: LibraryBig },
+    // RAG Phase 4 — AI usage: tokens, estimated cost, cache hits (metadata only).
+    { href: "/hospital-os/ai-usage", label: "AI usage", icon: Gauge },
     // Phase D2 — the SaaS commercial control plane (plans/subscription/
     // entitlements/usage). Distinct from BILLING_GROUP_ADMIN, which is the
     // hospital patient revenue cycle.

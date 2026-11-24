@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/db";
+import { appNow } from "@/lib/time/clock";
+import { windowOpen } from "@/lib/insurance/checkin";
 import { BadRequestError, NotFoundError } from "@/lib/auth/rbac";
 import { bookAppointment, cancelAppointment } from "@/lib/hospital/appointment";
 import { patientLanguage as L } from "./language";
@@ -29,6 +31,8 @@ export interface AppointmentDTO {
   roomLabel: string | null;
   isForSelf: boolean;
   canCancel: boolean;
+  /** Week 5c: pre-arrival check-in is open (24 hours before until 1 hour before), decided on the server's clock. */
+  checkInOpen: boolean;
 }
 
 function toDTO(a: {
@@ -50,6 +54,7 @@ function toDTO(a: {
     isForSelf: scope.isSelf,
     // A delegate is read-only; only the patient themselves may cancel.
     canCancel: scope.isSelf && CANCELLABLE.includes(a.status),
+    checkInOpen: ACTIVE_STATUSES.includes(a.status) && windowOpen(a.scheduledStart, appNow()),
   };
 }
 
@@ -61,7 +66,7 @@ export async function listAppointments(scope: PatientAccessScope) {
     take: 100,
     include: { doctor: { include: { user: { select: { displayName: true } } } }, department: { select: { name: true } } },
   });
-  const now = Date.now();
+  const now = appNow().getTime();
   const upcoming: AppointmentDTO[] = [];
   const past: AppointmentDTO[] = [];
   for (const r of rows) {

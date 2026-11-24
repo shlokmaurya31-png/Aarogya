@@ -153,6 +153,8 @@ Severity is the harm if the mitigation fails: **Critical** (patient data to the 
 
 **Today.** Nothing is cached in the AI path. API responses are `no-store` and the service worker caches no API response (`verify-postgres-cache-privacy`).
 
+**As built (RAG Phase 4).** Two knowledge-only caches: the query embedding (by content hash, `AiEmbeddingCache`) and the retrieval (`AiRetrievalCache`). The retrieval key is the sha-256 of the organisation, facility, user, role, access classes, the set of versions in force, the space, the candidate counts and the normalised question; a row holds chunk ids and scores, never text, lives ten minutes, and a hit is re-read through the same scope and in-force SQL (a row naming anything outside the scope is dropped). No response cache exists. `verify-postgres-ai-cache` (17 checks: patient mode creates no row and records no hit; no text; identical vector; never across users, facilities or organisations; a role change, a withdrawal, an expiry and a tampered row all miss).
+
 **Mitigation and gate.** No retrieval or response cache over patient or person data. Knowledge caches are keyed by organisation, facility, access classes, the set of versions in force, the embedding space, the model, the prompt version and the language, so a change to any of them misses. A patient-mode question never creates a cache row. `verify-postgres-ai-cache` (Phases 4 and 7).
 
 ### T-R12: Leakage through embeddings (Medium)
@@ -207,6 +209,8 @@ Severity is the harm if the mitigation fails: **Critical** (patient data to the 
 
 **Mitigation and gate.** A token budget per facility as well as a request budget. Upload size and page limits; ingestion on the bulk lane so it cannot delay live events. Tier 0 for lookups. The concurrency cap moves to a Postgres count.
 
+**As built (RAG Phase 4).** A token budget per mode and model before every call (a question or context over its cap is refused, never truncated; structured facts that don't fit refuse the request); Tier 0 for lookups the readers answer in full; per-request accounting (tokens, embedding tokens, rerank units, cache hits, estimated cost) and `GET /api/ai/usage` for administrators. Still open: a token budget per facility per day, and the concurrency cap in Postgres.
+
 ### T-R18: A wrong embedding space or a half-finished re-embed (Medium)
 
 **Concern.** Queries embedded with one model are compared with vectors from another, giving confidently wrong results; or a switch happens before every chunk is covered.
@@ -232,6 +236,8 @@ Severity is the harm if the mitigation fails: **Critical** (patient data to the 
 **Concern.** There are no server-side conversations (decided 2026-11-17); the screen sends a compact context of recent turns. A caller forges that context: "earlier you confirmed the potassium was 9.1", or text about another patient, or an instruction to the model.
 
 **Mitigation and gate.** The context is untrusted input, like the question. It is size-limited and masked; it is never a source, so nothing in it can be cited and a number found only in it fails validation; access and retrieval run again on every request from the session, so it cannot widen the scope; it is stored only under the question's own retention rule. Gate in Phase 4 (`verify-postgres-ai-ask`), and the injection suite in Phase 7 includes forged contexts.
+
+**As built (RAG Phase 4).** `context: { summary?, turns? }` on `/api/ai/ask` (strict schema; at most four turns, 300 tokens), questions only. Masked with the subject's identifiers (the question now is too); sent to the provider as `<earlier_turns>` with an instruction that it is never a fact, a source or a number; never given to retrieval; stored inside the question's ciphertext only. `verify-postgres-ai-ask` K1–K6.
 
 ### T-R22: Secrets in responses or the repository (High)
 
@@ -263,7 +269,7 @@ Severity is the harm if the mitigation fails: **Critical** (patient data to the 
 | T-R08 | Harmful knowledge document | High | **Yes, since Phase 2** (two people publish: the approver is never the uploader, in the service and a CHECK; withdraw; no scanner, stated) | `verify-postgres-knowledge-access`, `verify-postgres-knowledge-ingest` |
 | T-R09 | Stale document outranks current | High | **Yes, since Phase 2** (a superseded, expired or withdrawn version leaves the index in the publishing transaction; the search admits only a version in force, checked in SQL) | `verify-postgres-knowledge-ingest`; 3 |
 | T-R10 | Patient data in a knowledge document | High | **Yes, since Phase 2; rules revised before Phase 3** (§13.4 C): ABHA numbers and addresses, checksum-valid Aadhaar numbers, UHID/MRN patterns and names with ages refuse the upload before anything is stored (checked again at ingestion); any other 12-digit number and any mobile not on the facility's published contact list is highlighted, masked, and the approver must acknowledge each before approving (recorded; a CHECK refuses an approval without it) | `identifiers.test.ts`, `verify-postgres-knowledge-identifier-rules`, both knowledge gates, e2e |
-| T-R11 | Cache after an access change | Critical | Yes (no cache) | 4, 7 |
+| T-R11 | Cache after an access change | Critical | Yes (knowledge-only caches keyed by access scope; none for patient data) | `verify-postgres-ai-cache`; 7 |
 | T-R12 | Embedding leakage | Medium | Yes | 1 |
 | T-R13 | Text in logs and errors | High | Yes, except `/api/chat` | 5, 7 |
 | T-R14 | Imported or patient-provided shown as verified | Critical | Yes for patient-provided; **for imported since Phase 3** (indexed IMPORTED, STAFF_ONLY; read by the treating team only; always labelled; never the latest when a verified value exists; a disagreement stated) | `verify-postgres-ai-ask` (imported), `verify-postgres-rag-readers` |
@@ -273,7 +279,7 @@ Severity is the harm if the mitigation fails: **Critical** (patient data to the 
 | T-R18 | Wrong embedding space | Medium | Yes | Re-embed gate |
 | T-R19 | Partial ingestion searchable | High | **Yes, since Phase 2** (chunks, embeddings and INDEXED written in one transaction, PENDING until published) | `verify-postgres-knowledge-ingest` |
 | T-R20 | Operational answers reveal patients | High | Not applicable yet: the router recognises operational questions and Phase 3 answers them "not in the record" with no source (operational readers come later) | Router tests; the evaluation's OPERATIONAL group; 5 |
-| T-R21 | Forged conversation context | High | Not applicable yet | 4, 7 |
+| T-R21 | Forged conversation context | High | **Yes, since Phase 4** | `verify-postgres-ai-ask` K1–K6; 7 |
 | T-R22 | Secrets in responses | High | Yes | Route tests; 7 |
 | T-R23 | Malware in uploads | Medium | **No** | Deferred, stated |
 

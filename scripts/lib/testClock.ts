@@ -76,3 +76,31 @@ export function makeGateClock(real: Date = new Date()): GateClock {
 
 /** This process's clock. */
 export const gateClock = makeGateClock();
+
+// ── The app's clock, frozen to mid-day (RAG Phase 4 housekeeping) ───────────
+// The app decides "today's check-ins", "is the check-in window open" and
+// "upcoming appointments" from appNow() (src/lib/time/clock.ts). A run that
+// opts in shifts that clock so the app always sees 12:00 IST on the India day
+// the run started, whatever the real time: a journey started at 23:59 and
+// still running at 00:01 sees the same day throughout. verify:all records its
+// start once (RUN_START_ENV), so every gate of a run shares that day.
+export const TEST_CLOCK_ENV = "AAROGYA_TEST_CLOCK_OFFSET_MS";
+export const RUN_START_ENV = "AAROGYA_GATE_RUN_START";
+const HOUR_MS = 3_600_000;
+
+/** The offset that puts the real instant `real` at 12:00 IST on the India day of `runStart`. */
+export function middayOffsetMs(real: number, runStart: number): number {
+  return indiaMidnight(indiaDate(new Date(runStart))).getTime() + 12 * HOUR_MS - real;
+}
+
+/**
+ * Opt this process (and the apps, workers and browsers it starts, which
+ * inherit the environment) into the mid-day app clock. Returns the offset.
+ */
+export function freezeAppClockAtMidday(env: Record<string, string | undefined> = process.env, real: number = Date.now()): number {
+  const start = Number(env[RUN_START_ENV]) || real;
+  env[RUN_START_ENV] = String(start);
+  const offset = middayOffsetMs(real, start);
+  env[TEST_CLOCK_ENV] = String(offset);
+  return offset;
+}

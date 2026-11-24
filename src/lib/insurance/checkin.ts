@@ -1,4 +1,5 @@
 import type { PreArrivalCheckIn, PreArrivalStatus, Prisma } from "@prisma/client";
+import { appNow } from "@/lib/time/clock";
 import { prisma } from "@/lib/db";
 import { BadRequestError, ConflictError, NotFoundError } from "@/lib/auth/rbac";
 import { recordAuditEvent } from "@/lib/auth/audit";
@@ -44,7 +45,7 @@ const PLANNED_ADMISSION = ["PENDING", "BED_RESERVED"];
 export function checkInWindow(start: Date) {
   return { opensAt: new Date(start.getTime() - CHECKIN_OPENS_HOURS * HOUR), closesAt: new Date(start.getTime() - CHECKIN_CLOSES_HOURS * HOUR) };
 }
-export function windowOpen(start: Date, at = new Date()) {
+export function windowOpen(start: Date, at = appNow()) {
   const w = checkInWindow(start);
   return at >= w.opensAt && at < w.closesAt;
 }
@@ -231,7 +232,7 @@ export async function cancelPreArrival(a: CheckInActorRef, checkInId: string) {
 
 /** Pre-registered patients for a day (default: the facility's today, in its time zone): the token, who, when, and what is left to do. */
 export async function preRegistered(facilityId: string, day?: string) {
-  const d = parseDayKey(day) ?? dayKey(new Date(), await facilityTimeZone(prisma, facilityId));
+  const d = parseDayKey(day) ?? dayKey(appNow(), await facilityTimeZone(prisma, facilityId));
   const rows = await prisma.preArrivalCheckIn.findMany({ where: { facilityId, tokenDay: d }, orderBy: { token: "asc" }, take: 300 });
   const patients = await prisma.patient.findMany({ where: { id: { in: rows.map((r) => r.patientId) } }, select: { id: true, fullName: true, uhid: true } });
   const appts = await prisma.appointment.findMany({ where: { id: { in: rows.map((r) => r.appointmentId).filter((x): x is string => !!x) } }, select: { id: true, scheduledStart: true, doctor: { select: { user: { select: { displayName: true } } } } } });

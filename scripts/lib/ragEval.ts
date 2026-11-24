@@ -24,11 +24,11 @@ export const QUESTIONS: { status: string; questions: EvalQuestion[] } = JSON.par
  * expected to be answered but wasn't is still ranked, by what retrieval found (its candidates, in order), so the measure is
  * retrieval's, not the "no record" threshold's.
  */
-export interface RankedRetrieval { id: string; split: "dev" | "test"; group: string; types: string[]; expected: string[] }
+export interface RankedRetrieval { id: string; split: "dev" | "test" | "sealed"; group: string; types: string[]; expected: string[] }
 export interface EvalRun { scores: QuestionScore[]; results: { id: string; result: AskResult | null; error?: string; latencyMs: number; tokens: number; retrievalMs?: number | null }[]; thresholds: Record<string, number>; ranked: RankedRetrieval[] }
 
 /** Recall@8, Precision@8, MRR and nDCG@10 by expected source type (or document), over the questions expected to be answered that name one; one split, or both. */
-export function retrievalMetrics(run: EvalRun, split?: "dev" | "test", group?: (g: string) => boolean) {
+export function retrievalMetrics(run: EvalRun, split?: "dev" | "test" | "sealed", group?: (g: string) => boolean) {
   const js = run.ranked.filter((r) => (!split || r.split === split) && (!group || group(r.group))).map((r) => ({ ranked: r.types, relevant: (t: string) => r.expected.includes(t) }));
   return summarize(js, 8, 10);
 }
@@ -36,7 +36,11 @@ export function retrievalMetrics(run: EvalRun, split?: "dev" | "test", group?: (
 /** The per-minute and per-day limits (and the facility's daily budget) count the eval's own requests; its clock moves their timestamps back past both windows between questions (230 questions, some asked twice, exceed a day's 400). */
 const cool = (userId: string) => prisma.$executeRaw`UPDATE "AiInteraction" SET "createdAt" = "createdAt" - interval '25 hours', "textExpiresAt" = "textExpiresAt" - interval '25 hours' WHERE "userId" = ${userId} AND "createdAt" > now() - interval '25 hours'`;
 
-export async function runRagEval(fx: EvalFixture, opts: { split?: "dev" | "test" } = {}): Promise<EvalRun> {
+/**
+ * `questions` replaces the main set: RAG Phase 4, the sealed held-out split (eval/rag/sealed), run only by
+ * scripts/eval-rag-sealed.ts, once per phase.
+ */
+export async function runRagEval(fx: EvalFixture, opts: { split?: "dev" | "test"; questions?: EvalQuestion[] } = {}): Promise<EvalRun> {
   const scores: QuestionScore[] = [];
   const results: EvalRun["results"] = [];
   const ranked: RankedRetrieval[] = [];
@@ -47,7 +51,7 @@ export async function runRagEval(fx: EvalFixture, opts: { split?: "dev" | "test"
   const keyOf = new Map(titled.flatMap((d) => { const k = docKey(d.title); return k ? [[d.id, k] as const] : []; }));
   const idsOf: Record<string, string[]> = {};
   for (const [id, k] of keyOf) (idsOf[k] ??= []).push(id);
-  for (const q of QUESTIONS.questions.filter((x) => !opts.split || (x.split ?? "dev") === opts.split)) {
+  for (const q of (opts.questions ?? QUESTIONS.questions).filter((x) => !opts.split || (x.split ?? "dev") === opts.split)) {
     const actor = fx.actors[q.actor as keyof EvalFixture["actors"]];
     await cool(actor.userId);
     const started = Date.now();
@@ -83,7 +87,7 @@ export async function runRagEval(fx: EvalFixture, opts: { split?: "dev" | "test"
   return { scores, results, thresholds, ranked };
 }
 
-export function evalMarkdown(run: EvalRun, provider: string): string {
+export function evalMarkdown(run: EvalRun, provider: string, questions: EvalQuestion[] = QUESTIONS.questions): string {
   const n = run.scores.length;
   const pct = (k: number) => `${((k / n) * 100).toFixed(1)}%`;
   const scored = run.scores.filter((s) => s.score).length;
@@ -100,12 +104,12 @@ export function evalMarkdown(run: EvalRun, provider: string): string {
     `- Latency per question: median ${lat[Math.floor(lat.length / 2)]} ms, max ${lat.at(-1)} ms; tokens ${run.results.reduce((a, r) => a + r.tokens, 0)}`, "",
     "| Group | Scored | Scored (test) | Recall@8 / MRR (test) |", "|---|---|---|---|", ...groups.map((g) => {
       const xs = run.scores.filter((s) => s.group === g);
-      const ts = xs.filter((s) => QUESTIONS.questions.find((q) => q.id === s.id)?.split === "test");
+      const ts = xs.filter((s) => questions.find((q) => q.id === s.id)?.split === "test");
       const m = retrievalMetrics(run, "test", (x) => x === g);
       return `| ${g} | ${xs.filter((s) => s.score).length}/${xs.length} | ${ts.filter((s) => s.score).length}/${ts.length} | ${m.n ? `${m.recall.toFixed(2)} / ${m.mrr.toFixed(2)}` : "—"} |`;
     }), "",
     "| Question | Split | Mode | Route | Outcome | Score | Why not |", "|---|---|---|---|---|---|---|",
-    ...run.scores.map((s) => { const q = QUESTIONS.questions.find((x) => x.id === s.id)!; const r = run.results.find((x) => x.id === s.id)!; const t = r.result?.trace; return `| ${s.id} | ${q.split ?? "dev"} | ${q.mode} | ${t ? `${t.intent}${t.answeredByReader ? " (reader)" : ""}` : "—"} | ${r.result?.outcome ?? r.error} | ${s.score ? "yes" : "no"} | ${s.why.join("; ").replace(/\|/g, "/")} |`; }),
+    ...run.scores.map((s) => { const q = questions.find((x) => x.id === s.id)!; const r = run.results.find((x) => x.id === s.id)!; const t = r.result?.trace; return `| ${s.id} | ${q.split ?? "dev"} | ${q.mode} | ${t ? `${t.intent}${t.answeredByReader ? " (reader)" : ""}` : "—"} | ${r.result?.outcome ?? r.error} | ${s.score ? "yes" : "no"} | ${s.why.join("; ").replace(/\|/g, "/")} |`; }),
   ].join("\n");
 }
 

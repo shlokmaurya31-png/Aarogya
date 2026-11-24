@@ -59,7 +59,7 @@ export function PatientHome() {
             </div>
           </div>
         ) : (
-          <Empty>You have no upcoming appointments. <Link href="/patient/appointments" className="text-cyan">Book one</Link>.</Empty>
+          <Empty>You have no upcoming appointments. <Link href="/patient/appointments" className="text-cyan underline underline-offset-2">Book one</Link>.</Empty>
         )}
       </Card>
 

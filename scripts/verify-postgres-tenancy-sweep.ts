@@ -53,6 +53,8 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { ItemCategory, Prisma, Role, UnitOfMeasure } from "@prisma/client";
 import { prisma } from "../src/lib/db";
+import { appNow } from "../src/lib/time/clock";
+import { indiaDate, freezeAppClockAtMidday } from "./lib/testClock";
 import { hashPassword } from "../src/lib/auth/password";
 import { ALL_SECTIONS } from "../src/lib/hospital-os/command-center/authz";
 import { DRILLDOWN_KINDS } from "../src/lib/hospital-os/command-center/drilldowns";
@@ -445,7 +447,9 @@ const PARAM_MODELS: Record<string, string> = {
   specimenId: "Specimen", wardId: "Ward", bedId: "Bed", lotId: "ItemLot", claimId: "Claim", invoiceId: "Invoice",
   payerId: "Payer", unitId: "BloodUnit", requestId: "BloodRequest", surgeryId: "Surgery", operatingTheatreId: "OperatingTheatre",
 };
-const TODAY = new Date().toISOString().slice(0, 10);
+// The app's clock is frozen at mid-day India time for this gate (below), so "today" is that India day.
+freezeAppClockAtMidday();
+const TODAY = indiaDate(appNow());
 const DATE_PARAMS: Record<string, string> = {
   from: "2000-01-01", to: "2100-01-01", dateFrom: "2000-01-01", dateTo: "2100-01-01", fromISO: "2000-01-01T00:00:00Z",
   toISO: "2100-01-01T00:00:00Z", since: "2000-01-01", until: "2100-01-01", start: "2000-01-01", end: "2100-01-01",
@@ -681,7 +685,7 @@ async function seedAddressedRows(personId: string) {
   const soon = new Date(Date.now() + 2 * 86_400_000);
   await prisma.insuranceCard.create({ data: { id: ADDRESSED.card, personId, payerType: "PRIVATE_INSURER", payerName: `${MARKER} insurer`, memberIdCipher: encryptCardValue("SWEEP-MEMBER-0001", key.key), memberIdLast4: "0001", keyVersion: key.version, addedByPersonId: personId } });
   await prisma.cardShare.create({ data: { id: ADDRESSED.cardShare, cardId: ADDRESSED.card, personId, recipientFacilityId: FACILITIES.pune, checkInId: ADDRESSED.checkIn, expiresAt: soon, createdByPersonId: personId } });
-  await prisma.preArrivalCheckIn.create({ data: { id: ADDRESSED.checkIn, facilityId: FACILITIES.pune, kind: "APPOINTMENT", patientId: patient.id, personId, eligibility: "PENDING", token: "P-SWEEP", tokenDay: dayKey(new Date(), await facilityTimeZone(prisma, FACILITIES.pune)), cardShareId: ADDRESSED.cardShare, submittedByPersonId: personId } });
+  await prisma.preArrivalCheckIn.create({ data: { id: ADDRESSED.checkIn, facilityId: FACILITIES.pune, kind: "APPOINTMENT", patientId: patient.id, personId, eligibility: "PENDING", token: "P-SWEEP", tokenDay: dayKey(appNow(), await facilityTimeZone(prisma, FACILITIES.pune)), cardShareId: ADDRESSED.cardShare, submittedByPersonId: personId } });
   await prisma.accessRequest.create({ data: { id: ADDRESSED.request, personId, patientId: patient.id, requesterKind: "FACILITY", requesterUserId: staffUser.id, requesterFacilityId: FACILITIES.pune, purpose: "CONSULTATION", categories: ["LABS"], expiresAt: soon } });
 }
 

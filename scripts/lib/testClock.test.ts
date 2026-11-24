@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { GATE_TZ, indiaDate, indiaMidnight, makeGateClock } from "./testClock";
+import { GATE_TZ, indiaDate, indiaMidnight, makeGateClock, middayOffsetMs, RUN_START_ENV, TEST_CLOCK_ENV, freezeAppClockAtMidday } from "./testClock";
 
 // Every minute of one India day, plus the DST-free edges either side.
 const START = Date.parse("2026-10-27T18:30:00Z"); // 2026-10-28 00:00 IST
@@ -55,5 +55,27 @@ describe("gate clock", () => {
     expect(read("lib/gateBootstrap.ts")).toMatch(/process\.env\.TZ = GATE_TZ/);
     expect(read("verify-all.ts")).toMatch(/TZ: GATE_TZ/);
     expect(read("e2e-smoke.ts")).toMatch(/TZ: GATE_TZ/);
+  });
+});
+
+describe("the mid-day app clock", () => {
+  const ist = (iso: string) => new Date(`${iso}+05:30`).getTime();
+  it("puts the app at 12:00 IST of the run's start day, at 23:59, at 00:01, and across midnight", () => {
+    for (const [start, real, day] of [
+      ["2026-11-23T23:59:00", "2026-11-23T23:59:00", "2026-11-23"],
+      ["2026-11-24T00:01:00", "2026-11-24T00:01:00", "2026-11-24"],
+      ["2026-11-23T23:59:00", "2026-11-24T00:01:00", "2026-11-23"],
+    ] as const) {
+      const env: Record<string, string | undefined> = { [RUN_START_ENV]: String(ist(start)) };
+      const offset = freezeAppClockAtMidday(env, ist(real));
+      expect(new Date(ist(real) + offset).toISOString()).toBe(new Date(`${day}T12:00:00+05:30`).toISOString());
+      expect(env[TEST_CLOCK_ENV]).toBe(String(offset));
+    }
+  });
+  it("records the run start when none is set, so later processes share the day", () => {
+    const env: Record<string, string | undefined> = {};
+    freezeAppClockAtMidday(env, ist("2026-11-23T08:00:00"));
+    expect(env[RUN_START_ENV]).toBe(String(ist("2026-11-23T08:00:00")));
+    expect(middayOffsetMs(ist("2026-11-23T08:00:00"), ist("2026-11-23T08:00:00"))).toBe(4 * 3_600_000);
   });
 });

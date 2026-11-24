@@ -139,6 +139,9 @@ jobs:
       # (scripts/verify-all.ts); the job's DATABASE_URL is never reset. Exits
       # non-zero if any gate fails.
       - name: verify:all (main group)
+        # The HTTP gates build the app: the same heap as Test & Build (RAG Phase 4 outgrew the default ~2 GB).
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: npm run verify:all -- --group main
 
       - name: Upload gate report
@@ -262,6 +265,9 @@ jobs:
       # Migrates and seeds aarogya_e2e, builds a synthetic fixture, builds and
       # starts the app and the worker on the mock providers, runs e2e/*.spec.ts.
       - name: e2e:smoke
+        # The smoke builds the app itself: the same heap as the Test & Build job's build (RAG Phase 4 outgrew the default).
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: npm run e2e:smoke
 
       - name: Upload smoke report

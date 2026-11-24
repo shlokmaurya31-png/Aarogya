@@ -36,7 +36,11 @@ export interface LogInput {
   /** RAG Phase 1: the sources given to the model (AiInteractionSource rows; no text). */
   sources?: LoggedSource[];
   /** RAG Phase 1: accounting (docs/RAG_ARCHITECTURE.md §11.5). */
-  accounting?: { module: string; intent: string; tier: number; provider: string | null; retrievalMs: number | null; generationMs: number | null };
+  accounting?: {
+    module: string; intent: string; tier: number; provider: string | null; retrievalMs: number | null; generationMs: number | null;
+    /** RAG Phase 4, step 4.5: query-embedding tokens, rerank units, cache hits (embedding and retrieval), and the estimated cost. */
+    embeddingTokens?: number; rerankUnits?: number; cacheHits?: number; estimatedCostMicroUsd?: number;
+  };
 }
 
 export interface LoggedSource { rank: number; cited: boolean; chunkId: string; ragDocumentId: string | null; sourceType: string; sourceId: string; origin: RagOrigin; recordedAt: Date; pageNumber?: number | null; sectionPath?: string | null }
@@ -71,7 +75,10 @@ export async function logInteraction(input: LogInput): Promise<string> {
   const acc = input.accounting;
   await prisma.aiInteraction.create({
     data: {
-      ...(acc ? { module: acc.module, intent: acc.intent, tier: acc.tier, provider: acc.provider, retrievalMs: acc.retrievalMs, generationMs: acc.generationMs } : {}),
+      ...(acc ? {
+        module: acc.module, intent: acc.intent, tier: acc.tier, provider: acc.provider, retrievalMs: acc.retrievalMs, generationMs: acc.generationMs,
+        embeddingTokens: acc.embeddingTokens ?? 0, rerankUnits: acc.rerankUnits ?? 0, cacheHits: acc.cacheHits ?? 0, estimatedCostMicroUsd: acc.estimatedCostMicroUsd ?? 0,
+      } : {}),
       sources: { create: (input.sources ?? []).map((s) => {
         const kind = sourceKind(s.chunkId);
         const d = s.ragDocumentId ? versions.get(s.ragDocumentId) : undefined;

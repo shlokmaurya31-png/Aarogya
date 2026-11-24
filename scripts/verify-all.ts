@@ -40,7 +40,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { assertGateDatabase } from "./lib/gateGuard";
-import { GATE_TZ } from "./lib/testClock";
+import { GATE_TZ, RUN_START_ENV } from "./lib/testClock";
 import { resolveVerifyTarget } from "./lib/verifyTarget";
 
 const ROOT = path.resolve(__dirname, "..");
@@ -58,6 +58,7 @@ const ORDER = [
   // other facility's rows (builds and starts the app itself). Runs FIRST, on
   // the seed alone, and again after every other gate (AFTER_ALL): its result
   // must not depend on what ran before it (found 2026-11-17).
+  "verify-postgres-test-clock",
   "verify-postgres-tenancy-sweep",
   // Phase 4 / 4.5 — diagnostics and resource scheduling
   "verify-postgres-diagnostics",
@@ -476,6 +477,9 @@ function report(results: Result[], opts: Options, host: string, totalMs: number)
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
+  // One India day for the whole run: a gate that freezes the app's clock at mid-day uses the day the run
+  // started, even when it runs after midnight (scripts/lib/testClock.ts).
+  process.env[RUN_START_ENV] ??= String(Date.now());
   // Same source Prisma uses; variables already set in the shell win, so the
   // safety check and every child process see one DATABASE_URL.
   if (existsSync(path.join(ROOT, ".env"))) process.loadEnvFile(path.join(ROOT, ".env"));

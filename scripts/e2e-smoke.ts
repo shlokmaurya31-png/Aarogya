@@ -18,7 +18,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { GATE_TZ } from "./lib/testClock";
+import { GATE_TZ, freezeAppClockAtMidday } from "./lib/testClock";
 import { resolveVerifyTarget } from "./lib/verifyTarget";
 
 const ROOT = path.resolve(__dirname, "..");
@@ -28,6 +28,8 @@ const OUT = path.join(ROOT, ".e2e");
 async function main() {
   if (existsSync(path.join(ROOT, ".env"))) process.loadEnvFile(path.join(ROOT, ".env"));
   const target = resolveVerifyTarget("E2E_DATABASE_URL");
+  // The app's clock at mid-day India time for the whole run, so no journey depends on the real time of day.
+  freezeAppClockAtMidday();
   // Everything below (fixture, app, worker, tests) sees only this database and the mock providers.
   Object.assign(process.env, {
     DATABASE_URL: target.url, DIRECT_URL: target.url,

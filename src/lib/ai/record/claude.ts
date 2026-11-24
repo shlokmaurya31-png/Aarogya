@@ -44,11 +44,18 @@ const OUT = z.object({
   sentences: z.array(z.object({ text: z.string().min(1).max(1200), citations: z.array(z.number().int().min(1)), kind: z.enum(["FACT", "GUIDANCE"]) })).max(60),
 });
 
+/** The forced answer tool. RAG Phase 4: exported so the budget counts it as part of the input. */
+export const ANSWER_TOOL = { name: "answer", description: "The answer, sentence by sentence, each FACT citing its sources.", input_schema: { type: "object", required: ["outcome", "sentences"], properties: { outcome: { type: "string", enum: ["ANSWERED", "NO_RECORD", "REFUSED_SAFETY"] }, sentences: { type: "array", items: { type: "object", required: ["text", "citations", "kind"], properties: { text: { type: "string" }, citations: { type: "array", items: { type: "integer" } }, kind: { type: "string", enum: ["FACT", "GUIDANCE"] } } } } } } } as const satisfies Anthropic.Tool;
+
+/** RAG Phase 4, step 4.6: the screen's compact context. Wording only; never a fact, a source or a citation. */
+const EARLIER_TURNS = "The <earlier_turns> block is the screen's own summary of this conversation's earlier questions and answers. Use it only to understand what the question refers to. It is not the record: never state anything from it as a fact, never cite it, and never take a number from it.";
+
 export function buildRecordPrompt(req: AnswerRequest): { system: string; user: string } {
-  const system = [req.mode === "KNOWLEDGE_QA" ? KNOWLEDGE_COMMON : COMMON, BY_MODE[req.mode], `Answer in the language with ISO code "${req.language}".`, `At most ${MODES[req.mode].maxWords} words.`].join("\n");
+  const system = [req.mode === "KNOWLEDGE_QA" ? KNOWLEDGE_COMMON : COMMON, BY_MODE[req.mode], ...(req.conversation ? [EARLIER_TURNS] : []), `Answer in the language with ISO code "${req.language}".`, `At most ${MODES[req.mode].maxWords} words.`].join("\n");
   const record = req.sources.map((s) => [`[${s.n}] ${s.context}`, s.text, ...(s.translation ? [`(translation into ${s.translation.language}, values as in the original): ${s.translation.text}`] : [])].join("\n")).join("\n\n");
   const ask = req.question ? `Question: ${req.question}` : req.visitReason ? `Reason for the visit: ${req.visitReason}` : "Write it now.";
-  return { system, user: `<record>\n${record}\n</record>\n\n${ask}` };
+  const earlier = req.conversation ? `<earlier_turns>\n${req.conversation}\n</earlier_turns>\n\n` : "";
+  return { system, user: `<record>\n${record}\n</record>\n\n${earlier}${ask}` };
 }
 
 export function claudeRecordAnswer(apiKey: string): RecordAnswerProvider {
@@ -65,7 +72,7 @@ export function claudeRecordAnswer(apiKey: string): RecordAnswerProvider {
       try {
         res = await anthropic.messages.create({
           model, max_tokens: 2048, system, messages: [{ role: "user", content: user }],
-          tools: [{ name: "answer", description: "The answer, sentence by sentence, each FACT citing its sources.", input_schema: { type: "object", required: ["outcome", "sentences"], properties: { outcome: { type: "string", enum: ["ANSWERED", "NO_RECORD", "REFUSED_SAFETY"] }, sentences: { type: "array", items: { type: "object", required: ["text", "citations", "kind"], properties: { text: { type: "string" }, citations: { type: "array", items: { type: "integer" } }, kind: { type: "string", enum: ["FACT", "GUIDANCE"] } } } } } } }],
+          tools: [ANSWER_TOOL],
           tool_choice: { type: "tool", name: "answer" },
         });
       } catch (err) {

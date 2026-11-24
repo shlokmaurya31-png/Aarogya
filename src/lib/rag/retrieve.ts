@@ -1,4 +1,6 @@
 import { Prisma, type RagOrigin, type RagSourceType } from "@prisma/client";
+import { tokenEconomy } from "./economy";
+import { countTokens, familyFor } from "./tokens";
 import { prisma } from "@/lib/db";
 import { resolveEffectiveInternal } from "@/lib/config/resolver";
 import { embeddingProviderFor } from "@/lib/ai/embeddings";
@@ -76,6 +78,18 @@ export interface Retrieval {
   noRecord: boolean;
   space: { model: string; version: number };
   candidateIds: string[];
+  /** RAG Phase 4: what the retrieval cost (no text). */
+  usage: RetrievalUsage;
+}
+
+/** Query-embedding tokens (the space's provider family), rerank units (documents scored), and retrieval passes. */
+export interface RetrievalUsage { embeddingTokens: number; rerankUnits: number; iterations: number }
+
+/** RAG Phase 4: retrieval passes at most for one question (ai.retrieval.max_iterations). */
+async function maxRetrievalIterations(organizationId: string | null, facilityId: string | null): Promise<number> {
+  if (!organizationId) return 1;
+  const eff = await resolveEffectiveInternal({ key: "ai.retrieval.max_iterations", organizationId, facilityId: facilityId ?? undefined, fallbackRaw: "1" });
+  return typeof eff.value === "number" ? eff.value : 1;
 }
 
 const RRF_K = 60;
@@ -221,11 +235,13 @@ export async function retrieve(access: AiAccess, input: { question?: string; vis
   const space = await activeSpace();
   const threshold0 = () => modeThreshold(access.mode, access.callerOrganizationId ?? access.subject.organizationId, access.callerFacilityId ?? access.subject.facilityId);
   const spaceRef = { model: space.embeddingModel, version: space.embeddingVersion };
+  // RAG Phase 4, step 4.5: what this retrieval cost (no text): the query embedding's tokens, rerank units, passes.
+  const usage: RetrievalUsage = { embeddingTokens: 0, rerankUnits: 0, iterations: 1 };
 
   // RAG Phase 3: route the question; a lookup its readers answer in full needs no search.
   const plan = input.reportSourceIds ? null : await planFor(access, input.question);
   if (plan && (plan.intent === "OPERATIONAL" || plan.intent === "UNSUPPORTED")) {
-    return { structured: [], chunks: [], live: [], plan, answeredByReader: false, unsupported: true, topScore: null, threshold: await threshold0(), noRecord: true, space: spaceRef, candidateIds: [] };
+    return { structured: [], chunks: [], live: [], plan, answeredByReader: false, unsupported: true, topScore: null, threshold: await threshold0(), noRecord: true, space: spaceRef, candidateIds: [], usage };
   }
   const allLive = access.mode === "EXPLAIN_REPORT" ? [] : await liveFacts(access);
   let structured: LiveFact[] = [];
@@ -235,7 +251,7 @@ export async function retrieve(access: AiAccess, input: { question?: string; vis
     const answered = plan.readers.every((r) => (r === "ALLERGIES" || r === "MEDICINES" ? asked.length > 0 : facts.some((f) => f.reader === r)));
     structured = [...facts.map(({ reader: _r, ...f }) => f), ...asked];
     if (plan.intent === "STRUCTURED_LOOKUP" && answered) {
-      return { structured, chunks: [], live: [], plan, answeredByReader: true, unsupported: false, topScore: null, threshold: await threshold0(), noRecord: false, space: spaceRef, candidateIds: [] };
+      return { structured, chunks: [], live: [], plan, answeredByReader: true, unsupported: false, topScore: null, threshold: await threshold0(), noRecord: false, space: spaceRef, candidateIds: [], usage };
     }
   }
   const provider = embeddingProviderFor(space);
@@ -250,12 +266,34 @@ export async function retrieve(access: AiAccess, input: { question?: string; vis
   // RAG Phase 3, step 3.1: the candidate counts from the configuration.
   const counts = await candidateCounts(access.callerOrganizationId ?? access.subject.organizationId, access.callerFacilityId ?? access.subject.facilityId);
   const [qv] = await provider.embed([query], "query", access.permit);
-  const candidates = await candidateSearch({ scope, space: { model: space.embeddingModel, version: space.embeddingVersion }, queryVector: qv, terms, keyword: queryTerms(query), vectorLimit: counts.vector, keywordLimit: counts.keyword });
-  const fused = fuse(candidates).slice(0, counts.rerank);
-  const rows = new Map((await prisma.ragChunk.findMany({ where: { id: { in: fused.map((f) => f.chunkId) } }, select: CHUNK_SELECT })).map((c) => [c.id, toRow(c)]));
-  const top = fused.map((f) => rows.get(f.chunkId)).filter((c): c is ChunkRow => !!c);
-  const reranked = provider.rerank ? await provider.rerank(query, top.map((c) => `${c.context}\n${c.text}`), access.permit) : top.map((_, index) => ({ index, score: fused[index].rrf * RRF_K / 2 }));
+  usage.embeddingTokens = countTokens(query, familyFor(space.embeddingModel));
+  const threshold = await threshold0();
   const latestIntent = LATEST.test(query);
+  // RAG Phase 4: adaptive retrieval. A near miss (the question would be "no record": best score below the threshold
+  // but within 0.1 of it, no candidate holding every term, no reader's fact) is followed by one pass over a wider
+  // candidate pool, never a wider scope, up to ai.retrieval.max_iterations; the better pass is kept. The query is
+  // embedded once. Any other question pays for one pass only. Default one pass (the registry key explains why).
+  const pass = async (mult: number) => {
+    const c = { vector: Math.min(200, counts.vector * mult), keyword: Math.min(200, counts.keyword * mult), rerank: Math.min(100, counts.rerank * mult) };
+    const candidates = await candidateSearch({ scope, space: { model: space.embeddingModel, version: space.embeddingVersion }, queryVector: qv, terms, keyword: queryTerms(query), vectorLimit: c.vector, keywordLimit: c.keyword });
+    const fused = fuse(candidates).slice(0, c.rerank);
+    const rows = new Map((await prisma.ragChunk.findMany({ where: { id: { in: fused.map((f) => f.chunkId) } }, select: CHUNK_SELECT })).map((r) => [r.id, toRow(r)]));
+    const top = fused.map((f) => rows.get(f.chunkId)).filter((r): r is ChunkRow => !!r);
+    const reranked = provider.rerank ? await provider.rerank(query, top.map((r) => `${r.context}\n${r.text}`), access.permit) : top.map((_, index) => ({ index, score: fused[index].rrf * RRF_K / 2 }));
+    usage.rerankUnits += provider.rerank ? top.length : 0;
+    const topScore = reranked.length ? Math.max(...reranked.map((r) => r.score)) : null;
+    const covered = terms.length > 0 && candidates.some((x) => x.matchedTerms >= terms.length);
+    return { candidates, top, reranked, topScore, covered, full: candidates.length >= Math.min(c.vector, c.keyword) };
+  };
+  const maxIterations = await maxRetrievalIterations(access.callerOrganizationId ?? access.subject.organizationId, access.callerFacilityId ?? access.subject.facilityId);
+  let best0 = await pass(1);
+  const nearMiss = (p: typeof best0) => !p.covered && structured.length === 0 && (p.topScore ?? -1) < threshold && (p.topScore ?? -1) >= threshold - 0.1 && p.full;
+  for (let k = 2; k <= maxIterations && input.question && tokenEconomy() && nearMiss(best0); k++) {
+    const next = await pass(k);
+    usage.iterations = k;
+    if ((next.topScore ?? -1) > (best0.topScore ?? -1)) best0 = next;
+  }
+  const { candidates, top, reranked, topScore } = best0;
   const newest = Math.max(0, ...top.map((c) => c.recordedAt.getTime()));
   const oldest = Math.min(...top.map((c) => c.recordedAt.getTime()), newest);
   const scored: RetrievedChunk[] = reranked.map(({ index, score }) => {
@@ -267,7 +305,6 @@ export async function retrieve(access: AiAccess, input: { question?: string; vis
   // Verified above imported above patient-provided on the same footing; then the newer.
   const ORIGIN_RANK = { VERIFIED: 0, IMPORTED: 1, PATIENT_PROVIDED: 2 } as const;
   scored.sort((a, b) => b.score - a.score || ORIGIN_RANK[a.origin] - ORIGIN_RANK[b.origin] || b.recordedAt.getTime() - a.recordedAt.getTime() || a.chunkId.localeCompare(b.chunkId));
-  const topScore = reranked.length ? Math.max(...reranked.map((r) => r.score)) : null;
   // Step 3.7: a passage about a row a reader already gave is dropped; the same words twice are one passage.
   let chunks = dedupePassages(dropCoveredByFacts(scored, structured)).slice(0, spec.context ? counts.keepContext : counts.keep);
 
@@ -290,17 +327,17 @@ export async function retrieve(access: AiAccess, input: { question?: string; vis
   const live = allLive.filter((l) => !given.has(l.chunkId));
   // Live facts are evidence too ("Is she on warfarin?" never depends on the index, §7.4): scored by the same reranker.
   const liveScores = input.question && live.length && provider.rerank ? await provider.rerank(query, live.map((l) => `${l.context}\n${l.text}`), access.permit) : [];
+  usage.rerankUnits += liveScores.length;
   const best = Math.max(topScore ?? -1, ...liveScores.map((x) => x.score));
 
-  const threshold = await threshold0();
-  const covered = terms.length > 0 && candidates.some((c) => c.matchedTerms >= terms.length);
+  const covered = best0.covered;
   // A reader's fact is evidence of its own: a mixed question with facts is never "no record".
   const noRecord = input.question
     ? (best < threshold) && !covered && structured.length === 0
     : chunks.length === 0 && live.length === 0;
   return {
     structured: noRecord ? [] : structured, chunks: noRecord ? [] : chunks, live: noRecord ? [] : live, plan, answeredByReader: false, unsupported: false,
-    topScore: best >= 0 ? best : null, threshold, noRecord, space: spaceRef, candidateIds: fuse(candidates).map((c) => c.chunkId),
+    topScore: best >= 0 ? best : null, threshold, noRecord, space: spaceRef, candidateIds: fuse(candidates).map((c) => c.chunkId), usage,
   };
 }
 

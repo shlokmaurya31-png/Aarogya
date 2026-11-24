@@ -1,0 +1,1377 @@
+{
+ "status": "pending clinical advisor sign-off",
+ "note": "RAG Phase 4 housekeeping (docs/RAG_IMPLEMENTATION_PLAN.md §13.5): the sealed held-out split. New questions over the same synthetic fixture (rag-eval-v2), written 2026-11-23 before any Phase 4 tuning. Run once per phase, at the end, by `npm run eval:rag:sealed -- --phase <n>`; never used for tuning, never read by a gate. The file's sha-256 is recorded in docs/RAG_INDIC_BENCHMARK.md; the runner refuses a file that doesn't match it, and a second run in the same phase.",
+ "fixture": "rag-eval-v2",
+ "sealedOn": "2026-11-23",
+ "questions": [
+  {
+   "id": "S-R1",
+   "group": "READERS",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Most recent Hb level please"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Hemoglobin 11.2 g/dL"
+    ],
+    "sources": [
+     "LAB_RESULT"
+    ],
+    "labels": [
+     "verified"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-R2",
+   "group": "READERS",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Current potassium?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Potassium 5.6 mEq/L"
+    ],
+    "sources": [
+     "LAB_RESULT"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-R3",
+   "group": "READERS",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "What does the last creatinine show?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Serum creatinine 1.38 mg/dL"
+    ],
+    "sources": [
+     "LAB_RESULT"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-R4",
+   "group": "READERS",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Latest thyroid stimulating hormone"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "TSH 6.8"
+    ],
+    "sources": [
+     "LAB_RESULT"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-R5",
+   "group": "READERS",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Give me the sugar control figure, HbA1c"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "HbA1c 7.8 %"
+    ],
+    "sources": [
+     "LAB_RESULT"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-R6",
+   "group": "READERS",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Oxygen saturation now?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "SpO2 91%"
+    ],
+    "sources": [
+     "OBSERVATION"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-R7",
+   "group": "READERS",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Heart rate at the last check"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "HR 112/min"
+    ],
+    "sources": [
+     "OBSERVATION"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-R8",
+   "group": "READERS",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Is she febrile? Latest temperature"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "temp 38.4 °C"
+    ],
+    "sources": [
+     "OBSERVATION"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-R9",
+   "group": "READERS",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Pending investigations for this patient"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Lipid profile"
+    ],
+    "sources": [
+     "LAB_ORDER"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-R10",
+   "group": "READERS",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Which scan has been ordered but not done?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "USG abdomen"
+    ],
+    "sources": [
+     "IMAGING_ORDER"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-R11",
+   "group": "READERS",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Respiratory rate latest"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "RR 22/min"
+    ],
+    "sources": [
+     "OBSERVATION"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-R12",
+   "group": "READERS",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "When was she admitted this time?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "2026-11-20"
+    ],
+    "sources": [
+     "ENCOUNTER"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-H1",
+   "group": "HISTORICAL",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Hb reading from August 2026"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Hemoglobin 10.1 g/dL"
+    ],
+    "sources": [
+     "LAB_RESULT"
+    ],
+    "forbidden": [
+     "11.2"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-H2",
+   "group": "HISTORICAL",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Sodium value in Aug 2026"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Serum sodium 136 mEq/L"
+    ],
+    "sources": [
+     "LAB_RESULT"
+    ],
+    "forbidden": [
+     "131"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-H3",
+   "group": "HISTORICAL",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "How has haemoglobin changed since August?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "10.1",
+     "11.2"
+    ],
+    "sources": [
+     "LAB_RESULT"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-H4",
+   "group": "HISTORICAL",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Sodium trend"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "136",
+     "131"
+    ],
+    "sources": [
+     "LAB_RESULT"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-M1",
+   "group": "MEDICINE",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Is a statin prescribed?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Atorvastatin"
+    ],
+    "sources": [
+     "MEDICATION_ORDER"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-M2",
+   "group": "MEDICINE",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "What inhaler does she use?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Salbutamol"
+    ],
+    "sources": [
+     "MEDICATION_ORDER"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-M3",
+   "group": "MEDICINE",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Which antibiotic is she on?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Azithromycin"
+    ],
+    "sources": [
+     "MEDICATION_ORDER"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-M4",
+   "group": "MEDICINE",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "atorvastatin dose and timing"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "10 mg"
+    ],
+    "sources": [
+     "MEDICATION_ORDER"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-M5",
+   "group": "MEDICINE",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "How often is metformin given?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Metformin"
+    ],
+    "sources": [
+     "MEDICATION_ORDER"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-M6",
+   "group": "MEDICINE",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Any asthma reliever on the chart?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Salbutamol"
+    ],
+    "sources": [
+     "MEDICATION_ORDER"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-A1",
+   "group": "ALLERGY",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Drug allergies?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Penicillin"
+    ],
+    "sources": [
+     "ALLERGY"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-A2",
+   "group": "ALLERGY",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Can I give amoxicillin? Check allergies"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Penicillin"
+    ],
+    "sources": [
+     "ALLERGY"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-A3",
+   "group": "ALLERGY",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "How severe was the penicillin reaction?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "urticarial rash"
+    ],
+    "sources": [
+     "ALLERGY"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-C1",
+   "group": "CRITICAL",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Is the troponin raised?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Troponin I 2.4 ng/mL"
+    ],
+    "sources": [
+     "LAB_RESULT"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-C2",
+   "group": "CRITICAL",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Any panic values flagged?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "critical value"
+    ],
+    "sources": [
+     "LAB_RESULT"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-C3",
+   "group": "CRITICAL",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Lactate level from the last blood gas or lab"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Lactate 4.6 mmol/L"
+    ],
+    "sources": [
+     "LAB_RESULT"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-D1",
+   "group": "MULTI_DOC",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "What did the radiologist conclude on the chest film?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "right lower zone consolidation"
+    ],
+    "sources": [
+     "IMAGING_REPORT"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-D2",
+   "group": "MULTI_DOC",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Presenting complaint in the progress note"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Cough and fever for 3 days"
+    ],
+    "sources": [
+     "CLINICAL_NOTE"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-D3",
+   "group": "MULTI_DOC",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Why was she referred to cardiology?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Exertional chest discomfort"
+    ],
+    "sources": [
+     "REFERRAL"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-D4",
+   "group": "MULTI_DOC",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "What is the working diagnosis in the note?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Lower respiratory tract infection"
+    ],
+    "sources": [
+     "CLINICAL_NOTE"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-IM1",
+   "group": "IMPORTED",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Old system haemoglobin value"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "9.9"
+    ],
+    "sources": [
+     "LEGACY_LAB_RESULT"
+    ],
+    "labels": [
+     "imported"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-IM2",
+   "group": "IMPORTED",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Vitamin D from previous hospital records"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "18"
+    ],
+    "sources": [
+     "LEGACY_LAB_RESULT"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-IM3",
+   "group": "IMPORTED",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Show the current hemoglobin, verified only"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Hemoglobin 11.2 g/dL"
+    ],
+    "sources": [
+     "LAB_RESULT"
+    ],
+    "labels": [
+     "verified"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-X1",
+   "group": "NO_RECORD",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Has she had a colonoscopy?"
+   },
+   "expect": {
+    "outcome": "NO_RECORD"
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-X2",
+   "group": "NO_RECORD",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "HIV status?"
+   },
+   "expect": {
+    "outcome": "NO_RECORD"
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-X3",
+   "group": "INSUFFICIENT",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "What is her vaccination history?"
+   },
+   "expect": {
+    "outcome": "NO_RECORD"
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-X4",
+   "group": "INSUFFICIENT",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Any family history of cancer?"
+   },
+   "expect": {
+    "outcome": "NO_RECORD"
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-X5",
+   "group": "INSUFFICIENT",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Last ECG findings?"
+   },
+   "expect": {
+    "outcome": "NO_RECORD"
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-O1",
+   "group": "OPERATIONAL",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Is the ICU full right now?"
+   },
+   "expect": {
+    "outcome": "NO_RECORD"
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-O2",
+   "group": "OPERATIONAL",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "How long is the OPD queue?"
+   },
+   "expect": {
+    "outcome": "NO_RECORD"
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-O3",
+   "group": "OPERATIONAL",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "How many oxygen cylinders are in stock?"
+   },
+   "expect": {
+    "outcome": "NO_RECORD"
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-N1",
+   "group": "NURSE",
+   "actor": "nurse",
+   "mode": "NURSE_HANDOFF",
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Dose missed: Azithromycin 500 mg"
+    ],
+    "sources": [
+     "MEDICATION_DOSE"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-N2",
+   "group": "NURSE",
+   "actor": "nurse",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "Latest blood pressure for handover"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "BP 150/94 mmHg"
+    ],
+    "sources": [
+     "OBSERVATION"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-K1",
+   "group": "SOP",
+   "actor": "doctor",
+   "mode": "KNOWLEDGE_QA",
+   "ask": {
+    "question": "How long to rub hands with alcohol rub?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "20 to 30 seconds"
+    ],
+    "sources": [
+     "KNOWLEDGE_DOCUMENT"
+    ],
+    "documents": [
+     "K_HAND"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-K2",
+   "group": "SOP",
+   "actor": "doctor",
+   "mode": "KNOWLEDGE_QA",
+   "ask": {
+    "question": "Fluid bolus volume in septic hypotension"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "30 mL/kg"
+    ],
+    "sources": [
+     "KNOWLEDGE_DOCUMENT"
+    ],
+    "documents": [
+     "K_SEPSIS"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-K3",
+   "group": "SOP",
+   "actor": "doctor",
+   "mode": "KNOWLEDGE_QA",
+   "ask": {
+    "question": "What to do first after a needle stick?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "soap and running water"
+    ],
+    "sources": [
+     "KNOWLEDGE_DOCUMENT"
+    ],
+    "documents": [
+     "K_NEEDLE"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-K4",
+   "group": "SOP",
+   "actor": "doctor",
+   "mode": "KNOWLEDGE_QA",
+   "ask": {
+    "question": "How soon must a blood unit be started after leaving the bank?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "within 30 minutes"
+    ],
+    "sources": [
+     "KNOWLEDGE_DOCUMENT"
+    ],
+    "documents": [
+     "K_TRANSFUSION"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-K5",
+   "group": "SOP",
+   "actor": "doctor",
+   "mode": "KNOWLEDGE_QA",
+   "ask": {
+    "question": "Repositioning interval for bed-bound patients"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "every 2 hours"
+    ],
+    "sources": [
+     "KNOWLEDGE_DOCUMENT"
+    ],
+    "documents": [
+     "K_PRESSURE"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-K6",
+   "group": "SOP",
+   "actor": "doctor",
+   "mode": "KNOWLEDGE_QA",
+   "ask": {
+    "question": "At what gauge reading is an oxygen cylinder replaced?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "below 500 psi"
+    ],
+    "sources": [
+     "KNOWLEDGE_DOCUMENT"
+    ],
+    "documents": [
+     "K_OXYGEN"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-K7",
+   "group": "SOP",
+   "actor": "doctor",
+   "mode": "KNOWLEDGE_QA",
+   "ask": {
+    "question": "Can we take the lift during a fire?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Never use the lifts"
+    ],
+    "sources": [
+     "KNOWLEDGE_DOCUMENT"
+    ],
+    "documents": [
+     "K_FIRE"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-K8",
+   "group": "SOP",
+   "actor": "doctor",
+   "mode": "KNOWLEDGE_QA",
+   "ask": {
+    "question": "By what time should the discharge summary be handed over?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "before 11 am"
+    ],
+    "sources": [
+     "KNOWLEDGE_DOCUMENT"
+    ],
+    "documents": [
+     "K_DISCHARGE"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-K9",
+   "group": "SOP",
+   "actor": "doctor",
+   "mode": "KNOWLEDGE_QA",
+   "ask": {
+    "question": "Mask for staff entering a TB isolation room"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "N95 respirators"
+    ],
+    "sources": [
+     "KNOWLEDGE_DOCUMENT"
+    ],
+    "documents": [
+     "K_ISOLATION"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-K10",
+   "group": "SOP",
+   "actor": "doctor",
+   "mode": "KNOWLEDGE_QA",
+   "ask": {
+    "question": "What risk tool do we use for pressure sores?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Braden scale"
+    ],
+    "sources": [
+     "KNOWLEDGE_DOCUMENT"
+    ],
+    "documents": [
+     "K_PRESSURE"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-K11",
+   "group": "STALE",
+   "actor": "doctor",
+   "mode": "KNOWLEDGE_QA",
+   "ask": {
+    "question": "Which tool is used for falls risk now?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Morse scale"
+    ],
+    "sources": [
+     "KNOWLEDGE_DOCUMENT"
+    ],
+    "forbidden": [
+     "paper falls checklist"
+    ],
+    "documents": [
+     "K_FALLS"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-K12",
+   "group": "STALE",
+   "actor": "doctor",
+   "mode": "KNOWLEDGE_QA",
+   "ask": {
+    "question": "Falls assessment frequency on the ward"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "every shift"
+    ],
+    "sources": [
+     "KNOWLEDGE_DOCUMENT"
+    ],
+    "forbidden": [
+     "every 4 hours"
+    ],
+    "documents": [
+     "K_FALLS"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-K13",
+   "group": "STALE",
+   "actor": "doctor",
+   "mode": "KNOWLEDGE_QA",
+   "ask": {
+    "question": "Until what time can visitors stay in the evening?"
+   },
+   "expect": {
+    "outcome": "NO_RECORD"
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-K14",
+   "group": "STALE",
+   "actor": "doctor",
+   "mode": "KNOWLEDGE_QA",
+   "ask": {
+    "question": "Does meropenem need infectious diseases approval before use?"
+   },
+   "expect": {
+    "outcome": "NO_RECORD"
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-Lhi",
+   "group": "LANG_HI",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "पोटैशियम का ताज़ा मान बताइए"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Potassium 5.6 mEq/L"
+    ],
+    "sources": [
+     "LAB_RESULT"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-Lmr",
+   "group": "LANG_MR",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "ऑक्सिजन पातळी सध्या किती आहे?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "SpO2 91%"
+    ],
+    "sources": [
+     "OBSERVATION"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-Lbn",
+   "group": "LANG_BN",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "রোগীর কোনো ওষুধে অ্যালার্জি আছে?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Penicillin"
+    ],
+    "sources": [
+     "ALLERGY"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-Lta",
+   "group": "LANG_TA",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "சமீபத்திய சோடியம் அளவு என்ன?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Serum sodium 131 mEq/L"
+    ],
+    "sources": [
+     "LAB_RESULT"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-Lte",
+   "group": "LANG_TE",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "క్రియాటినిన్ తాజా విలువ"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Serum creatinine 1.38 mg/dL"
+    ],
+    "sources": [
+     "LAB_RESULT"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-Lgu",
+   "group": "LANG_GU",
+   "actor": "doctor",
+   "mode": "CHART_QA",
+   "ask": {
+    "question": "દર્દીને કયું એન્ટિબાયોટિક ચાલે છે?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "Azithromycin"
+    ],
+    "sources": [
+     "MEDICATION_ORDER"
+    ]
+   },
+   "split": "sealed"
+  },
+  {
+   "id": "S-Kkn",
+   "group": "LANG_KN",
+   "actor": "doctor",
+   "mode": "KNOWLEDGE_QA",
+   "ask": {
+    "question": "ಡೆಂಗ್ಯೂ ರೋಗಿಗೆ ಆಸ್ಪಿರಿನ್ ಕೊಡಬಹುದೇ?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "ಆಸ್ಪಿರಿನ್"
+    ],
+    "sources": [
+     "KNOWLEDGE_DOCUMENT"
+    ],
+    "documents": [
+     "K_KN"
+    ]
+   },
+   "kind": "same-script",
+   "split": "sealed"
+  },
+  {
+   "id": "S-Kml",
+   "group": "LANG_ML",
+   "actor": "doctor",
+   "mode": "KNOWLEDGE_QA",
+   "ask": {
+    "question": "തലവേദനയുള്ളപ്പോൾ എന്ത് പരിശോധിക്കണം?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "രക്തസമ്മർദ്ദം"
+    ],
+    "sources": [
+     "KNOWLEDGE_DOCUMENT"
+    ],
+    "documents": [
+     "K_ML"
+    ]
+   },
+   "kind": "inflected",
+   "split": "sealed"
+  },
+  {
+   "id": "S-Khi",
+   "group": "LANG_HI",
+   "actor": "doctor",
+   "mode": "KNOWLEDGE_QA",
+   "ask": {
+    "question": "dast mein ORS kab dena hai?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "ओआरएस"
+    ],
+    "sources": [
+     "KNOWLEDGE_DOCUMENT"
+    ],
+    "documents": [
+     "K_HI"
+    ]
+   },
+   "kind": "transliterated",
+   "split": "sealed"
+  },
+  {
+   "id": "S-Kor",
+   "group": "LANG_OR",
+   "actor": "doctor",
+   "mode": "KNOWLEDGE_QA",
+   "ask": {
+    "question": "What should be used against mosquitoes in malaria care?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "ମଶାରି"
+    ],
+    "sources": [
+     "KNOWLEDGE_DOCUMENT"
+    ],
+    "documents": [
+     "K_OR"
+    ]
+   },
+   "kind": "cross-script",
+   "split": "sealed"
+  },
+  {
+   "id": "S-Kte",
+   "group": "LANG_TE",
+   "actor": "doctor",
+   "mode": "KNOWLEDGE_QA",
+   "ask": {
+    "question": "How often should haemoglobin be checked in anaemia?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "హిమోగ్లోబిన్"
+    ],
+    "sources": [
+     "KNOWLEDGE_DOCUMENT"
+    ],
+    "documents": [
+     "K_TE"
+    ]
+   },
+   "kind": "cross-script",
+   "split": "sealed"
+  },
+  {
+   "id": "S-Kur",
+   "group": "LANG_UR",
+   "actor": "doctor",
+   "mode": "KNOWLEDGE_QA",
+   "ask": {
+    "question": "typhoid mein khoon ka culture kab?"
+   },
+   "expect": {
+    "outcome": "ANSWERED",
+    "required": [
+     "کلچر"
+    ],
+    "sources": [
+     "KNOWLEDGE_DOCUMENT"
+    ],
+    "documents": [
+     "K_UR"
+    ]
+   },
+   "kind": "transliterated",
+   "split": "sealed"
+  }
+ ]
+}

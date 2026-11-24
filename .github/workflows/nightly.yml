@@ -58,6 +58,9 @@ jobs:
       # Resets, migrates and seeds aarogya_verify once, keeps it as a template,
       # and re-creates aarogya_verify from it before every gate.
       - name: verify:isolated
+        # The HTTP gates build the app: the same heap as Test & Build (RAG Phase 4 outgrew the default ~2 GB).
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: npm run verify:isolated -- --group main
 
       - name: Upload gate report
