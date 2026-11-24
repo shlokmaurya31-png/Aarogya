@@ -28,6 +28,16 @@ import "./lib/gateBootstrap";
  *   8. Scholar: a record-free reply, logged with no person or facility.
  *   9. Rate limits counted on the interaction log: the patient's 7th
  *      request within a minute is a 429.
+ *  10. RAG Phase 5 (5.7), parity: the same record question through /api/chat
+ *      and through /api/ai/ask has the same access result, the same masking
+ *      of what reaches the answer provider, the same validation (an invented
+ *      number ends CITATION_INVALID on both), and the same log (CHART_QA,
+ *      the same sources retrieved and cited, text kept the same way; only
+ *      the module differs: CHAT, ASK).
+ *  11. RAG Phase 5 (5.7): a staff question about the hospital's documents or
+ *      its live state, with no patient, goes to the knowledge or the
+ *      operational gateway and gets their answer; never the record-free
+ *      assistant.
  *
  * Usage: through `npm run verify:all`.
  */
@@ -39,7 +49,13 @@ import { MockAIProvider } from "../src/lib/ai/mockProvider";
 import { AnthropicAIProvider } from "../src/lib/ai/anthropicProvider";
 import { issueAssistantPermit } from "../src/lib/ai/assistantPermit";
 import { decidePersonConsent } from "../src/lib/person/consent";
-import { chatAboutRecord, chatGeneral } from "../src/lib/rag/assistant";
+import { chatAboutRecord, chatGeneral, chatStaff } from "../src/lib/rag/assistant";
+import { askAi } from "../src/lib/rag/ask";
+import { askKnowledge } from "../src/lib/rag/knowledgeAsk";
+import { askOps } from "../src/lib/rag/opsAsk";
+import { getRecordAnswerProvider, setRecordAnswerProviderForTest, type AnswerRequest, type RecordAnswerProvider } from "../src/lib/ai/record";
+import { registerAllConsumers } from "../src/lib/runner/consumers";
+import { dispatchPendingDomainEvents } from "../src/lib/events/dispatcher";
 import { phrase } from "../src/lib/rag/phrases";
 import { linkAccountForGate } from "./lib/personFixture";
 
@@ -163,6 +179,70 @@ async function main() {
   const results: string[] = [];
   for (let i = 0; i < 7; i++) results.push(await outcome(chatGeneral({ kind: "PATIENT", userId: d.user.id }, { message: `question ${i}` })));
   report("Patient: six a minute, the seventh is 429", results.slice(0, 6).every((x) => x === "ANSWERED") && results[6] === "429 RATE_LIMITED", results.join(","));
+
+  // 10. Parity with /api/ai/ask (RAG Phase 5, 5.7).
+  const doc = await staff(Role.DOCTOR, PUNE);
+  const e = await patientWithPerson("e", PUNE);
+  await prisma.person.update({ where: { id: e.personId }, data: { dataClassification: "SYNTHETIC" } });
+  const docStaff = await prisma.hospitalStaffProfile.findUniqueOrThrow({ where: { userId: doc.userId }, select: { id: true } });
+  const enc = await prisma.encounter.create({ data: { patientId: e.patient.id, facilityId: PUNE, type: "OPD", status: "IN_CONSULTATION", chiefComplaint: "assistant parity", attendingStaffId: docStaff.id } });
+  await prisma.clinicalNote.create({ data: { encounterId: enc.id, authorStaffId: docStaff.id, authorRole: "DOCTOR", type: "PROGRESS", status: "SIGNED", content: { subjective: "Dizziness on standing for two days.", plan: "Orthostatic vitals; review in clinic." } } }).catch(() => null);
+  const o = await prisma.labOrder.create({ data: { encounterId: enc.id, patientId: e.patient.id, testName: "Serum sodium", category: "Biochemistry", orderedByStaffId: docStaff.id } });
+  const lr = await prisma.labResult.create({ data: { labOrderId: o.id, value: "129", unit: "mEq/L", abnormalFlag: "LOW", status: "VERIFIED", resultedAt: new Date("2026-10-05T08:00:00Z") } });
+  const { emitFacilityEvent } = await import("../src/lib/events/facilityEvent");
+  await prisma.$transaction((tx) => emitFacilityEvent(tx, { type: "LabResultReleased", aggregateId: lr.id, facilityId: PUNE, payload: { resultId: lr.id, orderId: o.id, patientId: e.patient.id } }));
+  registerAllConsumers();
+  for (let i = 0; i < 20; i++) if ((await dispatchPendingDomainEvents({ now: new Date(), batchSize: 500, maxDurationMs: 60_000 })).claimed === 0) break;
+  const recordMock = getRecordAnswerProvider({});
+  const given: AnswerRequest[] = [];
+  let invent = false;
+  const spy: RecordAnswerProvider = { id: "mock", async answerFromRecord(req, permit) {
+    given.push(req);
+    const a = await recordMock.answerFromRecord(req, permit);
+    return invent ? { ...a, sentences: a.sentences.map((x, i) => (i === a.sentences.length - 1 && x.kind === "FACT" ? { ...x, text: `${x.text} Sodium 141 mEq/L.` } : x)) } : a;
+  } };
+  setRecordAnswerProviderForTest(spy);
+  const Q = `Did ${e.patient.fullName} have a low sodium, and what was the plan?`;
+  const cool = () => prisma.$executeRaw`UPDATE "AiInteraction" SET "createdAt" = "createdAt" - interval '2 minutes' WHERE "userId" = ${doc.userId} AND "createdAt" > now() - interval '2 minutes'`;
+  await cool();
+  const viaChat = await chatAboutRecord(doc, { patientId: e.patient.id, message: Q });
+  await cool();
+  const viaAsk = await askAi(doc, { mode: "CHART_QA", patientId: e.patient.id, question: Q });
+  const [rc, ra] = await Promise.all([viaChat, viaAsk].map((r) => prisma.aiInteraction.findUniqueOrThrow({ where: { id: "interactionId" in r ? r.interactionId : r.meta.interactionId } })));
+  report("Parity: the same outcome and the same cited sources through /api/chat and /api/ai/ask", viaChat.outcome === viaAsk.outcome && viaAsk.outcome === "ANSWERED" && JSON.stringify(viaChat.citations.map((c) => c.sourceId).sort()) === JSON.stringify(viaAsk.citations.map((c) => c.sourceId).sort()), `${viaChat.outcome} / ${viaAsk.outcome}`);
+  report("Parity: the same masking (the patient's name never reaches the answer provider on either path)",
+    given.length === 2 && given.every((g) => !JSON.stringify(g).includes(e.patient.fullName) && g.question?.includes("[redacted]")) && given[0].question === given[1].question);
+  report("Parity: the same log (CHART_QA; the same sources retrieved and cited; the text kept the same way); the module CHAT or ASK",
+    rc.mode === "CHART_QA" && ra.mode === "CHART_QA" && rc.module === "CHAT" && ra.module === "ASK" && JSON.stringify([...rc.retrievedChunkIds].sort()) === JSON.stringify([...ra.retrievedChunkIds].sort())
+      && JSON.stringify([...rc.citedChunkIds].sort()) === JSON.stringify([...ra.citedChunkIds].sort()) && rc.textScope === ra.textScope && !!rc.questionCiphertext === !!ra.questionCiphertext && rc.tier === ra.tier);
+  invent = true;
+  await cool();
+  const badChat = await chatAboutRecord(doc, { patientId: e.patient.id, message: Q });
+  await cool();
+  const badAsk = await askAi(doc, { mode: "CHART_QA", patientId: e.patient.id, question: Q });
+  invent = false;
+  report("Parity: the same validation (an invented number ends CITATION_INVALID on both paths)", badChat.outcome === "CITATION_INVALID" && badAsk.outcome === "CITATION_INVALID", `${badChat.outcome} / ${badAsk.outcome}`);
+  const crossAsk = await outcome(askAi(noidaDoctor, { mode: "CHART_QA", patientId: e.patient.id, question: Q }));
+  const crossChat = await outcome(chatAboutRecord(noidaDoctor, { patientId: e.patient.id, message: Q }));
+  report("Parity: the same access result (another facility's doctor: 404 on both)", crossAsk === "404 NOT_FOUND" && crossChat === crossAsk, `${crossChat} / ${crossAsk}`);
+  setRecordAnswerProviderForTest(null);
+
+  // 11. Knowledge and live-state questions from the chat go to their own gateways.
+  seen.length = 0;
+  await cool();
+  const kq = "What is our hand hygiene policy for alcohol rub?";
+  const kChat = await chatStaff(doc, { message: kq });
+  await cool();
+  const kDirect = await askKnowledge(doc, { question: kq });
+  const kRow = await prisma.aiInteraction.findUniqueOrThrow({ where: { id: kChat.interactionId } });
+  await cool();
+  const oChat = await chatStaff(doc, { message: "How many beds are free?" });
+  await cool();
+  const oDirect = await askOps(doc, { question: "How many beds are free?" });
+  const oRow = await prisma.aiInteraction.findUniqueOrThrow({ where: { id: oChat.interactionId } });
+  report("Chat: a question about the hospital's documents or live state goes to the knowledge or operational gateway, never the record-free assistant",
+    seen.length === 0 && kRow.mode === "KNOWLEDGE_QA" && kRow.module === "CHAT" && kChat.outcome === kDirect.outcome && oRow.mode === "OPS_QA" && oRow.module === "CHAT" && oChat.outcome === oDirect.outcome && oChat.outcome === "ANSWERED",
+    `knowledge ${kChat.outcome}/${kDirect.outcome}, ops ${oChat.outcome}/${oDirect.outcome}, assistant calls ${seen.length}`);
 
   setAIProviderForTest(null);
   console.log(`\n${pass} passed, ${fail} failed.`);

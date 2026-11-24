@@ -106,7 +106,7 @@ async function readCritical(facilityId: string, at: string, names: boolean): Pro
   return out;
 }
 
-export async function askOps(actor: Extract<AiActor, { kind: "STAFF" }>, req: { question: string }): Promise<AskResult> {
+export async function askOps(actor: Extract<AiActor, { kind: "STAFF" }>, req: { question: string }, hooks: { module?: "ASK" | "CHAT" } = {}): Promise<AskResult> {
   const started = Date.now();
   await checkLimits(actor);
   const question = req.question.trim();
@@ -134,7 +134,7 @@ export async function askOps(actor: Extract<AiActor, { kind: "STAFF" }>, req: { 
   await prisma.aiInteraction.create({
     data: {
       id, userId: actor.userId, role: actor.role, organizationId: fac?.organizationId ?? null, facilityId: actor.facilityId, mode: "OPS_QA", language: "en",
-      model: "none", embeddingModel: "none", embeddingVersion: 0, outcome, module: "ASK", intent: `OPS_QA:${readers.join("+") || "NONE"}`, tier: 0, provider: null,
+      model: "none", embeddingModel: "none", embeddingVersion: 0, outcome, module: hooks.module ?? "ASK", intent: `OPS_QA:${readers.join("+") || "NONE"}`, tier: 0, provider: null,
       retrievedChunkIds: [], citedChunkIds: [], inputTokens: 0, outputTokens: 0, latencyMs: Date.now() - started,
       metadataExpiresAt: new Date(now.getTime() + 365 * 86_400_000), createdAt: now,
     },
