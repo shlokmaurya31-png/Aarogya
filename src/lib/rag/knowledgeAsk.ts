@@ -1,10 +1,13 @@
+import { subjectCovered } from "./abstain";
+import { answerWithFailover, routeAnswer, type AnswerRoute } from "@/lib/ai/record/registry";
+import { assertTokenBudget, checkTokenBudgetAlerts, TOKEN_BUDGET_MESSAGE, TokenBudgetExceededError } from "./tokenBudget";
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { resolveEffectiveInternal } from "@/lib/config/resolver";
 import { roleHasPermission } from "@/lib/auth/permissions";
 import { knowledgePermit } from "@/lib/ai/realData";
 import { embeddingProviderFor, EmbeddingUnavailableError } from "@/lib/ai/embeddings";
-import { getRecordAnswerProvider, RecordAiUnavailableError, type AnswerSentence, type RecordSource } from "@/lib/ai/record";
+import { RecordAiUnavailableError, type AnswerSentence, type RecordSource } from "@/lib/ai/record";
 import { mockRecordAnswer, contentWords } from "@/lib/ai/record/mock";
 import type { AiActor } from "./access";
 import { AskError, checkLimits, holdSlot, type AskHooks, type AskMeta, type AskResult, type Citation, type Label, type OutSentence, type Outcome } from "./ask";
@@ -92,7 +95,7 @@ async function run(actor: Extract<AiActor, { kind: "STAFF" }>, req: KnowledgeAsk
   await hooks.onMeta?.(meta);
 
   const access = { callerOrganizationId: organizationId, callerFacilityId: actor.facilityId, subject: { patientId: null, personId: null } };
-  const timing: { retrievalMs: number | null; generationMs: number | null; provider: string | null } = { retrievalMs: null, generationMs: null, provider: null };
+  const timing: { retrievalMs: number | null; generationMs: number | null; provider: string | null; tier: number } = { retrievalMs: null, generationMs: null, provider: null, tier: 0 };
   // RAG Phase 4, step 4.5: what the request cost (no text).
   const usage = { embeddingTokens: 0, rerankUnits: 0, cacheHits: 0 };
   let prepared: Prepared | null = null;
@@ -100,7 +103,7 @@ async function run(actor: Extract<AiActor, { kind: "STAFF" }>, req: KnowledgeAsk
   const finish = async (outcome: Outcome, sentences: OutSentence[], sources: KSource[], extra: { topScore?: number | null; threshold?: number | null; model?: string; inputTokens?: number; outputTokens?: number; retrieved?: string[] } = {}): Promise<AskResult> => {
     const citedNs = new Set(sentences.flatMap((s) => s.citations));
     const cited = sources.filter((s) => citedNs.has(s.n));
-    const tier = timing.provider && timing.provider !== "extractive" ? 2 : 0;
+    const tier = timing.provider && timing.provider !== "extractive" ? timing.tier : 0;
     const cost = estimateCostMicroUsd(await priceTable(organizationId), { model: extra.model ?? "none", pricedAs: tier ? prepared?.model : undefined, inputTokens: extra.inputTokens ?? 0, outputTokens: extra.outputTokens ?? 0, embeddingModel: space.embeddingModel, embeddingTokens: usage.embeddingTokens, rerankUnits: usage.rerankUnits });
     await logInteraction({
       id: interactionId, actor, access, mode: "KNOWLEDGE_QA", language, question, space: { model: space.embeddingModel, version: space.embeddingVersion }, started,
@@ -109,6 +112,8 @@ async function run(actor: Extract<AiActor, { kind: "STAFF" }>, req: KnowledgeAsk
       sources: sources.map((s) => ({ rank: s.n, cited: citedNs.has(s.n), chunkId: s.hit.chunkId, ragDocumentId: s.hit.ragDocumentId, sourceType: "KNOWLEDGE_DOCUMENT", sourceId: s.hit.knowledgeDocumentId, origin: "VERIFIED", recordedAt: s.hit.publishedAt ?? new Date(0), pageNumber: s.hit.pageNumber, sectionPath: s.hit.sectionPath })),
       accounting: { module: hooks.module ?? "ASK", intent: `KNOWLEDGE_QA:${intent}`, tier, provider: timing.provider, retrievalMs: timing.retrievalMs, generationMs: timing.generationMs, ...usage, estimatedCostMicroUsd: cost },
     });
+    // RAG Phase 5, step 3f: the 80% and 100% alerts, once per facility per 24 hours.
+    if (extra.inputTokens || extra.outputTokens) await checkTokenBudgetAlerts(actor.facilityId);
     for (const s of sentences) await hooks.onSentence?.(s);
     return {
       meta, sentences, outcome, trace: { intent, readers: [], confidence: "RULE", answeredByReader: false, tier, iterations: 1, inputTokens: extra.inputTokens ?? 0, ...(prepared ? { budget: prepared.budget.maxInput, dropped: prepared.dropped } : {}) },
@@ -164,7 +169,9 @@ async function run(actor: Extract<AiActor, { kind: "STAFF" }>, req: KnowledgeAsk
   // "Covered": some passage holds every content word of the question (stemmed), as for the record's keyword match.
   const terms = contentWords(question).map(stem);
   const covered = terms.length > 0 && hits.some((h) => { const t = `${h.title} ${h.sectionPath ?? ""} ${h.text}`.toLowerCase(); return terms.every((w) => t.includes(w)); });
-  if (!hits.length || (best < threshold && !covered)) return finish("NO_RECORD", [guidance("noRecord")], [], { topScore: best >= 0 ? best : null, threshold, retrieved: hits.map((h) => h.chunkId) });
+  // RAG Phase 5, step 3b: the question's subject must be in the passages (abstain.ts), or "no record" before a wrong answer.
+  const subjectMissing = subjectCovered(question, hits.map((h) => `${h.title}\n${h.sectionPath ?? ""}\n${h.text}`)) === false;
+  if (!hits.length || (best < threshold && !covered) || subjectMissing) return finish("NO_RECORD", [guidance("noRecord")], [], { topScore: best >= 0 ? best : null, threshold, retrieved: hits.map((h) => h.chunkId) });
 
   // Context: the kept passages, deduplicated, each followed by its neighbours in the same section.
   let kept = dedupePassages(hits).slice(0, counts.keep);
@@ -181,12 +188,32 @@ async function run(actor: Extract<AiActor, { kind: "STAFF" }>, req: KnowledgeAsk
 
   // The answer: the configured provider only where the organisation allows external providers for its knowledge text.
   const external = await resolveEffectiveInternal({ key: "ai.knowledge.external_providers", organizationId, fallbackRaw: "false" });
-  const configured = getRecordAnswerProvider();
-  const provider = configured.id === "mock" || external.value === true ? configured : mockRecordAnswer;
-  timing.provider = provider === mockRecordAnswer && configured.id !== "mock" ? "extractive" : provider.id;
+  // RAG Phase 5: the route by tier and policy (record/registry.ts): Tier 1, or Tier 2 for a high-risk question.
+  let route: AnswerRoute;
+  try {
+    route = routeAnswer({ mode: "KNOWLEDGE_QA", risk: plan.risk, real: false });
+  } catch (err) {
+    if (err instanceof RecordAiUnavailableError) throw new AskError(503, err.code);
+    throw err;
+  }
+  const externalOk = route.provider.id === "mock" || external.value === true;
+  const provider = externalOk ? route.provider : mockRecordAnswer;
+  timing.provider = !externalOk ? "extractive" : provider.id;
+  timing.tier = route.tier;
+  // RAG Phase 5, step 3f: the facility's daily token budget refuses a model call (an extractive answer uses none).
+  if (timing.provider !== "extractive") {
+    try {
+      await assertTokenBudget(actor.facilityId);
+    } catch (err) {
+      if (!(err instanceof TokenBudgetExceededError)) throw err;
+      timing.provider = null;
+      await finish("RATE_LIMITED", [], sources, { retrieved: sources.map((s) => s.hit.chunkId) });
+      throw new AskError(429, "FACILITY_TOKEN_BUDGET", TOKEN_BUDGET_MESSAGE);
+    }
+  }
   const all: (RecordSource & { documentId: string })[] = sources.map((s) => ({ n: s.n, chunkId: s.hit.chunkId, context: s.context, text: s.hit.text, documentId: s.hit.ragDocumentId }));
   try {
-    prepared = await prepareSources({ mode: "KNOWLEDGE_QA", language, question, providerId: provider.id, organizationId, facilityId: actor.facilityId, sources: all });
+    prepared = await prepareSources({ mode: "KNOWLEDGE_QA", language, question, providerId: provider.id, model: route.model, organizationId, facilityId: actor.facilityId, sources: all });
   } catch (err) {
     if (err instanceof BudgetError) throw new AskError(400, err.code);
     throw err;
@@ -196,7 +223,7 @@ async function run(actor: Extract<AiActor, { kind: "STAFF" }>, req: KnowledgeAsk
   const g0 = Date.now();
   let answer;
   try {
-    answer = await provider.answerFromRecord(answerReq, permit);
+    answer = externalOk ? await answerWithFailover(route, answerReq, permit) : await provider.answerFromRecord(answerReq, permit);
     timing.generationMs = Date.now() - g0;
   } catch (err) {
     timing.generationMs = Date.now() - g0;

@@ -8,7 +8,11 @@ import { realDataEnabled } from "@/lib/ai/dataPolicy";
 import { mayUseAiOver } from "@/lib/ai/realData";
 import { identifierSpans, personIdentifiers } from "@/lib/documents/identifiers";
 import { ownedPersonId } from "@/lib/person/access";
-import { askAi, AskError, checkLimits, holdSlot, type Citation, type Outcome } from "./ask";
+import { askAi, AskError, checkLimits, holdSlot, type AskResult, type Citation, type Outcome } from "./ask";
+import { askKnowledge } from "./knowledgeAsk";
+import { askOps, opsReadersFor } from "./opsAsk";
+import { routeQuestion } from "./router";
+import { roleHasPermission } from "@/lib/auth/permissions";
 import { estimateTokens } from "./chunk";
 import { logAssistantInteraction, logRateLimited } from "./interactions";
 import { ADVISORY_LABEL } from "./modes";
@@ -26,6 +30,10 @@ import { patientSafety } from "./safety";
  *                       the real-data switch and the person's AI consent,
  *                       masked sources, validated citations, the interaction
  *                       log, the provider's data-policy flag.
+ *   RAG Phase 5 (5.7)   staff asking, with no patient, about the hospital's
+ *                       documents or its live state: the knowledge gateway
+ *                       (askKnowledge) or the operational one (askOps),
+ *                       under their own permissions, as if asked there.
  *   Everything else     a record-free reply. The assistant is given NO
  *                       record (a patient has no free-form mode over their
  *                       record, docs/RAG_DESIGN.md §14: Explain, the timeline
@@ -59,6 +67,23 @@ export async function chatAboutRecord(actor: Extract<ChatActor, { kind: "STAFF" 
   const r = await askAi(actor, { mode: "CHART_QA", patientId: input.patientId, question: input.message }, { module: "CHAT" });
   const text = r.sentences.map((s) => (s.citations.length ? `${s.text} [${s.citations.join(", ")}]` : s.text)).join("\n");
   return { text: text || phrase("en", "noRecord"), outcome: r.outcome, label: r.meta.label, interactionId: r.meta.interactionId, citations: r.citations };
+}
+
+/**
+ * RAG Phase 5, step 5.7 — a staff message with no patient: a question about the hospital's approved documents goes to
+ * the knowledge gateway, one about its live state to the operational one, each only for a caller who may use it there;
+ * anything else is the record-free reply. The same router decides as everywhere else (router.ts).
+ */
+export async function chatStaff(actor: Extract<ChatActor, { kind: "STAFF" }>, input: { message: string; page?: string }): Promise<ChatResult> {
+  const plan = routeQuestion(input.message, "KNOWLEDGE_QA");
+  const intent = plan.kind === "PLAN" ? plan.plan.intent : "AMBIGUOUS";
+  const asResult = (r: AskResult): ChatResult => ({ text: r.sentences.map((x) => (x.citations.length ? `${x.text} [${x.citations.join(", ")}]` : x.text)).join("\n") || phrase("en", "noRecord"), outcome: r.outcome, label: r.meta.label, interactionId: r.meta.interactionId, citations: r.citations });
+  if (intent === "OPERATIONAL" && opsReadersFor(input.message).length) return asResult(await askOps(actor, { question: input.message }, { module: "CHAT" }));
+  if (intent === "KNOWLEDGE" && plan.kind === "PLAN" && plan.plan.confidence === "RULE" && roleHasPermission(actor.role, "ai:knowledge:ask")) {
+    if (input.message.length > CHAT_LIMITS.recordQuestionChars) throw new AskError(400, "QUESTION_TOO_LONG");
+    return asResult(await askKnowledge(actor, { question: input.message }, { module: "CHAT" }));
+  }
+  return chatGeneral(actor, input);
 }
 
 /** Whose data would this be, and may the AI be used at all? The same refusals as the record gateway (403 AI_<reason>). */

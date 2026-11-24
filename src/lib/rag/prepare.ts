@@ -1,5 +1,5 @@
 import { aiModel } from "@/lib/ai/models";
-import { ANSWER_TOOL, buildRecordPrompt } from "@/lib/ai/record/claude";
+import { ANSWER_SCHEMA, buildRecordPrompt } from "@/lib/ai/record/claude";
 import type { AnswerRequest, AnswerSentence, RecordSource } from "@/lib/ai/record/types";
 import { fitSources, planBudget, type Budget } from "./budget";
 import { compressSources } from "./compress";
@@ -30,15 +30,17 @@ export interface Prepared {
 }
 
 export function systemPromptFor(req: Pick<AnswerRequest, "mode" | "language" | "conversation">): string {
-  return `${buildRecordPrompt({ ...req, audience: MODES[req.mode].audience, sources: [] }).system}\n${JSON.stringify(ANSWER_TOOL)}`;
+  return `${buildRecordPrompt({ ...req, audience: MODES[req.mode].audience, sources: [] }).system}\n${JSON.stringify(ANSWER_SCHEMA)}`;
 }
 
 export async function prepareSources(input: {
   mode: AiMode; language: string; question?: string | null; conversation?: string | null; providerId: string;
+  /** RAG Phase 5: the model the gateway routed to (record/registry.ts); without it, the mode's configured model. */
+  model?: string;
   organizationId: string | null; facilityId: string | null;
   sources: (RecordSource & { documentId?: string; structured?: boolean })[];
 }): Promise<Prepared> {
-  const model = aiModel(MODES[input.mode].model);
+  const model = input.model ?? aiModel(MODES[input.mode].model);
   const budgetModel = input.providerId === "mock" ? "mock-record-1" : model;
   const budget = await planBudget({
     mode: input.mode, model: budgetModel, language: input.language, system: systemPromptFor({ mode: input.mode, language: input.language, conversation: input.conversation ?? undefined }),
@@ -69,7 +71,7 @@ export function usageOf(req: AnswerRequest, answer: { inputTokens: number; outpu
   if (answer.inputTokens > 0) return { inputTokens: answer.inputTokens, outputTokens: answer.outputTokens };
   const { system, user } = buildRecordPrompt(req);
   return {
-    inputTokens: countTokens(`${system}\n${JSON.stringify(ANSWER_TOOL)}`, "anthropic") + countTokens(user, "anthropic"),
+    inputTokens: countTokens(`${system}\n${JSON.stringify(ANSWER_SCHEMA)}`, "anthropic") + countTokens(user, "anthropic"),
     outputTokens: countTokens(JSON.stringify({ outcome: answer.outcome, sentences: answer.sentences }), "anthropic"),
   };
 }

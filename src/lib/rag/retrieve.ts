@@ -21,6 +21,8 @@ import { dedupePassages, dropCoveredByFacts } from "./context";
 import { nlemNames } from "@/lib/medicines/reference";
 import { canonicalMedicine, MEDICINE_VARIANTS } from "./medicineNames";
 import { LEXICON } from "./lexicon";
+import { subjectCovered } from "./abstain";
+import { lineInClass, MEDICINE_CLASSES } from "./medicineClasses";
 
 /**
  * Week 4b — retrieval (docs/RAG_DESIGN.md §7). Filters first, in SQL (the
@@ -154,11 +156,12 @@ async function planFor(access: AiAccess, question: string | undefined): Promise<
   return p.intent === "KNOWLEDGE" ? { ...p, intent: "NARRATIVE", semantic: true, keyword: true, readers: [] } : p;
 }
 
-/** The live facts a plan asked for: allergies; medicines (only the one named, if any). */
+/** The live facts a plan asked for: allergies; medicines (only the one named, or (RAG Phase 5) the named class's members, if any). */
 function askedLive(live: LiveFact[], plan: RetrievalPlan): LiveFact[] {
   const med = plan.entities.medicine ? medicineName(plan.entities.medicine) : undefined;
+  const cls = plan.entities.medicineClass ? MEDICINE_CLASSES.find((c) => c.id === plan.entities.medicineClass) : undefined;
   return live.filter((l) => (plan.readers.includes("ALLERGIES") && l.sourceType === "ALLERGY")
-    || (plan.readers.includes("MEDICINES") && (l.sourceType === "MEDICATION_ORDER" || l.sourceType === "MEDICATION_DOSE") && (!med || l.text.toLowerCase().includes(med))));
+    || (plan.readers.includes("MEDICINES") && (l.sourceType === "MEDICATION_ORDER" || l.sourceType === "MEDICATION_DOSE") && (med ? l.text.toLowerCase().includes(med) : cls ? lineInClass(l.text, cls) : true)));
 }
 const CHUNK_SELECT = { id: true, documentId: true, context: true, heading: true, text: true, origin: true, sourceType: true, sourceId: true, recordedAt: true, handwritten: true, translatedText: true, translationLanguage: true } as const;
 const toRow = (c: { id: string } & Omit<ChunkRow, "chunkId">): ChunkRow => ({ chunkId: c.id, documentId: c.documentId, context: c.context, heading: c.heading, text: c.text, origin: c.origin, sourceType: c.sourceType, sourceId: c.sourceId, recordedAt: c.recordedAt, handwritten: c.handwritten, translatedText: c.translatedText, translationLanguage: c.translationLanguage });
@@ -332,8 +335,12 @@ export async function retrieve(access: AiAccess, input: { question?: string; vis
 
   const covered = best0.covered;
   // A reader's fact is evidence of its own: a mixed question with facts is never "no record".
+  // RAG Phase 5, step 3b: no reader's fact and the subject isn't in the evidence ("HIV status?" over a diagnosis's status line):
+  // "no record", whatever the score (abstain.ts).
+  const subjectMissing = !!input.question && structured.length === 0
+    && subjectCovered(input.question, [...chunks.map((c) => `${c.context}\n${c.text}`), ...live.map((l) => `${l.context}\n${l.text}`)]) === false;
   const noRecord = input.question
-    ? (best < threshold) && !covered && structured.length === 0
+    ? ((best < threshold) && !covered && structured.length === 0) || subjectMissing
     : chunks.length === 0 && live.length === 0;
   return {
     structured: noRecord ? [] : structured, chunks: noRecord ? [] : chunks, live: noRecord ? [] : live, plan, answeredByReader: false, unsupported: false,

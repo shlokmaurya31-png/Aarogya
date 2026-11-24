@@ -1,4 +1,5 @@
 import { contentWords } from "@/lib/ai/record/mock";
+import { classesIn } from "./medicineClasses";
 
 /**
  * RAG Phase 3, step 3.2 — the intent router (docs/RAG_ARCHITECTURE.md §5.2).
@@ -27,7 +28,7 @@ export type RouteMode = "VISIT_BRIEF" | "CHART_QA" | "NURSE_HANDOFF" | "EXPLAIN_
 
 export interface RetrievalPlan {
   intent: Intent;
-  entities: { analyte?: string; vitals?: VitalKind[]; medicine?: string; period?: { from?: Date; to?: Date }; latest: boolean; trend: boolean };
+  entities: { analyte?: string; vitals?: VitalKind[]; medicine?: string; /** RAG Phase 5, step 3c: an ATC class or form the question names (medicineClasses.ts), when it names no medicine. */ medicineClass?: string; period?: { from?: Date; to?: Date }; latest: boolean; trend: boolean };
   readers: ReaderId[];
   semantic: boolean;
   keyword: boolean;
@@ -89,7 +90,7 @@ const VITALS_GENERIC = ["vitals", "vital signs", "obs", "observations", "वा�
 
 const LATEST = ["latest", "last", "current", "recent", "newest", "today", "now", "most recent", "नवीनतम", "ताज़ा", "ताजा", "आखिरी", "अंतिम", "अभी", "शेवटचा", "शेवटची", "शेवटचे", "सध्याचा", "सध्याची", "সর্বশেষ", "শেষ", "এখনকার", "சமீபத்திய", "கடைசி", "தற்போதைய", "తాజా", "చివరి", "ప్రస్తుత", "ಇತ್ತೀಚಿನ", "ಕೊನೆಯ", "ಪ್ರಸ್ತುತ", "ഏറ്റവും പുതിയ", "അവസാന", "ഇപ്പോഴത്തെ", "તાજેતરનું", "તાજેતરનો", "છેલ્લું", "છેલ્લો", "છેલ્લી", "હાલનું", "ସର୍ବଶେଷ", "ଶେଷ", "ବର୍ତ୍ତମାନ", "تازہ", "آخری", "موجودہ"];
 const TREND = ["trend", "trends", "all", "over time", "previous", "all values", "all results", "serial", "series", "history of values", "changed", "change in", "over the last", "रुझान", "पिछले", "सभी", "मागील", "সব", "আগের", "প্রবণতা", "முந்தைய", "அனைத்து", "போக்கு", "మునుపటి", "అన్ని", "ధోరణి", "ಹಿಂದಿನ", "ಎಲ್ಲಾ", "ಪ್ರವೃತ್ತಿ", "മുൻ", "എല്ലാ", "പ്രവണത", "અગાઉના", "બધા", "વલણ", "ପୂର୍ବ", "ସମସ୍ତ", "ଧାରା", "پچھلے", "تمام", "رجحان"];
-const PENDING = ["pending", "awaiting", "outstanding", "not yet resulted", "not resulted", "yet to come", "still waiting", "लंबित", "बाकी", "प्रलंबित", "बाकी आहे", "অপেক্ষমাণ", "বাকি", "நிலுவையில்", "நிலுவை", "పెండింగ్", "బాకీ", "ಬಾಕಿ", "ಬಾಕಿ ಇರುವ", "തീർപ്പാക്കാത്ത", "ബാക്കി", "બાકી", "બાકી રહેલા", "ବାକି", "ଅପେକ୍ଷାରତ", "زیر التوا", "باقی"];
+const PENDING = ["pending", "awaiting", "outstanding", "not yet done", "yet to be done", "not yet resulted", "not resulted", "yet to come", "still waiting", "लंबित", "बाकी", "प्रलंबित", "बाकी आहे", "অপেক্ষমাণ", "বাকি", "நிலுவையில்", "நிலுவை", "పెండింగ్", "బాకీ", "ಬಾಕಿ", "ಬಾಕಿ ಇರುವ", "തീർപ്പാക്കാത്ത", "ബാക്കി", "બાકી", "બાકી રહેલા", "ବାକି", "ଅପେକ୍ଷାରତ", "زیر التوا", "باقی"];
 const ORDER_WORDS = ["test", "tests", "investigation", "investigations", "order", "orders", "lab", "labs", "scan", "scans", "imaging", "x-ray", "xray", "report", "reports", "result", "results", "जाँच", "जांच", "टेस्ट", "चाचणी", "পরীক্ষা", "சோதனை", "சோதனைகள்", "పరీక్ష", "పరీక్షలు", "ಪರೀಕ್ಷೆ", "ಪರೀಕ್ಷೆಗಳು", "പരിശോധന", "ടെസ്റ്റ്", "તપાસ", "ટેસ્ટ", "ପରୀକ୍ଷା", "ٹیسٹ", "جانچ"];
 const ENCOUNTER = ["admitted", "admission", "which bed", "her bed", "his bed", "bed number", "ward", "current encounter", "current visit", "this visit", "this admission", "length of stay", "भर्ती", "बिस्तर", "बेड", "वार्ड", "दाखल", "खाट", "ভর্তি", "শয্যা", "বেড", "அனுமதி", "படுக்கை", "వార్డు", "అడ్మిట్", "పడక", "ದಾಖಲು", "ಹಾಸಿಗೆ", "ವಾರ್ಡ್", "അഡ്മിറ്റ്", "കിടക്ക", "വാർഡ്", "દાખલ", "પથારી", "વોર્ડ", "ଭର୍ତ୍ତି", "ଶଯ୍ୟା", "ୱାର୍ଡ", "داخل", "بستر", "وارڈ"];
 const PROBLEMS = ["diagnosis", "diagnoses", "problem list", "problems", "conditions", "comorbidities", "co-morbidities", "known case", "निदान", "बीमारियाँ", "बीमारी", "आजार", "রোগনির্ণয়", "நோயறிதல்", "நோய்கள்", "రోగనిర్ధారణ", "వ్యాధులు", "ರೋಗನಿರ್ಣಯ", "ಕಾಯಿಲೆಗಳು", "രോഗനിർണയം", "രോഗങ്ങൾ", "નિદાન", "બીમારીઓ", "ରୋଗ ନିର୍ଣ୍ଣୟ", "تشخیص", "بیماریاں"];
@@ -97,7 +98,12 @@ const ALLERGY = ["allergy", "allergies", "allergic", "एलर्जी", "অ�
 const MEDICINE = ["medicine", "medicines", "medication", "medications", "drug", "drugs", "tablet", "tablets", "on any", "दवा", "दवाई", "दवाएँ", "औषध", "ওষুধ", "மருந்து", "மருந்துகள்", "మందు", "మందులు", "ಔಷಧ", "ಔಷಧಿ", "മരുന്ന്", "દવા", "ଔଷଧ", "دوا", "ادویات"];
 const KNOWLEDGE = ["policy", "policies", "protocol", "protocols", "sop", "sops", "guideline", "guidelines", "procedure for", "how do we", "how should we", "what is our", "formulary", "according to", "as per", "नीति", "प्रोटोकॉल", "दिशानिर्देश", "धोरण", "নীতি", "প্রোটোকল", "கொள்கை", "நெறிமுறை", "విధానం", "ప్రోటోకాల్", "ನೀತಿ", "ಶಿಷ್ಟಾಚಾರ", "നയം", "പ്രോട്ടോക്കോൾ", "નીતિ", "પ્રોટોકોલ", "ନୀତି", "ପ୍ରୋଟୋକଲ", "پالیسی", "پروٹوکول"];
 const OPERATIONAL = ["how many beds", "beds are free", "beds are available", "beds free", "beds available", "bed availability", "free beds", "available beds", "occupancy", "queue", "waiting list", "how many patients", "stock", "in stock", "inventory", "census", "discharges today", "admissions today", "bed occupancy", "खाली बिस्तर", "कतार", "स्टॉक", "রিক্ত শয্যা", "স্টক", "காலியான படுக்கைகள்", "ఖాళీ పడకలు", "ಖಾಲಿ ಹಾಸಿಗೆಗಳು", "ഒഴിവുള്ള കിടക്കകൾ", "ખાલી પથારી", "ଖାଲି ଶଯ୍ୟା", "خالی بستر"];
-const NARRATIVE = ["upload", "uploaded", "outside report", "note", "notes", "discharge summary", "summary", "plan", "why", "reason", "compare", "agree", "agrees", "differ", "differs", "disagree", "told", "said", "advice", "impression", "findings", "x-ray show", "ct show", "mri", "ultrasound", "referral", "referred", "history of", "any history", "procedure", "surgery", "operation"];
+/**
+ * RAG Phase 5, step 3b: a question about the hospital's supplies ("oxygen cylinders in stock", "ventilators free") is
+ * operational even when it names a vital or a medicine ("oxygen", "ceftriaxone"): the patient's chart has no stock.
+ */
+const SUPPLY = ["stock", "in stock", "inventory", "cylinder", "cylinders", "ventilators free", "ventilators available", "free ventilators", "any ventilators", "ventilator availability", "units in the blood bank", "supply of", "supplies", "स्टॉक", "সিলিন্ডার", "স্টক"];
+const NARRATIVE = ["upload", "uploaded", "outside report", "note", "notes", "discharge summary", "summary", "plan", "why", "reason", "compare", "agree", "agrees", "differ", "differs", "disagree", "told", "said", "advice", "impression", "findings", "x-ray show", "ct show", "mri", "ultrasound", "referral", "referred", "consultation", "specialist opinion", "radiology", "scan show", "panic", "history of", "any history", "procedure", "surgery", "operation"];
 const HIGH_RISK = ["dose", "dosage", "how much", "should i give", "should we give", "can i give", "increase", "decrease", "stop", "start", "double", "मात्रा", "खुराक", "कितना दें", "ডোজ", "அளவு", "మోతాదు", "ಡೋಸ್", "ഡോസ്", "ડોઝ", "ମାତ୍ରା", "خوراک"];
 
 const MONTHS: Record<string, number> = { january: 0, jan: 0, february: 1, feb: 1, march: 2, mar: 2, april: 3, apr: 3, may: 4, june: 5, jun: 5, july: 6, jul: 6, august: 7, aug: 7, september: 8, sep: 8, sept: 8, october: 9, oct: 9, november: 10, nov: 10, december: 11, dec: 11 };
@@ -157,12 +163,14 @@ export function routeQuestion(question: string | undefined, mode: RouteMode, opt
   const allergy = anyOf(q, ALLERGY).length > 0;
   const words = contentWords(question);
   const medicine = opts.medicines ? words.find((w) => opts.medicines!.has(w)) : undefined;
-  const medicineWords = anyOf(q, MEDICINE).length > 0 || !!medicine;
+  const medicineClass = medicine ? undefined : classesIn(question)[0]?.id;
+  const medicineWords = anyOf(q, MEDICINE).length > 0 || !!medicine || !!medicineClass;
   const knowledge = anyOf(q, KNOWLEDGE).length > 0;
+  const supply = anyOf(q, SUPPLY).length > 0;
   const operational = anyOf(q, OPERATIONAL).length > 0;
   const narrative = anyOf(q, NARRATIVE).length > 0;
   const risk: RetrievalPlan["risk"] = anyOf(q, HIGH_RISK).length ? "HIGH_RISK" : knowledge || operational ? "LOW" : "CLINICAL";
-  const entities: RetrievalPlan["entities"] = { ...(analyte ? { analyte } : {}), ...(vitals.length ? { vitals } : {}), ...(medicine ? { medicine } : {}), ...(period ? { period } : {}), latest, trend };
+  const entities: RetrievalPlan["entities"] = { ...(analyte ? { analyte } : {}), ...(vitals.length ? { vitals } : {}), ...(medicine ? { medicine } : {}), ...(medicineClass ? { medicineClass } : {}), ...(period ? { period } : {}), latest, trend };
   const base = { entities, risk, matched };
 
   // Structured readers the question asks for.
@@ -196,7 +204,8 @@ export function routeQuestion(question: string | undefined, mode: RouteMode, opt
     if (structured && !knowledge && (analyte || vitals.length) && /\b(her|his|this patient|the patient's|patient's)\b/i.test(question)) return { kind: "PLAN", plan: plan({ intent: "UNSUPPORTED", semantic: false, keyword: false }, base) };
     return { kind: "PLAN", plan: knowledge ? knowledgePlan() : { ...knowledgePlan(), confidence: "DEFAULT" } };
   }
-  // A record mode.
+  // A record mode. A supply question is about the hospital, never the patient's value.
+  if (supply) return { kind: "PLAN", plan: opsPlan() };
   if (operational && encounter) return { kind: "AMBIGUOUS", candidates: [patientPlan(), opsPlan()] };
   if (operational && !structured) return { kind: "PLAN", plan: opsPlan() };
   if (knowledge && structured) return { kind: "AMBIGUOUS", candidates: [patientPlan(), knowledgePlan()] };

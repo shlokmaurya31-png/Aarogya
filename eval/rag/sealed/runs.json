@@ -8,5 +8,29 @@
   "scored": 52,
   "recall8": 0.831,
   "mrr": 0.795
+ },
+ {
+  "phase": 5,
+  "split": "phase4",
+  "commit": "01e58a1",
+  "ranAt": "2026-11-24T23:31:05.847Z",
+  "sha256": "c071b2e8f41e8b2ff1ae29b3b740b09cc7dd4f3cb211510a339b91a3df4ad4f9",
+  "questions": 71,
+  "scored": 60,
+  "recall8": 0.921,
+  "mrr": 0.878,
+  "confidentlyWrong": 0
+ },
+ {
+  "phase": 5,
+  "split": "phase5",
+  "commit": "01e58a1",
+  "ranAt": "2026-11-24T23:31:14.718Z",
+  "sha256": "b063fd2bd3b47cc5a6728abc6a62170a37b2bd8ec190040a409715d576653091",
+  "questions": 94,
+  "scored": 69,
+  "recall8": 0.839,
+  "mrr": 0.82,
+  "confidentlyWrong": 0
  }
 ]

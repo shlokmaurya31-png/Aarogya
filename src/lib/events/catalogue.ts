@@ -2090,6 +2090,12 @@ export const EVENT_CONTRACTS: EventContract[] = [
     sensitivity: "LOW", producer: "knowledge contacts (addFacilityContact: a hospital administrator adds a published number — switchboard, helpline, ambulance — that knowledge documents may print; the number is never in the event)",
     payload: z.object({ contactId: id, kind: z.enum(["SWITCHBOARD", "HELPLINE", "AMBULANCE", "OTHER"]) }).strict(),
   }),
+  // ── RAG Phase 5, step 3f: the daily token budget per facility ──
+  contract({
+    type: "AiTokenBudgetThresholdReached", version: 1, aggregateType: "FACILITY", scope: "FACILITY",
+    sensitivity: "LOW", producer: "rag tokenBudget (checkTokenBudgetAlerts: the facility's model tokens over the last 24 hours crossed 80% or 100% of ai.daily_token_budget; once per level per 24 hours, with a notification to the facility's administrators in the same transaction; counts only)",
+    payload: z.object({ level: z.union([z.literal(80), z.literal(100)]), budget: count, used: count, windowHours: z.literal(24) }).strict(),
+  }),
   contract({
     type: "FacilityContactRemoved", version: 1, aggregateType: "FACILITY", scope: "FACILITY",
     sensitivity: "LOW", producer: "knowledge contacts (removeFacilityContact: the number leaves the published list; the row is kept with who removed it)",

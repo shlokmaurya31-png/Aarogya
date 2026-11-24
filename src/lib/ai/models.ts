@@ -2,10 +2,14 @@
  * Week 4a/4b — model configuration (`ai.model.*`; docs/RAG_DESIGN.md §6.1,
  * docs/DOCUMENT_PIPELINE_DESIGN.md §6): the pipeline's helpers and one key per
  * AI mode. Each key can be overridden by an
- * environment variable, AI_MODEL_<KEY> (e.g. AI_MODEL_OCR_RETRY). Only a
- * Claude model id is accepted; anything else falls back to the default, so a
- * typo can't silently route patient data to an unexpected model.
+ * environment variable, AI_MODEL_<KEY> (e.g. AI_MODEL_OCR_RETRY). Only an
+ * allowed Claude model is accepted (RAG Phase 5: one whose request shapes are
+ * in modelCapabilities.ts, checked against Anthropic's documentation);
+ * anything else falls back to the default, so a typo can't silently route
+ * patient data to an unexpected model or to one whose requests would fail.
  */
+import { capabilitiesOf } from "./modelCapabilities";
+
 export const AI_MODEL_DEFAULTS = {
   ocr: "claude-haiku-5-5",
   ocr_retry: "claude-sonnet-5-5",
@@ -20,14 +24,14 @@ export const AI_MODEL_DEFAULTS = {
   explain_report: "claude-sonnet-5-5",
   health_timeline: "claude-sonnet-5-5",
   previsit_questions: "claude-sonnet-5-5",
-  // RAG Phase 3: knowledge Q&A over approved hospital documents (no patient data).
+  // RAG Phase 3: knowledge Q&A over approved hospital documents (no patient data). RAG Phase 5: it may run on
+  // Tier 1 (§12.1) once a Tier 1 model is configured here; a high-risk question (a dose) still goes to Tier 2
+  // (record/registry.ts). Sonnet 5.5 until a real-provider evaluation shows Haiku holds the quality.
   knowledge_qa: "claude-sonnet-5-5",
 } as const;
 export type AiModelKey = keyof typeof AI_MODEL_DEFAULTS;
 
-const CLAUDE_MODEL = /^claude-[a-z0-9-]+$/;
-
 export function aiModel(key: AiModelKey, env: Record<string, string | undefined> = process.env): string {
   const override = env[`AI_MODEL_${key.toUpperCase()}`]?.trim();
-  return override && CLAUDE_MODEL.test(override) ? override : AI_MODEL_DEFAULTS[key];
+  return override && capabilitiesOf(override) ? override : AI_MODEL_DEFAULTS[key];
 }

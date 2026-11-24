@@ -388,6 +388,38 @@ The 25% is a target set before measuring. If the baseline shows less room than t
 | A real permit accepted by a provider whose flag is off | 0 |
 | End-to-end latency with mocks, each mode | p95 ≤ 300 ms to the first sentence (staff) or the whole answer (patient) |
 
+### 7.3 As built (2026-11-24)
+
+Before any Phase 5 change, a new sealed split was written and sealed (`eval/rag/sealed/phase5.json`, 94 questions; §13.5 E), and the sealed runner learnt to keep several files apart (`--split`).
+
+| # | Step | As built |
+|---|---|---|
+| 31 | The forced `tool_choice` (checklist item 31) | Anthropic's documentation, read 2026-11-24 (ADR 0005 addendum): forced tool use is a 400 on Sonnet 5.5 and Opus 5.5, accepted on Haiku 5.5; `budget_tokens`, sampling parameters and prefills are 400s; structured outputs work on all three. `record/claude.ts` now asks for a structured output (`output_config.format`, a schema with no length or range keyword), no tools, `max_tokens` 8,192 for thinking; the document helpers force the tool only where accepted. `modelCapabilities.ts` holds the rules; `claudeContract.test.ts` builds every request through the SDK (recording fetch, no network, no mock answerer) for every mode, helper and allowed model and fails on a rejected shape. Not yet confirmed by a real call (no credit). |
+| 5.1 | The gateway's eight steps | `askAi()` names its steps as in the architecture (§3.1); no behaviour change for the six record modes. |
+| 5.2 | Tiers; Tier 0 templates | Tier 0 in all eleven languages: a fixed opening line in the reader's language (`fromRecords`), then the readers' facts as recorded. `verify-postgres-ai-ask`: cited, labelled, zero model tokens, no provider call, in the ten other languages. |
+| 5.3 | Provider registry | `record/registry.ts`: providers, models, tiers and data policies; routing by tier, risk and policy. A patient-facing mode or a high-risk question never below Tier 2; a short knowledge answer may use Tier 1 once a Tier 1 model is configured (the default stays Sonnet 5.5); a real permit never reaches a provider whose flag is off (refused before any call); a model outside the allow-list falls back to the default. Unit tests (`registry.test.ts`). |
+| 5.4 | Failover | After an availability failure only, to the same tier and the same or a stricter policy (Sonnet 5.5 → Opus 5.5); never from a real provider to the mock (503). Unit tests with failing fakes. |
+| 5.5 | Validation: medicine names and units | `validate.ts`: a unit after a number must be the unit that number carries in a cited source; every medicine a sentence names must be in a cited source (INN, variant or lexicon name in any script). `verify-postgres-rag-eval`: every development answer altered once (a wrong dose or value, a swapped unit, a renamed medicine) ends `CITATION_INVALID`. |
+| 5.6 | `OPS_QA` and the operational readers | `opsAsk.ts`, `POST /api/ai/ops/ask`: beds, queues, stock, unacknowledged critical results; Tier 0 only, every sentence states when it was read, the caller's facility only; each reader needs its screen's permission, names only with the screen's own (queue: `queue:manage`; critical results: `clinical:chart:read`). Gate `verify-postgres-ai-ops`. |
+| 5.7 | `/api/chat` behind the gateway | Record questions already went through `askAi`; staff questions about documents or live state now reach the knowledge or operational gateway (`chatStaff`). `verify-postgres-ai-assistant` gains the parity checks (access, masking, validation, log). |
+| 5.8 | `GET /api/ai/sources/:id` | `sourceOpen.ts`: the cited source opened with access checked again now (the resolver and scope SQL for a record source, re-read for a live fact, classes and versions in force for a knowledge source); 404 otherwise, as for an unknown id. Gate `verify-postgres-ai-sources`. |
+
+**Thresholds (§7.2), measured** at 01e58a1, mock providers:
+
+| Measure | Threshold | Measured |
+|---|---|---|
+| Existing gates | Pass unmodified | `verify:all` 148/148, `verify:isolated` 148/148 (every gate this phase didn't name passes as before; `verify-postgres-ai-ask`, `-ai-assistant` and `-rag-eval` gained checks, none lost one) |
+| Adversarial answers caught by validation | 100% | wrong dose 46/46, swapped unit 46/46, renamed medicine 11/11 (`verify:isolated`: 44/44, 44/44, 11/11) |
+| Answers with an uncited factual sentence | 0 | 0 of 230 |
+| Fabricated citations | 0 | 0 of 230 |
+| A real permit accepted by a provider whose flag is off | 0 | 0 (refused before any call; `registry.test.ts`, and inside each provider) |
+| End-to-end latency with mocks, each mode | p95 ≤ 300 ms | at most 155 ms (VISIT_BRIEF; CHART_QA 67, KNOWLEDGE_QA 58) |
+| Confidently wrong (new, recorded) | — | 0/230 on the evaluation set; 0/71 and 0/94 on the sealed splits |
+
+Tokens and cost (`bench:rag:tokens`): median input tokens per mode within ±10 of Phase 4 (the answer schema replaces the tool definition); the estimated cost per 1,000 queries fell in every mode (reranking now priced in tokens, as Voyage bills it): CHART_QA $0.93 → $0.67, KNOWLEDGE_QA $2.96 → $2.17, VISIT_BRIEF $10.34 → $9.59, NURSE_HANDOFF $11.98 → $11.12, EXPLAIN_REPORT $1.17 → $1.13, HEALTH_TIMELINE $8.74 → $7.94, PREVISIT_QUESTIONS $4.40 → $3.64. Real-provider usage feeding the calibration: **pending** (no credit, no Voyage key).
+
+**Before Phase 5 (step 3 of the task):** the three Phase 4 "should be no record" answers were found to pass the threshold on generic words (`abstain.ts`: the question's subject must be in the evidence) and a supply question routed to a vital (`router.ts`: supply questions are operational); the confidently wrong count is reported on its own everywhere; medicine classes and forms (WHO ATC, `medicineClasses.ts`, eleven languages, pending review); synonyms for critical values, imaging, referrals and pending studies (`synonyms.ts`); the price table checked against the providers' pages (ADR 0005 addendum; reranking corrected to tokens); a daily token budget per facility (`tokenBudget.ts`, gate `verify-postgres-ai-token-budget`); and `verify:all` now keeps every gate's log of every run. **The knowledge-access failure seen once at the Phase 4 head did not recur:** it passed in all six complete runs this phase (`verify:all` twice at 99a53d1, then at 7c01751 and at 01e58a1, and `verify:isolated` at both), each run's logs kept under `.verify-report/runs/`; the logging stays so a recurrence can be read. The only failures in those runs: `rag-latency` once under machine load (knowledge p95 160 ms while unit tests ran alongside; passed in every other run), and two of this phase's own gate and validator bugs, fixed (a gate picking another gate's document; a bare number lending a unit across lines).
+
 ## 8. Phase 6: integration into the product
 
 **Goal:** the layer is used where people work, in their language.

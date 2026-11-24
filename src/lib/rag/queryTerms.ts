@@ -2,6 +2,8 @@ import { contentWords } from "@/lib/ai/record/mock";
 import { abbreviationTerms } from "./abbreviations";
 import { medicineTerms } from "./medicineNames";
 import { lexiconTerms } from "./lexicon";
+import { classMembersIn } from "./medicineClasses";
+import { synonymTerms } from "./synonyms";
 import { latinSkeleton, QUERY_SCRIPTS, romanizeWord, scriptOf, transliterateLatin } from "./romanize";
 
 /**
@@ -51,7 +53,8 @@ export function queryTerms(question: string, f: QueryFeatures = queryFeatures())
   const original = [...new Set(contentWords(question))];
   const abbr = f.abbreviations ? abbreviationTerms(question) : [];
   const med = f.medicines ? medicineTerms(original) : [];
-  const lex = f.lexicon ? lexiconTerms(question, { romanized: f.shadow }) : [];
+  // RAG Phase 5, steps 3c and 3d: a medicine class or form expands to its members' INN names, and a synonym to the record's word.
+  const lex = f.lexicon ? [...lexiconTerms(question, { romanized: f.shadow }), ...classMembersIn(question).flatMap((m) => m.split(/[\s-]+/)), ...synonymTerms(question)] : [];
   const exact = [...new Set([...original, ...abbr, ...med])].filter((w) => w.length > 1);
   const lexExact = lex.filter((w) => w.length > 1 && !exact.includes(w));
   const english = [...new Set([...original, ...abbr, ...med].filter((w) => LATIN.test(w)))];

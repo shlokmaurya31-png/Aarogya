@@ -152,7 +152,7 @@ jobs:
           # The summary and every gate's own log (its checks, measurements and errors).
           path: |
             .verify-report/latest.md
-            .verify-report/gates/
+            .verify-report/runs/
           include-hidden-files: true
           if-no-files-found: warn
 
@@ -215,7 +215,7 @@ jobs:
           # The summary and every gate's own log (its checks, measurements and errors).
           path: |
             .verify-report/latest.md
-            .verify-report/gates/
+            .verify-report/runs/
           include-hidden-files: true
           if-no-files-found: warn
 

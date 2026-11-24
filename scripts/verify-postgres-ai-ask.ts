@@ -40,6 +40,7 @@ import { fixtureById, fixturePdf } from "../src/lib/documents/fixtures";
 import { setDocumentProvidersForTest } from "../src/lib/ai/documents";
 import { bulkReview, listOwnFacts } from "../src/lib/documents/review";
 import { getRecordAnswerProvider, RecordAiUnavailableError, setRecordAnswerProviderForTest, type AnswerRequest, type RecordAnswerProvider } from "../src/lib/ai/record";
+import { phrase } from "../src/lib/rag/phrases";
 import { askAi, AskError, LIMITS, type AskRequest } from "../src/lib/rag/ask";
 import { decryptText } from "../src/lib/rag/textCrypto";
 import { monthlyReviewReport, purgeExpiredAiInteractions, readInteractionText } from "../src/lib/rag/interactions";
@@ -161,6 +162,18 @@ async function main() {
   report("Tier 0: a lookup its reader answers in full is answered from the reader's fact, cited and labelled, with no provider call",
     t0.outcome === "ANSWERED" && rec.sent.length === sentBefore && t0.sentences.some((s) => s.text.includes("11.2 g/dL") && s.citations.length === 1 && s.labels.includes("verified"))
       && t0Row.tier === 0 && t0Row.model === "none" && t0Row.inputTokens === 0 && t0Row.outputTokens === 0 && t0Row.embeddingTokens === 0, `tier ${t0Row.tier}, model ${t0Row.model}`);
+  // RAG Phase 5, step 5.2: Tier 0 from templates in every language: the opening line in the reader's language, the
+  // reader's fact as recorded, cited and labelled, zero model tokens, no provider call.
+  const t0Langs: string[] = [];
+  for (const lang of ["hi", "mr", "bn", "ta", "te", "kn", "ml", "gu", "or", "ur"]) {
+    const r = await ask(doctor.actor, { mode: "CHART_QA", question: "What was the hemoglobin?", language: lang });
+    const row = await prisma.aiInteraction.findUniqueOrThrow({ where: { id: r.meta.interactionId } });
+    const facts = r.sentences.filter((x) => x.kind === "FACT");
+    if (r.outcome === "ANSWERED" && rec.sent.length === sentBefore && r.sentences[0]?.kind === "GUIDANCE" && r.sentences[0].text === phrase(lang, "fromRecords") && r.sentences[0].citations.length === 0
+      && facts.length > 0 && facts.every((x) => x.citations.length === 1 && x.labels.includes("verified") && x.labels.includes("translated")) && facts.some((x) => x.text.includes("11.2 g/dL"))
+      && row.tier === 0 && row.model === "none" && row.inputTokens === 0 && row.outputTokens === 0 && row.language === lang) t0Langs.push(lang);
+  }
+  report("Phase 5 (5.2): Tier 0 answers from templates in the ten other languages: the reader's language opens, the fact as recorded, cited and labelled, zero model tokens", t0Langs.length === 10, `${t0Langs.length}/10: ${t0Langs.join(", ")}`);
   const qaAcc = await prisma.aiInteraction.findUniqueOrThrow({ where: { id: qa.meta.interactionId } });
   report("Accounting: the provider's request records tokens, the query embedding, the tier, and an estimated cost (never zero for work done)",
     qaAcc.tier === 2 && qaAcc.inputTokens > 0 && qaAcc.outputTokens > 0 && qaAcc.embeddingTokens > 0 && qaAcc.estimatedCostMicroUsd > 0 && qaAcc.retrievalMs !== null, `in ${qaAcc.inputTokens}, out ${qaAcc.outputTokens}, emb ${qaAcc.embeddingTokens}, cost ${qaAcc.estimatedCostMicroUsd}`);

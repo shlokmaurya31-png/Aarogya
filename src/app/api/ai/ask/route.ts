@@ -40,7 +40,7 @@ const BODY = z.object({
 }).strict();
 
 function errorResponse(err: unknown): NextResponse {
-  if (err instanceof AskError) return NextResponse.json({ error: err.code }, { status: err.status });
+  if (err instanceof AskError) return NextResponse.json({ error: err.code, ...(err.detail ? { message: err.detail } : {}) }, { status: err.status });
   if (err instanceof UnauthorizedError) return NextResponse.json({ error: err.message }, { status: 401 });
   if (err instanceof ForbiddenError) return NextResponse.json({ error: err.message }, { status: 403 });
   if (err instanceof NotFoundError) return NextResponse.json({ error: "Not found." }, { status: 404 });
@@ -100,7 +100,7 @@ export async function POST(req: NextRequest) {
   }, (err) => {
     // Before the stream opened: a plain error response. After: a closing error event.
     opened(errorResponse(err));
-    try { send("done", { outcome: "ERROR", error: err instanceof AskError ? err.code : "INTERNAL" }); controller.close(); } catch { /* already closed */ }
+    try { send("done", { outcome: "ERROR", error: err instanceof AskError ? err.code : "INTERNAL", ...(err instanceof AskError && err.detail ? { message: err.detail } : {}) }); controller.close(); } catch { /* already closed */ }
   });
   const early = await ready;
   if (early) return early;

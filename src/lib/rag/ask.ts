@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { resolveEffectiveInternal } from "@/lib/config/resolver";
-import { getRecordAnswerProvider, RecordAiUnavailableError, type AnswerSentence, type RecordSource } from "@/lib/ai/record";
+import { RecordAiUnavailableError, type AnswerSentence, type RecordSource } from "@/lib/ai/record";
+import { answerWithFailover, routeAnswer, type AnswerRoute } from "@/lib/ai/record/registry";
 import { identifierSpans, personIdentifiers } from "@/lib/documents/identifiers";
 import { EmbeddingUnavailableError } from "@/lib/ai/embeddings";
 import { AiAccessError, resolveAiAccess, type AiAccess, type AiActor } from "./access";
@@ -18,6 +19,7 @@ import { BudgetError, planBudget } from "./budget";
 import { tokenEconomy } from "./economy";
 import { prepareSources, systemPromptFor, usageOf, type Prepared } from "./prepare";
 import { estimateCostMicroUsd, priceTable } from "./prices";
+import { assertTokenBudget, checkTokenBudgetAlerts, TOKEN_BUDGET_MESSAGE, TokenBudgetExceededError } from "./tokenBudget";
 
 /**
  * Week 4b — one AI request, end to end (docs/RAG_DESIGN.md §8–§9):
@@ -73,7 +75,8 @@ export interface AskTrace { intent: string; readers: string[]; confidence: strin
 export interface AskResult { meta: AskMeta; sentences: OutSentence[]; citations: Citation[]; outcome: Outcome; trace?: AskTrace }
 
 export class AskError extends Error {
-  constructor(readonly status: 400 | 403 | 404 | 429 | 503, readonly code: string) {
+  /** RAG Phase 5: `detail` is a sentence the screen may show as it is (the token budget's refusal). Never provider text. */
+  constructor(readonly status: 400 | 403 | 404 | 429 | 503, readonly code: string, readonly detail?: string) {
     super(code);
     this.name = "AskError";
   }
@@ -170,8 +173,35 @@ export interface AskHooks {
   module?: "ASK" | "CHAT";
 }
 
+/**
+ * RAG Phase 5, step 5.1 — the gateway: one path for every AI answer about a
+ * record, in the eight steps of docs/RAG_ARCHITECTURE.md §3.1. Each step runs
+ * only if the one before it allowed the request; the order is the security
+ * design.
+ *
+ *   1  session and actor     the caller's role and facility, from the
+ *                            session (the route), never the request
+ *   2  rate limits, budgets  per user, per facility (requests), here; the
+ *                            facility's token budget before a model call (7)
+ *   3  access scope          resolveAiAccess(): 403 for a mode the caller
+ *                            can't use, 404 for a record they can't see
+ *   4  safety, then intent   the patient safety rules; the router (in 5)
+ *   5  retrieval             readers, then search, filters first, in SQL;
+ *                            "no record" here without a model
+ *   6  context and budget    masked sources, deduplicated, compressed, fitted
+ *                            to the routed model's budget (prepare.ts)
+ *   7  provider              Tier 0 without a model; otherwise the registry's
+ *                            route by tier and policy, with failover
+ *                            (record/registry.ts)
+ *   8  validate, label, log  every sentence checked against the originals,
+ *                            labelled, the interaction logged
+ *
+ * Knowledge Q&A (knowledgeAsk.ts) and the portal assistant's record questions
+ * (assistant.ts) follow the same steps through the same registry.
+ */
 export async function askAi(actor: AiActor, req: AskRequest, hooks: AskHooks = {}): Promise<AskResult> {
   const started = Date.now();
+  // ── Step 1 is the caller's: `actor` comes from the session. Step 2: rate limits and the facility's request budget. ──
   try {
     await checkLimits(actor);
   } catch (err) {
@@ -189,6 +219,7 @@ export async function askAi(actor: AiActor, req: AskRequest, hooks: AskHooks = {
 
 async function run(actor: AiActor, req: AskRequest, hooks: AskHooks, started: number): Promise<AskResult> {
   const spec = MODES[req.mode];
+  // ── Step 3: the access scope. ──
   let access: AiAccess;
   try {
     access = await resolveAiAccess(actor, { mode: req.mode, patientId: req.patientId, shareId: req.shareId, documentId: req.documentId, period: req.period ? { from: req.period.from ? new Date(req.period.from) : undefined, to: req.period.to ? new Date(req.period.to) : undefined } : undefined });
@@ -236,14 +267,14 @@ async function run(actor: AiActor, req: AskRequest, hooks: AskHooks, started: nu
   await hooks.onMeta?.(m);
 
   // RAG Phase 1 accounting: how long retrieval and generation took, and which provider answered.
-  const timing: { retrievalMs: number | null; generationMs: number | null; provider: string | null } = { retrievalMs: null, generationMs: null, provider: null };
+  const timing: { retrievalMs: number | null; generationMs: number | null; provider: string | null; tier: number } = { retrievalMs: null, generationMs: null, provider: null, tier: 0 };
   let retrieval: Awaited<ReturnType<typeof retrieve>> | null = null;
   let prepared: Prepared | null = null;
   const finish = async (outcome: Outcome, sentences: OutSentence[], sources: Source[], extra: { topScore?: number | null; threshold?: number | null; model?: string; inputTokens?: number; outputTokens?: number; retrieved?: string[] } = {}): Promise<AskResult> => {
     const citedNs = new Set(sentences.flatMap((s) => s.citations));
     const cited = sources.filter((s) => citedNs.has(s.n));
     // RAG Phase 4, step 4.5: the request's cost, from the dated price table; the mock is priced as the model it stands in for.
-    const tier = timing.provider ? 2 : 0;
+    const tier = timing.provider ? timing.tier : 0;
     const usage = retrieval?.usage ?? { embeddingTokens: 0, rerankUnits: 0, iterations: 0 };
     const cost = estimateCostMicroUsd(await priceTable(orgId), { model: extra.model ?? "none", pricedAs: tier ? prepared?.model : undefined, inputTokens: extra.inputTokens ?? 0, outputTokens: extra.outputTokens ?? 0, embeddingModel: space.embeddingModel, embeddingTokens: usage.embeddingTokens, rerankUnits: usage.rerankUnits });
     await logInteraction({
@@ -253,6 +284,8 @@ async function run(actor: AiActor, req: AskRequest, hooks: AskHooks, started: nu
       sources: sources.map((s) => ({ rank: s.n, cited: citedNs.has(s.n), chunkId: s.chunkId, ragDocumentId: s.documentId ?? null, sourceType: s.sourceType, sourceId: s.sourceId, origin: s.origin, recordedAt: s.recordedAt })),
       accounting: { module: hooks.module ?? "ASK", intent: retrieval?.plan ? `${req.mode}:${retrieval.plan.intent}` : req.mode, tier, provider: timing.provider, retrievalMs: timing.retrievalMs, generationMs: timing.generationMs, embeddingTokens: usage.embeddingTokens, rerankUnits: usage.rerankUnits, cacheHits: 0, estimatedCostMicroUsd: cost },
     });
+    // RAG Phase 5, step 3f: the 80% and 100% alerts, once per facility per 24 hours (after the tokens are logged).
+    if (extra.inputTokens || extra.outputTokens) await checkTokenBudgetAlerts(access.callerFacilityId);
     // Staff answers already streamed what passed; everything else is released now, whole.
     if (spec.audience === "PATIENT" || (outcome !== "ANSWERED" && outcome !== "CITATION_INVALID")) for (const s of sentences) await hooks.onSentence?.(s);
     return {
@@ -263,14 +296,14 @@ async function run(actor: AiActor, req: AskRequest, hooks: AskHooks, started: nu
   };
   const guidance = (key: Parameters<typeof phrase>[1]): OutSentence => ({ text: phrase(language, key), citations: [], labels: [], kind: "GUIDANCE" });
 
-  // Patient safety rules first: an urgent symptom gets the emergency line and nothing else.
+  // ── Step 4: patient safety rules first: an urgent symptom gets the emergency line and nothing else. ──
   if (spec.audience === "PATIENT") {
     const v = patientSafety(req.question);
     if (v === "URGENT") return finish("REFUSED_SAFETY", [guidance("emergency")], []);
     if (v !== "OK") return finish("REFUSED_SAFETY", [guidance("askCareTeam")], []);
   }
 
-  // The sources.
+  // ── Step 5: retrieval (the router's plan, the readers, the search; "no record" without a model). ──
   let sources: Source[] = [];
   const upload = req.mode === "EXPLAIN_REPORT" && req.documentId ? await unconfirmedUpload(access, req.documentId) : null;
   try {
@@ -311,21 +344,49 @@ async function run(actor: AiActor, req: AskRequest, hooks: AskHooks, started: nu
   const masked: (RecordSource & { documentId?: string; structured: boolean })[] = sources.map((s, i) => ({ n: s.n, chunkId: s.chunkId, context: mask(s.context, ids), text: mask(s.text, ids), ...(s.translation ? { translation: { language: s.translation.language, text: mask(s.translation.text, ids) } } : {}), ...(s.documentId ? { documentId: s.documentId } : {}), structured: !upload && i < (retrieval?.structured.length ?? 0) }));
   const srcOf = new Map(sources.map((s) => [s.n, s]));
 
-  // RAG Phase 4, Tier 0: a staff lookup its readers answered in full is answered from their facts, one cited line each, with no model.
-  if (tokenEconomy() && retrieval?.answeredByReader && spec.audience === "STAFF" && language === "en" && !conversation) {
+  // ── Step 7, Tier 0: no model. RAG Phase 4: a staff lookup its readers answered in full is answered from their facts, one cited line each, with no model.
+  // RAG Phase 5, step 5.2: in any of the eleven languages, from a template: a fixed opening line in the reader's language
+  // (GUIDANCE, no fact), then the facts as recorded (values exactly as in the source, labelled translated).
+  if (tokenEconomy() && retrieval?.answeredByReader && spec.audience === "STAFF" && !conversation) {
     const facts = masked.filter((m) => m.structured);
     const lines: OutSentence[] = facts.map((f) => ({ text: f.text.replace(/\s*\n\s*/g, "; "), citations: [f.n], kind: "FACT", labels: labelsFor([srcOf.get(f.n)!], language) }));
+    if (lines.length && language !== "en") lines.unshift(guidance("fromRecords"));
     const byN0 = new Map(facts.map((f) => [f.n, { n: f.n, text: f.text, context: f.context } as SourceText]));
-    if (lines.length && lines.every((l) => checkSentence({ text: l.text, citations: l.citations, kind: "FACT" }, byN0).ok)) {
+    if (lines.length && lines.every((l) => checkSentence({ text: l.text, citations: l.citations, kind: l.kind }, byN0).ok)) {
       for (const l of lines) await hooks.onSentence?.(l);
       return finish("ANSWERED", lines, sources, { topScore: retrieval.topScore, threshold: retrieval.threshold, model: "none", retrieved: sources.map((s) => s.chunkId) });
     }
   }
 
+  // RAG Phase 5, step 3f: the facility's daily token budget. Only a model call is refused; Tier 0 above never reaches here.
+  if (actor.kind === "STAFF") {
+    try {
+      await assertTokenBudget(actor.facilityId);
+    } catch (err) {
+      if (!(err instanceof TokenBudgetExceededError)) throw err;
+      await finish("RATE_LIMITED", [], sources, { retrieved: sources.map((s) => s.chunkId) });
+      throw new AskError(429, "FACILITY_TOKEN_BUDGET", TOKEN_BUDGET_MESSAGE);
+    }
+  }
+
+  // ── Step 7: the provider by tier and policy (record/registry.ts): Tier 2 for every record mode; real data only to a
+  // provider whose flag allows it; failover within the tier only. ──
   let answer;
-  const provider = getRecordAnswerProvider();
+  let route: AnswerRoute;
   try {
-    prepared = await prepareSources({ mode: req.mode, language, question: askedText, conversation, providerId: provider.id, organizationId: orgId, facilityId: facId, sources: masked });
+    route = routeAnswer({ mode: req.mode, risk: retrieval?.plan?.risk, real: access.permit.real });
+  } catch (err) {
+    if (err instanceof RecordAiUnavailableError) {
+      await finish("ERROR", [], sources, { retrieved: sources.map((s) => s.chunkId) });
+      throw new AskError(503, err.code);
+    }
+    throw err;
+  }
+  const provider = route.provider;
+  timing.tier = route.tier;
+  // ── Step 6: context and token budget, for the routed model. ──
+  try {
+    prepared = await prepareSources({ mode: req.mode, language, question: askedText, conversation, providerId: provider.id, model: route.model, organizationId: orgId, facilityId: facId, sources: masked });
   } catch (err) {
     if (err instanceof BudgetError) {
       // The structured facts alone don't fit: refused, never answered from a part of them.
@@ -339,7 +400,7 @@ async function run(actor: AiActor, req: AskRequest, hooks: AskHooks, started: nu
   timing.provider = provider.id;
   const g0 = Date.now();
   try {
-    answer = await provider.answerFromRecord(answerReq, access.permit);
+    answer = await answerWithFailover(route, answerReq, access.permit);
     timing.generationMs = Date.now() - g0;
   } catch (err) {
     timing.generationMs = Date.now() - g0;
@@ -356,7 +417,7 @@ async function run(actor: AiActor, req: AskRequest, hooks: AskHooks, started: nu
     return finish(answer.outcome, [line], sources, extra);
   }
 
-  // Validate, sentence by sentence, against the original sources the provider was given (never a compressed copy); label each.
+  // ── Step 8: validate, sentence by sentence, against the original sources the provider was given (never a compressed copy); label each.
   const givenNs = new Set(provided.map((p) => p.n));
   const byN = new Map([...prepared.originals.values()].filter((p) => givenNs.has(p.n)).map((p) => [p.n, { n: p.n, text: p.text, context: p.context } as SourceText]));
   const srcByN = new Map(sources.map((s) => [s.n, s]));

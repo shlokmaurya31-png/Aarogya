@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireSession, UnauthorizedError, ForbiddenError, NotFoundError, BadRequestError } from "@/lib/auth/rbac";
 import { requireFacilityStaff } from "@/lib/auth/hospitalRbac";
 import { AskError } from "@/lib/rag/ask";
-import { chatAboutRecord, chatGeneral, CHAT_LIMITS, type ChatActor } from "@/lib/rag/assistant";
+import { chatAboutRecord, chatGeneral, chatStaff, CHAT_LIMITS, type ChatActor } from "@/lib/rag/assistant";
 
 /**
  * POST /api/chat — the portal assistant ("Aarogya AI").
@@ -29,7 +29,7 @@ const MAX_BODY_BYTES = 64 * 1024;
 const HOSPITAL_ROLES = new Set(["DOCTOR", "NURSE", "LAB_TECHNICIAN", "RADIOLOGY_TECH", "PHARMACIST", "BILLING_STAFF", "FRONT_DESK", "HOSPITAL_ADMIN", "PROCUREMENT_OFFICER", "MEDICAL_SUPERINTENDENT", "QUALITY_LEAD"]);
 
 function errorResponse(err: unknown): NextResponse {
-  if (err instanceof AskError) return NextResponse.json({ error: err.code }, { status: err.status });
+  if (err instanceof AskError) return NextResponse.json({ error: err.code, ...(err.detail ? { message: err.detail } : {}) }, { status: err.status });
   if (err instanceof UnauthorizedError) return NextResponse.json({ error: "Sign in to use the assistant." }, { status: 401 });
   if (err instanceof ForbiddenError) return NextResponse.json({ error: err.message }, { status: 403 });
   if (err instanceof NotFoundError) return NextResponse.json({ error: "Not found." }, { status: 404 });
@@ -61,7 +61,8 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(await chatAboutRecord({ kind: "STAFF", userId: s.userId, role: s.role, facilityId }, { patientId, message }));
       }
       const { session: s, facilityId } = await requireFacilityStaff("clinical:chart:read");
-      return NextResponse.json(await chatGeneral({ kind: "STAFF", userId: s.userId, role: s.role, facilityId }, { message, page }));
+      // RAG Phase 5 (5.7): a question about the hospital's documents or live state goes to its own gateway.
+      return NextResponse.json(await chatStaff({ kind: "STAFF", userId: s.userId, role: s.role, facilityId }, { message, page }));
     }
     // A patient's `patientId` (a delegated record) is ignored: the assistant is record-free for patients.
     const actor: ChatActor = session.role === "PATIENT" ? { kind: "PATIENT", userId: session.userId } : { kind: "OTHER", userId: session.userId, role: session.role };
