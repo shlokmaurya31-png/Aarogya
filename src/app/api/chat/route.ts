@@ -29,7 +29,7 @@ const MAX_BODY_BYTES = 64 * 1024;
 const HOSPITAL_ROLES = new Set(["DOCTOR", "NURSE", "LAB_TECHNICIAN", "RADIOLOGY_TECH", "PHARMACIST", "BILLING_STAFF", "FRONT_DESK", "HOSPITAL_ADMIN", "PROCUREMENT_OFFICER", "MEDICAL_SUPERINTENDENT", "QUALITY_LEAD"]);
 
 function errorResponse(err: unknown): NextResponse {
-  if (err instanceof AskError) return NextResponse.json({ error: err.code }, { status: err.status });
+  if (err instanceof AskError) return NextResponse.json({ error: err.code, ...(err.detail ? { message: err.detail } : {}) }, { status: err.status });
   if (err instanceof UnauthorizedError) return NextResponse.json({ error: "Sign in to use the assistant." }, { status: 401 });
   if (err instanceof ForbiddenError) return NextResponse.json({ error: err.message }, { status: 403 });
   if (err instanceof NotFoundError) return NextResponse.json({ error: "Not found." }, { status: 404 });

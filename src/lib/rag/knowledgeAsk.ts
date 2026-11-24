@@ -1,4 +1,5 @@
 import { subjectCovered } from "./abstain";
+import { assertTokenBudget, checkTokenBudgetAlerts, TOKEN_BUDGET_MESSAGE, TokenBudgetExceededError } from "./tokenBudget";
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { resolveEffectiveInternal } from "@/lib/config/resolver";
@@ -110,6 +111,8 @@ async function run(actor: Extract<AiActor, { kind: "STAFF" }>, req: KnowledgeAsk
       sources: sources.map((s) => ({ rank: s.n, cited: citedNs.has(s.n), chunkId: s.hit.chunkId, ragDocumentId: s.hit.ragDocumentId, sourceType: "KNOWLEDGE_DOCUMENT", sourceId: s.hit.knowledgeDocumentId, origin: "VERIFIED", recordedAt: s.hit.publishedAt ?? new Date(0), pageNumber: s.hit.pageNumber, sectionPath: s.hit.sectionPath })),
       accounting: { module: hooks.module ?? "ASK", intent: `KNOWLEDGE_QA:${intent}`, tier, provider: timing.provider, retrievalMs: timing.retrievalMs, generationMs: timing.generationMs, ...usage, estimatedCostMicroUsd: cost },
     });
+    // RAG Phase 5, step 3f: the 80% and 100% alerts, once per facility per 24 hours.
+    if (extra.inputTokens || extra.outputTokens) await checkTokenBudgetAlerts(actor.facilityId);
     for (const s of sentences) await hooks.onSentence?.(s);
     return {
       meta, sentences, outcome, trace: { intent, readers: [], confidence: "RULE", answeredByReader: false, tier, iterations: 1, inputTokens: extra.inputTokens ?? 0, ...(prepared ? { budget: prepared.budget.maxInput, dropped: prepared.dropped } : {}) },
@@ -187,6 +190,17 @@ async function run(actor: Extract<AiActor, { kind: "STAFF" }>, req: KnowledgeAsk
   const configured = getRecordAnswerProvider();
   const provider = configured.id === "mock" || external.value === true ? configured : mockRecordAnswer;
   timing.provider = provider === mockRecordAnswer && configured.id !== "mock" ? "extractive" : provider.id;
+  // RAG Phase 5, step 3f: the facility's daily token budget refuses a model call (an extractive answer uses none).
+  if (timing.provider !== "extractive") {
+    try {
+      await assertTokenBudget(actor.facilityId);
+    } catch (err) {
+      if (!(err instanceof TokenBudgetExceededError)) throw err;
+      timing.provider = null;
+      await finish("RATE_LIMITED", [], sources, { retrieved: sources.map((s) => s.hit.chunkId) });
+      throw new AskError(429, "FACILITY_TOKEN_BUDGET", TOKEN_BUDGET_MESSAGE);
+    }
+  }
   const all: (RecordSource & { documentId: string })[] = sources.map((s) => ({ n: s.n, chunkId: s.hit.chunkId, context: s.context, text: s.hit.text, documentId: s.hit.ragDocumentId }));
   try {
     prepared = await prepareSources({ mode: "KNOWLEDGE_QA", language, question, providerId: provider.id, organizationId, facilityId: actor.facilityId, sources: all });

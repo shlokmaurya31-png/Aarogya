@@ -18,6 +18,7 @@ import { BudgetError, planBudget } from "./budget";
 import { tokenEconomy } from "./economy";
 import { prepareSources, systemPromptFor, usageOf, type Prepared } from "./prepare";
 import { estimateCostMicroUsd, priceTable } from "./prices";
+import { assertTokenBudget, checkTokenBudgetAlerts, TOKEN_BUDGET_MESSAGE, TokenBudgetExceededError } from "./tokenBudget";
 
 /**
  * Week 4b — one AI request, end to end (docs/RAG_DESIGN.md §8–§9):
@@ -73,7 +74,8 @@ export interface AskTrace { intent: string; readers: string[]; confidence: strin
 export interface AskResult { meta: AskMeta; sentences: OutSentence[]; citations: Citation[]; outcome: Outcome; trace?: AskTrace }
 
 export class AskError extends Error {
-  constructor(readonly status: 400 | 403 | 404 | 429 | 503, readonly code: string) {
+  /** RAG Phase 5: `detail` is a sentence the screen may show as it is (the token budget's refusal). Never provider text. */
+  constructor(readonly status: 400 | 403 | 404 | 429 | 503, readonly code: string, readonly detail?: string) {
     super(code);
     this.name = "AskError";
   }
@@ -253,6 +255,8 @@ async function run(actor: AiActor, req: AskRequest, hooks: AskHooks, started: nu
       sources: sources.map((s) => ({ rank: s.n, cited: citedNs.has(s.n), chunkId: s.chunkId, ragDocumentId: s.documentId ?? null, sourceType: s.sourceType, sourceId: s.sourceId, origin: s.origin, recordedAt: s.recordedAt })),
       accounting: { module: hooks.module ?? "ASK", intent: retrieval?.plan ? `${req.mode}:${retrieval.plan.intent}` : req.mode, tier, provider: timing.provider, retrievalMs: timing.retrievalMs, generationMs: timing.generationMs, embeddingTokens: usage.embeddingTokens, rerankUnits: usage.rerankUnits, cacheHits: 0, estimatedCostMicroUsd: cost },
     });
+    // RAG Phase 5, step 3f: the 80% and 100% alerts, once per facility per 24 hours (after the tokens are logged).
+    if (extra.inputTokens || extra.outputTokens) await checkTokenBudgetAlerts(access.callerFacilityId);
     // Staff answers already streamed what passed; everything else is released now, whole.
     if (spec.audience === "PATIENT" || (outcome !== "ANSWERED" && outcome !== "CITATION_INVALID")) for (const s of sentences) await hooks.onSentence?.(s);
     return {
@@ -319,6 +323,17 @@ async function run(actor: AiActor, req: AskRequest, hooks: AskHooks, started: nu
     if (lines.length && lines.every((l) => checkSentence({ text: l.text, citations: l.citations, kind: "FACT" }, byN0).ok)) {
       for (const l of lines) await hooks.onSentence?.(l);
       return finish("ANSWERED", lines, sources, { topScore: retrieval.topScore, threshold: retrieval.threshold, model: "none", retrieved: sources.map((s) => s.chunkId) });
+    }
+  }
+
+  // RAG Phase 5, step 3f: the facility's daily token budget. Only a model call is refused; Tier 0 above never reaches here.
+  if (actor.kind === "STAFF") {
+    try {
+      await assertTokenBudget(actor.facilityId);
+    } catch (err) {
+      if (!(err instanceof TokenBudgetExceededError)) throw err;
+      await finish("RATE_LIMITED", [], sources, { retrieved: sources.map((s) => s.chunkId) });
+      throw new AskError(429, "FACILITY_TOKEN_BUDGET", TOKEN_BUDGET_MESSAGE);
     }
   }
 

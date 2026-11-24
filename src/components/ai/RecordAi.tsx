@@ -59,7 +59,8 @@ export function RecordAi({ patientId, modes, documentId, appointmentId, shareId,
       const res = await fetch("/api/ai/ask", { method: "POST", headers: { "Content-Type": "application/json", Accept: "text/event-stream" }, body: JSON.stringify(body) });
       if (!res.ok || !res.body) {
         const e = await res.json().catch(() => ({}));
-        setError(res.status === 429 ? "Too many requests — try again in a minute." : res.status === 404 ? "Not available for this patient." : res.status === 403 ? "Not available here." : (e.error ?? "Something went wrong."));
+        // RAG Phase 5: a refusal with its own sentence (the facility's token budget) is shown as it is.
+        setError(e.message ?? (res.status === 429 ? "Too many requests — try again in a minute." : res.status === 404 ? "Not available for this patient." : res.status === 403 ? "Not available here." : (e.error ?? "Something went wrong.")));
         return;
       }
       const reader = res.body.getReader();
@@ -72,7 +73,11 @@ export function RecordAi({ patientId, modes, documentId, appointmentId, shareId,
           if (ev.event === "meta") setLabel((ev.data as { label: string }).label);
           else if (ev.event === "sentence") setSentences((s) => [...s, ev.data as Sentence]);
           else if (ev.event === "citations") setCitations(ev.data as Citation[]);
-          else if (ev.event === "done") setOutcome((ev.data as { outcome: string }).outcome);
+          else if (ev.event === "done") {
+            const d = ev.data as { outcome: string; message?: string };
+            setOutcome(d.outcome);
+            if (d.message) setError(d.message);
+          }
         }
       }
     } catch {
