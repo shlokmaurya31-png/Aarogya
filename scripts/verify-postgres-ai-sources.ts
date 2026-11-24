@@ -113,7 +113,8 @@ async function main() {
   await ingestKnowledgeVersion(k.versionId);
   await approveKnowledgeVersion(sup, k.versionId);
   const kq = await askKnowledge(doctor as Extract<AiActor, { kind: "STAFF" }>, { question: `Urinary catheter bag change ${tag}` });
-  const kRow = (await prisma.aiInteractionSource.findMany({ where: { interactionId: kq.meta.interactionId, sourceType: "KNOWLEDGE_DOCUMENT" } }))[0];
+  // This gate's own document (other gates' documents may be retrieved beside it in a full run).
+  const kRow = await prisma.aiInteractionSource.findFirst({ where: { interactionId: kq.meta.interactionId, sourceType: "KNOWLEDGE_DOCUMENT", sourceId: k.documentId }, orderBy: { rank: "asc" } });
   const kOpen = kRow ? await opened(doctor, kRow.id) : "no row";
   const billingU = await staffUser(`src-billing-${tag}@verify.aarogya`, "BILLING_STAFF", PUNE);
   const kBilling = kRow ? await opened({ kind: "STAFF", userId: billingU.userId, role: "BILLING_STAFF", facilityId: PUNE }, kRow.id) : "";
