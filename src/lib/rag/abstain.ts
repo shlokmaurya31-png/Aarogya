@@ -4,6 +4,7 @@ import { conceptsIn } from "./lexicon";
 import { MEDICINE_VARIANTS, canonicalMedicine } from "./medicineNames";
 import { stem } from "./stem";
 import { classesIn } from "./medicineClasses";
+import { synonymForms } from "./synonyms";
 
 /**
  * RAG Phase 5, step 3b — "no record" before a wrong answer
@@ -66,6 +67,9 @@ export function subjectForms(word: string, question: string): string[] {
 
 // RAG Phase 5, step 3c: a class word's members ("statin" is covered by atorvastatin in the sources).
 registerSubjectExpander((word, question) => classesIn(question).filter((c) => Object.values(c.names).some((ns) => ns.some((n) => n.toLowerCase().split(/[\s-]+/).includes(word)))).flatMap((c) => c.members));
+
+// RAG Phase 5, step 3d: a synonym's record word ("panic" is covered by "critical").
+registerSubjectExpander(synonymForms);
 
 const fold = (w: string) => stem(w.replace(/ae/g, "e").replace(/oe/g, "e"));
 

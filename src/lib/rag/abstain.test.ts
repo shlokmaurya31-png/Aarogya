@@ -37,3 +37,11 @@ describe("supply questions route as operational", () => {
   });
 });
 
+describe("synonyms (step 3d)", () => {
+  it("count the record's word as the subject", () => {
+    const crit = ["[Lab result · Troponin I · 2026-10-02 · verified]\nTroponin I 2.4 ng/mL (reference 0.00 - 0.04), high, critical value."];
+    expect(subjectCovered("Any panic values?", crit)).toBe(true);
+    expect(subjectCovered("Any panic values?", XRAY)).toBe(false);
+    expect(subjectCovered("Any scan reports?", ["[Imaging report · X-ray Chest PA view · 2026-10-01 · verified]\nImpression: consolidation."])).toBe(true);
+  });
+});
