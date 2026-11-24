@@ -70,7 +70,7 @@ jobs:
           name: isolated-report
           path: |
             .verify-report/isolated.md
-            .verify-report/gates/
+            .verify-report/runs/
           include-hidden-files: true
 
   isolated-scale-gates:
@@ -128,5 +128,5 @@ jobs:
           name: isolated-report-scale
           path: |
             .verify-report/isolated.md
-            .verify-report/gates/
+            .verify-report/runs/
           include-hidden-files: true

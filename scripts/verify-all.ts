@@ -251,8 +251,14 @@ interface Result {
   silent: boolean;
 }
 
-/** Lines of each stream kept in the per-gate log (.verify-report/gates/<name>.log). */
-const LOG_TAIL_LINES = 200;
+/**
+ * RAG Phase 5: every run keeps its own logs, never overwritten:
+ * .verify-report/runs/<start>-<main|isolated>/<gate>.log (the whole stdout and
+ * stderr, up to 20,000 lines each) and report.md. A gate that fails once can be
+ * read afterwards, whatever ran later.
+ */
+const RUN_LOG_LINES = 20_000;
+let runDir = "";
 
 function parseArgs(argv: string[]): Options {
   const opts: Options = { freshEach: false, group: "all", list: false, only: [], timeoutMs: 300_000 };
@@ -367,10 +373,10 @@ function fmtBytes(n: number | null): string {
 
 /** The per-gate log: exit, signal, duration, peak memory, then the last lines of stdout and stderr. */
 function writeGateLog(name: string, r: RunOutcome, durationMs: number, status: Result["status"]) {
-  const dir = path.join(REPORT_DIR, "gates");
-  mkdirSync(dir, { recursive: true });
+  mkdirSync(runDir, { recursive: true });
   const silent = !r.stdout.trim() && !r.stderr.trim();
-  writeFileSync(path.join(dir, `${name}.log`), [
+  // "wx": a log is written once, never replaced.
+  writeFileSync(path.join(runDir, `${name}.log`), [
     `gate:      ${name}`,
     `status:    ${status}${silent ? "  — NO OUTPUT" : ""}`,
     `exit code: ${r.code ?? "none"}`,
@@ -378,11 +384,11 @@ function writeGateLog(name: string, r: RunOutcome, durationMs: number, status: R
     `duration:  ${fmt(durationMs)}`,
     `peak RSS:  ${fmtBytes(r.peakRssBytes)}${TIME_BIN ? "" : " (no /usr/bin/time)"}`,
     "",
-    `── stdout (last ${LOG_TAIL_LINES} lines) ──`, ...lastLines(r.stdout, LOG_TAIL_LINES),
+    `── stdout (last ${RUN_LOG_LINES} lines) ──`, ...lastLines(r.stdout, RUN_LOG_LINES),
     "",
-    `── stderr (last ${LOG_TAIL_LINES} lines) ──`, ...lastLines(r.stderr, LOG_TAIL_LINES),
+    `── stderr (last ${RUN_LOG_LINES} lines) ──`, ...lastLines(r.stderr, RUN_LOG_LINES),
     "",
-  ].join("\n"));
+  ].join("\n"), { flag: "wx" });
 }
 
 async function resetDatabase() {
@@ -461,7 +467,7 @@ function report(results: Result[], opts: Options, host: string, totalMs: number)
     `- Result: **${passed}/${results.length} passed** in ${fmt(totalMs)}`,
     `- Excluded: ${[...EXCLUDED].join(", ")} (needs external ABDM sandbox credentials)`,
     "",
-    `- Per-gate logs (exit code, signal, duration, peak memory, last ${LOG_TAIL_LINES} lines of stdout and stderr): .verify-report/gates/<gate>.log`,
+    `- Per-gate logs of this run, kept (exit code, signal, duration, peak memory, stdout and stderr): ${path.relative(ROOT, runDir)}/<gate>.log`,
     "",
     "| # | Script | Result | Duration | Exit | Signal | Peak RSS |",
     "|---|--------|--------|----------|------|--------|----------|",
@@ -470,7 +476,7 @@ function report(results: Result[], opts: Options, host: string, totalMs: number)
   for (const r of results.filter((x) => x.status !== "PASS")) {
     lines.push("", `## ${r.name}: ${r.status}`, "");
     if (r.silent) lines.push(`**NO OUTPUT: the gate exited with code ${r.exitCode ?? "none"}, signal ${r.signal ?? "none"}, after ${fmt(r.durationMs)}.**`, "");
-    lines.push(`Exit code ${r.exitCode ?? "none"}, signal ${r.signal ?? "none"}, peak RSS ${fmtBytes(r.peakRssBytes)}. Full tail: .verify-report/gates/${r.name}.log`, "", "Last 40 lines of output:", "", "```", ...r.tail, "```");
+    lines.push(`Exit code ${r.exitCode ?? "none"}, signal ${r.signal ?? "none"}, peak RSS ${fmtBytes(r.peakRssBytes)}. Full log: ${path.relative(ROOT, runDir)}/${r.name}.log`, "", "Last 40 lines of output:", "", "```", ...r.tail, "```");
   }
   return lines.join("\n") + "\n";
 }
@@ -502,6 +508,9 @@ async function main() {
   console.log(`verify:all — ${names.length} script(s) against ${host}${opts.freshEach ? ", fresh database each" : ""}${opts.group !== "all" ? `, group ${opts.group}` : ""}`);
 
   const started = Date.now();
+  runDir = path.join(REPORT_DIR, "runs", `${new Date(started).toISOString().replace(/[:.]/g, "-")}-${opts.freshEach ? "isolated" : "main"}${opts.group !== "all" ? `-${opts.group}` : ""}`);
+  mkdirSync(runDir, { recursive: true });
+  console.log(`  logs: ${path.relative(ROOT, runDir)}/`);
   const results: Result[] = [];
   await resetDatabase();
   for (const [i, name] of names.entries()) {
@@ -520,7 +529,7 @@ async function main() {
     writeGateLog(name, r, durationMs, status);
     console.log(`  ${status} (${fmt(durationMs)}${r.peakRssBytes !== null ? `, ${fmtBytes(r.peakRssBytes)}` : ""})`);
     if (status !== "PASS" && silent) {
-      console.log(`  !!!! ${name} exited with NO OUTPUT — exit code ${r.code ?? "none"}, signal ${r.signal ?? "none"}${r.timedOut ? " (timeout)" : ""}. See .verify-report/gates/${name}.log`);
+      console.log(`  !!!! ${name} exited with NO OUTPUT — exit code ${r.code ?? "none"}, signal ${r.signal ?? "none"}${r.timedOut ? " (timeout)" : ""}. See ${path.relative(ROOT, runDir)}/${name}.log`);
     }
   }
 
@@ -528,6 +537,7 @@ async function main() {
   const md = report(results, opts, host, Date.now() - started);
   mkdirSync(REPORT_DIR, { recursive: true });
   writeFileSync(path.join(REPORT_DIR, "latest.md"), md);
+  writeFileSync(path.join(runDir, "report.md"), md, { flag: "wx" });
   if (opts.freshEach) writeFileSync(path.join(REPORT_DIR, "isolated.md"), md);
   console.log("\n" + md.split("\n## ")[0]);
   console.log(`Full report: .verify-report/latest.md`);
