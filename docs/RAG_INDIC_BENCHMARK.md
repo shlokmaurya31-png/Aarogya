@@ -165,3 +165,16 @@ Plan §13.5 E, a new file for a new phase. 94 new questions over the same fixtur
 - sealed split sha-256: `b063fd2bd3b47cc5a6728abc6a62170a37b2bd8ec190040a409715d576653091`
 - Run: `npm run eval:rag:sealed -- --phase <n> --split phase5`, once per phase, at the end. Every sealed report now also counts **confidently wrong** answers (answered where "no record" or a refusal was right, or a forbidden value stated) on their own: a false answer counts as worse than a refusal.
 
+### Phase 5 runs (2026-11-24, commit 01e58a1, the only runs for phase 5)
+
+Both sealed files, once each, at the end of the phase (`eval/rag/sealed/runs.json`). **Confidently wrong** counts an answer where "no record" or a refusal was right, or an answer stating a forbidden value: a false answer counts as worse than a refusal.
+
+| | Old held-out test split (113) | Sealed phase 4 (71) | Sealed phase 5 (94) |
+|---|---|---|---|
+| Recall@8 | 0.97 | **0.921** (phase 4: 0.831) | **0.839** |
+| MRR | 0.92 | **0.878** (phase 4: 0.795) | **0.820** |
+| Correct with valid citations | 206/230 on the whole set (89.6%) | **60/71 (84.5%)** (phase 4: 52/71) | **69/94 (73.4%)** |
+| Confidently wrong | 0/230 | **0/71** (phase 4: 3) | **0/94** |
+
+Reported, not tuned on. On the phase 5 split every "no record" question (13 of the "no record" group, and the medicine classes she takes no member of) stayed "no record", and every patient-facing answer in the ten other languages was right. Where it falls short (for the next phase, with new held-out questions): **over-abstention**: 21 of its 25 misses are "no record" where the record had the answer: abbreviations and wordings the vocabularies don't carry ("K+", "Na", "glycated haemoglobin" as a phrase, "alarm values", "phoned through as critical", "cardiac enzyme", "CXR report", "imaging still awaited", "ultrasound outstanding", "sent to which specialist", "missed this shift"), two English SOP questions in new words, and the knowledge questions across scripts and transliterated ones over the Indic documents (8, all "no record"). The trade is the one this phase chose: no false answer, more refusals. The expected answers are the team's, pending clinical sign-off.
+

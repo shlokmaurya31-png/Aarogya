@@ -521,6 +521,10 @@ Enforced where the permit is checked, inside each provider, so no caller can ski
 | Knowledge documents (no identifiers) | Yes | Per the organisation's setting | Yes |
 | Real patient or person data | **Refused** | **Refused** | Allowed, with the switch on and consent |
 
+### 12.3a As built (Phase 5)
+
+`src/lib/ai/record/registry.ts` is the registry and the router (tier, risk, policy, failover); `src/lib/ai/modelCapabilities.ts` holds the request shapes each allowed model accepts, from Anthropic's documentation, and `claudeContract.test.ts` checks every request the app sends against them.
+
 ### 12.4 Failure
 
 - A real provider's failure is a 503. It never falls back to the mock (exists).
@@ -602,11 +606,12 @@ Invalidation for the knowledge caches is by key, not by event: the key contains 
 | `POST /api/ai/ask` | Exists; gains modes | Per mode |
 | `GET /api/ai/me` | Exists | Signed in |
 | `GET /api/ai/interactions`, `…/report`, `POST …/:id/text` | Exist | Reviewer roles |
-| `GET /api/ai/sources/:id` | New | Access re-checked for the caller, now |
+| `GET /api/ai/sources/:id` | Built (Phase 5, `sourceOpen.ts`) | Access re-checked for the caller, now; 404 otherwise |
+| `POST /api/ai/ops/ask` | Built (Phase 5, `opsAsk.ts`) | Staff; each operational reader its screen's own permission |
 | `POST /api/ai/knowledge`, `GET /api/ai/knowledge/:id`, `POST …/versions`, `POST …/versions/:v/approve`, `POST …/withdraw` | New | `knowledge:manage`, `knowledge:approve` |
-| `GET /api/ai/usage` | New | `ai:usage:read` |
+| `GET /api/ai/usage` | Built (Phase 4) | `ai:usage:read` |
 | `GET /api/ai/admin/health`, `POST /api/ai/admin/reindex` | New | Platform admin |
-| `POST /api/chat` | Exists; record questions go through the gateway | Signed in |
+| `POST /api/chat` | Exists; record, knowledge and live-state questions go through their gateways (Phase 5) | Signed in |
 
 Every response is `Cache-Control: no-store`, like every other API response (the cache-privacy gate checks it). No response carries a secret, a hash, a storage reference or a provider's raw error.
 

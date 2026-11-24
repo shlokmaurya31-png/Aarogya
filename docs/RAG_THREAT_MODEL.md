@@ -193,6 +193,8 @@ Severity is the harm if the mitigation fails: **Critical** (patient data to the 
 
 **Mitigation and gate.** Validation of medicine names and units. Readers return "not recorded" for an absent row. The real-provider evaluation, and the advisor's sign-off, both block real data.
 
+**As built (RAG Phase 5).** Validation now checks units and medicine names (`validate.ts`); every development answer altered once (a wrong dose, a swapped unit, a renamed medicine) ends `CITATION_INVALID` (`verify-postgres-rag-eval`). An English question whose subject is in none of its evidence is "no record" without a model (`abstain.ts`), and a confidently wrong answer is counted on its own in every report. The answer request is now a shape the current models accept (structured outputs; `claudeContract.test.ts`).
+
 ### T-R16: Scholar reaches hospital data, or hospital data reaches Scholar (Critical)
 
 **Concern.** A Scholar prompt contains real patient text, or a hospital answer quotes Scholar's synthetic cases as if they were records or policy.
@@ -209,7 +211,9 @@ Severity is the harm if the mitigation fails: **Critical** (patient data to the 
 
 **Mitigation and gate.** A token budget per facility as well as a request budget. Upload size and page limits; ingestion on the bulk lane so it cannot delay live events. Tier 0 for lookups. The concurrency cap moves to a Postgres count.
 
-**As built (RAG Phase 4).** A token budget per mode and model before every call (a question or context over its cap is refused, never truncated; structured facts that don't fit refuse the request); Tier 0 for lookups the readers answer in full; per-request accounting (tokens, embedding tokens, rerank units, cache hits, estimated cost) and `GET /api/ai/usage` for administrators. Still open: a token budget per facility per day, and the concurrency cap in Postgres.
+**As built (RAG Phase 4).** A token budget per mode and model before every call (a question or context over its cap is refused, never truncated; structured facts that don't fit refuse the request); Tier 0 for lookups the readers answer in full; per-request accounting (tokens, embedding tokens, rerank units, cache hits, estimated cost) and `GET /api/ai/usage` for administrators. Still open: the concurrency cap in Postgres.
+
+**As built (RAG Phase 5).** A daily token budget per facility (`tokenBudget.ts`): an alert at 80% (an event and a notification to the facility's administrators, once per 24 hours), model calls refused at 100% while Tier 0 answers carry on; set by the hospital administrator through the audited configuration API (`verify-postgres-ai-token-budget`).
 
 ### T-R18: A wrong embedding space or a half-finished re-embed (Medium)
 
@@ -230,6 +234,8 @@ Severity is the harm if the mitigation fails: **Critical** (patient data to the 
 **Concern.** "Who is in bed 12?" or "which patients have unpaid bills?" returns names to someone who should see only counts.
 
 **Mitigation and gate.** Operational readers return counts and states by default and reuse the permission of the screen that would show the same detail. `verify-postgres-ai-ops` (Phase 5).
+
+**As built (RAG Phase 5).** `opsAsk.ts`: counts by default; the queue's names only with `queue:manage`, the critical results' names only with `clinical:chart:read`, never a result value; a reader the caller may not use refuses the whole question; the caller's facility only; Tier 0, never cached. A citation opened later (`GET /api/ai/sources/:id`) re-checks access now and answers 404 otherwise (`verify-postgres-ai-sources`).
 
 ### T-R21: The client's conversation context is used to mislead or to widen access (High)
 
