@@ -63,7 +63,7 @@ async function readBeds(facilityId: string, at: string): Promise<Fact[]> {
 }
 
 async function readQueue(facilityId: string, at: string, names: boolean): Promise<Fact[]> {
-  const live = await prisma.queueEntry.findMany({ where: { facilityId, status: { in: ["WAITING", "CALLED", "IN_SERVICE"] } }, select: { queueType: true, status: true, enteredAt: true, patient: names ? { select: { fullName: true } } : false }, orderBy: { enteredAt: "asc" }, take: 500 });
+  const live = await prisma.queueEntry.findMany({ where: { facilityId, status: { in: ["WAITING", "CALLED", "IN_SERVICE"] } }, select: { queueType: true, status: true, enteredAt: true, ...(names ? { patient: { select: { fullName: true } } } : {}) }, orderBy: { enteredAt: "asc" }, take: 500 });
   if (!live.length) return [{ reader: "QUEUE", text: `As of ${at}: no one is waiting in any queue.` }];
   const types = [...new Set(live.map((e) => e.queueType))].sort();
   const now = Date.now();
@@ -95,7 +95,7 @@ async function readStock(facilityId: string, at: string, question: string): Prom
 
 async function readCritical(facilityId: string, at: string, names: boolean): Promise<Fact[]> {
   const where = { isCurrent: true, isCritical: true, acknowledgedAt: null, labOrder: { encounter: { facilityId } } };
-  const labs = await prisma.labResult.findMany({ where, select: { resultedAt: true, labOrder: { select: { patient: names ? { select: { fullName: true } } : false } } }, orderBy: { resultedAt: "asc" }, take: 200 });
+  const labs = await prisma.labResult.findMany({ where, select: { resultedAt: true, labOrder: { select: { id: true, ...(names ? { patient: { select: { fullName: true } } } : {}) } } }, orderBy: { resultedAt: "asc" }, take: 200 });
   const imaging = await prisma.imagingReport.count({ where: { isCurrent: true, isCritical: true, acknowledgedAt: null, imagingOrder: { encounter: { facilityId } } } });
   const oldest = labs[0]?.resultedAt ? Math.round((Date.now() - labs[0].resultedAt.getTime()) / 60_000) : 0;
   const out: Fact[] = [{ reader: "CRITICAL", text: `As of ${at}: ${labs.length} critical lab results and ${imaging} critical imaging reports not yet acknowledged${labs.length ? `; the oldest lab result has waited ${oldest} min` : ""}.` }];

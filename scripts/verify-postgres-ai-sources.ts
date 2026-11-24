@@ -112,7 +112,7 @@ async function main() {
   const k = await uploadKnowledge(admin, { title: `Sources gate SOP ${tag}`, documentType: "SOP", accessClass: "CLINICAL", scope: "FACILITY", fileName: `src-${tag}.md`, declaredType: "text/markdown", bytes: Buffer.from(`# Catheter care ${tag}\n\nChange the urinary catheter bag every 7 days ${tag}.\n`, "utf8") });
   await ingestKnowledgeVersion(k.versionId);
   await approveKnowledgeVersion(sup, k.versionId);
-  const kq = await askKnowledge(doctor as Extract<AiActor, { kind: "STAFF" }>, { question: `How often is the urinary catheter bag changed ${tag}?` });
+  const kq = await askKnowledge(doctor as Extract<AiActor, { kind: "STAFF" }>, { question: `Urinary catheter bag change ${tag}` });
   const kRow = (await prisma.aiInteractionSource.findMany({ where: { interactionId: kq.meta.interactionId, sourceType: "KNOWLEDGE_DOCUMENT" } }))[0];
   const kOpen = kRow ? await opened(doctor, kRow.id) : "no row";
   const billingU = await staffUser(`src-billing-${tag}@verify.aarogya`, "BILLING_STAFF", PUNE);
@@ -120,7 +120,7 @@ async function main() {
   await withdrawKnowledgeVersion(admin, k.versionId, "sources gate");
   const kAfter = kRow ? await opened(doctor, kRow.id) : "";
   report("S4: a knowledge source opens while in force; withdrawn, 404; a role without its access class, 404",
-    kOpen.startsWith("OK") && kOpen.includes("every 7 days") && kBilling === "404 NOT_FOUND" && kAfter === "404 NOT_FOUND", `${kOpen.slice(0, 40)}; ${kBilling}; ${kAfter}`);
+    kOpen.startsWith("OK") && kOpen.includes("every 7 days") && kBilling === "404 NOT_FOUND" && kAfter === "404 NOT_FOUND", `knowledge ${kq.outcome}; ${kOpen.slice(0, 40)}; ${kBilling}; ${kAfter}`);
 
   // ── S5 ──
   const pActor: AiActor = { kind: "PATIENT", userId: p.userId };

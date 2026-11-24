@@ -34,6 +34,8 @@ export async function openSource(actor: AiActor, id: string): Promise<OpenedSour
   const row = await prisma.aiInteractionSource.findUnique({ where: { id }, include: { interaction: { select: { patientId: true, shareId: true, organizationId: true } } } });
   if (!row) throw NOT_FOUND();
 
+  // An upload read directly before its review has no durable chunk to re-open.
+  if (row.sourceKind === "UPLOAD") throw NOT_FOUND();
   if (row.sourceType === "KNOWLEDGE_DOCUMENT") {
     if (actor.kind !== "STAFF" || !row.chunkId) throw NOT_FOUND();
     const fac = await prisma.facility.findUnique({ where: { id: actor.facilityId }, select: { organizationId: true } });
@@ -54,8 +56,8 @@ export async function openSource(actor: AiActor, id: string): Promise<OpenedSour
   }
   const link = actor.kind === "STAFF" ? `/hospital-os/doctor/patients/${patientId}?entry=${row.sourceType}:${row.sourceId}` : `/patient/records?entry=${row.sourceType}:${row.sourceId}`;
 
-  // A live fact: re-read from its own table, inside the caller's live scope.
-  if (row.chunkId?.startsWith("live:")) {
+  // A live fact (logged with sourceKind LIVE and no chunk): re-read from its own table, inside the caller's live scope.
+  if (row.sourceKind === "LIVE") {
     const { patientIds, facilityIds } = access.live;
     if (row.sourceType === "MEDICATION_ORDER" && access.live.medications) {
       const o = await prisma.medicationOrder.findFirst({ where: { id: row.sourceId, patientId: { in: patientIds }, encounter: { facilityId: { in: facilityIds } } }, select: { drugName: true, dose: true, route: true, frequency: true, orderedAt: true, status: true } });

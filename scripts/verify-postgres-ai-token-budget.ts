@@ -48,7 +48,7 @@ function report(name: string, ok: boolean, detail?: string) {
 const NOIDA = "fac-amc-noida";
 const PUNE = "fac-amc-pune";
 const tag = Date.now().toString(36);
-const started = new Date();
+let started = new Date();
 
 async function drain() {
   registerAllConsumers();
@@ -92,6 +92,9 @@ async function main() {
   await drain();
   // The window starts empty for Noida: earlier gates' rows move back past it.
   await prisma.$executeRaw`UPDATE "AiInteraction" SET "createdAt" = "createdAt" - interval '25 hours', "textExpiresAt" = "textExpiresAt" - interval '25 hours' WHERE "facilityId" = ${NOIDA} AND "createdAt" > now() - interval '25 hours'`;
+  // …and so do the alerts an earlier run of this gate raised (an alert is raised once per facility per 24 hours).
+  await prisma.$executeRaw`UPDATE "DomainEventOutbox" SET "occurredAt" = "occurredAt" - interval '25 hours' WHERE "eventType" = 'AiTokenBudgetThresholdReached' AND "facilityId" = ${NOIDA} AND "occurredAt" > now() - interval '25 hours'`;
+  started = new Date();
   const org = (await prisma.facility.findUniqueOrThrow({ where: { id: NOIDA }, select: { organizationId: true } })).organizationId;
   const scope = { scope: "FACILITY" as const, organizationId: org, facilityId: NOIDA };
   const adminM = await loadActorMemberships(admin.userId, "HOSPITAL_ADMIN");
@@ -156,8 +159,9 @@ async function main() {
   // ── T7 ──
   await spread(noida.actor.userId);
   let kcode = "";
-  try { await askKnowledge(noida.actor as Extract<AiActor, { kind: "STAFF" }>, { question: `How often is a soiled wound dressing changed ${tag}?` }); } catch (err) { if (err instanceof AskError) kcode = err.code; else throw err; }
-  report("T7: at 100% a knowledge question that needs the model is refused too", kcode === "FACILITY_TOKEN_BUDGET" && calls === callsBefore, kcode || "not refused");
+  let kOutcome = "";
+  try { kOutcome = (await askKnowledge(noida.actor as Extract<AiActor, { kind: "STAFF" }>, { question: `Soiled wound dressing change ${tag}` })).outcome; } catch (err) { if (err instanceof AskError) kcode = err.code; else throw err; }
+  report("T7: at 100% a knowledge question that needs the model is refused too", kcode === "FACILITY_TOKEN_BUDGET" && calls === callsBefore, kcode || `not refused: ${kOutcome}`);
 
   // ── T8 ──
   const other = await askAi(pune.actor, { mode: "VISIT_BRIEF", patientId: pune.patientId });
